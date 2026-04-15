@@ -21,6 +21,9 @@ import Events from "./pages/app/Events";
 import Teams from "./pages/app/Teams";
 import MyAssignments from "./pages/app/MyAssignments";
 import Settings from "./pages/app/Settings";
+import Messages from "./pages/app/Messages";
+import Prayer from "./pages/app/Prayer";
+import Training from "./pages/app/Training";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -48,6 +51,9 @@ const App = () => (
                 <Route path="teams" element={<Teams />} />
                 <Route path="my-assignments" element={<MyAssignments />} />
                 <Route path="settings" element={<Settings />} />
+                <Route path="messages" element={<Messages />} />
+                <Route path="prayer" element={<Prayer />} />
+                <Route path="training" element={<Training />} />
               </Route>
               <Route path="*" element={<NotFound />} />
             </Routes>

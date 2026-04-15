@@ -9,6 +9,9 @@ import {
   LogOut,
   ClipboardList,
   Settings,
+  MessageCircle,
+  Heart,
+  BookOpen,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
@@ -34,6 +37,9 @@ const items = [
   { title: "Events", url: "/app/events", icon: CalendarDays },
   { title: "Teams", url: "/app/teams", icon: UsersRound },
   { title: "Settings", url: "/app/settings", icon: Settings },
+  { title: "Messages", url: "/app/messages", icon: MessageCircle },
+  { title: "Prayer", url: "/app/prayer", icon: Heart },
+  { title: "Training", url: "/app/training", icon: BookOpen },
 ];
 
 export function AppSidebar() {
