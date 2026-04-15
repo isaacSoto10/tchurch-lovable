@@ -197,12 +197,13 @@ export default function Services() {
 
     setItemsLoading((prev) => ({ ...prev, [serviceId]: true }));
     try {
-      const [itemsRes, assignmentsRes] = await Promise.all([
-        fetchApi(`/service-items?serviceId=${serviceId}`),
-        fetchApi(`/service-assignments?serviceId=${serviceId}`),
-      ]);
-      setServiceItems((prev) => ({ ...prev, [serviceId]: Array.isArray(itemsRes) ? itemsRes : [] }));
-      setServiceAssignments((prev) => ({ ...prev, [serviceId]: Array.isArray(assignmentsRes) ? assignmentsRes : [] }));
+      const serviceRes = await fetchApi(`/services/${serviceId}`);
+      if (serviceRes && typeof serviceRes === 'object') {
+        const items = (serviceRes as Record<string, unknown>).items || [];
+        const assignments = (serviceRes as Record<string, unknown>).assignments || [];
+        setServiceItems((prev) => ({ ...prev, [serviceId]: Array.isArray(items) ? items as ServiceItem[] : [] }));
+        setServiceAssignments((prev) => ({ ...prev, [serviceId]: Array.isArray(assignments) ? assignments as ServiceAssignment[] : [] }));
+      }
     } catch (e) {
       console.error("Failed to load service details:", e);
     } finally {
@@ -464,8 +465,11 @@ export default function Services() {
       toast({ title: "Member assigned" });
       setAssignDialogOpen(false);
 
-      const assignmentsRes = await fetchApi(`/service-assignments?serviceId=${selectedServiceId}`);
-      setServiceAssignments((prev) => ({ ...prev, [selectedServiceId]: Array.isArray(assignmentsRes) ? assignmentsRes : [] }));
+      const serviceRes = await fetchApi(`/services/${selectedServiceId}`);
+      if (serviceRes && typeof serviceRes === 'object') {
+        const assignments = (serviceRes as Record<string, unknown>).assignments || [];
+        setServiceAssignments((prev) => ({ ...prev, [selectedServiceId]: Array.isArray(assignments) ? assignments as ServiceAssignment[] : [] }));
+      }
     } catch (e: unknown) {
       const error = e as { blocked?: boolean };
       if (error?.blocked) {
