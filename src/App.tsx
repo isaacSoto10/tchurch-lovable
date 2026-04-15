@@ -15,7 +15,9 @@ import Dashboard from "./pages/app/Dashboard";
 import Songs from "./pages/app/Songs";
 import Services from "./pages/app/Services";
 import Announcements from "./pages/app/Announcements";
-import Placeholder from "./pages/app/Placeholder";
+import Ministries from "./pages/app/Ministries";
+import Events from "./pages/app/Events";
+import Teams from "./pages/app/Teams";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -37,9 +39,9 @@ const App = () => (
               <Route path="songs" element={<Songs />} />
               <Route path="services" element={<Services />} />
               <Route path="announcements" element={<Announcements />} />
-              <Route path="ministries" element={<Placeholder />} />
-              <Route path="events" element={<Placeholder />} />
-              <Route path="teams" element={<Placeholder />} />
+              <Route path="ministries" element={<Ministries />} />
+              <Route path="events" element={<Events />} />
+              <Route path="teams" element={<Teams />} />
             </Route>
             <Route path="*" element={<NotFound />} />
           </Routes>
