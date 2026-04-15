@@ -1,37 +1,54 @@
 
 
-# Set Up Subscription Payments for Tchurch
+# Sharing a Backend Between This Lovable App and Your Tchurch Next.js App
 
-## Overview
+## The Challenge
 
-Enable Lovable's built-in payment integration for subscription billing (free/pro/premium tiers for churches using the Tchurch platform).
+Your existing Tchurch app uses **InsForge (PostgreSQL)** + **Clerk auth** + **Next.js API routes**, while this Lovable app uses **Lovable Cloud (Supabase)** + **Paddle payments**. These are two completely different backend stacks — they can't natively share a database.
 
-## Steps
+## Your Options
 
-### 1. Enable Lovable Cloud
-Payments require Lovable Cloud (Supabase backend). This will be enabled first if not already active.
+### Option A: Use Your Next.js API as the Single Source of Truth (Recommended)
 
-### 2. Enable Payment Provider
-Based on the eligibility check, **Paddle** is recommended (handles global taxes and compliance automatically at 5% + 50¢). Alternatively, **built-in Stripe** is available if you prefer more control.
+Keep InsForge + Clerk as your main backend. Have this Lovable app call your Next.js API routes instead of using Lovable Cloud for data.
 
-Both are fully built-in — no external account needed to start. A test environment is created immediately so you can test without real money. Going live requires verification later.
+**How it works:**
+- Your Next.js app at `tchurchapp.com/api/*` remains the authoritative backend
+- This Lovable app calls those API endpoints via edge functions or directly from the client
+- Auth tokens from Clerk are used in both apps
+- Paddle webhook data gets forwarded to your Next.js API or written to InsForge
 
-### 3. Create Subscription Products
-Define your pricing tiers. Based on what I saw on tchurchapp.com:
-- **Free** — Small churches, limited members
-- **Pro** — More members, full features
-- **Premium** — Unlimited, priority support
+**Pros:** Single database, no data sync issues, existing logic reused
+**Cons:** Requires your Next.js app to be deployed and available; Lovable Cloud features (RLS, realtime) won't apply to your main data
 
-These will be created as subscription products with monthly/yearly intervals.
+### Option B: Migrate Everything to Lovable Cloud
 
-### 4. Implement Checkout Flow
-- Add a pricing page with tier comparison
-- Add checkout buttons that open the payment flow
-- Handle webhooks for subscription status changes
-- Gate features based on active subscription tier
+Move your InsForge data and Clerk auth into Lovable Cloud (Supabase). Update your Next.js app to also use Supabase.
 
-## Technical Details
-- Payment provider SDK and webhook handler will be auto-configured on enable
-- Subscription status stored in Supabase, checked via RLS or client queries
-- Pricing page added at `/pricing` or integrated into the landing page
+**Pros:** Unified backend, RLS, realtime, everything in one place
+**Cons:** Significant migration effort — schema, auth, API routes all need rewriting in both apps
+
+### Option C: Two-Way Sync Between Databases
+
+Keep both backends but sync data between InsForge and Supabase.
+
+**Pros:** Each app keeps its native stack
+**Cons:** Complex, error-prone, eventual consistency issues
+
+## Recommendation
+
+**Option A** is the most practical path. Your Next.js app already has working API routes. We would:
+
+1. **Set up Clerk auth in this Lovable app** — install `@clerk/clerk-react`, configure sign-in/sign-up to match your existing Clerk instance
+2. **Replace Supabase data calls with API calls** to your Next.js endpoints (songs, services, announcements, etc.)
+3. **Keep Paddle in Lovable Cloud** for payment processing, but forward subscription data to your Next.js API so it's stored in InsForge alongside everything else
+4. **Create a thin edge function** that proxies or forwards webhook data to your existing backend
+
+This means both apps share the same users (Clerk) and the same data (InsForge), with payments handled by Paddle and synced to your main database.
+
+## What I Need From You
+
+- Your deployed Next.js app URL (the base URL for API calls)
+- Your Clerk publishable key (so this app can authenticate against the same Clerk instance)
+- Confirmation of which API routes exist in your Next.js app (e.g., `/api/songs`, `/api/services`, etc.)
 
