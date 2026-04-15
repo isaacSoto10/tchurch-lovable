@@ -1,23 +1,37 @@
+# Fix Test Mode Banner + App Store Plan
 
+## Issue 1: Giant Yellow Banner
 
-# Replace "From Web to App" with This Tchurch App
+The `PaymentTestModeBanner` is placed inside `SidebarProvider` but **outside** the flex layout, so it takes up the full viewport width/height and pushes everything down. The banner itself is fine — it's the **placement** that's wrong. It's also inside the `SidebarProvider` which causes layout issues.
 
-## The Problem
+**Fix:** Move `<PaymentTestModeBanner />` inside the flex column layout, right above the header, so it renders as a slim bar at the top of the content area — not as a full-screen block.
 
-The cross-project tools only allow **reading from** and **copying assets to** the current project. I cannot write files into the "From Web to App" project from here.
+```
+AppLayout change:
+- Remove PaymentTestModeBanner from outside the flex div
+- Place it inside the flex-1 column, above the header
+```
 
-## How to Do It
+## Issue 2: Getting on the App Store (iPhone)
 
-You need to open the **[From Web to App](/projects/94a7da32-0c68-4f20-bb70-b8713bd1acb7)** project in Lovable and tell the AI there:
+Your project already has **Capacitor** configured. To get the app on the Apple App Store, you need to follow these steps **outside of Lovable** (this cannot be done from within Lovable):
 
-> Replace all the code in this project with the code from @Tchurch (reference this project using the @ mention). Copy every file from that project into this one, replacing all existing files. This is a React + Vite + Tailwind + TypeScript app with Clerk auth, Paddle payments, and Capacitor for mobile. Delete any files that don't exist in the source project.
+1. **Apple Developer Account** — Enroll in the Apple Developer Program ($99/year) at developer.apple.com
+2. **Connect to GitHub** — Connect this Lovable project to GitHub (Settings → GitHub)
+3. **Clone & build locally** — On a Mac with Xcode:
+  - `git clone` the repo
+  - `npm install`
+  - `npx cap add ios`
+  - `npm run build && npx cap sync`
+  - `npx cap open ios` → opens Xcode
+4. **Configure in Xcode** — Set your Team, Bundle ID, signing certificates
+5. **Archive & Upload** — Product → Archive → Distribute App → App Store Connect
+6. **Submit for Review** — In App Store Connect, fill out app metadata, screenshots, and submit
 
-That project's AI will be able to use the cross-project tools to read all files from this Tchurch project and write them into "From Web to App", which will then sync to your GitHub repo.
+For a detailed walkthrough, see the [Lovable mobile app guide](https://docs.lovable.dev/tips-tricks/native-mobile-apps).
 
-## Steps
+## Technical Details
 
-1. Open [From Web to App](/projects/94a7da32-0c68-4f20-bb70-b8713bd1acb7)
-2. Use `@Tchurch` to reference this project in the chat
-3. Ask it to replace all files with the ones from this project
-4. The changes will automatically sync to your connected GitHub repo
-
+**Files changed:** `src/layouts/AppLayout.tsx` — move banner placement inside the content column.  
+  
+Make the first page more simple where the user is only able to login/sign in signup and the suscription button takes them to the online website
