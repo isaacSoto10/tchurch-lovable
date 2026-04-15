@@ -7,6 +7,7 @@ import {
   CalendarDays,
   UsersRound,
   LogOut,
+  ClipboardList,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
@@ -27,6 +28,7 @@ const items = [
   { title: "Songs", url: "/app/songs", icon: Music },
   { title: "Services", url: "/app/services", icon: ListChecks },
   { title: "Announcements", url: "/app/announcements", icon: Megaphone },
+  { title: "My Assignments", url: "/app/my-assignments", icon: ClipboardList },
   { title: "Ministries", url: "/app/ministries", icon: Users },
   { title: "Events", url: "/app/events", icon: CalendarDays },
   { title: "Teams", url: "/app/teams", icon: UsersRound },
