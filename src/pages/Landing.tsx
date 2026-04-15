@@ -66,6 +66,9 @@ export default function Landing() {
           </Link>
           <div className="flex items-center gap-3">
             <Button variant="ghost" size="sm" asChild>
+              <Link to="/pricing">Pricing</Link>
+            </Button>
+            <Button variant="ghost" size="sm" asChild>
               <Link to="/login">Sign In</Link>
             </Button>
             <Button size="sm" asChild>
