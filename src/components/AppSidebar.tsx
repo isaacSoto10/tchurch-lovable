@@ -12,6 +12,9 @@ import {
   MessageCircle,
   Heart,
   BookOpen,
+  Calendar,
+  UserCircle,
+  CalendarX,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
@@ -36,6 +39,9 @@ const items = [
   { title: "Ministries", url: "/app/ministries", icon: Users },
   { title: "Events", url: "/app/events", icon: CalendarDays },
   { title: "Teams", url: "/app/teams", icon: UsersRound },
+  { title: "Calendar", url: "/app/calendar", icon: Calendar },
+  { title: "Members", url: "/app/users", icon: UserCircle },
+  { title: "Blockouts", url: "/app/blockouts", icon: CalendarX },
   { title: "Settings", url: "/app/settings", icon: Settings },
   { title: "Messages", url: "/app/messages", icon: MessageCircle },
   { title: "Prayer", url: "/app/prayer", icon: Heart },

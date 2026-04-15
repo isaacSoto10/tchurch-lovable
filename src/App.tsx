@@ -24,6 +24,9 @@ import Settings from "./pages/app/Settings";
 import Messages from "./pages/app/Messages";
 import Prayer from "./pages/app/Prayer";
 import Training from "./pages/app/Training";
+import Calendar from "./pages/app/Calendar";
+import Users from "./pages/app/Users";
+import Blockouts from "./pages/app/Blockouts";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -54,6 +57,9 @@ const App = () => (
                 <Route path="messages" element={<Messages />} />
                 <Route path="prayer" element={<Prayer />} />
                 <Route path="training" element={<Training />} />
+                <Route path="calendar" element={<Calendar />} />
+                <Route path="users" element={<Users />} />
+                <Route path="blockouts" element={<Blockouts />} />
               </Route>
               <Route path="*" element={<NotFound />} />
             </Routes>
