@@ -163,6 +163,9 @@ export default function Services() {
   const [serviceItems, setServiceItems] = useState<Record<string, ServiceItem[]>>({});
   const [serviceAssignments, setServiceAssignments] = useState<Record<string, ServiceAssignment[]>>({});
   const [itemsLoading, setItemsLoading] = useState<Record<string, boolean>>({});
+  const [draggingItemId, setDraggingItemId] = useState<string | null>(null);
+  const [dragOverItemId, setDragOverItemId] = useState<string | null>(null);
+  const [dragServiceId, setDragServiceId] = useState<string | null>(null);
 
   const [addItemDialogOpen, setAddItemDialogOpen] = useState(false);
   const [assignDialogOpen, setAssignDialogOpen] = useState(false);
@@ -397,6 +400,76 @@ export default function Services() {
     } catch (e) {
       toast({ title: "Failed to delete item", variant: "destructive" });
     }
+  };
+
+  const handleDragStart = (e: React.DragEvent, serviceId: string, itemId: string) => {
+    e.dataTransfer.effectAllowed = "move";
+    setDraggingItemId(itemId);
+    setDragServiceId(serviceId);
+  };
+
+  const handleDragOver = (e: React.DragEvent, itemId: string) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (dragOverItemId !== itemId) {
+      setDragOverItemId(itemId);
+    }
+  };
+
+  const handleDrop = async (e: React.DragEvent, targetServiceId: string, targetItemId: string) => {
+    e.preventDefault();
+    if (!draggingItemId || !dragServiceId || draggingItemId === targetItemId) {
+      setDraggingItemId(null);
+      setDragOverItemId(null);
+      setDragServiceId(null);
+      return;
+    }
+
+    const items = serviceItems[targetServiceId] || [];
+    const draggingIndex = items.findIndex((i) => i.id === draggingItemId);
+    const targetIndex = items.findIndex((i) => i.id === targetItemId);
+
+    if (draggingIndex === -1 || targetIndex === -1) {
+      setDraggingItemId(null);
+      setDragOverItemId(null);
+      setDragServiceId(null);
+      return;
+    }
+
+    const newItems = [...items];
+    const [draggedItem] = newItems.splice(draggingIndex, 1);
+    newItems.splice(targetIndex, 0, draggedItem);
+
+    setServiceItems((prev) => ({ ...prev, [targetServiceId]: newItems }));
+
+    const updates = newItems.map((item, idx) => ({
+      id: item.id,
+      position: idx,
+    }));
+
+    try {
+      await fetchApi("/service-items/reorder", {
+        method: "PATCH",
+        body: JSON.stringify({ items: updates }),
+      });
+    } catch (e) {
+      toast({ title: "Failed to reorder items", variant: "destructive" });
+      const serviceRes = await fetchApi(`/services/${targetServiceId}`);
+      if (serviceRes && typeof serviceRes === 'object') {
+        const items = (serviceRes as Record<string, unknown>).items || [];
+        setServiceItems((prev) => ({ ...prev, [targetServiceId]: Array.isArray(items) ? items as ServiceItem[] : [] }));
+      }
+    }
+
+    setDraggingItemId(null);
+    setDragOverItemId(null);
+    setDragServiceId(null);
+  };
+
+  const handleDragEnd = () => {
+    setDraggingItemId(null);
+    setDragOverItemId(null);
+    setDragServiceId(null);
   };
 
   const handleMoveItem = async (serviceId: string, itemId: string, direction: "up" | "down") => {
@@ -938,7 +1011,17 @@ export default function Services() {
                       ) : (
                         <div className="space-y-1">
                           {(serviceItems[svc.id] || []).map((item, idx) => (
-                            <div key={item.id} className="flex items-center gap-2 p-2 bg-muted/50 rounded">
+                            <div
+                              key={item.id}
+                              draggable
+                              onDragStart={(e) => handleDragStart(e, svc.id, item.id)}
+                              onDragOver={(e) => handleDragOver(e, item.id)}
+                              onDrop={(e) => handleDrop(e, svc.id, item.id)}
+                              onDragEnd={handleDragEnd}
+                              className={`flex items-center gap-2 p-2 bg-muted/50 rounded cursor-grab active:cursor-grabbing transition-all ${
+                                draggingItemId === item.id ? "opacity-50" : ""
+                              } ${dragOverItemId === item.id && draggingItemId !== item.id ? "ring-2 ring-primary ring-offset-2" : ""}`}
+                            >
                               <span className="text-xs text-muted-foreground w-4">{idx + 1}</span>
                               {getItemIcon(item.type)}
                               <span className="flex-1 text-sm">{item.title}</span>
