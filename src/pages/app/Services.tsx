@@ -34,9 +34,24 @@ interface Service {
   id: string;
   title: string;
   date: string;
-  type: "sunday" | "wednesday" | "special";
-  status: "draft" | "confirmed";
+  type: string;
+  status: string;
 }
+
+const SERVICE_TYPES = [
+  { label: "Sunday Service", value: "Sunday Service" },
+  { label: "Wednesday Service", value: "Wednesday Service" },
+  { label: "Special", value: "Special" },
+  { label: "Youth", value: "Youth" },
+  { label: "Kids", value: "Kids" },
+  { label: "Other", value: "Other" },
+];
+
+const SERVICE_STATUSES = [
+  { label: "Draft", value: "draft" },
+  { label: "Confirmed", value: "confirmed" },
+  { label: "Completed", value: "completed" },
+];
 
 export default function Services() {
   const { fetchApi } = useApi();
@@ -49,8 +64,8 @@ export default function Services() {
   const [formData, setFormData] = useState({
     title: "",
     date: "",
-    type: "sunday" as Service["type"],
-    status: "draft" as Service["status"],
+    type: "Sunday Service",
+    status: "draft",
   });
 
   useEffect(() => {
@@ -67,7 +82,7 @@ export default function Services() {
 
   const openNewDialog = () => {
     setEditingService(null);
-    setFormData({ title: "", date: "", type: "sunday", status: "draft" });
+    setFormData({ title: "", date: "", type: "Sunday Service", status: "draft" });
     setDialogOpen(true);
   };
 
@@ -166,9 +181,11 @@ export default function Services() {
                   <SelectValue placeholder="Select type" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="sunday">Sunday Service</SelectItem>
-                  <SelectItem value="wednesday">Wednesday Service</SelectItem>
-                  <SelectItem value="special">Special</SelectItem>
+                  {SERVICE_TYPES.map((t) => (
+                    <SelectItem key={t.value} value={t.value}>
+                      {t.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>

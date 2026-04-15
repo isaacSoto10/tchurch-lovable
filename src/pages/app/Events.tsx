@@ -42,13 +42,20 @@ interface Event {
   status?: string;
 }
 
-const EVENT_TYPES = ["Sunday Service", "Bible Study", "Youth", "Other"];
+const EVENT_TYPES = [
+  { label: "Sunday Service", value: "sunday_service" },
+  { label: "Wednesday Service", value: "wednesday_service" },
+  { label: "Bible Study", value: "bible_study" },
+  { label: "Youth", value: "youth" },
+  { label: "Special", value: "special" },
+  { label: "Other", value: "other" },
+];
 
 const emptyForm = {
-  name: "",
+  title: "",
   date: "",
   time: "",
-  type: "Sunday Service",
+  type: "sunday_service",
   location: "",
   description: "",
 };
@@ -85,10 +92,10 @@ export default function Events() {
   const openEditDialog = (event: Event) => {
     setEditingEvent(event);
     setFormData({
-      name: event.name || event.title || "",
+      title: event.title || event.name || "",
       date: event.date ? event.date.split("T")[0] : "",
       time: event.time || "",
-      type: event.type || "Sunday Service",
+      type: event.type || "sunday_service",
       location: event.location || "",
       description: event.description || "",
     });
@@ -102,12 +109,15 @@ export default function Events() {
   };
 
   const handleSubmit = async () => {
-    if (!formData.name.trim() || !formData.date) return;
+    if (!formData.title.trim() || !formData.date) return;
     setSubmitting(true);
 
     const payload = {
-      ...formData,
+      title: formData.title,
       date: new Date(formData.date).toISOString(),
+      type: formData.type,
+      location: formData.location || null,
+      description: formData.description || null,
     };
 
     try {
@@ -173,9 +183,9 @@ export default function Events() {
             <div>
               <Input
                 placeholder="Event title"
-                value={formData.name}
+                value={formData.title}
                 onChange={(e) =>
-                  setFormData({ ...formData, name: e.target.value })
+                  setFormData({ ...formData, title: e.target.value })
                 }
               />
             </div>
@@ -210,8 +220,8 @@ export default function Events() {
                 </SelectTrigger>
                 <SelectContent>
                   {EVENT_TYPES.map((t) => (
-                    <SelectItem key={t} value={t}>
-                      {t}
+                    <SelectItem key={t.value} value={t.value}>
+                      {t.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -241,7 +251,7 @@ export default function Events() {
               </Button>
               <Button
                 onClick={handleSubmit}
-                disabled={submitting || !formData.name.trim() || !formData.date}
+                disabled={submitting || !formData.title.trim() || !formData.date}
               >
                 {submitting ? "Saving..." : editingEvent ? "Update" : "Create"}
               </Button>
