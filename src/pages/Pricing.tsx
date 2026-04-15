@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Check } from "lucide-react";
 import { PaymentTestModeBanner } from "@/components/PaymentTestModeBanner";
 import { usePaddleCheckout } from "@/hooks/usePaddleCheckout";
+import { useUser } from "@clerk/clerk-react";
 
 const plans = [
   {
@@ -70,6 +71,7 @@ const plans = [
 export default function Pricing() {
   const [billingInterval, setBillingInterval] = useState<"monthly" | "yearly">("monthly");
   const { openCheckout, loading } = usePaddleCheckout();
+  const { user } = useUser();
 
   const handleSubscribe = (plan: typeof plans[0]) => {
     const priceId = billingInterval === "monthly" ? plan.priceIdMonthly : plan.priceIdYearly;
@@ -78,6 +80,8 @@ export default function Pricing() {
     openCheckout({
       priceId,
       successUrl: `${window.location.origin}/app?checkout=success`,
+      customerEmail: user?.primaryEmailAddress?.emailAddress,
+      customData: { userId: user?.id || "" },
     });
   };
 
