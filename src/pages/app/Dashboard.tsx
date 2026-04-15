@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { CalendarDays, Music, Users, Megaphone, ListChecks, UsersRound, Heart, Calendar, ArrowRight, Plus } from "lucide-react";
+import { CalendarDays, Music, Users, Megaphone, ListChecks, UsersRound, Calendar, ArrowRight, Plus } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useChurch } from "@/providers/ChurchProvider";
 import { useNavigate } from "react-router-dom";
@@ -105,7 +105,7 @@ export default function Dashboard() {
         );
         setTimeline(merged.slice(0, 10));
 
-        setAnnouncements(Array.isArray(announcementsData) ? announcementsData.slice(0, 4) : []);
+        setAnnouncements(Array.isArray(announcementsData) ? announcementsData.slice(0, 10) : []);
       } catch (e) {
         console.error("Failed to load dashboard:", e);
       } finally {
@@ -149,7 +149,7 @@ export default function Dashboard() {
         { label: "Songs", value: stats.songs, href: "/app/songs", icon: Music },
         { label: "Services", value: stats.services, href: "/app/services", icon: ListChecks },
         { label: "Teams", value: stats.teams, href: "/app/teams", icon: UsersRound },
-        { label: "Members", value: stats.members, href: "/app/settings", icon: Users },
+        { label: "Members", value: stats.members, href: "/app/users", icon: Users },
         { label: "Announcements", value: stats.announcements, href: "/app/announcements", icon: Megaphone },
       ]
     : [];
@@ -177,23 +177,21 @@ export default function Dashboard() {
         </Button>
       </div>
 
-      {statItems.length > 0 && (
-        <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-7 gap-3 mb-6">
-          {statItems.map((stat) => (
-            <Card
-              key={stat.label}
-              className="cursor-pointer hover:shadow-md transition-shadow"
-              onClick={() => navigate(stat.href)}
-            >
-              <CardContent className="p-3 text-center">
-                <stat.icon className="w-4 h-4 mx-auto text-muted-foreground mb-1" />
-                <p className="text-lg font-bold">{stat.value}</p>
-                <p className="text-xs text-muted-foreground truncate">{stat.label}</p>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
+      <div className="grid grid-cols-4 sm:grid-cols-4 lg:grid-cols-7 gap-2 mb-6">
+        {statItems.map((stat) => (
+          <Card
+            key={stat.label}
+            className="cursor-pointer hover:shadow-md transition-shadow"
+            onClick={() => navigate(stat.href)}
+          >
+            <CardContent className="p-2 text-center">
+              <stat.icon className="w-4 h-4 mx-auto text-muted-foreground mb-1" />
+              <p className="text-lg font-bold">{stat.value}</p>
+              <p className="text-[10px] text-muted-foreground truncate">{stat.label}</p>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
 
       <div className="flex gap-2 mb-6">
         <Button size="sm" onClick={() => navigate("/app/services")}>
@@ -307,20 +305,28 @@ export default function Dashboard() {
               View All <ArrowRight className="w-3 h-3 ml-1" />
             </Button>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {announcements.slice(0, 4).map((ann) => (
+          <div className="space-y-3">
+            {announcements.slice(0, 10).map((ann) => (
               <Card key={ann.id} className="overflow-hidden">
-                {ann.imageUrl && (
-                  <div className="h-20 w-full overflow-hidden">
-                    <img src={ann.imageUrl} alt={ann.title} className="w-full h-full object-cover" />
-                  </div>
-                )}
-                <CardContent className="p-3">
-                  <p className="font-medium text-sm truncate">{ann.title}</p>
-                  <p className="text-xs text-muted-foreground line-clamp-2 mt-1">
-                    {ann.content}
-                  </p>
-                </CardContent>
+                <div className="flex">
+                  {ann.imageUrl && (
+                    <div className="w-24 h-24 shrink-0">
+                      <img src={ann.imageUrl} alt={ann.title} className="w-full h-full object-cover" />
+                    </div>
+                  )}
+                  <CardContent className="p-3 flex-1">
+                    <p className="font-medium">{ann.title}</p>
+                    <p className="text-sm text-muted-foreground line-clamp-2 mt-1">
+                      {ann.content}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-2">
+                      {ann.createdAt ? new Date(ann.createdAt).toLocaleDateString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                      }) : ""}
+                    </p>
+                  </CardContent>
+                </div>
               </Card>
             ))}
           </div>
