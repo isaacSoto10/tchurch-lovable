@@ -124,8 +124,8 @@ export default function Landing() {
           <Card className="overflow-hidden shadow-2xl border-0 bg-card">
             <div className="flex items-center gap-2 px-4 py-3 border-b bg-muted/40">
               <div className="w-3 h-3 rounded-full bg-destructive/60" />
-              <div className="w-3 h-3 rounded-full bg-yellow-400/60" />
-              <div className="w-3 h-3 rounded-full bg-green-400/60" />
+              <div className="w-3 h-3 rounded-full bg-accent" />
+              <div className="w-3 h-3 rounded-full bg-primary/40" />
               <span className="ml-auto text-xs text-muted-foreground">tchurchapp.com</span>
             </div>
             <div className="flex min-h-[340px]">
