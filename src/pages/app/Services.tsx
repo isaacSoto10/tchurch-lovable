@@ -1031,34 +1031,14 @@ export default function Services() {
                                   {item.duration}m
                                 </span>
                               )}
-                              <div className="flex gap-0.5">
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="w-6 h-6"
-                                  disabled={idx === 0}
-                                  onClick={() => handleMoveItem(svc.id, item.id, "up")}
-                                >
-                                  <ChevronUp className="w-3 h-3" />
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="w-6 h-6"
-                                  disabled={idx === (serviceItems[svc.id] || []).length - 1}
-                                  onClick={() => handleMoveItem(svc.id, item.id, "down")}
-                                >
-                                  <ChevronDown className="w-3 h-3" />
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="w-6 h-6"
-                                  onClick={() => handleDeleteItem(svc.id, item.id)}
-                                >
-                                  <X className="w-3 h-3" />
-                                </Button>
-                              </div>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="w-6 h-6"
+                                onClick={() => handleDeleteItem(svc.id, item.id)}
+                              >
+                                <X className="w-3 h-3" />
+                              </Button>
                             </div>
                           ))}
                           {(serviceItems[svc.id] || []).length === 0 && (
