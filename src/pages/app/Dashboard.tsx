@@ -177,22 +177,6 @@ export default function Dashboard() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-4 sm:grid-cols-4 lg:grid-cols-7 gap-2 mb-6">
-        {statItems.map((stat) => (
-          <Card
-            key={stat.label}
-            className="cursor-pointer hover:shadow-md transition-shadow"
-            onClick={() => navigate(stat.href)}
-          >
-            <CardContent className="p-2 text-center">
-              <stat.icon className="w-4 h-4 mx-auto text-muted-foreground mb-1" />
-              <p className="text-lg font-bold">{stat.value}</p>
-              <p className="text-[10px] text-muted-foreground truncate">{stat.label}</p>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
       <div className="flex gap-2 mb-6">
         <Button size="sm" onClick={() => navigate("/app/services")}>
           <Plus className="w-3 h-3 mr-1" /> New Service
@@ -327,6 +311,29 @@ export default function Dashboard() {
                     </p>
                   </CardContent>
                 </div>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {statItems.length > 0 && (
+        <div className="mt-8">
+          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">
+            Overview
+          </h2>
+          <div className="grid grid-cols-4 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+            {statItems.map((stat) => (
+              <Card
+                key={stat.label}
+                className="cursor-pointer hover:shadow-md transition-shadow"
+                onClick={() => navigate(stat.href)}
+              >
+                <CardContent className="p-2 text-center">
+                  <stat.icon className="w-4 h-4 mx-auto text-muted-foreground mb-1" />
+                  <p className="text-lg font-bold">{stat.value}</p>
+                  <p className="text-[10px] text-muted-foreground truncate">{stat.label}</p>
+                </CardContent>
               </Card>
             ))}
           </div>
