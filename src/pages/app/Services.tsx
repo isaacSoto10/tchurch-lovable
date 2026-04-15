@@ -376,8 +376,11 @@ export default function Services() {
       toast({ title: "Item added" });
       setAddItemDialogOpen(false);
 
-      const itemsRes = await fetchApi(`/service-items?serviceId=${selectedServiceId}`);
-      setServiceItems((prev) => ({ ...prev, [selectedServiceId]: Array.isArray(itemsRes) ? itemsRes : [] }));
+      const serviceRes = await fetchApi(`/services/${selectedServiceId}`);
+      if (serviceRes && typeof serviceRes === 'object') {
+        const items = (serviceRes as Record<string, unknown>).items || [];
+        setServiceItems((prev) => ({ ...prev, [selectedServiceId]: Array.isArray(items) ? items as ServiceItem[] : [] }));
+      }
     } catch (e) {
       toast({ title: "Failed to add item", variant: "destructive" });
     }
