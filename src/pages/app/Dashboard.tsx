@@ -128,6 +128,13 @@ export default function Dashboard() {
     );
   }
 
+  const getGreeting = () => {
+    const h = new Date().getHours();
+    if (h < 12) return "Good morning";
+    if (h < 18) return "Good afternoon";
+    return "Good evening";
+  };
+
   const getEndOfSunday = () => {
     const now = new Date();
     const day = now.getDay();
@@ -169,8 +176,8 @@ export default function Dashboard() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold">{selectedChurch.name}</h1>
-          <p className="text-sm text-muted-foreground capitalize">{selectedChurch.role.toLowerCase()}</p>
+          <h1 className="text-2xl font-bold">{getGreeting()}</h1>
+          <p className="text-sm text-muted-foreground">{selectedChurch.name}</p>
         </div>
         <Button size="sm" variant="outline" onClick={() => navigate("/app/calendar")}>
           <Calendar className="w-4 h-4 mr-1" /> Calendar

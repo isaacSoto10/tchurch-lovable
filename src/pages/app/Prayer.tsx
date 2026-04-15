@@ -4,8 +4,10 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Plus, Heart } from "lucide-react";
+import { Plus, Heart, Check } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
+import { useChurch } from "@/providers/ChurchProvider";
+import { useToast } from "@/components/ui/use-toast";
 
 interface PrayerRequest {
   id: string;
@@ -19,15 +21,18 @@ interface PrayerRequest {
 
 export default function Prayer() {
   const { fetchApi } = useApi();
+  const { selectedChurch } = useChurch();
+  const { toast } = useToast();
   const [prayerRequests, setPrayerRequests] = useState<PrayerRequest[]>([]);
   const [filter, setFilter] = useState<"active" | "answered">("active");
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [newRequest, setNewRequest] = useState({ title: "", content: "" });
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     loadPrayerRequests();
-  }, [filter, fetchApi]);
+  }, [filter, fetchApi, selectedChurch]);
 
   const loadPrayerRequests = () => {
     setLoading(true);
@@ -46,9 +51,20 @@ export default function Prayer() {
     }
   };
 
+  const handleMarkAnswered = async (id: string) => {
+    try {
+      await fetchApi(`/prayer-requests/${id}/answer`, { method: "PUT" });
+      toast({ title: "Marked as answered" });
+      loadPrayerRequests();
+    } catch (e) {
+      toast({ title: "Failed to mark as answered", variant: "destructive" });
+    }
+  };
+
   const handleSubmitRequest = async () => {
     if (!newRequest.title.trim() || !newRequest.content.trim()) return;
 
+    setSubmitting(true);
     try {
       await fetchApi("/prayer-requests", {
         method: "POST",
@@ -58,7 +74,9 @@ export default function Prayer() {
       setShowForm(false);
       loadPrayerRequests();
     } catch (e) {
-      console.error("Failed to submit prayer request:", e);
+      toast({ title: "Failed to submit prayer request", variant: "destructive" });
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -85,7 +103,9 @@ export default function Prayer() {
               onChange={(e) => setNewRequest({ ...newRequest, content: e.target.value })}
             />
             <div className="flex gap-2">
-              <Button onClick={handleSubmitRequest}>Submit</Button>
+              <Button onClick={handleSubmitRequest} disabled={submitting}>
+                {submitting ? "Submitting..." : "Submit"}
+              </Button>
               <Button variant="outline" onClick={() => setShowForm(false)}>Cancel</Button>
             </div>
           </CardContent>
@@ -128,15 +148,27 @@ export default function Prayer() {
                   </div>
                 </div>
                 {filter === "active" && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handlePray(pr.id)}
-                    className="shrink-0"
-                  >
-                    <Heart className="w-4 h-4 mr-1" />
-                    {pr.prayCount || 0}
-                  </Button>
+                  <div className="flex gap-2 shrink-0">
+                    {selectedChurch?.role === "ADMIN" && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleMarkAnswered(pr.id)}
+                        className="shrink-0"
+                      >
+                        <Check className="w-4 h-4" />
+                      </Button>
+                    )}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handlePray(pr.id)}
+                      className="shrink-0"
+                    >
+                      <Heart className="w-4 h-4 mr-1" />
+                      {pr.prayCount || 0}
+                    </Button>
+                  </div>
                 )}
               </div>
             </CardContent>

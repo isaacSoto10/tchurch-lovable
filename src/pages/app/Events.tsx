@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, Pencil, Trash2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Check } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
 import {
@@ -64,6 +64,7 @@ export default function Events() {
   const { fetchApi } = useApi();
   const { toast } = useToast();
   const [events, setEvents] = useState<Event[]>([]);
+  const [rsvps, setRsvps] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<Event | null>(null);
@@ -75,12 +76,43 @@ export default function Events() {
     loadEvents();
   }, [fetchApi]);
 
-  const loadEvents = () => {
+  const loadEvents = async () => {
     setLoading(true);
-    fetchApi("/events")
-      .then((data) => setEvents(Array.isArray(data) ? data : []))
-      .catch((e) => console.error("Failed to load events:", e))
-      .finally(() => setLoading(false));
+    try {
+      const data = await fetchApi("/events");
+      setEvents(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error("Failed to load events:", e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRsvp = async (eventId: string, status: string) => {
+    try {
+      await fetchApi(`/events/${eventId}/rsvp`, {
+        method: "POST",
+        body: JSON.stringify({ status }),
+      });
+      setRsvps((prev) => ({ ...prev, [eventId]: status }));
+      toast({ title: `RSVP: ${status}` });
+    } catch (e) {
+      toast({ title: "Failed to update RSVP", variant: "destructive" });
+    }
+  };
+
+  const handleRemoveRsvp = async (eventId: string) => {
+    try {
+      await fetchApi(`/events/${eventId}/rsvp`, { method: "DELETE" });
+      setRsvps((prev) => {
+        const newRsvps = { ...prev };
+        delete newRsvps[eventId];
+        return newRsvps;
+      });
+      toast({ title: "RSVP removed" });
+    } catch (e) {
+      toast({ title: "Failed to remove RSVP", variant: "destructive" });
+    }
   };
 
   const openNewDialog = () => {
@@ -283,42 +315,61 @@ export default function Events() {
         {events.map((ev) => (
           <Card
             key={ev.id}
-            className="hover:shadow-md transition-shadow cursor-pointer"
+            className="hover:shadow-md transition-shadow"
           >
-            <CardContent className="p-4 flex items-center gap-4">
-              <div className="w-1 h-10 rounded bg-primary" />
-              <div className="flex-1">
-                <p className="font-medium">{ev.name || ev.title}</p>
-                <p className="text-sm text-muted-foreground">
-                  {ev.date
-                    ? new Date(ev.date).toLocaleDateString("en-US", {
-                        weekday: "short",
-                        month: "short",
-                        day: "numeric",
-                      })
-                    : ""}
-                  {ev.time ? ` · ${ev.time}` : ""}
-                  {ev.location ? ` · ${ev.location}` : ""}
-                </p>
+            <CardContent className="p-4">
+              <div className="flex items-start gap-3">
+                <div className="w-1 h-10 rounded bg-primary shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium">{ev.name || ev.title}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {ev.date
+                      ? new Date(ev.date).toLocaleDateString("en-US", {
+                          weekday: "short",
+                          month: "short",
+                          day: "numeric",
+                        })
+                      : ""}
+                    {ev.time ? ` · ${ev.time}` : ""}
+                    {ev.location ? ` · ${ev.location}` : ""}
+                  </p>
+                  {ev.description && (
+                    <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{ev.description}</p>
+                  )}
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <span className="text-xs text-muted-foreground capitalize mr-2">
+                    {ev.status || ""}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => openEditDialog(ev)}
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setDeleteId(ev.id)}
+                  >
+                    <Trash2 className="w-4 h-4 text-destructive" />
+                  </Button>
+                </div>
               </div>
-              <div className="flex items-center gap-1">
-                <span className="text-xs text-muted-foreground capitalize mr-2">
-                  {ev.status || ""}
-                </span>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => openEditDialog(ev)}
-                >
-                  <Pencil className="w-4 h-4" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => setDeleteId(ev.id)}
-                >
-                  <Trash2 className="w-4 h-4 text-destructive" />
-                </Button>
+              <div className="flex gap-2 mt-3 ml-4">
+                {(["yes", "no", "maybe"] as const).map((status) => (
+                  <Button
+                    key={status}
+                    size="sm"
+                    variant={rsvps[ev.id] === status ? "default" : "outline"}
+                    onClick={() => rsvps[ev.id] === status ? handleRemoveRsvp(ev.id) : handleRsvp(ev.id, status)}
+                    className="capitalize"
+                  >
+                    {status === "yes" && <Check className="w-3 h-3 mr-1" />}
+                    {status}
+                  </Button>
+                ))}
               </div>
             </CardContent>
           </Card>

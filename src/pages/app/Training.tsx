@@ -14,15 +14,36 @@ interface TrainingMaterial {
   progress?: number;
 }
 
+interface Category {
+  id: string;
+  name: string;
+  count: number;
+}
+
+const CATEGORY_COLORS: Record<string, string> = {
+  volunteer: "bg-purple-100 text-purple-800",
+  tech: "bg-blue-100 text-blue-800",
+  worship: "bg-amber-100 text-amber-800",
+  general: "bg-gray-100 text-gray-800",
+};
+
 export default function Training() {
   const { fetchApi } = useApi();
   const [materials, setMaterials] = useState<TrainingMaterial[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchApi("/training/materials")
-      .then((data) => setMaterials(Array.isArray(data) ? data : []))
-      .catch((e) => console.error("Failed to load training materials:", e))
+    Promise.all([
+      fetchApi("/training/materials"),
+      fetchApi("/training/categories"),
+    ])
+      .then(([materialsData, categoriesData]) => {
+        setMaterials(Array.isArray(materialsData) ? materialsData : []);
+        setCategories(Array.isArray(categoriesData) ? categoriesData : []);
+      })
+      .catch((e) => console.error("Failed to load training:", e))
       .finally(() => setLoading(false));
   }, [fetchApi]);
 
@@ -39,6 +60,10 @@ export default function Training() {
 
   const completedCount = materials.filter((m) => m.completed).length;
   const overallProgress = materials.length > 0 ? (completedCount / materials.length) * 100 : 0;
+
+  const filteredMaterials = selectedCategory === "all"
+    ? materials
+    : materials.filter((m) => m.category?.toLowerCase() === selectedCategory);
 
   if (loading) {
     return <div className="flex items-center justify-center py-20"><div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full" /></div>;
@@ -60,11 +85,33 @@ export default function Training() {
         </CardContent>
       </Card>
 
+      {categories.length > 0 && (
+        <div className="flex gap-2 mb-4 flex-wrap">
+          <Button
+            size="sm"
+            variant={selectedCategory === "all" ? "default" : "outline"}
+            onClick={() => setSelectedCategory("all")}
+          >
+            All
+          </Button>
+          {categories.map((cat) => (
+            <Button
+              key={cat.id}
+              size="sm"
+              variant={selectedCategory === cat.id ? "default" : "outline"}
+              onClick={() => setSelectedCategory(cat.id)}
+            >
+              {cat.name} ({cat.count})
+            </Button>
+          ))}
+        </div>
+      )}
+
       <div className="grid gap-3">
-        {materials.length === 0 && (
-          <p className="text-sm text-muted-foreground">No training materials available.</p>
+        {filteredMaterials.length === 0 && (
+          <p className="text-sm text-muted-foreground">No training materials{selectedCategory !== "all" ? ` in ${selectedCategory}` : ""}.</p>
         )}
-        {materials.map((material) => (
+        {filteredMaterials.map((material) => (
           <Card key={material.id} className={material.completed ? "opacity-60" : ""}>
             <CardContent className="p-4 flex items-start gap-4">
               <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${material.completed ? "bg-green-100" : "bg-primary/10"}`}>
@@ -80,7 +127,9 @@ export default function Training() {
                   <p className="text-sm text-muted-foreground mt-0.5 line-clamp-2">{material.description}</p>
                 )}
                 {material.category && (
-                  <span className="text-xs text-muted-foreground mt-1 inline-block">{material.category}</span>
+                  <span className={`text-xs px-2 py-0.5 rounded mt-1 inline-block ${CATEGORY_COLORS[material.category.toLowerCase()] || "bg-gray-100 text-gray-800"}`}>
+                    {material.category}
+                  </span>
                 )}
                 {!material.completed && material.progress !== undefined && (
                   <Progress value={material.progress} className="h-1 mt-2" />
