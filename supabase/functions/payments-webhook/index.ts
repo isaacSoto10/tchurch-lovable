@@ -6,6 +6,23 @@ const supabase = createClient(
   Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 );
 
+const TCHURCH_API_BASE = 'https://www.tchurchapp.com/api';
+
+async function forwardToTchurch(path: string, data: any) {
+  try {
+    const res = await fetch(`${TCHURCH_API_BASE}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      console.error(`Tchurch API ${path} returned ${res.status}:`, await res.text());
+    }
+  } catch (e) {
+    console.error(`Failed to forward to Tchurch ${path}:`, e);
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method !== 'POST') {
     return new Response('Method not allowed', { status: 405 });
@@ -61,6 +78,7 @@ async function handleSubscriptionCreated(data: any, env: PaddleEnv) {
   const priceId = item.price.importMeta?.externalId || item.price.id;
   const productId = item.product.importMeta?.externalId || item.product.id;
 
+  // Save to Lovable Cloud
   await supabase.from('subscriptions').upsert({
     user_id: userId,
     paddle_subscription_id: id,
@@ -75,10 +93,24 @@ async function handleSubscriptionCreated(data: any, env: PaddleEnv) {
   }, {
     onConflict: 'user_id,environment',
   });
+
+  // Forward to Tchurch API for InsForge sync
+  await forwardToTchurch('/webhooks/paddle', {
+    event: 'subscription.created',
+    userId,
+    subscriptionId: id,
+    customerId,
+    productId,
+    priceId,
+    status,
+    currentPeriodStart: currentBillingPeriod?.startsAt,
+    currentPeriodEnd: currentBillingPeriod?.endsAt,
+    environment: env,
+  });
 }
 
 async function handleSubscriptionUpdated(data: any, env: PaddleEnv) {
-  const { id, status, currentBillingPeriod, scheduledChange } = data;
+  const { id, status, currentBillingPeriod, scheduledChange, customData } = data;
 
   await supabase.from('subscriptions')
     .update({
@@ -90,6 +122,18 @@ async function handleSubscriptionUpdated(data: any, env: PaddleEnv) {
     })
     .eq('paddle_subscription_id', id)
     .eq('environment', env);
+
+  // Forward to Tchurch API
+  await forwardToTchurch('/webhooks/paddle', {
+    event: 'subscription.updated',
+    userId: customData?.userId,
+    subscriptionId: id,
+    status,
+    cancelAtPeriodEnd: scheduledChange?.action === 'cancel',
+    currentPeriodStart: currentBillingPeriod?.startsAt,
+    currentPeriodEnd: currentBillingPeriod?.endsAt,
+    environment: env,
+  });
 }
 
 async function handleSubscriptionCanceled(data: any, env: PaddleEnv) {
@@ -100,4 +144,13 @@ async function handleSubscriptionCanceled(data: any, env: PaddleEnv) {
     })
     .eq('paddle_subscription_id', data.id)
     .eq('environment', env);
+
+  // Forward to Tchurch API
+  await forwardToTchurch('/webhooks/paddle', {
+    event: 'subscription.canceled',
+    userId: data.customData?.userId,
+    subscriptionId: data.id,
+    status: 'canceled',
+    environment: env,
+  });
 }
