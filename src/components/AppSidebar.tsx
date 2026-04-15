@@ -6,9 +6,11 @@ import {
   Users,
   CalendarDays,
   UsersRound,
+  LogOut,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
+import { useClerk, useUser } from "@clerk/clerk-react";
 import {
   Sidebar,
   SidebarContent,
@@ -34,6 +36,8 @@ export function AppSidebar() {
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
   const location = useLocation();
+  const { signOut } = useClerk();
+  const { user } = useUser();
 
   return (
     <Sidebar collapsible="icon">
@@ -66,6 +70,20 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
+      <div className="mt-auto border-t p-3">
+        {!collapsed && user && (
+          <p className="text-xs text-muted-foreground truncate mb-2 px-1">
+            {user.primaryEmailAddress?.emailAddress}
+          </p>
+        )}
+        <button
+          onClick={() => signOut({ redirectUrl: "/" })}
+          className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground w-full px-2 py-1.5 rounded-md hover:bg-muted/50 transition-colors"
+        >
+          <LogOut className="w-4 h-4" />
+          {!collapsed && <span>Sign Out</span>}
+        </button>
+      </div>
     </Sidebar>
   );
 }
