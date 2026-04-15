@@ -20,6 +20,7 @@ import Ministries from "./pages/app/Ministries";
 import Events from "./pages/app/Events";
 import Teams from "./pages/app/Teams";
 import MyAssignments from "./pages/app/MyAssignments";
+import Settings from "./pages/app/Settings";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -46,6 +47,7 @@ const App = () => (
                 <Route path="events" element={<Events />} />
                 <Route path="teams" element={<Teams />} />
                 <Route path="my-assignments" element={<MyAssignments />} />
+                <Route path="settings" element={<Settings />} />
               </Route>
               <Route path="*" element={<NotFound />} />
             </Routes>

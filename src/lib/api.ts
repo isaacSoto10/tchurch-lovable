@@ -1,4 +1,17 @@
-const API_BASE = "https://www.tchurchapp.com/api";
+const API_BASE = "http://localhost:3000/api";
+const CHURCH_ID_KEY = "tchurch_church_id";
+
+export function getChurchId(): string | null {
+  return localStorage.getItem(CHURCH_ID_KEY);
+}
+
+export function setChurchId(id: string | null): void {
+  if (id) {
+    localStorage.setItem(CHURCH_ID_KEY, id);
+  } else {
+    localStorage.removeItem(CHURCH_ID_KEY);
+  }
+}
 
 export async function apiFetch<T = any>(
   path: string,
@@ -14,15 +27,49 @@ export async function apiFetch<T = any>(
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  const res = await fetch(`${API_BASE}${path}`, {
+  const churchId = getChurchId();
+  if (churchId) {
+    headers["x-church-id"] = churchId;
+  }
+
+  const url = `${API_BASE}${path}`;
+  console.log(`[apiFetch] Requesting: ${url}`);
+  console.log(`[apiFetch] Headers:`, headers);
+
+  const res = await fetch(url, {
     ...options,
     headers,
   });
 
   if (!res.ok) {
     const body = await res.text();
+    console.error(`[apiFetch] Error ${res.status}: ${body}`);
     throw new Error(`API error ${res.status}: ${body}`);
   }
 
-  return res.json();
+  const data = await res.json();
+  console.log(`[apiFetch] Response from ${path}:`, data);
+  return data;
+}
+
+export async function fetchUserChurches(token: string): Promise<any[]> {
+  const url = `${API_BASE}/churches/mine`;
+  console.log(`[fetchUserChurches] Requesting: ${url}`);
+  
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    console.error(`[fetchUserChurches] Error ${res.status}: ${body}`);
+    throw new Error(`Failed to fetch churches: ${res.status}`);
+  }
+
+  const data = await res.json();
+  console.log(`[fetchUserChurches] Response:`, data);
+  return data.churches || [];
 }
