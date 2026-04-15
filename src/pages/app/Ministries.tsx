@@ -22,6 +22,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
+  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 
 interface Ministry {
@@ -99,14 +100,21 @@ export default function Ministries() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [ministriesData, myMinistriesData, groupsData] = await Promise.all([
+      const [ministriesData, myMinistriesData, groupsData] = await Promise.allSettled([
         fetchApi("/ministries"),
         fetchApi("/my-ministries"),
         fetchApi("/groups"),
       ]);
-      setMinistries(Array.isArray(ministriesData) ? ministriesData : []);
-      setUserRole((myMinistriesData as any)?.role || null);
-      setAllGroups(Array.isArray(groupsData) ? groupsData : []);
+      
+      if (ministriesData.status === "fulfilled") {
+        setMinistries(Array.isArray(ministriesData.value) ? ministriesData.value : []);
+      }
+      if (myMinistriesData.status === "fulfilled") {
+        setUserRole((myMinistriesData.value as any)?.role || null);
+      }
+      if (groupsData.status === "fulfilled") {
+        setAllGroups(Array.isArray(groupsData.value) ? groupsData.value : []);
+      }
     } catch (e) {
       console.error("Failed to load ministries:", e);
     } finally {
