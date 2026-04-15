@@ -1,30 +1,54 @@
+import { useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { CalendarDays, Music, Users } from "lucide-react";
-
-const stats = [
-  { label: "This Week", value: "3 Services", icon: CalendarDays, color: "text-primary" },
-  { label: "Songs", value: "303", icon: Music, color: "text-blue-500" },
-  { label: "Members", value: "8", icon: Users, color: "text-orange-500" },
-];
-
-const services = [
-  { name: "Sunday Worship", time: "Sun, Apr 13 · 10:00 AM" },
-  { name: "Wednesday Bible Study", time: "Wed, Apr 16 · 7:00 PM" },
-  { name: "Youth Service", time: "Fri, Apr 18 · 7:30 PM" },
-];
+import { useApi } from "@/hooks/useApi";
 
 export default function Dashboard() {
+  const { fetchApi } = useApi();
+  const [stats, setStats] = useState({ services: 0, songs: 0, members: 0 });
+  const [services, setServices] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const [statsData, servicesData] = await Promise.all([
+          fetchApi("/dashboard/stats"),
+          fetchApi("/services"),
+        ]);
+        setStats({
+          services: statsData?.servicesThisWeek ?? 0,
+          songs: statsData?.totalSongs ?? 0,
+          members: statsData?.totalMembers ?? 0,
+        });
+        setServices(Array.isArray(servicesData) ? servicesData.slice(0, 5) : []);
+      } catch (e) {
+        console.error("Failed to load dashboard:", e);
+      } finally {
+        setLoading(false);
+      }
+    }
+    load();
+  }, [fetchApi]);
+
+  const statCards = [
+    { label: "This Week", value: `${stats.services} Services`, icon: CalendarDays, color: "text-primary" },
+    { label: "Songs", value: String(stats.songs), icon: Music, color: "text-blue-500" },
+    { label: "Members", value: String(stats.members), icon: Users, color: "text-orange-500" },
+  ];
+
+  if (loading) {
+    return <div className="flex items-center justify-center py-20"><div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full" /></div>;
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">Dashboard</h1>
-        <span className="text-xs font-medium bg-accent text-accent-foreground px-3 py-1 rounded-full">
-          FREE
-        </span>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
-        {stats.map((s) => (
+        {statCards.map((s) => (
           <Card key={s.label}>
             <CardContent className="p-5">
               <div className="flex items-center gap-3">
@@ -40,16 +64,22 @@ export default function Dashboard() {
       </div>
 
       <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-4">
-        This Week
+        Upcoming Services
       </h2>
       <div className="space-y-2">
-        {services.map((svc) => (
-          <Card key={svc.name}>
+        {services.length === 0 && (
+          <p className="text-sm text-muted-foreground">No upcoming services.</p>
+        )}
+        {services.map((svc: any) => (
+          <Card key={svc.id}>
             <CardContent className="p-4 flex items-center gap-4">
               <div className="w-1 h-10 rounded bg-primary" />
               <div>
-                <p className="font-medium">{svc.name}</p>
-                <p className="text-sm text-muted-foreground">{svc.time}</p>
+                <p className="font-medium">{svc.name || svc.title}</p>
+                <p className="text-sm text-muted-foreground">
+                  {svc.date ? new Date(svc.date).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }) : ""}
+                  {svc.time ? ` · ${svc.time}` : ""}
+                </p>
               </div>
             </CardContent>
           </Card>
