@@ -2,8 +2,17 @@ import { useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { MessageCircle, Send, Hash } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
+import { MessageCircle, Send, Hash, Plus } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
+import { useToast } from "@/components/ui/use-toast";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 
 interface Channel {
   id: string;
@@ -21,12 +30,17 @@ interface Message {
 
 export default function Messages() {
   const { fetchApi } = useApi();
+  const { toast } = useToast();
   const [channels, setChannels] = useState<Channel[]>([]);
   const [selectedChannel, setSelectedChannel] = useState<Channel | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState("");
   const [loading, setLoading] = useState(true);
   const [loadingMessages, setLoadingMessages] = useState(false);
+  const [newChannelOpen, setNewChannelOpen] = useState(false);
+  const [newChannelName, setNewChannelName] = useState("");
+  const [newChannelDesc, setNewChannelDesc] = useState("");
+  const [creating, setCreating] = useState(false);
 
   useEffect(() => {
     fetchApi("/channels")
@@ -61,6 +75,26 @@ export default function Messages() {
     }
   };
 
+  const handleCreateChannel = async () => {
+    if (!newChannelName.trim()) return;
+    setCreating(true);
+    try {
+      const result = await fetchApi<Channel>("/channels", {
+        method: "POST",
+        body: JSON.stringify({ name: newChannelName, description: newChannelDesc }),
+      });
+      setChannels([...channels, result]);
+      setNewChannelOpen(false);
+      setNewChannelName("");
+      setNewChannelDesc("");
+      toast({ title: "Channel created" });
+    } catch (e) {
+      toast({ title: "Failed to create channel", variant: "destructive" });
+    } finally {
+      setCreating(false);
+    }
+  };
+
   if (loading) {
     return <div className="flex items-center justify-center py-20"><div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full" /></div>;
   }
@@ -69,12 +103,52 @@ export default function Messages() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">Messages</h1>
+        <Dialog open={newChannelOpen} onOpenChange={setNewChannelOpen}>
+          <DialogTrigger asChild>
+            <Button size="sm">
+              <Plus className="w-4 h-4 mr-1" /> New Channel
+            </Button>
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Create New Channel</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div>
+                <label className="text-sm font-medium">Channel Name</label>
+                <Input
+                  value={newChannelName}
+                  onChange={(e) => setNewChannelName(e.target.value)}
+                  placeholder="e.g., worship-team"
+                  className="mt-1"
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Description (optional)</label>
+                <Textarea
+                  value={newChannelDesc}
+                  onChange={(e) => setNewChannelDesc(e.target.value)}
+                  placeholder="What is this channel about?"
+                  className="mt-1"
+                />
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setNewChannelOpen(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={handleCreateChannel} disabled={!newChannelName.trim() || creating}>
+                  {creating ? "Creating..." : "Create Channel"}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
 
       {!selectedChannel ? (
         <div className="grid gap-3">
           {channels.length === 0 && (
-            <p className="text-sm text-muted-foreground">No channels yet.</p>
+            <p className="text-sm text-muted-foreground">No channels yet. Create one to start messaging!</p>
           )}
           {channels.map((channel) => (
             <Card
