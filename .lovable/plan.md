@@ -1,61 +1,37 @@
-# Tchurch — Web App + Capacitor Native + Payments
 
-## Summary
 
-Build an app of your tchurch church management WEBSITE in this Lovable project, set it up for native mobile deployment via Capacitor, and add a donations/payments system. The GitHub repo is public here: [https://github.com/isaacSoto10/Tchurch](https://github.com/isaacSoto10/Tchurch) REVIEW IT BEFORE REVIEWIG THIS DOCUMENT and also work from the website at tchurchapp.com to match design and features.
+# Set Up Subscription Payments for Tchurch
 
-## What I Saw on tchurchapp.com
+## Overview
 
-- **Branding**: Purple accent color, clean white/light gray background, cross-styled "t" logo, bilingual (EN/ES)
-- **Features**: Dashboard, Songs (with chords/ChordPro/PDF export), Services (drag-and-drop flow editor), Announcements, Ministries, Events, Teams
-- **Billing**: Stripe-based, free tier for small churches, 90-day trial, role-based access
+Enable Lovable's built-in payment integration for subscription billing (free/pro/premium tiers for churches using the Tchurch platform).
 
-## Phase 1 — Landing Page + Core Layout
+## Steps
 
-Build the public-facing landing page matching tchurch's branding (purple theme, bilingual toggle, hero section, feature showcase, CTA). Set up the app shell with sidebar navigation (Dashboard, Songs, Services, Announcements, Ministries, Events, Teams).
+### 1. Enable Lovable Cloud
+Payments require Lovable Cloud (Supabase backend). This will be enabled first if not already active.
 
-**Pages**: Landing page, Login/Signup (placeholder), App shell with sidebar
+### 2. Enable Payment Provider
+Based on the eligibility check, **Paddle** is recommended (handles global taxes and compliance automatically at 5% + 50¢). Alternatively, **built-in Stripe** is available if you prefer more control.
 
-## Phase 2 — Capacitor Setup
+Both are fully built-in — no external account needed to start. A test environment is created immediately so you can test without real money. Going live requires verification later.
 
-Install and configure Capacitor so you can build native iOS/Android apps:
+### 3. Create Subscription Products
+Define your pricing tiers. Based on what I saw on tchurchapp.com:
+- **Free** — Small churches, limited members
+- **Pro** — More members, full features
+- **Premium** — Unlimited, priority support
 
-- Install `@capacitor/core`, `@capacitor/cli`, `@capacitor/ios`, `@capacitor/android`
-- Initialize with `npx cap init` using your app ID and preview URL for hot-reload
-- You'll then export to GitHub, run `npx cap add ios/android`, and open in Xcode/Android Studio
+These will be created as subscription products with monthly/yearly intervals.
 
-## Phase 3 — Payments & Donations
-
-Since the project doesn't have product content yet, I need to know more before enabling payments:
-
-- **What are you selling?** Subscription plans for the tchurch platform (free/pro/premium tiers)? Or donation collection for churches using the app? Or both?
-- **Donations**: Do church members donate to their church through your app, or do churches pay you a subscription fee to use tchurch?
-
-Once clarified, I'll enable the appropriate built-in payment provider (Stripe or Paddle) and set up:
-
-- Product/pricing configuration
-- Checkout flow
-- Webhook handling for subscription management
-
-## Phase 4 — Core App Features (follow-up)
-
-After the foundation is set, we can incrementally build out:
-
-- Dashboard with stats
-- Songs library with chord display
-- Service flow planner
-- Announcements, Events, Ministries, Teams management
-
-These will require a backend (Lovable Cloud / Supabase) for data storage and auth.
+### 4. Implement Checkout Flow
+- Add a pricing page with tier comparison
+- Add checkout buttons that open the payment flow
+- Handle webhooks for subscription status changes
+- Gate features based on active subscription tier
 
 ## Technical Details
+- Payment provider SDK and webhook handler will be auto-configured on enable
+- Subscription status stored in Supabase, checked via RLS or client queries
+- Pricing page added at `/pricing` or integrated into the landing page
 
-- **Stack**: React + Tailwind + TypeScript (existing), Capacitor for native
-- **Design tokens**: Purple primary (~#6C5CE7 or similar from site), white/light gray backgrounds, clean card-based UI
-- **Backend**: Lovable Cloud (Supabase) for auth, database, edge functions
-- **Payments**: Built-in Lovable payments (Stripe or Paddle depending on use case)
-- **i18n**: Will need a translation system for EN/ES support
-
-## Questions Before Starting
-
-I need clarity on the payments/donations model before enabling a provider. I'll ask you about this when we begin implementation.
