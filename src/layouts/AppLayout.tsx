@@ -10,7 +10,7 @@ export default function AppLayout() {
         <AppSidebar />
         <div className="flex-1 flex flex-col">
           <PaymentTestModeBanner />
-          <header className="h-14 flex items-center border-b px-4">
+          <header className="h-14 flex items-center border-b px-4" style={{ paddingTop: 'max(env(safe-area-inset-top), 60px)' }}>
             <SidebarTrigger className="mr-4" />
             <span className="text-sm font-medium text-muted-foreground">Tchurch</span>
           </header>
