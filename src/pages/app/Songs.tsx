@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Plus, Search, Pencil, Trash2 } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
+import { useChurch } from "@/providers/ChurchProvider";
 
 interface Song {
   id: string;
@@ -22,8 +24,11 @@ interface Song {
 const MUSICAL_KEYS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B", "Cm", "C#m", "Dm", "D#m", "Em", "Fm", "F#m", "Gm", "G#m", "Am", "A#m", "Bm"];
 
 export default function Songs() {
+  const navigate = useNavigate();
+  const { selectedChurch } = useChurch();
   const { fetchApi } = useApi();
   const { toast } = useToast();
+  const isAdmin = selectedChurch?.role === "ADMIN";
   const [songs, setSongs] = useState<Song[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
@@ -129,7 +134,7 @@ export default function Songs() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">Songs</h1>
-        <Button size="sm" onClick={openNewDialog}><Plus className="w-4 h-4 mr-1" /> New Song</Button>
+        {isAdmin && <Button size="sm" onClick={openNewDialog}><Plus className="w-4 h-4 mr-1" /> New Song</Button>}
       </div>
       <div className="relative mb-6 max-w-sm">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -218,7 +223,7 @@ export default function Songs() {
 
       <div className="grid gap-3">
         {filtered.map((s) => (
-          <Card key={s.id} className="hover:shadow-md transition-shadow">
+          <Card key={s.id} className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => navigate(`/app/songs/${s.id}`)}>
             <CardContent className="p-4 flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-lg bg-accent flex items-center justify-center text-sm font-bold text-primary">
@@ -229,14 +234,18 @@ export default function Songs() {
                   {s.author && <div className="text-sm text-muted-foreground">{s.author}</div>}
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                 {s.bpm && <span className="text-sm text-muted-foreground mr-2">{s.bpm} BPM</span>}
-                <Button variant="ghost" size="icon" onClick={() => openEditDialog(s)}>
-                  <Pencil className="w-4 h-4" />
-                </Button>
-                <Button variant="ghost" size="icon" onClick={() => setDeleteId(s.id)}>
-                  <Trash2 className="w-4 h-4 text-destructive" />
-                </Button>
+                {isAdmin && (
+                  <>
+                    <Button variant="ghost" size="icon" onClick={() => openEditDialog(s)}>
+                      <Pencil className="w-4 h-4" />
+                    </Button>
+                    <Button variant="ghost" size="icon" onClick={() => setDeleteId(s.id)}>
+                      <Trash2 className="w-4 h-4 text-destructive" />
+                    </Button>
+                  </>
+                )}
               </div>
             </CardContent>
           </Card>

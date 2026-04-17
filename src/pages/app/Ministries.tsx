@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Plus, Search, Pencil, Trash2, ArrowLeft, Users, Megaphone, FolderOpen, UserPlus, X, Calendar } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
+import { useChurch } from "@/providers/ChurchProvider";
 import {
   Dialog,
   DialogContent,
@@ -66,13 +68,15 @@ interface Announcement {
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 export default function Ministries() {
+  const navigate = useNavigate();
+  const { selectedChurch } = useChurch();
+  const isAdmin = selectedChurch?.role === "ADMIN";
   const { fetchApi } = useApi();
   const { toast } = useToast();
   const [ministries, setMinistries] = useState<Ministry[]>([]);
   const [allGroups, setAllGroups] = useState<Group[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
-  const [userRole, setUserRole] = useState<string | null>(null);
 
   const [selectedMinistry, setSelectedMinistry] = useState<Ministry | null>(null);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
@@ -110,7 +114,7 @@ export default function Ministries() {
         setMinistries(Array.isArray(ministriesData.value) ? ministriesData.value : []);
       }
       if (myMinistriesData.status === "fulfilled") {
-        setUserRole((myMinistriesData.value as any)?.role || null);
+        // role is now available via useChurch() instead
       }
       if (groupsData.status === "fulfilled") {
         setAllGroups(Array.isArray(groupsData.value) ? groupsData.value : []);
@@ -298,8 +302,6 @@ export default function Ministries() {
       toast({ title: "Failed to create announcement", variant: "destructive" });
     }
   };
-
-  const isAdmin = userRole === "ADMIN";
 
   if (loading) {
     return <div className="flex items-center justify-center py-20"><div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full" /></div>;
@@ -627,9 +629,9 @@ export default function Ministries() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">Ministries</h1>
-        <Button size="sm" onClick={openNewDialog}>
+        {isAdmin && <Button size="sm" onClick={openNewDialog}>
           <Plus className="w-4 h-4 mr-1" /> New Ministry
-        </Button>
+        </Button>}
       </div>
 
       <div className="relative mb-6 max-w-sm">
@@ -639,7 +641,7 @@ export default function Ministries() {
 
       <div className="grid gap-3">
         {filtered.map((m) => (
-          <Card key={m.id} className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => selectMinistry(m)}>
+          <Card key={m.id} className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => navigate(`/app/ministries/${m.id}`)}>
             <CardContent className="p-5 flex items-start gap-4">
               <div
                 className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"

@@ -15,6 +15,8 @@ import {
   Calendar,
   UserCircle,
   CalendarX,
+  Shield,
+  Loader2,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
@@ -29,8 +31,20 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { useChurch } from "@/providers/ChurchProvider";
+import { useApi } from "@/hooks/useApi";
+import { useEffect, useState } from "react";
+import { Badge } from "@/components/ui/badge";
 
-const items = [
+interface NavItem {
+  title: string;
+  url: string;
+  icon: any;
+  adminOnly?: boolean;
+  leaderOnly?: boolean;
+}
+
+const navItems: NavItem[] = [
   { title: "Dashboard", url: "/app", icon: LayoutDashboard },
   { title: "Songs", url: "/app/songs", icon: Music },
   { title: "Services", url: "/app/services", icon: ListChecks },
@@ -54,6 +68,44 @@ export function AppSidebar() {
   const location = useLocation();
   const { signOut } = useClerk();
   const { user } = useUser();
+  const { selectedChurch } = useChurch();
+  const { fetchApi } = useApi();
+
+  const [pendingCount, setPendingCount] = useState(0);
+  const [loadingPending, setLoadingPending] = useState(false);
+
+  const isAdmin = selectedChurch?.role === "ADMIN";
+  const isPlanner = selectedChurch?.role === "PLANNER" || isAdmin;
+  const isLeader = selectedChurch?.role === "LEADER" || isPlanner;
+
+  useEffect(() => {
+    if (isAdmin && selectedChurch?.id) {
+      loadPendingCount();
+    } else {
+      setPendingCount(0);
+    }
+  }, [isAdmin, selectedChurch?.id]);
+
+  async function loadPendingCount() {
+    setLoadingPending(true);
+    try {
+      const data = await fetchApi<{ users: any[] }>(`/churches/${selectedChurch.id}/pending-users`);
+      setPendingCount(data.users?.length || 0);
+    } catch (e) {
+      console.error("Failed to load pending count:", e);
+      setPendingCount(0);
+    } finally {
+      setLoadingPending(false);
+    }
+  }
+
+  function canSee(item: NavItem): boolean {
+    if (item.adminOnly) return isAdmin;
+    if (item.leaderOnly) return isLeader;
+    return true;
+  }
+
+  const visibleItems = navItems.filter(canSee);
 
   return (
     <Sidebar collapsible="icon">
@@ -67,7 +119,7 @@ export function AppSidebar() {
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
-              {items.map((item) => (
+              {visibleItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton asChild>
                     <NavLink
@@ -77,7 +129,35 @@ export function AppSidebar() {
                       activeClassName="bg-primary text-primary-foreground font-medium hover:bg-primary/90"
                     >
                       <item.icon className="mr-2 h-4 w-4" />
-                      {!collapsed && <span>{item.title}</span>}
+                      {!collapsed && (
+                        <span className="flex items-center gap-2">
+                          {item.title}
+                          {item.title === "Members" && pendingCount > 0 && (
+                            <Badge
+                              variant="destructive"
+                              className="h-5 w-5 p-0 text-xs justify-center items-center"
+                            >
+                              {pendingCount}
+                            </Badge>
+                          )}
+                          {item.title === "Settings" && isAdmin && (
+                            <Badge
+                              variant="secondary"
+                              className="h-5 px-1.5 text-xs justify-center items-center"
+                            >
+                              <Shield className="w-3 h-3" />
+                            </Badge>
+                          )}
+                        </span>
+                      )}
+                      {collapsed && item.title === "Members" && pendingCount > 0 && (
+                        <Badge
+                          variant="destructive"
+                          className="absolute -top-1 -right-1 h-4 w-4 p-0 text-[10px] justify-center items-center"
+                        >
+                          {pendingCount > 9 ? "9+" : pendingCount}
+                        </Badge>
+                      )}
                     </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -86,6 +166,21 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
+      {!collapsed && (
+        <div className="px-3 py-2 border-t">
+          {isAdmin && (
+            <div className="px-2 py-1.5 mb-2 rounded-md bg-primary/10 text-primary text-xs font-medium">
+              <Shield className="w-3 h-3 inline mr-1" />
+              Admin Access
+            </div>
+          )}
+          {isPlanner && !isAdmin && (
+            <div className="px-2 py-1.5 mb-2 rounded-md bg-amber-500/10 text-amber-700 text-xs font-medium">
+              Planner Access
+            </div>
+          )}
+        </div>
+      )}
       <div className="mt-auto border-t p-3">
         {!collapsed && user && (
           <p className="text-xs text-muted-foreground truncate mb-2 px-1">

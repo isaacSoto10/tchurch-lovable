@@ -14,11 +14,16 @@ import Signup from "./pages/Signup";
 import AppLayout from "./layouts/AppLayout";
 import Dashboard from "./pages/app/Dashboard";
 import Songs from "./pages/app/Songs";
+import SongDetail from "./pages/app/SongDetail";
 import Services from "./pages/app/Services";
+import ServiceDetail from "./pages/app/ServiceDetail";
 import Announcements from "./pages/app/Announcements";
 import Ministries from "./pages/app/Ministries";
+import MinistryDetail from "./pages/app/MinistryDetail";
 import Events from "./pages/app/Events";
+import EventDetail from "./pages/app/EventDetail";
 import Teams from "./pages/app/Teams";
+import TeamDetail from "./pages/app/TeamDetail";
 import MyAssignments from "./pages/app/MyAssignments";
 import Settings from "./pages/app/Settings";
 import Messages from "./pages/app/Messages";
@@ -27,6 +32,8 @@ import Training from "./pages/app/Training";
 import Calendar from "./pages/app/Calendar";
 import Users from "./pages/app/Users";
 import Blockouts from "./pages/app/Blockouts";
+import Onboarding from "./pages/app/Onboarding";
+import JoinChurch from "./pages/app/JoinChurch";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -47,11 +54,16 @@ const App = () => (
               <Route path="/app" element={<RequireAuth><AppLayout /></RequireAuth>}>
                 <Route index element={<Dashboard />} />
                 <Route path="songs" element={<Songs />} />
+                <Route path="songs/:id" element={<SongDetail />} />
                 <Route path="services" element={<Services />} />
+                <Route path="services/:id" element={<ServiceDetail />} />
                 <Route path="announcements" element={<Announcements />} />
                 <Route path="ministries" element={<Ministries />} />
+                <Route path="ministries/:id" element={<MinistryDetail />} />
                 <Route path="events" element={<Events />} />
+                <Route path="events/:id" element={<EventDetail />} />
                 <Route path="teams" element={<Teams />} />
+                <Route path="teams/:id" element={<TeamDetail />} />
                 <Route path="my-assignments" element={<MyAssignments />} />
                 <Route path="settings" element={<Settings />} />
                 <Route path="messages" element={<Messages />} />
@@ -61,6 +73,8 @@ const App = () => (
                 <Route path="users" element={<Users />} />
                 <Route path="blockouts" element={<Blockouts />} />
               </Route>
+              <Route path="/onboarding" element={<RequireAuth><Onboarding /></RequireAuth>} />
+              <Route path="/join-church" element={<JoinChurch />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </ChurchProvider>

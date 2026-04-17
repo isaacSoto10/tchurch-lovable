@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -6,6 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Plus, Pencil, Trash2, Search, ChevronUp, ChevronDown, Music, FileText, Bell, X, Check, Clock, Users } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
+import { useChurch } from "@/providers/ChurchProvider";
 import {
   Dialog,
   DialogContent,
@@ -139,6 +141,9 @@ const TEMPLATE_ITEMS = [
 ];
 
 export default function Services() {
+  const navigate = useNavigate();
+  const { selectedChurch } = useChurch();
+  const isAdmin = selectedChurch?.role === "ADMIN";
   const { fetchApi } = useApi();
   const { toast } = useToast();
   const [services, setServices] = useState<Service[]>([]);
@@ -607,9 +612,9 @@ export default function Services() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">Services</h1>
-        <Button size="sm" onClick={openNewDialog}>
+        {isAdmin && <Button size="sm" onClick={openNewDialog}>
           <Plus className="w-4 h-4 mr-1" /> New Service
-        </Button>
+        </Button>}
       </div>
 
       <div className="flex gap-3 mb-4">
@@ -937,7 +942,7 @@ export default function Services() {
         )}
         {!loading &&
           filteredServices.map((svc) => (
-            <Card key={svc.id} className="hover:shadow-md transition-shadow">
+            <Card key={svc.id} className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => navigate(`/app/services/${svc.id}`)}>
               <CardContent className="p-4">
                 <div className="flex items-center gap-4">
                   <div className="w-1 h-10 rounded bg-primary" />
@@ -960,13 +965,13 @@ export default function Services() {
                     </p>
                   </div>
                   <button
-                    onClick={() => handleStatusToggle(svc)}
+                    onClick={(e) => { e.stopPropagation(); handleStatusToggle(svc); }}
                     className={`text-xs px-2 py-1 rounded cursor-pointer ${getStatusColor(svc.status)}`}
                     disabled={svc.status === "completed"}
                   >
                     {svc.status}
                   </button>
-                  <div className="flex gap-1">
+                  <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
                     <Button
                       variant="ghost"
                       size="sm"
@@ -974,20 +979,24 @@ export default function Services() {
                     >
                       {expandedService === svc.id ? "−" : "+"}
                     </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => openEditDialog(svc)}
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setDeleteId(svc.id)}
-                    >
-                      <Trash2 className="w-4 h-4 text-destructive" />
-                    </Button>
+                    {isAdmin && (
+                      <>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => openEditDialog(svc)}
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setDeleteId(svc.id)}
+                        >
+                          <Trash2 className="w-4 h-4 text-destructive" />
+                        </Button>
+                      </>
+                    )}
                   </div>
                 </div>
 
@@ -1000,9 +1009,9 @@ export default function Services() {
                     <div>
                       <div className="flex items-center justify-between mb-2">
                         <h4 className="text-sm font-medium">Service Flow</h4>
-                        <Button size="sm" variant="outline" onClick={() => openAddItemDialog(svc.id)}>
+                        {isAdmin && <Button size="sm" variant="outline" onClick={() => openAddItemDialog(svc.id)}>
                           <Plus className="w-3 h-3 mr-1" /> Add Item
-                        </Button>
+                        </Button>}
                       </div>
                       {itemsLoading[svc.id] ? (
                         <div className="flex items-center justify-center py-4">
@@ -1031,14 +1040,16 @@ export default function Services() {
                                   {item.duration}m
                                 </span>
                               )}
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="w-6 h-6"
-                                onClick={() => handleDeleteItem(svc.id, item.id)}
-                              >
-                                <X className="w-3 h-3" />
-                              </Button>
+                              {isAdmin && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="w-6 h-6"
+                                  onClick={() => handleDeleteItem(svc.id, item.id)}
+                                >
+                                  <X className="w-3 h-3" />
+                                </Button>
+                              )}
                             </div>
                           ))}
                           {(serviceItems[svc.id] || []).length === 0 && (
@@ -1051,9 +1062,9 @@ export default function Services() {
                     <div>
                       <div className="flex items-center justify-between mb-2">
                         <h4 className="text-sm font-medium">Team</h4>
-                        <Button size="sm" variant="outline" onClick={() => openAssignDialog(svc.id)}>
+                        {isAdmin && <Button size="sm" variant="outline" onClick={() => openAssignDialog(svc.id)}>
                           <Plus className="w-3 h-3 mr-1" /> Assign
-                        </Button>
+                        </Button>}
                       </div>
                       <div className="space-y-1">
                         {(serviceAssignments[svc.id] || []).map((assignment) => (
@@ -1070,14 +1081,16 @@ export default function Services() {
                               {assignment.user?.firstName} {assignment.user?.lastName}
                             </span>
                             <span className="text-xs text-muted-foreground">{assignment.position}</span>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="w-6 h-6"
-                              onClick={() => handleRemoveAssignment(svc.id, assignment.id)}
-                            >
-                              <X className="w-3 h-3" />
-                            </Button>
+                            {isAdmin && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="w-6 h-6"
+                                onClick={() => handleRemoveAssignment(svc.id, assignment.id)}
+                              >
+                                <X className="w-3 h-3" />
+                              </Button>
+                            )}
                           </div>
                         ))}
                         {(serviceAssignments[svc.id] || []).length === 0 && (

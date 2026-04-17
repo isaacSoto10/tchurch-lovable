@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Plus, Users, Pencil, Trash2 } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
+import { useChurch } from "@/providers/ChurchProvider";
 import {
   Dialog,
   DialogContent,
@@ -36,6 +38,9 @@ interface Team {
 }
 
 export default function Teams() {
+  const navigate = useNavigate();
+  const { selectedChurch } = useChurch();
+  const isAdmin = selectedChurch?.role === "ADMIN";
   const { fetchApi } = useApi();
   const { toast } = useToast();
   const [teams, setTeams] = useState<Team[]>([]);
@@ -132,9 +137,9 @@ export default function Teams() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">Teams</h1>
-        <Button size="sm" onClick={openNewDialog}>
+        {isAdmin && <Button size="sm" onClick={openNewDialog}>
           <Plus className="w-4 h-4 mr-1" /> New Team
-        </Button>
+        </Button>}
       </div>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -190,7 +195,7 @@ export default function Teams() {
           <p className="text-sm text-muted-foreground text-center py-8">No teams yet.</p>
         )}
         {!loading && teams.map((t) => (
-          <Card key={t.id} className="hover:shadow-md transition-shadow">
+          <Card key={t.id} className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => navigate(`/app/teams/${t.id}`)}>
             <CardContent className="p-5 flex items-center gap-4">
               <div
                 className="w-10 h-10 rounded-lg flex items-center justify-center"
@@ -205,31 +210,35 @@ export default function Teams() {
               {t.memberCount != null && (
                 <span className="text-sm text-muted-foreground">{t.memberCount} members</span>
               )}
-              <div className="flex gap-1">
-                <Button variant="ghost" size="sm" onClick={() => openEditDialog(t)}>
-                  <Pencil className="w-4 h-4" />
-                </Button>
-                <AlertDialog open={deleteId === t.id} onOpenChange={(open) => !open && setDeleteId(null)}>
-                  <AlertDialogTrigger asChild>
-                    <Button variant="ghost" size="sm" onClick={() => setDeleteId(t.id)}>
-                      <Trash2 className="w-4 h-4 text-destructive" />
+              <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
+                {isAdmin && (
+                  <>
+                    <Button variant="ghost" size="sm" onClick={() => openEditDialog(t)}>
+                      <Pencil className="w-4 h-4" />
                     </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>Delete Team</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        Are you sure you want to delete "{t.name || t.title}"? This action cannot be undone.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>Cancel</AlertDialogCancel>
-                      <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                        Delete
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
+                    <AlertDialog open={deleteId === t.id} onOpenChange={(open) => !open && setDeleteId(null)}>
+                      <AlertDialogTrigger asChild>
+                        <Button variant="ghost" size="sm" onClick={() => setDeleteId(t.id)}>
+                          <Trash2 className="w-4 h-4 text-destructive" />
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Delete Team</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            Are you sure you want to delete "{t.name || t.title}"? This action cannot be undone.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                            Delete
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  </>
+                )}
               </div>
             </CardContent>
           </Card>

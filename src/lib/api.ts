@@ -1,4 +1,5 @@
-const API_BASE = "http://localhost:3000/api";
+// Use deployed API in production, localhost in development
+const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3000/api";
 const CHURCH_ID_KEY = "tchurch_church_id";
 
 export function getChurchId(): string | null {

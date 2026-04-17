@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Plus, Pencil, Trash2, Check } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
+import { useChurch } from "@/providers/ChurchProvider";
 import {
   Dialog,
   DialogContent,
@@ -61,6 +63,9 @@ const emptyForm = {
 };
 
 export default function Events() {
+  const navigate = useNavigate();
+  const { selectedChurch } = useChurch();
+  const isAdmin = selectedChurch?.role === "ADMIN";
   const { fetchApi } = useApi();
   const { toast } = useToast();
   const [events, setEvents] = useState<Event[]>([]);
@@ -199,9 +204,9 @@ export default function Events() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">Events</h1>
-        <Button size="sm" onClick={openNewDialog}>
+        {isAdmin && <Button size="sm" onClick={openNewDialog}>
           <Plus className="w-4 h-4 mr-1" /> New Event
-        </Button>
+        </Button>}
       </div>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -315,7 +320,8 @@ export default function Events() {
         {events.map((ev) => (
           <Card
             key={ev.id}
-            className="hover:shadow-md transition-shadow"
+            className="hover:shadow-md transition-shadow cursor-pointer"
+            onClick={() => navigate(`/app/events/${ev.id}`)}
           >
             <CardContent className="p-4">
               <div className="flex items-start gap-3">
@@ -337,24 +343,28 @@ export default function Events() {
                     <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{ev.description}</p>
                   )}
                 </div>
-                <div className="flex items-center gap-1 shrink-0">
+                <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
                   <span className="text-xs text-muted-foreground capitalize mr-2">
                     {ev.status || ""}
                   </span>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => openEditDialog(ev)}
-                  >
-                    <Pencil className="w-4 h-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => setDeleteId(ev.id)}
-                  >
-                    <Trash2 className="w-4 h-4 text-destructive" />
-                  </Button>
+                  {isAdmin && (
+                    <>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => openEditDialog(ev)}
+                      >
+                        <Pencil className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setDeleteId(ev.id)}
+                      >
+                        <Trash2 className="w-4 h-4 text-destructive" />
+                      </Button>
+                    </>
+                  )}
                 </div>
               </div>
               <div className="flex gap-2 mt-3 ml-4">
@@ -363,7 +373,7 @@ export default function Events() {
                     key={status}
                     size="sm"
                     variant={rsvps[ev.id] === status ? "default" : "outline"}
-                    onClick={() => rsvps[ev.id] === status ? handleRemoveRsvp(ev.id) : handleRsvp(ev.id, status)}
+                    onClick={(e) => { e.stopPropagation(); rsvps[ev.id] === status ? handleRemoveRsvp(ev.id) : handleRsvp(ev.id, status); }}
                     className="capitalize"
                   >
                     {status === "yes" && <Check className="w-3 h-3 mr-1" />}
