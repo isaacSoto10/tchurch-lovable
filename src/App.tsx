@@ -34,6 +34,8 @@ import Users from "./pages/app/Users";
 import Blockouts from "./pages/app/Blockouts";
 import Onboarding from "./pages/app/Onboarding";
 import JoinChurch from "./pages/app/JoinChurch";
+import CreateChurchForm from "./pages/app/CreateChurchForm";
+import Presets from "./pages/app/Presets";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -75,6 +77,8 @@ const App = () => (
               </Route>
               <Route path="/onboarding" element={<RequireAuth><Onboarding /></RequireAuth>} />
               <Route path="/join-church" element={<JoinChurch />} />
+              <Route path="/create-church" element={<RequireAuth><CreateChurchForm /></RequireAuth>} />
+              <Route path="/app/presets" element={<RequireAuth><Presets /></RequireAuth>} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </ChurchProvider>

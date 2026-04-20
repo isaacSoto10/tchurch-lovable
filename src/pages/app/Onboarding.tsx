@@ -11,9 +11,8 @@ import { apiFetch } from "@/lib/api";
 export default function Onboarding() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [mode, setMode] = useState<"choose" | "join" | "create">("choose");
+  const [mode, setMode] = useState<"choose" | "join">("choose");
   const [joinCode, setJoinCode] = useState("");
-  const [churchName, setChurchName] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -42,27 +41,9 @@ export default function Onboarding() {
     }
   }
 
-  async function handleCreate(e: React.FormEvent) {
-    e.preventDefault();
-    if (!churchName.trim()) return;
-    setLoading(true);
-    setError("");
-    try {
-      const data = await apiFetch<any>("/churches", {
-        method: "POST",
-        body: JSON.stringify({ name: churchName.trim() }),
-      });
-      if (data.error) {
-        setError(data.error);
-      } else {
-        navigate("/app", { replace: true });
-        window.location.reload();
-      }
-    } catch (err: any) {
-      setError(err.message || "Failed to create church");
-    } finally {
-      setLoading(false);
-    }
+  // Create card → navigate to dedicated form
+  function handleCreateNavigate() {
+    navigate("/create-church");
   }
 
   return (
@@ -105,7 +86,7 @@ export default function Onboarding() {
                 </CardContent>
               </Card>
 
-              <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => setMode("create")}>
+              <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={handleCreateNavigate}>
                 <CardContent className="p-5 flex items-center gap-4">
                   <div className="w-12 h-12 bg-amber-50 rounded-xl flex items-center justify-center shrink-0">
                     <Plus className="w-6 h-6 text-amber-600" />
@@ -146,38 +127,6 @@ export default function Onboarding() {
                     </Button>
                     <Button type="submit" disabled={loading || joinCode.length < 6} className="flex-1">
                       {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Join Church"}
-                    </Button>
-                  </div>
-                </form>
-              </CardContent>
-            </Card>
-          )}
-
-          {mode === "create" && (
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-lg">Create a Church</CardTitle>
-                <CardDescription>Give your new church community a name</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <form onSubmit={handleCreate} className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="church-name">Church Name</Label>
-                    <Input
-                      id="church-name"
-                      value={churchName}
-                      onChange={(e) => setChurchName(e.target.value)}
-                      placeholder="e.g. Grace Community Church"
-                      autoFocus
-                    />
-                  </div>
-                  {error && <p className="text-sm text-red-500">{error}</p>}
-                  <div className="flex gap-2">
-                    <Button type="button" variant="outline" onClick={() => { setMode("choose"); setError(""); }} className="flex-1">
-                      Back
-                    </Button>
-                    <Button type="submit" disabled={loading || !churchName.trim()} className="flex-1">
-                      {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Create Church"}
                     </Button>
                   </div>
                 </form>
