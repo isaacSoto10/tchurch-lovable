@@ -9,7 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useApi } from "@/hooks/useApi";
 import { useChurch } from "@/providers/ChurchProvider";
 import { useAuth } from "@clerk/clerk-react";
-import { User, Bell, Church, LogOut, Settings, Loader2, Check, X, Shield } from "lucide-react";
+import { User, Bell, Church, LogOut, Settings, Loader2, Check, X, Shield, CreditCard, Crown, Users, AlertCircle, CheckCircle } from "lucide-react";
 
 type PendingMember = {
   id: string;
@@ -18,6 +18,17 @@ type PendingMember = {
   email: string;
   imageUrl?: string;
   createdAt: string;
+};
+
+type BillingData = {
+  plan: "free" | "basic" | "all_in";
+  memberLimit: number;
+  memberCount: number;
+  subscriptionStatus: "active" | "trialing" | "past_due" | "canceled" | "inactive";
+  billingCycle: "monthly" | "yearly";
+  currentPeriodEnd: string;
+  subscriptionId?: string;
+  cancelAtPeriodEnd: boolean;
 };
 
 export default function Settings() {
@@ -42,6 +53,10 @@ export default function Settings() {
   const [pendingMembers, setPendingMembers] = useState<PendingMember[]>([]);
   const [loadingPending, setLoadingPending] = useState(false);
   const [processingId, setProcessingId] = useState<string | null>(null);
+
+  const [billingData, setBillingData] = useState<BillingData | null>(null);
+  const [loadingBilling, setLoadingBilling] = useState(false);
+  const [openingPortal, setOpeningPortal] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -79,6 +94,69 @@ export default function Settings() {
     } finally {
       setLoadingPending(false);
     }
+  }
+
+  async function loadBillingData() {
+    if (!selectedChurch?.id) return;
+    setLoadingBilling(true);
+    try {
+      const data = await fetchApi<BillingData>(`/billing/plan`);
+      setBillingData(data);
+    } catch (e) {
+      console.error("Failed to load billing data:", e);
+    } finally {
+      setLoadingBilling(false);
+    }
+  }
+
+  useEffect(() => {
+    if (isAdmin && selectedChurch?.id) {
+      loadBillingData();
+    }
+  }, [isAdmin, selectedChurch?.id]);
+
+  async function handleManageSubscription() {
+    setOpeningPortal(true);
+    try {
+      const data = await fetchApi<{ url: string }>(`/billing/portal`);
+      window.open(data.url, "_blank");
+    } catch (e) {
+      console.error("Failed to open billing portal:", e);
+    } finally {
+      setOpeningPortal(false);
+    }
+  }
+
+  function getPlanLabel(plan: BillingData["plan"]) {
+    switch (plan) {
+      case "free": return "Starter";
+      case "basic": return "Basic";
+      case "all_in": return "All In";
+    }
+  }
+
+  function getPlanColors(plan: BillingData["plan"]) {
+    switch (plan) {
+      case "free": return { bg: "bg-gray-100", text: "text-gray-700", border: "border-gray-200" };
+      case "basic": return { bg: "bg-indigo-50", text: "text-indigo-700", border: "border-indigo-200" };
+      case "all_in": return { bg: "bg-purple-50", text: "text-purple-700", border: "border-purple-200" };
+    }
+  }
+
+  function getStatusColor(status: BillingData["subscriptionStatus"]) {
+    switch (status) {
+      case "active":
+      case "trialing": return "text-emerald-600";
+      case "past_due": return "text-amber-600";
+      case "canceled": return "text-red-600";
+      case "inactive": return "text-gray-500";
+    }
+  }
+
+  function getUsageColor(percentage: number) {
+    if (percentage >= 90) return "bg-red-500";
+    if (percentage >= 70) return "bg-amber-500";
+    return "bg-emerald-500";
   }
 
   async function handleToggle(key: keyof typeof prefs, value: boolean) {
@@ -179,6 +257,10 @@ export default function Settings() {
                     {pendingMembers.length}
                   </Badge>
                 )}
+              </TabsTrigger>
+              <TabsTrigger value="billing">
+                <CreditCard className="w-4 h-4 mr-1.5" />
+                Billing
               </TabsTrigger>
             </>
           )}
@@ -447,6 +529,143 @@ export default function Settings() {
                   )}
                 </CardContent>
               </Card>
+            </TabsContent>
+
+            <TabsContent value="billing" className="mt-6">
+              {loadingBilling ? (
+                <div className="flex justify-center py-12">
+                  <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : billingData ? (
+                <div className="space-y-6">
+                  {/* Welcome message for All In */}
+                  {billingData.plan === "all_in" && (
+                    <Card className="bg-purple-50 border-purple-200">
+                      <CardContent className="flex items-center gap-3 py-4">
+                        <Crown className="w-5 h-5 text-purple-600" />
+                        <p className="text-sm text-purple-700 font-medium">
+                          You're all in! Unlimited members & all features unlocked.
+                        </p>
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {/* Current Plan Card */}
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        <CreditCard className="w-5 h-5" />
+                        Current Plan
+                      </CardTitle>
+                      <CardDescription>Your subscription details</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-6">
+                      {/* Plan Badge */}
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className={`px-4 py-2 rounded-lg ${getPlanColors(billingData.plan).bg} ${getPlanColors(billingData.plan).text} font-semibold`}>
+                            {getPlanLabel(billingData.plan)}
+                          </div>
+                          {billingData.plan === "all_in" && (
+                            <Badge variant="secondary" className="bg-purple-100 text-purple-700">Pro</Badge>
+                          )}
+                        </div>
+                        {/* Status Badge */}
+                        <div className="flex items-center gap-1.5">
+                          {billingData.subscriptionStatus === "active" || billingData.subscriptionStatus === "trialing" ? (
+                            <CheckCircle className={`w-4 h-4 ${getStatusColor(billingData.subscriptionStatus)}`} />
+                          ) : billingData.subscriptionStatus === "past_due" ? (
+                            <AlertCircle className={`w-4 h-4 ${getStatusColor(billingData.subscriptionStatus)}`} />
+                          ) : (
+                            <AlertCircle className={`w-4 h-4 ${getStatusColor(billingData.subscriptionStatus)}`} />
+                          )}
+                          <span className={`text-sm font-medium capitalize ${getStatusColor(billingData.subscriptionStatus)}`}>
+                            {billingData.subscriptionStatus === "active" || billingData.subscriptionStatus === "trialing" ? "Active" :
+                             billingData.subscriptionStatus === "past_due" ? "Past Due" :
+                             billingData.subscriptionStatus === "canceled" ? "Canceled" : "Inactive"}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Member Usage */}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Users className="w-4 h-4 text-muted-foreground" />
+                            <span className="text-sm font-medium">Members</span>
+                          </div>
+                          {billingData.plan === "all_in" ? (
+                            <span className="text-sm text-muted-foreground">Unlimited</span>
+                          ) : (
+                            <span className="text-sm text-muted-foreground">
+                              {billingData.memberCount} / {billingData.memberLimit}
+                            </span>
+                          )}
+                        </div>
+                        {billingData.plan !== "all_in" && (
+                          <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
+                            <div
+                              className={`h-full ${getUsageColor((billingData.memberCount / billingData.memberLimit) * 100)}`}
+                              style={{ width: `${Math.min((billingData.memberCount / billingData.memberLimit) * 100, 100)}%` }}
+                            />
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Billing Details for paid plans */}
+                      {billingData.plan !== "free" && (
+                        <div className="space-y-2">
+                          <Separator />
+                          <div className="flex items-center justify-between py-2">
+                            <span className="text-sm text-muted-foreground">Billing Cycle</span>
+                            <span className="text-sm font-medium capitalize">{billingData.billingCycle}</span>
+                          </div>
+                          <div className="flex items-center justify-between py-2">
+                            <span className="text-sm text-muted-foreground">
+                              {billingData.cancelAtPeriodEnd ? "Cancels On" : "Next Billing Date"}
+                            </span>
+                            <span className="text-sm font-medium">
+                              {new Date(billingData.currentPeriodEnd).toLocaleDateString("en-US", {
+                                month: "short",
+                                day: "numeric",
+                                year: "numeric"
+                              })}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Manage/Upgrade Buttons */}
+                      <div className="flex gap-3 pt-2">
+                        {billingData.plan === "free" ? (
+                          <Button asChild className="flex-1">
+                            <a href="/pricing">Upgrade Plan</a>
+                          </Button>
+                        ) : (
+                          <Button
+                            onClick={handleManageSubscription}
+                            disabled={openingPortal}
+                            className="flex-1"
+                          >
+                            {openingPortal && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                            Manage Subscription
+                          </Button>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              ) : (
+                <Card>
+                  <CardContent className="flex flex-col items-center justify-center py-12 text-center">
+                    <AlertCircle className="w-8 h-8 text-muted-foreground mb-3" />
+                    <p className="text-sm text-muted-foreground">Failed to load billing information</p>
+                    <Button variant="outline" size="sm" onClick={loadBillingData} className="mt-4">
+                      Try Again
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
             </TabsContent>
           </>
         )}

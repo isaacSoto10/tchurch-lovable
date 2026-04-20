@@ -4,91 +4,94 @@ import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Check } from "lucide-react";
-import { PaymentTestModeBanner } from "@/components/PaymentTestModeBanner";
-import { usePaddleCheckout } from "@/hooks/usePaddleCheckout";
 import { useUser } from "@clerk/clerk-react";
+import { useToast } from "@/components/ui/use-toast";
+import { apiFetch } from "@/lib/api";
 
-const plans = [
+const PLANS = [
   {
-    name: "Free",
-    description: "For small churches getting started",
-    monthlyPrice: 0,
-    yearlyPrice: 0,
-    priceIdMonthly: null,
-    priceIdYearly: null,
+    name: "Basic",
+    description: "For growing churches ready to move online",
+    monthlyPrice: 35,
+    clerkPlanId: "cplan_3CbQdCc2S6mCUEPDxANSmjuxdkR",
     features: [
-      "Up to 10 members",
-      "Basic dashboard",
-      "Song library (up to 50 songs)",
-      "1 service per week",
-      "Community support",
+      "Up to 20 members",
+      "Ministry teams",
+      "Events & RSVPs",
+      "Calendar & scheduling",
+      "Song library",
+      "Blockout dates",
+      "Service scheduling",
     ],
-    cta: "Get Started Free",
-    highlighted: false,
-  },
-  {
-    name: "Pro",
-    description: "For growing churches",
-    monthlyPrice: 14.99,
-    yearlyPrice: 149.90,
-    priceIdMonthly: "pro_monthly",
-    priceIdYearly: "pro_yearly",
-    features: [
-      "Up to 100 members",
-      "Full dashboard & analytics",
-      "Unlimited songs with ChordPro",
-      "PDF export",
-      "Unlimited services",
-      "Advanced scheduling",
-      "Ministries & teams",
-      "Email support",
-    ],
-    cta: "Start Pro",
+    cta: "Subscribe",
     highlighted: true,
   },
   {
-    name: "Premium",
-    description: "For large churches",
-    monthlyPrice: 29.99,
-    yearlyPrice: 299.90,
-    priceIdMonthly: "premium_monthly",
-    priceIdYearly: "premium_yearly",
+    name: "All In",
+    description: "For large churches needing advanced features",
+    monthlyPrice: 50,
+    clerkPlanId: "cplan_3CbQpDJmKLjjrRJkxVYSrYMXagk",
     features: [
       "Unlimited members",
-      "Everything in Pro",
-      "Advanced analytics",
+      "Everything in Basic",
+      "AI image generation",
       "Priority support",
-      "Custom branding",
-      "API access",
-      "Multi-campus support",
-      "Dedicated account manager",
+      "Advanced features",
     ],
-    cta: "Start Premium",
+    cta: "Subscribe",
     highlighted: false,
   },
 ];
 
+interface CheckoutResponse {
+  url: string;
+}
+
 export default function Pricing() {
-  const [billingInterval, setBillingInterval] = useState<"monthly" | "yearly">("monthly");
-  const { openCheckout, loading } = usePaddleCheckout();
+  const [loadingPlanId, setLoadingPlanId] = useState<string | null>(null);
   const { user } = useUser();
+  const { toast } = useToast();
 
-  const handleSubscribe = (plan: typeof plans[0]) => {
-    const priceId = billingInterval === "monthly" ? plan.priceIdMonthly : plan.priceIdYearly;
-    if (!priceId) return;
+  const handleSubscribe = async (plan: typeof PLANS[0]) => {
+    if (!plan.clerkPlanId) return;
 
-    openCheckout({
-      priceId,
-      successUrl: `${window.location.origin}/app?checkout=success`,
-      customerEmail: user?.primaryEmailAddress?.emailAddress,
-      customData: { userId: user?.id || "" },
-    });
+    setLoadingPlanId(plan.clerkPlanId);
+
+    try {
+      const email = user?.primaryEmailAddress?.emailAddress;
+      const params = new URLSearchParams({
+        planId: plan.clerkPlanId,
+        ...(email && { email }),
+      });
+
+      const data = await apiFetch<CheckoutResponse>(
+        `/billing/checkout?${params}`,
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      if (data.url) {
+        window.open(data.url, "_blank");
+      } else {
+        throw new Error("No checkout URL received");
+      }
+    } catch (error) {
+      console.error("[Pricing] Checkout error:", error);
+      toast({
+        title: "Failed to open checkout",
+        description: "Please try again or contact support.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingPlanId(null);
+    }
   };
 
   return (
     <div className="min-h-screen bg-background">
-      <PaymentTestModeBanner />
-
       {/* Nav */}
       <nav className="fixed top-0 inset-x-0 z-50 bg-background/80 backdrop-blur-md border-b">
         <div className="max-w-6xl mx-auto flex items-center justify-between px-6 h-16">
@@ -119,38 +122,29 @@ export default function Pricing() {
               Simple, transparent pricing
             </h1>
             <p className="text-lg text-muted-foreground max-w-2xl mx-auto mb-8">
-              Start free and upgrade as your church grows. All plans include a 90-day free trial.
+              Start free and upgrade as your church grows.
             </p>
 
             {/* Billing Toggle */}
             <div className="inline-flex items-center gap-3 bg-muted rounded-full p-1">
               <button
-                onClick={() => setBillingInterval("monthly")}
-                className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
-                  billingInterval === "monthly"
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
+                className="px-4 py-2 rounded-full text-sm font-medium transition-colors bg-primary text-primary-foreground"
               >
                 Monthly
               </button>
               <button
-                onClick={() => setBillingInterval("yearly")}
-                className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
-                  billingInterval === "yearly"
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
+                disabled
+                className="px-4 py-2 rounded-full text-sm font-medium transition-colors text-muted-foreground cursor-not-allowed opacity-60"
               >
                 Yearly
-                <span className="ml-1.5 text-xs opacity-80">Save 2 months</span>
+                <span className="ml-1.5 text-xs opacity-80">Coming soon</span>
               </button>
             </div>
           </motion.div>
 
           {/* Plan Cards */}
-          <div className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto">
-            {plans.map((plan, i) => (
+          <div className="grid md:grid-cols-2 gap-6 max-w-4xl mx-auto">
+            {PLANS.map((plan, i) => (
               <motion.div
                 key={plan.name}
                 initial={{ opacity: 0, y: 20 }}
@@ -175,14 +169,8 @@ export default function Pricing() {
                     <h3 className="text-lg font-bold">{plan.name}</h3>
                     <p className="text-sm text-muted-foreground">{plan.description}</p>
                     <div className="mt-4">
-                      <span className="text-4xl font-extrabold">
-                        ${billingInterval === "monthly" ? plan.monthlyPrice : plan.yearlyPrice}
-                      </span>
-                      {plan.monthlyPrice > 0 && (
-                        <span className="text-muted-foreground ml-1">
-                          /{billingInterval === "monthly" ? "mo" : "yr"}
-                        </span>
-                      )}
+                      <span className="text-4xl font-extrabold">${plan.monthlyPrice}</span>
+                      <span className="text-muted-foreground ml-1">/mo</span>
                     </div>
                   </CardHeader>
                   <CardContent className="flex-1 flex flex-col">
@@ -197,14 +185,35 @@ export default function Pricing() {
                     <Button
                       className="w-full mt-6"
                       variant={plan.highlighted ? "default" : "outline"}
-                      onClick={() => plan.priceIdMonthly ? handleSubscribe(plan) : undefined}
-                      disabled={loading}
-                      asChild={!plan.priceIdMonthly}
+                      onClick={() => handleSubscribe(plan)}
+                      disabled={loadingPlanId !== null}
                     >
-                      {plan.priceIdMonthly ? (
-                        <span>{plan.cta}</span>
+                      {loadingPlanId === plan.clerkPlanId ? (
+                        <span className="flex items-center gap-2">
+                          <svg
+                            className="animate-spin h-4 w-4"
+                            xmlns="http://www.w3.org/2000/svg"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                          >
+                            <circle
+                              className="opacity-25"
+                              cx="12"
+                              cy="12"
+                              r="10"
+                              stroke="currentColor"
+                              strokeWidth="4"
+                            />
+                            <path
+                              className="opacity-75"
+                              fill="currentColor"
+                              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                            />
+                          </svg>
+                          Loading...
+                        </span>
                       ) : (
-                        <Link to="/signup">{plan.cta}</Link>
+                        plan.cta
                       )}
                     </Button>
                   </CardContent>
