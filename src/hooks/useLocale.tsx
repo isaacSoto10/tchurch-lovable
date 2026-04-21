@@ -1,8 +1,8 @@
 "use client";
 
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
-import { en, type TranslationKey } from "./translations/en";
-import es from "./translations/es";
+import { en, type TranslationKey } from "../lib/translations/en";
+import es from "../lib/translations/es";
 
 type Locale = "en" | "es";
 
