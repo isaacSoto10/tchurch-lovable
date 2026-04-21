@@ -5,6 +5,8 @@ import { CalendarDays, Music, Users, Megaphone, ListChecks, UsersRound, Calendar
 import { useApi } from "@/hooks/useApi";
 import { useChurch } from "@/providers/ChurchProvider";
 import { useNavigate } from "react-router-dom";
+import { MOCK_MINISTRIES, MOCK_USER } from "@/lib/mock-data";
+import { USE_MOCK } from "@/lib/api";
 
 interface TimelineItem {
   id: string;
@@ -56,21 +58,23 @@ export default function Dashboard() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [ministries, setMinistries] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function load() {
-      if (!selectedChurch) {
+      if (!selectedChurch && !USE_MOCK) {
         setLoading(false);
         return;
       }
 
       try {
-        const [statsData, servicesData, eventsData, announcementsData] = await Promise.all([
-          fetchApi("/dashboard/stats"),
-          fetchApi("/services"),
-          fetchApi("/events"),
-          fetchApi("/announcements"),
+        const [statsData, servicesData, eventsData, announcementsData, ministriesData] = await Promise.all([
+          fetchApi("/dashboard/stats").catch(() => null),
+          fetchApi("/services").catch(() => []),
+          fetchApi("/events").catch(() => []),
+          fetchApi("/announcements").catch(() => []),
+          fetchApi("/ministries").catch(() => []),
         ]);
 
         if (statsData && typeof statsData === "object" && !statsData.error) {
@@ -106,6 +110,7 @@ export default function Dashboard() {
         setTimeline(merged.slice(0, 10));
 
         setAnnouncements(Array.isArray(announcementsData) ? announcementsData.slice(0, 10) : []);
+        setMinistries(Array.isArray(ministriesData) ? ministriesData : []);
       } catch (e) {
         console.error("Failed to load dashboard:", e);
       } finally {
@@ -119,7 +124,7 @@ export default function Dashboard() {
     return <div className="flex items-center justify-center py-20"><div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full" /></div>;
   }
 
-  if (!selectedChurch) {
+  if (!selectedChurch && !USE_MOCK) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-center">
         <p className="text-muted-foreground mb-2">No church selected</p>
@@ -192,6 +197,42 @@ export default function Dashboard() {
           <Plus className="w-3 h-3 mr-1" /> New Event
         </Button>
       </div>
+
+      {/* My Ministries */}
+      {ministries.length > 0 && (
+        <div className="mb-6">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
+              My Ministries
+            </h2>
+            <Button size="sm" variant="ghost" onClick={() => navigate("/app/ministries")}>
+              View All <ArrowRight className="w-3 h-3 ml-1" />
+            </Button>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            {ministries.slice(0, 6).map((ministry: any) => (
+              <Card
+                key={ministry.id}
+                className="cursor-pointer hover:shadow-md transition-shadow"
+                onClick={() => navigate("/app/ministries")}
+              >
+                <CardContent className="p-3 flex items-center gap-3">
+                  <div
+                    className="w-3 h-3 rounded-full shrink-0"
+                    style={{ backgroundColor: ministry.color || "#6366f1" }}
+                  />
+                  <div className="min-w-0">
+                    <p className="font-medium text-sm truncate">{ministry.nameEs || ministry.name}</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      {ministry._count?.members ?? 0} members
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="flex items-center justify-center py-8">
