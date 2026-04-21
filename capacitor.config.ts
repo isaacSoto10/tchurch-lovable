@@ -4,6 +4,10 @@ const config: CapacitorConfig = {
   appId: 'app.lovable.e5ddf50ff80d4eb7a86a937f7a9f8a62',
   appName: 'Tchurch',
   webDir: 'dist',
+  server: {
+    iosScheme: 'https',
+    androidScheme: 'https',
+  },
 };
 
 export default config;
