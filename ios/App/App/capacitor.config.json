@@ -6,5 +6,7 @@
 		"iosScheme": "https",
 		"androidScheme": "https"
 	},
-	"packageClassList": []
+	"packageClassList": [
+		"CAPBrowserPlugin"
+	]
 }

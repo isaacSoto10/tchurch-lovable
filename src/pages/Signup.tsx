@@ -12,6 +12,10 @@ export default function Signup() {
           elements: {
             rootBox: "mx-auto",
             card: "shadow-xl",
+            socialButtonsBlockButton: "hidden",
+            socialButtonsBlockButtonText: "hidden",
+            dividerRow: "hidden",
+            dividerText: "hidden",
           },
         }}
       />

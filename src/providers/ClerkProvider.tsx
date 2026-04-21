@@ -1,4 +1,4 @@
-import { ClerkProvider as BaseClerkProvider } from "@clerk/clerk-react";
+import { ClerkProvider as BaseClerkProvider, useClerk } from "@clerk/clerk-react";
 import { useNavigate } from "react-router-dom";
 
 const CLERK_PUBLISHABLE_KEY = "pk_test_cHJlY2lzZS1tYW1tYWwtODguY2xlcmsuYWNjb3VudHMuZGV2JA";
@@ -14,6 +14,9 @@ export function ClerkProvider({ children }: { children: React.ReactNode }) {
       fallbackRedirectUrl="/"
       signInFallbackRedirectUrl="/"
       signUpFallbackRedirectUrl="/"
+      afterSignInUrl="/app"
+      afterSignUpUrl="/app"
+      clerkJSVersion="5"
     >
       {children}
     </BaseClerkProvider>
