@@ -1,4 +1,4 @@
-const API_BASE = "http://localhost:3000/api";
+const API_BASE = "https://www.tchurchapp.com/api";
 const CHURCH_ID_KEY = "tchurch_church_id";
 
 export function getChurchId(): string | null {
