@@ -1,5 +1,8 @@
+import { mockFetch } from "./mock-api";
+
 const API_BASE = "https://www.tchurchapp.com/api";
 const CHURCH_ID_KEY = "tchurch_church_id";
+export const USE_MOCK = true;
 
 export function getChurchId(): string | null {
   return localStorage.getItem(CHURCH_ID_KEY);
@@ -18,6 +21,10 @@ export async function apiFetch<T = any>(
   options: RequestInit = {},
   token?: string | null
 ): Promise<T> {
+  if (USE_MOCK) {
+    return mockFetch<T>(path, options, token);
+  }
+
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(options.headers as Record<string, string>),
@@ -33,29 +40,23 @@ export async function apiFetch<T = any>(
   }
 
   const url = `${API_BASE}${path}`;
-  console.log(`[apiFetch] Requesting: ${url}`);
-  console.log(`[apiFetch] Headers:`, headers);
-
-  const res = await fetch(url, {
-    ...options,
-    headers,
-  });
+  const res = await fetch(url, { ...options, headers });
 
   if (!res.ok) {
     const body = await res.text();
-    console.error(`[apiFetch] Error ${res.status}: ${body}`);
     throw new Error(`API error ${res.status}: ${body}`);
   }
 
   const data = await res.json();
-  console.log(`[apiFetch] Response from ${path}:`, data);
   return data;
 }
 
 export async function fetchUserChurches(token: string): Promise<any[]> {
+  if (USE_MOCK) {
+    return mockFetch<any>("/churches/mine", undefined, token).then(d => d.churches || []);
+  }
+
   const url = `${API_BASE}/churches/mine`;
-  console.log(`[fetchUserChurches] Requesting: ${url}`);
-  
   const res = await fetch(url, {
     headers: {
       Authorization: `Bearer ${token}`,
@@ -65,11 +66,9 @@ export async function fetchUserChurches(token: string): Promise<any[]> {
 
   if (!res.ok) {
     const body = await res.text();
-    console.error(`[fetchUserChurches] Error ${res.status}: ${body}`);
     throw new Error(`Failed to fetch churches: ${res.status}`);
   }
 
   const data = await res.json();
-  console.log(`[fetchUserChurches] Response:`, data);
   return data.churches || [];
 }

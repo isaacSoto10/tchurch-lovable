@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { useAuth } from "@clerk/clerk-react";
-import { fetchUserChurches, getChurchId, setChurchId } from "@/lib/api";
+import { fetchUserChurches, getChurchId, setChurchId, USE_MOCK } from "@/lib/api";
+import { MOCK_CHURCHES } from "@/lib/mock-data";
 
 interface Church {
   id: string;
@@ -40,52 +41,52 @@ export function ChurchProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     async function loadChurches() {
-      console.log("[ChurchProvider] Loading churches... isSignedIn:", isSignedIn, "userId:", userId);
-      
+      if (USE_MOCK) {
+        // Mock mode: use mock data directly, no auth needed
+        setChurches(MOCK_CHURCHES as Church[]);
+        const savedId = getChurchId();
+        const church = savedId
+          ? (MOCK_CHURCHES as Church[]).find(c => c.id === savedId)
+          : MOCK_CHURCHES[0];
+        if (church) {
+          setSelectedChurch(church as Church);
+          setChurchId((church as Church).id);
+        }
+        setLoading(false);
+        return;
+      }
+
+      // Production mode: fetch from API
       if (!isSignedIn || !userId) {
-        console.log("[ChurchProvider] Not signed in, skipping");
         setLoading(false);
         return;
       }
 
       try {
         const token = await getToken();
-        console.log("[ChurchProvider] Got token:", token ? "yes" : "no");
-        
         if (!token) {
           setError("Not authenticated - no token");
           setLoading(false);
           return;
         }
 
-        console.log("[ChurchProvider] Fetching churches from API...");
         const userChurches = await fetchUserChurches(token);
-        console.log("[ChurchProvider] Got churches:", userChurches);
-        
         setChurches(userChurches);
 
         const savedChurchId = getChurchId();
-        console.log("[ChurchProvider] Saved church ID:", savedChurchId);
-        
         if (savedChurchId) {
           const saved = userChurches.find((c: Church) => c.id === savedChurchId);
           if (saved) {
             setSelectedChurch(saved);
-            console.log("[ChurchProvider] Using saved church:", saved.name);
           } else if (userChurches.length > 0) {
             setSelectedChurch(userChurches[0]);
             setChurchId(userChurches[0].id);
-            console.log("[ChurchProvider] Saved not found, using first:", userChurches[0].name);
           }
         } else if (userChurches.length > 0) {
           setSelectedChurch(userChurches[0]);
           setChurchId(userChurches[0].id);
-          console.log("[ChurchProvider] No saved, using first:", userChurches[0].name);
-        } else {
-          console.log("[ChurchProvider] No churches found for user");
         }
       } catch (e) {
-        console.error("[ChurchProvider] Error loading churches:", e);
         setError(e instanceof Error ? e.message : "Failed to load churches");
       } finally {
         setLoading(false);
