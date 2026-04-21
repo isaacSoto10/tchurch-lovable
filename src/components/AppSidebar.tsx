@@ -109,7 +109,7 @@ export function AppSidebar() {
 
   return (
     <Sidebar collapsible="icon">
-      <div className="flex items-center gap-2 px-4 py-4 border-b">
+      <div className="flex items-center gap-2 px-4 border-b" style={{ paddingTop: "max(1rem, env(safe-area-inset-top, 1rem))", paddingBottom: "1rem" }}>
         <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-primary-foreground font-bold text-sm shrink-0">
           T
         </div>
@@ -181,7 +181,7 @@ export function AppSidebar() {
           )}
         </div>
       )}
-      <div className="mt-auto border-t p-3">
+      <div className="mt-auto border-t p-3" style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom, 0.75rem))" }}>
         {!collapsed && user && (
           <p className="text-xs text-muted-foreground truncate mb-2 px-1">
             {user.primaryEmailAddress?.emailAddress}

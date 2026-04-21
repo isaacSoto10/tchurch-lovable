@@ -49,18 +49,23 @@
 	<true/>
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
-		<string>app.lovable.e5ddf50ff80d4eb7a86a937f7a9f8a62.tchurch</string>
+		<string>https</string>
 	</array>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>com.tchurch.mobile</string>
+			<string>com.tchurchapp.tchurch</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>app.lovable.e5ddf50ff80d4eb7a86a937f7a9f8a62.tchurch</string>
+				<string>tchurchapp</string>
 			</array>
 		</dict>
 	</array>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
 </dict>
 </plist>
