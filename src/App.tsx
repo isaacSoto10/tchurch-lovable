@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ClerkProvider } from "@/providers/ClerkProvider";
 import { ChurchProvider } from "@/providers/ChurchProvider";
+import { LocaleProvider } from "@/lib/locale";
 import { RequireAuth } from "@/components/RequireAuth";
 
 import Landing from "./pages/Landing";
@@ -38,8 +39,9 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <ClerkProvider>
-          <ChurchProvider>
-            <Routes>
+          <LocaleProvider>
+            <ChurchProvider>
+              <Routes>
               <Route path="/" element={<Landing />} />
               <Route path="/pricing" element={<Pricing />} />
               <Route path="/login/*" element={<Login />} />
@@ -64,6 +66,7 @@ const App = () => (
               <Route path="*" element={<NotFound />} />
             </Routes>
           </ChurchProvider>
+          </LocaleProvider>
         </ClerkProvider>
       </BrowserRouter>
     </TooltipProvider>

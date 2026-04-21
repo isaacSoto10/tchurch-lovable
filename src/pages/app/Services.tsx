@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -6,6 +7,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Plus, Pencil, Trash2, Search, ChevronUp, ChevronDown, Music, FileText, Bell, X, Check, Clock, Users } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
+import { useChurch } from "@/providers/ChurchProvider";
+import { useT } from "@/hooks/useLocale";
 import {
   Dialog,
   DialogContent,
@@ -38,6 +41,16 @@ interface Service {
   type: string;
   status: string;
   notes?: string;
+  preachingUser?: {
+    id: string;
+    firstName?: string;
+    lastName?: string;
+  };
+  worshipLeader?: {
+    id: string;
+    firstName?: string;
+    lastName?: string;
+  };
 }
 
 interface ServiceItem {
@@ -139,8 +152,12 @@ const TEMPLATE_ITEMS = [
 ];
 
 export default function Services() {
+  const navigate = useNavigate();
+  const { selectedChurch } = useChurch();
+  const isAdmin = selectedChurch?.role === "ADMIN";
   const { fetchApi } = useApi();
   const { toast } = useToast();
+  const t = useT();
   const [services, setServices] = useState<Service[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -266,18 +283,18 @@ export default function Services() {
           method: "PUT",
           body: JSON.stringify(payload),
         });
-        toast({ title: "Service updated successfully" });
+        toast({ title: t("services.updated") });
       } else {
         await fetchApi("/services", {
           method: "POST",
           body: JSON.stringify(payload),
         });
-        toast({ title: "Service created successfully" });
+        toast({ title: t("services.created") });
       }
       setDialogOpen(false);
       loadServices();
     } catch (e) {
-      toast({ title: "Failed to save service", variant: "destructive" });
+      toast({ title: t("services.saveFailed"), variant: "destructive" });
     } finally {
       setSubmitting(false);
     }
@@ -294,10 +311,10 @@ export default function Services() {
         method: "PUT",
         body: JSON.stringify({ ...service, status: newStatus }),
       });
-      toast({ title: `Status updated to ${newStatus}` });
+      toast({ title: `${t("common.status")}: ${newStatus}` });
       loadServices();
     } catch (e) {
-      toast({ title: "Failed to update status", variant: "destructive" });
+      toast({ title: t("services.statusUpdateFailed"), variant: "destructive" });
     }
   };
 
@@ -306,11 +323,11 @@ export default function Services() {
 
     try {
       await fetchApi(`/services/${deleteId}`, { method: "DELETE" });
-      toast({ title: "Service deleted successfully" });
+      toast({ title: t("services.deleted") });
       setDeleteId(null);
       loadServices();
     } catch (e) {
-      toast({ title: "Failed to delete service", variant: "destructive" });
+      toast({ title: t("services.deleteFailed"), variant: "destructive" });
     }
   };
 
@@ -356,7 +373,7 @@ export default function Services() {
     }
 
     if (!title.trim()) {
-      toast({ title: "Please select or enter a title", variant: "destructive" });
+      toast({ title: t("services.pleaseSelectTitle"), variant: "destructive" });
       return;
     }
 
@@ -376,7 +393,7 @@ export default function Services() {
           details: {},
         }),
       });
-      toast({ title: "Item added" });
+      toast({ title: t("services.itemAdded") });
       setAddItemDialogOpen(false);
 
       const serviceRes = await fetchApi(`/services/${selectedServiceId}`);
@@ -385,7 +402,7 @@ export default function Services() {
         setServiceItems((prev) => ({ ...prev, [selectedServiceId]: Array.isArray(items) ? items as ServiceItem[] : [] }));
       }
     } catch (e) {
-      toast({ title: "Failed to add item", variant: "destructive" });
+      toast({ title: t("services.addItemFailed"), variant: "destructive" });
     }
   };
 
@@ -396,9 +413,9 @@ export default function Services() {
         ...prev,
         [serviceId]: (prev[serviceId] || []).filter((i) => i.id !== itemId),
       }));
-      toast({ title: "Item deleted" });
+      toast({ title: t("services.itemDeleted") });
     } catch (e) {
-      toast({ title: "Failed to delete item", variant: "destructive" });
+      toast({ title: t("services.deleteItemFailed"), variant: "destructive" });
     }
   };
 
@@ -453,7 +470,7 @@ export default function Services() {
         body: JSON.stringify({ items: updates }),
       });
     } catch (e) {
-      toast({ title: "Failed to reorder items", variant: "destructive" });
+      toast({ title: t("services.reorderFailed"), variant: "destructive" });
       const serviceRes = await fetchApi(`/services/${targetServiceId}`);
       if (serviceRes && typeof serviceRes === 'object') {
         const items = (serviceRes as Record<string, unknown>).items || [];
@@ -496,7 +513,7 @@ export default function Services() {
         body: JSON.stringify({ items: updates }),
       });
     } catch (e) {
-      toast({ title: "Failed to reorder items", variant: "destructive" });
+      toast({ title: t("services.reorderFailed"), variant: "destructive" });
       setServiceItems((prev) => ({ ...prev, [serviceId]: items }));
     }
   };
@@ -525,7 +542,7 @@ export default function Services() {
 
   const handleAssignMember = async () => {
     if (!selectedServiceId || !selectedMember) {
-      toast({ title: "Please select a member", variant: "destructive" });
+      toast({ title: t("services.pleaseSelectMember"), variant: "destructive" });
       return;
     }
 
@@ -538,7 +555,7 @@ export default function Services() {
           position: selectedPosition,
         }),
       });
-      toast({ title: "Member assigned" });
+      toast({ title: t("services.memberAssigned") });
       setAssignDialogOpen(false);
 
       const serviceRes = await fetchApi(`/services/${selectedServiceId}`);
@@ -549,9 +566,9 @@ export default function Services() {
     } catch (e: unknown) {
       const error = e as { blocked?: boolean };
       if (error?.blocked) {
-        toast({ title: "Member has a blockout on this date", variant: "destructive" });
+        toast({ title: t("services.memberHasBlockout"), variant: "destructive" });
       } else {
-        toast({ title: "Failed to assign member", variant: "destructive" });
+        toast({ title: t("services.assignFailed"), variant: "destructive" });
       }
     }
   };
@@ -569,7 +586,7 @@ export default function Services() {
         ),
       }));
     } catch (e) {
-      toast({ title: "Failed to update assignment", variant: "destructive" });
+      toast({ title: t("services.updateAssignmentFailed"), variant: "destructive" });
     }
   };
 
@@ -580,9 +597,9 @@ export default function Services() {
         ...prev,
         [serviceId]: (prev[serviceId] || []).filter((a) => a.id !== assignmentId),
       }));
-      toast({ title: "Assignment removed" });
+      toast({ title: t("services.assignmentRemoved") });
     } catch (e) {
-      toast({ title: "Failed to remove assignment", variant: "destructive" });
+      toast({ title: t("services.removeAssignmentFailed"), variant: "destructive" });
     }
   };
 
@@ -606,10 +623,10 @@ export default function Services() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">Services</h1>
-        <Button size="sm" onClick={openNewDialog}>
-          <Plus className="w-4 h-4 mr-1" /> New Service
-        </Button>
+        <h1 className="text-2xl font-bold">{t("services.title")}</h1>
+        {isAdmin && <Button size="sm" onClick={openNewDialog}>
+          <Plus className="w-4 h-4 mr-1" /> {t("services.add")}
+        </Button>}
       </div>
 
       <div className="flex gap-3 mb-4">
@@ -617,7 +634,7 @@ export default function Services() {
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
-              placeholder="Search services..."
+              placeholder={t("services.searchPlaceholder")}
               className="pl-9"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -626,10 +643,10 @@ export default function Services() {
         </div>
         <Select value={filterType} onValueChange={setFilterType}>
           <SelectTrigger className="w-40">
-            <SelectValue placeholder="Type" />
+            <SelectValue placeholder={t("common.type")} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Types</SelectItem>
+            <SelectItem value="all">{t("services.allTypes")}</SelectItem>
             {SERVICE_TYPES.map((t) => (
               <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
             ))}
@@ -637,10 +654,10 @@ export default function Services() {
         </Select>
         <Select value={filterStatus} onValueChange={setFilterStatus}>
           <SelectTrigger className="w-32">
-            <SelectValue placeholder="Status" />
+            <SelectValue placeholder={t("services.status")} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Status</SelectItem>
+            <SelectItem value="all">{t("services.allStatuses")}</SelectItem>
             {SERVICE_STATUSES.map((s) => (
               <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
             ))}
@@ -653,13 +670,13 @@ export default function Services() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {editingService ? "Edit Service" : "New Service"}
+              {editingService ? t("services.edit") : t("services.new")}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div>
               <Input
-                placeholder="Service title"
+                placeholder={t("services.titlePlaceholder")}
                 value={formData.title}
                 onChange={(e) =>
                   setFormData({ ...formData, title: e.target.value })
@@ -683,7 +700,7 @@ export default function Services() {
                 }
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Select type" />
+                  <SelectValue placeholder={t("services.selectType")} />
                 </SelectTrigger>
                 <SelectContent>
                   {SERVICE_TYPES.map((t) => (
@@ -702,7 +719,7 @@ export default function Services() {
                 }
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Select status" />
+                  <SelectValue placeholder={t("services.selectStatus")} />
                 </SelectTrigger>
                 <SelectContent>
                   {SERVICE_STATUSES.map((s) => (
@@ -715,7 +732,7 @@ export default function Services() {
             </div>
             <div>
               <Textarea
-                placeholder="Notes (optional)"
+                placeholder={t("services.notesPlaceholder")}
                 value={formData.notes}
                 onChange={(e) =>
                   setFormData({ ...formData, notes: e.target.value })
@@ -725,13 +742,13 @@ export default function Services() {
             </div>
             <div className="flex gap-2">
               <Button onClick={handleSubmit} disabled={submitting}>
-                {submitting ? "Saving..." : editingService ? "Update" : "Create"}
+                {submitting ? t("common.saving") : editingService ? t("common.update") : t("common.create")}
               </Button>
               <Button
                 variant="outline"
                 onClick={() => setDialogOpen(false)}
               >
-                Cancel
+                {t("common.cancel")}
               </Button>
             </div>
           </div>
@@ -741,18 +758,17 @@ export default function Services() {
       <AlertDialog open={!!deleteId} onOpenChange={() => setDeleteId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Service</AlertDialogTitle>
+            <AlertDialogTitle>{t("services.deleteTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete this service? This action cannot
-              be undone.
+              {t("services.deleteConfirm")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel onClick={() => setDeleteId(null)}>
-              Cancel
+              {t("common.cancel")}
             </AlertDialogCancel>
             <AlertDialogAction onClick={handleDelete}>
-              Delete
+              {t("common.delete")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -761,7 +777,7 @@ export default function Services() {
       <Dialog open={addItemDialogOpen} onOpenChange={setAddItemDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Add Service Item</DialogTitle>
+            <DialogTitle>{t("services.addItem")}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div className="flex gap-2">
@@ -770,14 +786,14 @@ export default function Services() {
                 size="sm"
                 onClick={() => setNewItemType("template")}
               >
-                Template
+                {t("services.template")}
               </Button>
               <Button
                 variant={newItemType === "song" ? "default" : "outline"}
                 size="sm"
                 onClick={() => setNewItemType("song")}
               >
-                Song
+                {t("type.song")}
               </Button>
             </div>
 
@@ -788,7 +804,7 @@ export default function Services() {
                   onValueChange={(v) => setItemType(v as ServiceItem["type"])}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Item type" />
+                    <SelectValue placeholder={t("services.itemType")} />
                   </SelectTrigger>
                   <SelectContent>
                     {ITEM_TYPES.map((t) => (
@@ -817,7 +833,7 @@ export default function Services() {
                 </div>
                 {itemType !== "song" && !TEMPLATE_ITEMS.find((t) => t.title === itemTitle) && (
                   <Input
-                    placeholder="Or enter custom title"
+                    placeholder={t("services.customTitlePlaceholder")}
                     value={itemTitle}
                     onChange={(e) => setItemTitle(e.target.value)}
                   />
@@ -828,7 +844,7 @@ export default function Services() {
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                   <Input
-                    placeholder="Search songs..."
+                    placeholder={t("songs.search")}
                     className="pl-9"
                     value={songSearch}
                     onChange={(e) => {
@@ -851,8 +867,8 @@ export default function Services() {
                     >
                       <Music className="w-4 h-4 mr-2" />
                       <span>{song.title}</span>
-                      {song.author && <span className="ml-2 text-xs text-muted-foreground">by {song.author}</span>}
-                      {song.key && <span className="ml-2 text-xs text-muted-foreground">Key: {song.key}</span>}
+                      {song.author && <span className="ml-2 text-xs text-muted-foreground">{t("songs.by")}{song.author}</span>}
+                      {song.key && <span className="ml-2 text-xs text-muted-foreground">{t("common.key")}: {song.key}</span>}
                     </Button>
                   ))}
                 </div>
@@ -861,10 +877,10 @@ export default function Services() {
 
             <div className="flex gap-2 justify-end">
               <Button variant="outline" onClick={() => setAddItemDialogOpen(false)}>
-                Cancel
+                {t("common.cancel")}
               </Button>
               <Button onClick={handleAddItem} disabled={!itemTitle.trim()}>
-                Add Item
+                {t("services.addItem")}
               </Button>
             </div>
           </div>
@@ -874,13 +890,13 @@ export default function Services() {
       <Dialog open={assignDialogOpen} onOpenChange={setAssignDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Assign Team Member</DialogTitle>
+            <DialogTitle>{t("services.assignMember")}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
-                placeholder="Search members..."
+                placeholder={t("common.searchPlaceholder")}
                 className="pl-9"
                 value={memberSearch}
                 onChange={(e) => {
@@ -906,7 +922,7 @@ export default function Services() {
             </div>
             <Select value={selectedPosition} onValueChange={setSelectedPosition}>
               <SelectTrigger>
-                <SelectValue placeholder="Select position" />
+                <SelectValue placeholder={t("services.choosePosition")} />
               </SelectTrigger>
               <SelectContent>
                 {POSITIONS.map((p) => (
@@ -916,10 +932,10 @@ export default function Services() {
             </Select>
             <div className="flex gap-2 justify-end">
               <Button variant="outline" onClick={() => setAssignDialogOpen(false)}>
-                Cancel
+                {t("common.cancel")}
               </Button>
               <Button onClick={handleAssignMember} disabled={!selectedMember}>
-                Assign
+                {t("services.assign")}
               </Button>
             </div>
           </div>
@@ -933,11 +949,11 @@ export default function Services() {
           </div>
         )}
         {!loading && filteredServices.length === 0 && (
-          <p className="text-sm text-muted-foreground">No services found.</p>
+          <p className="text-sm text-muted-foreground">{t("services.empty")}</p>
         )}
         {!loading &&
           filteredServices.map((svc) => (
-            <Card key={svc.id} className="hover:shadow-md transition-shadow">
+            <Card key={svc.id} className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => navigate(`/app/services/${svc.id}`)}>
               <CardContent className="p-4">
                 <div className="flex items-center gap-4">
                   <div className="w-1 h-10 rounded bg-primary" />
@@ -958,15 +974,22 @@ export default function Services() {
                           })}`
                         : ""}
                     </p>
+                    {(svc.preachingUser || svc.worshipLeader) && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {svc.preachingUser && `${t("services.preacher")}: ${svc.preachingUser.firstName} ${svc.preachingUser.lastName}`}
+                        {svc.preachingUser && svc.worshipLeader && " · "}
+                        {svc.worshipLeader && `${t("services.worshipLeader")}: ${svc.worshipLeader.firstName} ${svc.worshipLeader.lastName}`}
+                      </p>
+                    )}
                   </div>
                   <button
-                    onClick={() => handleStatusToggle(svc)}
+                    onClick={(e) => { e.stopPropagation(); handleStatusToggle(svc); }}
                     className={`text-xs px-2 py-1 rounded cursor-pointer ${getStatusColor(svc.status)}`}
                     disabled={svc.status === "completed"}
                   >
                     {svc.status}
                   </button>
-                  <div className="flex gap-1">
+                  <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
                     <Button
                       variant="ghost"
                       size="sm"
@@ -974,20 +997,24 @@ export default function Services() {
                     >
                       {expandedService === svc.id ? "−" : "+"}
                     </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => openEditDialog(svc)}
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setDeleteId(svc.id)}
-                    >
-                      <Trash2 className="w-4 h-4 text-destructive" />
-                    </Button>
+                    {isAdmin && (
+                      <>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => openEditDialog(svc)}
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setDeleteId(svc.id)}
+                        >
+                          <Trash2 className="w-4 h-4 text-destructive" />
+                        </Button>
+                      </>
+                    )}
                   </div>
                 </div>
 
@@ -999,10 +1026,10 @@ export default function Services() {
 
                     <div>
                       <div className="flex items-center justify-between mb-2">
-                        <h4 className="text-sm font-medium">Service Flow</h4>
-                        <Button size="sm" variant="outline" onClick={() => openAddItemDialog(svc.id)}>
-                          <Plus className="w-3 h-3 mr-1" /> Add Item
-                        </Button>
+                        <h4 className="text-sm font-medium">{t("services.serviceFlow")}</h4>
+                        {isAdmin && <Button size="sm" variant="outline" onClick={() => openAddItemDialog(svc.id)}>
+                          <Plus className="w-3 h-3 mr-1" /> {t("services.addItem")}
+                        </Button>}
                       </div>
                       {itemsLoading[svc.id] ? (
                         <div className="flex items-center justify-center py-4">
@@ -1031,18 +1058,20 @@ export default function Services() {
                                   {item.duration}m
                                 </span>
                               )}
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="w-6 h-6"
-                                onClick={() => handleDeleteItem(svc.id, item.id)}
-                              >
-                                <X className="w-3 h-3" />
-                              </Button>
+                              {isAdmin && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="w-6 h-6"
+                                  onClick={() => handleDeleteItem(svc.id, item.id)}
+                                >
+                                  <X className="w-3 h-3" />
+                                </Button>
+                              )}
                             </div>
                           ))}
                           {(serviceItems[svc.id] || []).length === 0 && (
-                            <p className="text-sm text-muted-foreground text-center py-2">No items yet</p>
+                            <p className="text-sm text-muted-foreground text-center py-2">{t("services.noItems")}</p>
                           )}
                         </div>
                       )}
@@ -1050,10 +1079,10 @@ export default function Services() {
 
                     <div>
                       <div className="flex items-center justify-between mb-2">
-                        <h4 className="text-sm font-medium">Team</h4>
-                        <Button size="sm" variant="outline" onClick={() => openAssignDialog(svc.id)}>
-                          <Plus className="w-3 h-3 mr-1" /> Assign
-                        </Button>
+                        <h4 className="text-sm font-medium">{t("services.team")}</h4>
+                        {isAdmin && <Button size="sm" variant="outline" onClick={() => openAssignDialog(svc.id)}>
+                          <Plus className="w-3 h-3 mr-1" /> {t("services.assign")}
+                        </Button>}
                       </div>
                       <div className="space-y-1">
                         {(serviceAssignments[svc.id] || []).map((assignment) => (
@@ -1070,18 +1099,20 @@ export default function Services() {
                               {assignment.user?.firstName} {assignment.user?.lastName}
                             </span>
                             <span className="text-xs text-muted-foreground">{assignment.position}</span>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="w-6 h-6"
-                              onClick={() => handleRemoveAssignment(svc.id, assignment.id)}
-                            >
-                              <X className="w-3 h-3" />
-                            </Button>
+                            {isAdmin && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="w-6 h-6"
+                                onClick={() => handleRemoveAssignment(svc.id, assignment.id)}
+                              >
+                                <X className="w-3 h-3" />
+                              </Button>
+                            )}
                           </div>
                         ))}
                         {(serviceAssignments[svc.id] || []).length === 0 && (
-                          <p className="text-sm text-muted-foreground text-center py-2">No team members assigned</p>
+                          <p className="text-sm text-muted-foreground text-center py-2">{t("services.noTeam")}</p>
                         )}
                       </div>
                     </div>
