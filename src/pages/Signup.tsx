@@ -6,7 +6,6 @@ export default function Signup() {
       <SignUp
         routing="virtual"
         signInUrl="/login"
-        afterSignUpUrl="/app"
         appearance={{
           elements: {
             rootBox: "mx-auto",
