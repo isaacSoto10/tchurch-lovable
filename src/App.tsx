@@ -11,7 +11,7 @@ import Landing from "./pages/Landing";
 import Pricing from "./pages/Pricing";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
-import AppLayout from "./layouts/AppLayout";
+import { AppLayout } from "./layouts/AppLayout";
 import Dashboard from "./pages/app/Dashboard";
 import Songs from "./pages/app/Songs";
 import SongDetail from "./pages/app/SongDetail";

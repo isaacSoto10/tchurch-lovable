@@ -1,33 +1,37 @@
-import { SignUp, useAuth } from "@clerk/clerk-react";
+import { SignUp } from "@clerk/clerk-react";
+import { useAuth } from "@clerk/clerk-react";
 import { useNavigate } from "react-router-dom";
 import { useEffect } from "react";
 
-export default function Signup() {
-  const { isLoaded, isSignedIn } = useAuth();
+function SignupInner() {
+  const { isSignedIn } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (isLoaded && isSignedIn) {
-      navigate("/app", { replace: true });
+    if (isSignedIn) {
+      navigate("/app");
     }
-  }, [isLoaded, isSignedIn, navigate]);
+  }, [isSignedIn, navigate]);
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-6">
-      <SignUp
-        routing="virtual"
-        signInUrl="/login"
-        appearance={{
-          elements: {
-            rootBox: "mx-auto",
-            card: "shadow-xl",
-            socialButtonsBlockButton: "hidden",
-            socialButtonsBlockButtonText: "hidden",
-            dividerRow: "hidden",
-            dividerText: "hidden",
-          },
-        }}
-      />
+    <div className="flex min-h-svh items-center justify-center bg-gradient-to-br from-indigo-50 via-white to-violet-50 p-4">
+      <div className="w-full max-w-md">
+        <SignUp
+          routing="virtual"
+          appearance={{
+            elements: {
+              socialButtonsBlockButton: { display: "none" },
+              dividerLine: { display: "none" },
+              dividerText: { display: "none" },
+              formFieldLabel: { fontSize: "14px" },
+            },
+          }}
+        />
+      </div>
     </div>
   );
+}
+
+export default function Signup() {
+  return <SignupInner />;
 }

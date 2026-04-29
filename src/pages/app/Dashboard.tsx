@@ -34,6 +34,13 @@ interface Announcement {
   createdAt: string;
 }
 
+interface Ministry {
+  id: string;
+  name: string;
+  color: string;
+  memberCount?: number;
+}
+
 function formatDate(dateStr: string) {
   return new Date(dateStr).toLocaleDateString("en-US", {
     weekday: "short",
@@ -56,6 +63,7 @@ export default function Dashboard() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [ministries, setMinistries] = useState<Ministry[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -66,11 +74,12 @@ export default function Dashboard() {
       }
 
       try {
-        const [statsData, servicesData, eventsData, announcementsData] = await Promise.all([
+        const [statsData, servicesData, eventsData, announcementsData, ministriesData] = await Promise.all([
           fetchApi("/dashboard/stats"),
           fetchApi("/services"),
           fetchApi("/events"),
           fetchApi("/announcements"),
+          fetchApi("/my-ministries"),
         ]);
 
         if (statsData && typeof statsData === "object" && !statsData.error) {
@@ -106,6 +115,7 @@ export default function Dashboard() {
         setTimeline(merged.slice(0, 10));
 
         setAnnouncements(Array.isArray(announcementsData) ? announcementsData.slice(0, 10) : []);
+        setMinistries(Array.isArray(ministriesData) ? ministriesData : Array.isArray((ministriesData as any)?.ministries) ? (ministriesData as any).ministries : []);
       } catch (e) {
         console.error("Failed to load dashboard:", e);
       } finally {
@@ -192,6 +202,39 @@ export default function Dashboard() {
           <Plus className="w-3 h-3 mr-1" /> New Event
         </Button>
       </div>
+
+      {/* My Ministries */}
+      {ministries.length > 0 && (
+        <div className="mb-6">
+          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">
+            My Ministries
+          </h2>
+          <div className="grid grid-cols-2 gap-3">
+            {ministries.map((m) => (
+              <Card
+                key={m.id}
+                className="cursor-pointer hover:shadow-md transition-all"
+                onClick={() => navigate("/app/ministries")}
+              >
+                <CardContent className="p-4 flex items-center gap-3">
+                  <span
+                    className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-sm shrink-0"
+                    style={{ backgroundColor: m.color || "#6366f1" }}
+                  >
+                    {m.name.charAt(0).toUpperCase()}
+                  </span>
+                  <div className="min-w-0">
+                    <p className="font-medium text-sm truncate">{m.name}</p>
+                    {m.memberCount != null && (
+                      <p className="text-xs text-muted-foreground">{m.memberCount} members</p>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="flex items-center justify-center py-8">

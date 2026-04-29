@@ -1,7 +1,7 @@
 import { ClerkProvider as BaseClerkProvider } from "@clerk/clerk-react";
 import { useNavigate } from "react-router-dom";
 
-const CLERK_PUBLISHABLE_KEY = "pk_test_cHJlY2lzZS1tYW1tYWwtODguY2xlcmsuYWNjb3VudHMuZGV2JA";
+const CLERK_PUBLISHABLE_KEY = "pk_live_Y2xlcmsudGNodXJjaGFwcC5jb20k";
 
 export function ClerkProvider({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
@@ -12,8 +12,8 @@ export function ClerkProvider({ children }: { children: React.ReactNode }) {
       routerPush={(to) => navigate(to)}
       routerReplace={(to) => navigate(to, { replace: true })}
       fallbackRedirectUrl="/"
-      signInFallbackRedirectUrl="/"
-      signUpFallbackRedirectUrl="/"
+      signInFallbackRedirectUrl="/app"
+      signUpFallbackRedirectUrl="/app"
     >
       {children}
     </BaseClerkProvider>

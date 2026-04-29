@@ -36,6 +36,59 @@ import { useApi } from "@/hooks/useApi";
 import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 
+interface Ministry {
+  id: string;
+  name: string;
+  color: string;
+}
+
+function MinistriesSection({ fetchApi, selectedChurchId, collapsed }: { fetchApi: any; selectedChurchId?: string; collapsed: boolean }) {
+  const [ministries, setMinistries] = useState<Ministry[]>([]);
+
+  useEffect(() => {
+    if (!selectedChurchId) return;
+    fetchApi(`/my-ministries`)
+      .then((data: any) => {
+        const list = Array.isArray(data) ? data : Array.isArray(data?.ministries) ? data.ministries : [];
+        setMinistries(list.slice(0, 5));
+      })
+      .catch(() => setMinistries([]));
+  }, [selectedChurchId]);
+
+  if (ministries.length === 0) return null;
+
+  if (collapsed) {
+    return (
+      <div className="px-2 py-2 border-t">
+        <Users className="w-4 h-4 mx-auto text-muted-foreground" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="px-3 py-2 border-t">
+      <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-1">
+        My Ministries
+      </p>
+      <div className="space-y-0.5">
+        {ministries.map((m) => (
+          <NavLink
+            key={m.id}
+            to={`/app/ministries`}
+            className="flex items-center gap-2 px-2 py-1.5 rounded-md text-sm text-foreground hover:bg-muted/50 transition-colors"
+          >
+            <span
+              className="w-2.5 h-2.5 rounded-full shrink-0"
+              style={{ backgroundColor: m.color || "#6366f1" }}
+            />
+            <span className="truncate">{m.name}</span>
+          </NavLink>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 interface NavItem {
   title: string;
   url: string;
@@ -166,6 +219,13 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
+      {/* My Ministries */}
+      {!collapsed && (
+        <MinistriesSection fetchApi={fetchApi} selectedChurchId={selectedChurch?.id} collapsed={false} />
+      )}
+      {collapsed && (
+        <MinistriesSection fetchApi={fetchApi} selectedChurchId={selectedChurch?.id} collapsed={true} />
+      )}
       {!collapsed && (
         <div className="px-3 py-2 border-t">
           {isAdmin && (
