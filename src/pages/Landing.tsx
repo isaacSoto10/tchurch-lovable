@@ -1,8 +1,16 @@
 import { motion } from "framer-motion";
+import { useAuth } from "@clerk/clerk-react";
+import { Navigate } from "react-router-dom";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 
 export default function Landing() {
+  const { isLoaded, isSignedIn } = useAuth();
+
+  if (isLoaded && isSignedIn) {
+    return <Navigate to="/app" replace />;
+  }
+
   return (
     <div className="min-h-screen bg-background flex flex-col items-center justify-center px-6">
       {/* Logo & Branding */}

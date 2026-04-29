@@ -1,4 +1,5 @@
 import { ClerkProvider as BaseClerkProvider } from "@clerk/clerk-react";
+import { Capacitor } from "@capacitor/core";
 import { useNavigate } from "react-router-dom";
 
 const CLERK_PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
@@ -6,6 +7,7 @@ const CLERK_PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 export function ClerkProvider({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const isDev = import.meta.env.DEV;
+  const postAuthRedirect = Capacitor.isNativePlatform() ? "/#/app" : "/app";
 
   if (!CLERK_PUBLISHABLE_KEY) {
     return (
@@ -46,9 +48,11 @@ export function ClerkProvider({ children }: { children: React.ReactNode }) {
       publishableKey={CLERK_PUBLISHABLE_KEY}
       routerPush={(to) => navigate(to)}
       routerReplace={(to) => navigate(to, { replace: true })}
-      fallbackRedirectUrl="/"
-      signInFallbackRedirectUrl="/app"
-      signUpFallbackRedirectUrl="/app"
+      fallbackRedirectUrl={postAuthRedirect}
+      signInFallbackRedirectUrl={postAuthRedirect}
+      signUpFallbackRedirectUrl={postAuthRedirect}
+      signInForceRedirectUrl={postAuthRedirect}
+      signUpForceRedirectUrl={postAuthRedirect}
     >
       {children}
     </BaseClerkProvider>

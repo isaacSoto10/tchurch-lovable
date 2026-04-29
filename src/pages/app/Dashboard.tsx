@@ -131,9 +131,28 @@ export default function Dashboard() {
 
   if (!selectedChurch) {
     return (
-      <div className="flex flex-col items-center justify-center py-20 text-center">
-        <p className="text-muted-foreground mb-2">No church selected</p>
-        <p className="text-sm text-muted-foreground">Contact support to join a church</p>
+      <div className="flex flex-1 items-center justify-center py-10">
+        <Card className="w-full max-w-md border-dashed">
+          <CardContent className="flex flex-col items-center gap-4 p-8 text-center">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10">
+              <Users className="h-7 w-7 text-primary" />
+            </div>
+            <div className="space-y-2">
+              <p className="text-xl font-semibold">No church selected</p>
+              <p className="text-sm text-muted-foreground">
+                Join an existing church or create your own workspace to start using the app.
+              </p>
+            </div>
+            <div className="flex w-full flex-col gap-3 sm:flex-row">
+              <Button className="flex-1" onClick={() => navigate("/join-church")}>
+                Join Church
+              </Button>
+              <Button className="flex-1" variant="outline" onClick={() => navigate("/create-church")}>
+                Create Church
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     );
   }
@@ -183,22 +202,22 @@ export default function Dashboard() {
   };
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
+    <div className="w-full min-w-0 space-y-8 overflow-x-clip">
+      <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold">{getGreeting()}</h1>
           <p className="text-sm text-muted-foreground">{selectedChurch.name}</p>
         </div>
-        <Button size="sm" variant="outline" onClick={() => navigate("/app/calendar")}>
+        <Button className="w-full sm:w-auto" size="sm" variant="outline" onClick={() => navigate("/app/calendar")}>
           <Calendar className="w-4 h-4 mr-1" /> Calendar
         </Button>
       </div>
 
-      <div className="flex gap-2 mb-6">
-        <Button size="sm" onClick={() => navigate("/app/services")}>
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Button className="w-full sm:w-auto" size="sm" onClick={() => navigate("/app/services")}>
           <Plus className="w-3 h-3 mr-1" /> New Service
         </Button>
-        <Button size="sm" variant="outline" onClick={() => navigate("/app/events")}>
+        <Button className="w-full sm:w-auto" size="sm" variant="outline" onClick={() => navigate("/app/events")}>
           <Plus className="w-3 h-3 mr-1" /> New Event
         </Button>
       </div>
@@ -209,11 +228,11 @@ export default function Dashboard() {
           <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">
             My Ministries
           </h2>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
             {ministries.map((m) => (
               <Card
                 key={m.id}
-                className="cursor-pointer hover:shadow-md transition-all"
+                className="min-w-0 cursor-pointer hover:shadow-md transition-all"
                 onClick={() => navigate("/app/ministries")}
               >
                 <CardContent className="p-4 flex items-center gap-3">
@@ -258,7 +277,7 @@ export default function Dashboard() {
                 {thisWeekItems.map((item) => (
                   <Card
                     key={`${item._type}-${item.id}`}
-                    className="cursor-pointer hover:shadow-md transition-shadow"
+                    className="min-w-0 cursor-pointer hover:shadow-md transition-shadow"
                     onClick={() => navigate(item._type === "service" ? "/app/services" : "/app/events")}
                   >
                     <CardContent className="p-3 flex items-center gap-3">
@@ -297,7 +316,7 @@ export default function Dashboard() {
                 {comingUpItems.map((item) => (
                   <Card
                     key={`${item._type}-${item.id}`}
-                    className="cursor-pointer hover:shadow-md transition-shadow"
+                    className="min-w-0 cursor-pointer hover:shadow-md transition-shadow"
                     onClick={() => navigate(item._type === "service" ? "/app/services" : "/app/events")}
                   >
                     <CardContent className="p-3 flex items-center gap-3">
@@ -331,25 +350,25 @@ export default function Dashboard() {
 
       {announcements.length > 0 && (
         <div className="mt-8">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex min-w-0 items-center justify-between gap-3 mb-4">
             <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
               Recent Announcements
             </h2>
-            <Button size="sm" variant="ghost" onClick={() => navigate("/app/announcements")}>
+            <Button className="shrink-0" size="sm" variant="ghost" onClick={() => navigate("/app/announcements")}>
               View All <ArrowRight className="w-3 h-3 ml-1" />
             </Button>
           </div>
           <div className="space-y-3">
             {announcements.slice(0, 10).map((ann) => (
-              <Card key={ann.id} className="overflow-hidden">
-                <div className="flex">
+              <Card key={ann.id} className="min-w-0 overflow-hidden">
+                <div className="flex min-w-0">
                   {ann.imageUrl && (
                     <div className="w-24 h-24 shrink-0">
                       <img src={ann.imageUrl} alt={ann.title} className="w-full h-full object-cover" />
                     </div>
                   )}
-                  <CardContent className="p-3 flex-1">
-                    <p className="font-medium">{ann.title}</p>
+                  <CardContent className="min-w-0 flex-1 p-3">
+                    <p className="truncate font-medium">{ann.title}</p>
                     <p className="text-sm text-muted-foreground line-clamp-2 mt-1">
                       {ann.content}
                     </p>
@@ -372,17 +391,17 @@ export default function Dashboard() {
           <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">
             Overview
           </h2>
-          <div className="grid grid-cols-4 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+          <div className="grid min-w-0 grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
             {statItems.map((stat) => (
               <Card
                 key={stat.label}
-                className="cursor-pointer hover:shadow-md transition-shadow"
+                className="min-w-0 cursor-pointer hover:shadow-md transition-shadow"
                 onClick={() => navigate(stat.href)}
               >
-                <CardContent className="p-2 text-center">
+                <CardContent className="p-3 text-center">
                   <stat.icon className="w-4 h-4 mx-auto text-muted-foreground mb-1" />
                   <p className="text-lg font-bold">{stat.value}</p>
-                  <p className="text-[10px] text-muted-foreground truncate">{stat.label}</p>
+                  <p className="text-xs text-muted-foreground truncate">{stat.label}</p>
                 </CardContent>
               </Card>
             ))}
