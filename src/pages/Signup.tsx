@@ -17,7 +17,9 @@ function SignupInner() {
     <div className="flex min-h-svh items-center justify-center bg-gradient-to-br from-indigo-50 via-white to-violet-50 p-4">
       <div className="w-full max-w-md">
         <SignUp
-          routing="virtual"
+          routing="path"
+          path="/signup"
+          signInUrl="/login"
           appearance={{
             elements: {
               socialButtonsBlockButton: { display: "none" },
