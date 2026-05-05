@@ -1,0 +1,10 @@
+{
+	"appId": "com.tchurchapp.tchurch",
+	"appName": "Tchurch",
+	"webDir": "dist",
+	"server": {
+		"iosScheme": "https",
+		"androidScheme": "https"
+	},
+	"packageClassList": []
+}
