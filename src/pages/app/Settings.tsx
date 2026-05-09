@@ -8,7 +8,7 @@ import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useApi } from "@/hooks/useApi";
 import { useChurch } from "@/providers/ChurchProvider";
-import { User, Bell, Church, LogOut, Settings, Loader2, Check, X, Shield, CreditCard, Crown, Users, AlertCircle, CheckCircle } from "lucide-react";
+import { User, Bell, Church, LogOut, Settings, Loader2, Check, X, Shield, CreditCard, Crown, Users, AlertCircle, CheckCircle, MessageCircle } from "lucide-react";
 
 type PendingMember = {
   id: string;
@@ -51,6 +51,30 @@ type ChurchMemberRecord = {
   } | null;
 };
 
+type WhatsAppSettings = {
+  user: {
+    whatsappPhone: string;
+    whatsappOptIn: boolean;
+    whatsappNotifications: boolean;
+    whatsappLanguage: "es" | "en";
+  };
+  preferences: {
+    whatsappAssignments: boolean;
+    whatsappAnnouncements: boolean;
+    whatsappEvents: boolean;
+    whatsappResources: boolean;
+  };
+  church: {
+    whatsappGroupUrl: string;
+    whatsappEnabled: boolean;
+  };
+  role: string;
+  config: {
+    configured: boolean;
+    templates: Record<string, boolean>;
+  };
+};
+
 export default function Settings() {
   const { selectedChurch, churches, switchChurch } = useChurch();
   const { fetchApi } = useApi();
@@ -75,6 +99,12 @@ export default function Settings() {
   const [billingData, setBillingData] = useState<BillingData | null>(null);
   const [loadingBilling, setLoadingBilling] = useState(false);
   const [openingPortal, setOpeningPortal] = useState(false);
+  const [whatsappSettings, setWhatsappSettings] = useState<WhatsAppSettings | null>(null);
+  const [loadingWhatsApp, setLoadingWhatsApp] = useState(false);
+  const [savingWhatsApp, setSavingWhatsApp] = useState(false);
+  const [testingWhatsApp, setTestingWhatsApp] = useState(false);
+  const [whatsappMessage, setWhatsappMessage] = useState("");
+  const [whatsappError, setWhatsappError] = useState("");
 
   useEffect(() => {
     async function load() {
@@ -89,6 +119,22 @@ export default function Settings() {
     }
     load();
   }, [fetchApi]);
+
+  const loadWhatsAppSettings = useCallback(async () => {
+    setLoadingWhatsApp(true);
+    try {
+      const data = await fetchApi<WhatsAppSettings>("/whatsapp/settings");
+      setWhatsappSettings(data);
+    } catch (e) {
+      console.error("Failed to load WhatsApp settings:", e);
+    } finally {
+      setLoadingWhatsApp(false);
+    }
+  }, [fetchApi]);
+
+  useEffect(() => {
+    loadWhatsAppSettings();
+  }, [loadWhatsAppSettings]);
 
   useEffect(() => {
     if (selectedChurch?.id) {
@@ -204,6 +250,64 @@ export default function Settings() {
     }
   }
 
+  async function handleSaveWhatsApp() {
+    if (!whatsappSettings) return;
+    setSavingWhatsApp(true);
+    setWhatsappMessage("");
+    setWhatsappError("");
+    try {
+      const data = await fetchApi<WhatsAppSettings>("/whatsapp/settings", {
+        method: "PUT",
+        body: JSON.stringify({
+          whatsappPhone: whatsappSettings.user.whatsappPhone,
+          whatsappOptIn: whatsappSettings.user.whatsappOptIn,
+          whatsappNotifications: whatsappSettings.user.whatsappNotifications,
+          whatsappLanguage: whatsappSettings.user.whatsappLanguage,
+          preferences: whatsappSettings.preferences,
+          ...(isAdmin ? {
+            churchWhatsappGroupUrl: whatsappSettings.church.whatsappGroupUrl,
+            whatsappEnabled: whatsappSettings.church.whatsappEnabled,
+          } : {}),
+        }),
+      });
+      setWhatsappSettings(data);
+      setWhatsappMessage("WhatsApp settings saved.");
+    } catch (e) {
+      setWhatsappError("Could not save WhatsApp settings.");
+    } finally {
+      setSavingWhatsApp(false);
+    }
+  }
+
+  async function handleTestWhatsApp() {
+    setTestingWhatsApp(true);
+    setWhatsappMessage("");
+    setWhatsappError("");
+    try {
+      const data = await fetchApi<{ ok?: boolean; disabled?: boolean; error?: string }>("/whatsapp/settings", {
+        method: "POST",
+      });
+      if (data.ok === false && !data.disabled) throw new Error(data.error || "Could not send test.");
+      setWhatsappMessage(data.disabled ? "Preferences saved. WhatsApp Cloud API is not configured yet." : "Test WhatsApp sent.");
+    } catch (e) {
+      setWhatsappError(e instanceof Error ? e.message : "Could not send test WhatsApp.");
+    } finally {
+      setTestingWhatsApp(false);
+    }
+  }
+
+  function updateWhatsAppUser<K extends keyof WhatsAppSettings["user"]>(key: K, value: WhatsAppSettings["user"][K]) {
+    setWhatsappSettings((current) => current ? { ...current, user: { ...current.user, [key]: value } } : current);
+  }
+
+  function updateWhatsAppChurch<K extends keyof WhatsAppSettings["church"]>(key: K, value: WhatsAppSettings["church"][K]) {
+    setWhatsappSettings((current) => current ? { ...current, church: { ...current.church, [key]: value } } : current);
+  }
+
+  function updateWhatsAppPreference<K extends keyof WhatsAppSettings["preferences"]>(key: K, value: WhatsAppSettings["preferences"][K]) {
+    setWhatsappSettings((current) => current ? { ...current, preferences: { ...current.preferences, [key]: value } } : current);
+  }
+
   async function handleApprove(userId: string) {
     setProcessingId(userId);
     try {
@@ -275,9 +379,13 @@ export default function Settings() {
       </div>
 
       <Tabs defaultValue="profile" className="w-full">
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1">
           <TabsTrigger value="profile">Profile</TabsTrigger>
           <TabsTrigger value="notifications">Notifications</TabsTrigger>
+          <TabsTrigger value="whatsapp">
+            <MessageCircle className="w-4 h-4 mr-1.5" />
+            WhatsApp
+          </TabsTrigger>
           {isAdmin && (
             <>
               <TabsTrigger value="church">Church</TabsTrigger>
@@ -440,6 +548,153 @@ export default function Settings() {
                   disabled={savingPrefs}
                 />
               </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="whatsapp" className="mt-6">
+          <Card className="border-emerald-100 bg-gradient-to-br from-white to-emerald-50/50">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <MessageCircle className="w-5 h-5 text-emerald-600" />
+                WhatsApp
+              </CardTitle>
+              <CardDescription>
+                Receive announcements, events, assignments, and ministry resources where your church already communicates.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {loadingWhatsApp || !whatsappSettings ? (
+                <div className="flex justify-center py-8">
+                  <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : (
+                <>
+                  {!whatsappSettings.config.configured && (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                      WhatsApp Cloud API is not configured yet, but users can still save opt-in preferences and group links.
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="text-sm font-medium block mb-1">WhatsApp number</label>
+                    <input
+                      value={whatsappSettings.user.whatsappPhone}
+                      onChange={(event) => updateWhatsAppUser("whatsappPhone", event.target.value)}
+                      placeholder="+1 555 123 4567"
+                      className="w-full px-3 py-2 border rounded-md text-sm"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-sm font-medium block mb-1">Message language</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button
+                        type="button"
+                        variant={whatsappSettings.user.whatsappLanguage === "es" ? "default" : "outline"}
+                        onClick={() => updateWhatsAppUser("whatsappLanguage", "es")}
+                      >
+                        Español
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={whatsappSettings.user.whatsappLanguage === "en" ? "default" : "outline"}
+                        onClick={() => updateWhatsAppUser("whatsappLanguage", "en")}
+                      >
+                        English
+                      </Button>
+                    </div>
+                  </div>
+
+                  <Separator />
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1 pr-4">
+                      <p className="font-medium text-sm">I consent to WhatsApp messages</p>
+                      <p className="text-xs text-muted-foreground">Required before Tchurch sends WhatsApp notifications.</p>
+                    </div>
+                    <Switch
+                      checked={whatsappSettings.user.whatsappOptIn}
+                      onCheckedChange={(value) => updateWhatsAppUser("whatsappOptIn", value)}
+                    />
+                  </div>
+                  <Separator />
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1 pr-4">
+                      <p className="font-medium text-sm">Send notifications by WhatsApp</p>
+                      <p className="text-xs text-muted-foreground">Assignments, events, announcements, and ministry resources.</p>
+                    </div>
+                    <Switch
+                      checked={whatsappSettings.user.whatsappNotifications}
+                      onCheckedChange={(value) => updateWhatsAppUser("whatsappNotifications", value)}
+                    />
+                  </div>
+
+                  <div className="rounded-lg border border-emerald-100 bg-emerald-50/60 p-3 space-y-3">
+                    <div>
+                      <p className="font-medium text-sm">What should arrive on WhatsApp?</p>
+                      <p className="text-xs text-muted-foreground">You can keep the channel useful instead of noisy.</p>
+                    </div>
+                    {[
+                      ["whatsappAssignments", "Service assignments"],
+                      ["whatsappAnnouncements", "Announcements"],
+                      ["whatsappEvents", "Events and reminders"],
+                      ["whatsappResources", "Ministry resources"],
+                    ].map(([key, label]) => (
+                      <div key={key} className="flex items-center justify-between rounded-md bg-white px-3 py-2">
+                        <p className="text-sm">{label}</p>
+                        <Switch
+                          checked={whatsappSettings.preferences[key as keyof WhatsAppSettings["preferences"]]}
+                          onCheckedChange={(value) => updateWhatsAppPreference(key as keyof WhatsAppSettings["preferences"], value)}
+                          disabled={!whatsappSettings.user.whatsappNotifications}
+                        />
+                      </div>
+                    ))}
+                  </div>
+
+                  {isAdmin && (
+                    <>
+                      <Separator />
+                      <div>
+                        <label className="text-sm font-medium block mb-1">Church WhatsApp group link</label>
+                        <input
+                          value={whatsappSettings.church.whatsappGroupUrl}
+                          onChange={(event) => updateWhatsAppChurch("whatsappGroupUrl", event.target.value)}
+                          placeholder="https://chat.whatsapp.com/..."
+                          className="w-full px-3 py-2 border rounded-md text-sm"
+                        />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1 pr-4">
+                          <p className="font-medium text-sm">Show WhatsApp group tools</p>
+                          <p className="text-xs text-muted-foreground">Expose group links and quick share actions to members.</p>
+                        </div>
+                        <Switch
+                          checked={whatsappSettings.church.whatsappEnabled}
+                          onCheckedChange={(value) => updateWhatsAppChurch("whatsappEnabled", value)}
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {whatsappMessage && (
+                    <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{whatsappMessage}</p>
+                  )}
+                  {whatsappError && (
+                    <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{whatsappError}</p>
+                  )}
+
+                  <div className="flex gap-2">
+                    <Button onClick={handleSaveWhatsApp} disabled={savingWhatsApp} className="flex-1">
+                      {savingWhatsApp && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                      Save
+                    </Button>
+                    <Button onClick={handleTestWhatsApp} disabled={testingWhatsApp} variant="outline" className="flex-1">
+                      {testingWhatsApp && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                      Test
+                    </Button>
+                  </div>
+                </>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Loader2, ArrowLeft, MapPin, Calendar, Clock, Users, Check, X, Trash2 } from "lucide-react";
+import { Loader2, ArrowLeft, MapPin, Calendar, Clock, Users, Check, X, Trash2, MessageCircle } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useChurch } from "@/providers/ChurchProvider";
 
@@ -44,6 +44,18 @@ type EventResponse = Event & {
 function getInitials(firstName?: string | null, lastName?: string | null, email?: string): string {
   if (firstName || lastName) return `${firstName?.[0] || ""}${lastName?.[0] || ""}`.toUpperCase();
   return (email?.[0] || "?").toUpperCase();
+}
+
+function whatsappEventShare(event: Event) {
+  const date = new Date(event.date).toLocaleString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  const location = event.location ? `\nLocation: ${event.location}` : "";
+  return `https://wa.me/?text=${encodeURIComponent(`📅 ${event.title}\n${date}${location}`)}`;
 }
 
 export default function EventDetail() {
@@ -198,6 +210,12 @@ export default function EventDetail() {
                 </div>
               </>
             )}
+
+            <Button variant="outline" asChild className="w-full">
+              <a href={whatsappEventShare(event)} target="_blank" rel="noreferrer">
+                <MessageCircle className="w-4 h-4 mr-2" /> Share on WhatsApp
+              </a>
+            </Button>
           </CardContent>
         </Card>
 

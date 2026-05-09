@@ -14,7 +14,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, ArrowLeft, Plus, Check, X, UserMinus, Users, Clock } from "lucide-react";
+import { Loader2, ArrowLeft, Plus, Check, X, UserMinus, Users, Clock, MessageCircle } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useChurch } from "@/providers/ChurchProvider";
 import { MinistryResources } from "@/components/MinistryResources";
@@ -39,6 +39,7 @@ type Ministry = {
   name: string;
   description?: string | null;
   color?: string | null;
+  whatsappGroupUrl?: string | null;
   members?: MinistryMember[];
 };
 
@@ -98,7 +99,7 @@ export default function MinistryDetail() {
   const [addEmail, setAddEmail] = useState("");
   const [addRole, setAddRole] = useState("MEMBER");
   const [submitting, setSubmitting] = useState(false);
-  const [editForm, setEditForm] = useState({ name: "", description: "", color: "" });
+  const [editForm, setEditForm] = useState({ name: "", description: "", color: "", whatsappGroupUrl: "" });
 
   // Fetch ministry
   useEffect(() => {
@@ -111,6 +112,7 @@ export default function MinistryDetail() {
           name: data.name || "",
           description: data.description || "",
           color: data.color || "",
+          whatsappGroupUrl: data.whatsappGroupUrl || "",
         });
       } catch (e) {
         console.error(e);
@@ -332,11 +334,29 @@ export default function MinistryDetail() {
         {activeTab === "members" && (
           <div className="space-y-3">
             {canManage && (
-              <div className="flex justify-end">
+              <div className="flex justify-end gap-2">
+                {ministry.whatsappGroupUrl && (
+                  <Button size="sm" variant="outline" asChild>
+                    <a href={ministry.whatsappGroupUrl} target="_blank" rel="noreferrer">
+                      <MessageCircle className="w-4 h-4 mr-1" /> WhatsApp
+                    </a>
+                  </Button>
+                )}
                 <Button size="sm" onClick={() => setShowAddMember(true)}>
                   <Plus className="w-4 h-4 mr-1" /> Add Member
                 </Button>
               </div>
+            )}
+            {!canManage && ministry.whatsappGroupUrl && (
+              <Card className="border-emerald-100 bg-emerald-50">
+                <CardContent className="p-4">
+                  <Button asChild className="w-full bg-emerald-600 hover:bg-emerald-700">
+                    <a href={ministry.whatsappGroupUrl} target="_blank" rel="noreferrer">
+                      <MessageCircle className="w-4 h-4 mr-2" /> Open ministry WhatsApp group
+                    </a>
+                  </Button>
+                </CardContent>
+              </Card>
             )}
 
             {!isMember && !isPending && (
@@ -591,6 +611,14 @@ export default function MinistryDetail() {
                   />
                 )}
               </div>
+            </div>
+            <div className="space-y-2">
+              <Label>WhatsApp Group Link</Label>
+              <Input
+                value={editForm.whatsappGroupUrl}
+                onChange={(e) => setEditForm({ ...editForm, whatsappGroupUrl: e.target.value })}
+                placeholder="https://chat.whatsapp.com/..."
+              />
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setShowEditMinistry(false)}>

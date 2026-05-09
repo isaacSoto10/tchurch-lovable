@@ -18,7 +18,7 @@ import {
 import { AnnouncementAiImageField } from "@/components/AnnouncementAiImageField";
 import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
-import { Check, Loader2, Megaphone, Send, Trash2, X } from "lucide-react";
+import { Check, Loader2, Megaphone, MessageCircle, Send, Trash2, X } from "lucide-react";
 
 type AnnouncementStatus = "PENDING" | "PUBLISHED" | "REJECTED";
 type Locale = "en" | "es";
@@ -65,6 +65,10 @@ function creatorName(announcement: Announcement) {
   return [announcement.creatorFirstName, announcement.creatorLastName].filter(Boolean).join(" ") ||
     announcement.creatorEmail ||
     "A church member";
+}
+
+function whatsappShareLink(title: string, content: string) {
+  return `https://wa.me/?text=${encodeURIComponent(`📣 ${title}\n\n${content}`)}`;
 }
 
 export default function Announcements() {
@@ -431,7 +435,15 @@ function AnnouncementCard({
           <p className="text-xs text-muted-foreground">
             {announcement.status === "PUBLISHED" ? "Posted" : "Created"} {formatDate(announcement.publishedAt || announcement.createdAt)} by {creatorName(announcement)}
           </p>
-          {actions}
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" asChild>
+              <a href={whatsappShareLink(announcement.title, announcement.content)} target="_blank" rel="noreferrer">
+                <MessageCircle className="h-4 w-4" />
+                WhatsApp
+              </a>
+            </Button>
+            {actions}
+          </div>
         </div>
       </CardContent>
     </Card>
