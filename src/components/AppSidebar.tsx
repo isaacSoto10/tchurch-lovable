@@ -16,10 +16,9 @@ import {
   UserCircle,
   CalendarX,
   Shield,
-  Loader2,
+  type LucideIcon,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
-import { useLocation } from "react-router-dom";
 import { useClerk, useUser } from "@clerk/clerk-react";
 import {
   Sidebar,
@@ -33,7 +32,7 @@ import {
 } from "@/components/ui/sidebar";
 import { useChurch } from "@/providers/ChurchProvider";
 import { useApi } from "@/hooks/useApi";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 
 interface Ministry {
@@ -42,18 +41,32 @@ interface Ministry {
   color: string;
 }
 
-function MinistriesSection({ fetchApi, selectedChurchId, collapsed }: { fetchApi: any; selectedChurchId?: string; collapsed: boolean }) {
+type FetchApi = <T = unknown>(path: string, options?: RequestInit) => Promise<T>;
+
+interface MyMinistriesResponse {
+  ministries?: Ministry[];
+}
+
+interface ChurchMemberSummary {
+  status?: string | null;
+}
+
+interface ChurchMembersResponse {
+  members?: ChurchMemberSummary[];
+}
+
+function MinistriesSection({ fetchApi, selectedChurchId, collapsed }: { fetchApi: FetchApi; selectedChurchId?: string; collapsed: boolean }) {
   const [ministries, setMinistries] = useState<Ministry[]>([]);
 
   useEffect(() => {
     if (!selectedChurchId) return;
-    fetchApi(`/my-ministries`)
-      .then((data: any) => {
+    fetchApi<Ministry[] | MyMinistriesResponse>(`/my-ministries`)
+      .then((data) => {
         const list = Array.isArray(data) ? data : Array.isArray(data?.ministries) ? data.ministries : [];
         setMinistries(list.slice(0, 5));
       })
       .catch(() => setMinistries([]));
-  }, [selectedChurchId]);
+  }, [fetchApi, selectedChurchId]);
 
   if (ministries.length === 0) return null;
 
@@ -74,7 +87,7 @@ function MinistriesSection({ fetchApi, selectedChurchId, collapsed }: { fetchApi
         {ministries.map((m) => (
           <NavLink
             key={m.id}
-            to={`/app/ministries`}
+            to={`/app/ministries/${m.id}`}
             className="flex items-center gap-2 px-2 py-1.5 rounded-md text-sm text-foreground hover:bg-muted/50 transition-colors"
           >
             <span
@@ -92,7 +105,7 @@ function MinistriesSection({ fetchApi, selectedChurchId, collapsed }: { fetchApi
 interface NavItem {
   title: string;
   url: string;
-  icon: any;
+  icon: LucideIcon;
   adminOnly?: boolean;
   leaderOnly?: boolean;
 }
@@ -118,18 +131,27 @@ const navItems: NavItem[] = [
 export function AppSidebar() {
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
-  const location = useLocation();
   const { signOut } = useClerk();
   const { user } = useUser();
   const { selectedChurch } = useChurch();
   const { fetchApi } = useApi();
 
   const [pendingCount, setPendingCount] = useState(0);
-  const [loadingPending, setLoadingPending] = useState(false);
-
   const isAdmin = selectedChurch?.role === "ADMIN";
   const isPlanner = selectedChurch?.role === "PLANNER" || isAdmin;
   const isLeader = selectedChurch?.role === "LEADER" || isPlanner;
+
+  const loadPendingCount = useCallback(async () => {
+    if (!selectedChurch?.id) return;
+    try {
+      const data = await fetchApi<ChurchMembersResponse>(`/churches/${selectedChurch.id}/members`);
+      const members = Array.isArray(data?.members) ? data.members : [];
+      setPendingCount(members.filter((member) => member.status === "PENDING" || !member.status).length);
+    } catch (e) {
+      console.error("Failed to load pending count:", e);
+      setPendingCount(0);
+    }
+  }, [fetchApi, selectedChurch?.id]);
 
   useEffect(() => {
     if (isAdmin && selectedChurch?.id) {
@@ -137,20 +159,7 @@ export function AppSidebar() {
     } else {
       setPendingCount(0);
     }
-  }, [isAdmin, selectedChurch?.id]);
-
-  async function loadPendingCount() {
-    setLoadingPending(true);
-    try {
-      const data = await fetchApi<{ users: any[] }>(`/churches/${selectedChurch.id}/pending-users`);
-      setPendingCount(data.users?.length || 0);
-    } catch (e) {
-      console.error("Failed to load pending count:", e);
-      setPendingCount(0);
-    } finally {
-      setLoadingPending(false);
-    }
-  }
+  }, [isAdmin, loadPendingCount, selectedChurch?.id]);
 
   function canSee(item: NavItem): boolean {
     if (item.adminOnly) return isAdmin;

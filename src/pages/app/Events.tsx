@@ -1,17 +1,11 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, Pencil, Trash2, Check } from "lucide-react";
-import { useApi } from "@/hooks/useApi";
-import { useToast } from "@/components/ui/use-toast";
-import { useChurch } from "@/providers/ChurchProvider";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -22,289 +16,518 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { useApi } from "@/hooks/useApi";
+import { useChurch } from "@/providers/ChurchProvider";
+import { useToast } from "@/components/ui/use-toast";
+import { CalendarDays, Clock, Loader2, MapPin, Plus, Trash2, UserRound } from "lucide-react";
 
-interface Event {
+type EventType = "service" | "bible_study" | "fellowship" | "youth" | "children" | "special_event";
+
+interface EventItem {
   id: string;
-  name?: string;
-  title?: string;
-  date?: string;
-  time?: string;
-  location?: string;
-  type?: string;
-  description?: string;
-  status?: string;
+  title: string;
+  description?: string | null;
+  date: string;
+  endDate?: string | null;
+  location?: string | null;
+  type?: EventType | string | null;
+  notes?: string | null;
+  ministryId?: string | null;
+  leaderId?: string | null;
+  ministryName?: string | null;
+  ministryColor?: string | null;
+  leaderFirstName?: string | null;
+  leaderLastName?: string | null;
+  leaderEmail?: string | null;
 }
 
-const EVENT_TYPES = [
-  { label: "Sunday Service", value: "sunday_service" },
-  { label: "Wednesday Service", value: "wednesday_service" },
-  { label: "Bible Study", value: "bible_study" },
-  { label: "Youth", value: "youth" },
-  { label: "Special", value: "special" },
-  { label: "Other", value: "other" },
+interface Ministry {
+  id: string;
+  name: string;
+  color?: string | null;
+}
+
+interface UserOption {
+  id: string;
+  firstName: string | null;
+  lastName: string | null;
+  email: string;
+}
+
+const TYPE_LABELS: Record<EventType, string> = {
+  service: "Service",
+  bible_study: "Bible Study",
+  fellowship: "Fellowship",
+  youth: "Youth",
+  children: "Children",
+  special_event: "Special Event",
+};
+
+const EVENT_TYPES: Array<{ value: EventType; title: string; description: string }> = [
+  { value: "service", title: "Special Service", description: "A service for worship, prayer, and church-wide connection." },
+  { value: "bible_study", title: "Bible Study", description: "A focused time to study Scripture and grow together." },
+  { value: "fellowship", title: "Fellowship Gathering", description: "A warm gathering for food, connection, and community." },
+  { value: "youth", title: "Youth Night", description: "A night for students to worship and build friendships." },
+  { value: "children", title: "Children's Event", description: "A safe and joyful event for children and families." },
+  { value: "special_event", title: "Special Event", description: "A church event with clear details for everyone attending." },
 ];
+
+const DURATION_OPTIONS = [60, 90, 120, 180];
 
 const emptyForm = {
   title: "",
-  date: "",
-  time: "",
-  type: "sunday_service",
-  location: "",
   description: "",
+  start: "",
+  end: "",
+  location: "",
+  type: "special_event" as EventType,
+  ministryId: "",
+  leaderId: "",
+  notes: "",
+  duration: 90,
 };
+
+function toLocalInputValue(date: Date) {
+  const offsetDate = new Date(date.getTime() - date.getTimezoneOffset() * 60 * 1000);
+  return offsetDate.toISOString().slice(0, 16);
+}
+
+function addMinutes(value: string, minutes: number) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  date.setMinutes(date.getMinutes() + minutes);
+  return toLocalInputValue(date);
+}
+
+function defaultStart() {
+  const date = new Date();
+  date.setDate(date.getDate() + 7);
+  date.setHours(19, 0, 0, 0);
+  return toLocalInputValue(date);
+}
+
+function displayName(user: UserOption) {
+  return [user.firstName, user.lastName].filter(Boolean).join(" ") || user.email;
+}
+
+function leaderName(event: EventItem) {
+  return [event.leaderFirstName, event.leaderLastName].filter(Boolean).join(" ") || event.leaderEmail || null;
+}
+
+function formatDate(value: string) {
+  return new Date(value).toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function formatTime(value: string) {
+  return new Date(value).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+}
+
+function typeLabel(type?: string | null) {
+  return type && TYPE_LABELS[type as EventType] ? TYPE_LABELS[type as EventType] : type || "Event";
+}
 
 export default function Events() {
   const navigate = useNavigate();
   const { selectedChurch } = useChurch();
-  const isAdmin = selectedChurch?.role === "ADMIN";
   const { fetchApi } = useApi();
   const { toast } = useToast();
-  const [events, setEvents] = useState<Event[]>([]);
-  const [rsvps, setRsvps] = useState<Record<string, string>>({});
+  const [events, setEvents] = useState<EventItem[]>([]);
+  const [ministries, setMinistries] = useState<Ministry[]>([]);
+  const [users, setUsers] = useState<UserOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [editingEvent, setEditingEvent] = useState<Event | null>(null);
+  const [editingEvent, setEditingEvent] = useState<EventItem | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
-  const [formData, setFormData] = useState(emptyForm);
   const [submitting, setSubmitting] = useState(false);
+  const [typeFilter, setTypeFilter] = useState("");
+  const [form, setForm] = useState(() => {
+    const start = defaultStart();
+    return { ...emptyForm, start, end: addMinutes(start, emptyForm.duration) };
+  });
 
-  useEffect(() => {
-    loadEvents();
-  }, [fetchApi]);
+  const canManage = selectedChurch?.role === "ADMIN" || selectedChurch?.role === "PLANNER";
+  const now = Date.now();
+  const filteredEvents = typeFilter ? events.filter((event) => event.type === typeFilter) : events;
+  const upcoming = filteredEvents
+    .filter((event) => new Date(event.endDate || event.date).getTime() >= now)
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  const past = filteredEvents
+    .filter((event) => new Date(event.endDate || event.date).getTime() < now)
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  const leaderOptions = useMemo(() => [...users].sort((a, b) => displayName(a).localeCompare(displayName(b))), [users]);
+  const selectedMinistry = ministries.find((ministry) => ministry.id === form.ministryId);
+  const selectedLeader = users.find((user) => user.id === form.leaderId);
 
-  const loadEvents = async () => {
+  const loadPage = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await fetchApi("/events");
-      setEvents(Array.isArray(data) ? data : []);
-    } catch (e) {
-      console.error("Failed to load events:", e);
+      const [eventData, ministryData, userData] = await Promise.all([
+        fetchApi<EventItem[]>("/events?limit=200"),
+        fetchApi<Ministry[]>("/ministries"),
+        fetchApi<UserOption[]>("/users"),
+      ]);
+      setEvents(Array.isArray(eventData) ? eventData : []);
+      setMinistries(Array.isArray(ministryData) ? ministryData : []);
+      setUsers(Array.isArray(userData) ? userData : []);
+    } catch (error) {
+      console.error("Failed to load events:", error);
+      toast({ title: "Failed to load events", variant: "destructive" });
     } finally {
       setLoading(false);
     }
-  };
+  }, [fetchApi, toast]);
 
-  const handleRsvp = async (eventId: string, status: string) => {
-    try {
-      await fetchApi(`/events/${eventId}/rsvp`, {
-        method: "POST",
-        body: JSON.stringify({ status }),
-      });
-      setRsvps((prev) => ({ ...prev, [eventId]: status }));
-      toast({ title: `RSVP: ${status}` });
-    } catch (e) {
-      toast({ title: "Failed to update RSVP", variant: "destructive" });
-    }
-  };
+  useEffect(() => {
+    loadPage();
+  }, [loadPage]);
 
-  const handleRemoveRsvp = async (eventId: string) => {
-    try {
-      await fetchApi(`/events/${eventId}/rsvp`, { method: "DELETE" });
-      setRsvps((prev) => {
-        const newRsvps = { ...prev };
-        delete newRsvps[eventId];
-        return newRsvps;
-      });
-      toast({ title: "RSVP removed" });
-    } catch (e) {
-      toast({ title: "Failed to remove RSVP", variant: "destructive" });
-    }
-  };
+  function resetForm() {
+    const start = defaultStart();
+    setForm({ ...emptyForm, start, end: addMinutes(start, emptyForm.duration) });
+  }
 
-  const openNewDialog = () => {
+  function openNewDialog() {
     setEditingEvent(null);
-    setFormData(emptyForm);
+    resetForm();
     setDialogOpen(true);
-  };
+  }
 
-  const openEditDialog = (event: Event) => {
+  function openEditDialog(event: EventItem) {
+    const start = toLocalInputValue(new Date(event.date));
+    const end = event.endDate ? toLocalInputValue(new Date(event.endDate)) : addMinutes(start, emptyForm.duration);
     setEditingEvent(event);
-    setFormData({
-      title: event.title || event.name || "",
-      date: event.date ? event.date.split("T")[0] : "",
-      time: event.time || "",
-      type: event.type || "sunday_service",
-      location: event.location || "",
+    setForm({
+      title: event.title || "",
       description: event.description || "",
+      start,
+      end,
+      location: event.location || "",
+      type: (event.type as EventType) || "special_event",
+      ministryId: event.ministryId || "",
+      leaderId: event.leaderId || "",
+      notes: event.notes || "",
+      duration: emptyForm.duration,
     });
     setDialogOpen(true);
-  };
+  }
 
-  const closeDialog = () => {
-    setDialogOpen(false);
-    setEditingEvent(null);
-    setFormData(emptyForm);
-  };
+  function applyTemplate(type: EventType) {
+    const template = EVENT_TYPES.find((item) => item.value === type);
+    setForm((prev) => ({
+      ...prev,
+      type,
+      title: prev.title || template?.title || "",
+      description: prev.description || template?.description || "",
+    }));
+  }
 
-  const handleSubmit = async () => {
-    if (!formData.title.trim() || !formData.date) return;
+  function updateStart(value: string) {
+    setForm((prev) => ({ ...prev, start: value, end: addMinutes(value, prev.duration) }));
+  }
+
+  function updateDuration(duration: number) {
+    setForm((prev) => ({ ...prev, duration, end: addMinutes(prev.start, duration) }));
+  }
+
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!form.title.trim() || !form.start) return;
+    if (!form.ministryId && !form.leaderId) {
+      toast({ title: "Choose a ministry or event leader", variant: "destructive" });
+      return;
+    }
+    if (form.end && new Date(form.end).getTime() < new Date(form.start).getTime()) {
+      toast({ title: "End time must be after start time", variant: "destructive" });
+      return;
+    }
+
     setSubmitting(true);
-
-    const payload = {
-      title: formData.title,
-      date: new Date(formData.date).toISOString(),
-      type: formData.type,
-      location: formData.location || null,
-      description: formData.description || null,
-    };
-
     try {
+      const payload = {
+        title: form.title,
+        description: form.description,
+        date: form.start,
+        endDate: form.end || null,
+        location: form.location || null,
+        type: form.type,
+        ministryId: form.ministryId || null,
+        leaderId: form.leaderId || null,
+        notes: form.notes || null,
+      };
+
       if (editingEvent) {
         await fetchApi(`/events/${editingEvent.id}`, {
           method: "PUT",
           body: JSON.stringify(payload),
         });
-        toast({ title: "Event updated successfully" });
+        toast({ title: "Event updated" });
       } else {
         await fetchApi("/events", {
           method: "POST",
           body: JSON.stringify(payload),
         });
-        toast({ title: "Event created successfully" });
+        toast({ title: "Event created" });
       }
-      closeDialog();
-      loadEvents();
-    } catch (e) {
+      setDialogOpen(false);
+      resetForm();
+      await loadPage();
+    } catch (error) {
+      console.error("Failed to save event:", error);
       toast({ title: "Failed to save event", variant: "destructive" });
     } finally {
       setSubmitting(false);
     }
-  };
+  }
 
-  const handleDelete = async () => {
+  async function handleDelete() {
     if (!deleteId) return;
     try {
       await fetchApi(`/events/${deleteId}`, { method: "DELETE" });
-      toast({ title: "Event deleted successfully" });
+      toast({ title: "Event deleted" });
       setDeleteId(null);
-      loadEvents();
-    } catch (e) {
+      await loadPage();
+    } catch (error) {
+      console.error("Failed to delete event:", error);
       toast({ title: "Failed to delete event", variant: "destructive" });
     }
-  };
+  }
 
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full" />
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
       </div>
     );
   }
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">Events</h1>
-        {isAdmin && <Button size="sm" onClick={openNewDialog}>
-          <Plus className="w-4 h-4 mr-1" /> New Event
-        </Button>}
-      </div>
+    <div className="space-y-6">
+      <Card className="overflow-hidden border-primary/10 bg-gradient-to-br from-white via-slate-50 to-sky-50">
+        <CardHeader className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <Badge variant="secondary" className="w-fit gap-1">
+              <CalendarDays className="h-3.5 w-3.5" />
+              Church calendar
+            </Badge>
+            {canManage && (
+              <Button size="sm" onClick={openNewDialog} className="rounded-full">
+                <Plus className="h-4 w-4" />
+                Create event
+              </Button>
+            )}
+          </div>
+          <div>
+            <CardTitle className="text-2xl leading-tight">Events that are easy to understand.</CardTitle>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">
+              Keep the essentials visible: when it happens, where it happens, and who owns it.
+            </p>
+          </div>
+          <select
+            value={typeFilter}
+            onChange={(event) => setTypeFilter(event.target.value)}
+            className="min-h-11 rounded-2xl border bg-white px-4 text-sm font-medium outline-none"
+          >
+            <option value="">All types</option>
+            {EVENT_TYPES.map((eventType) => (
+              <option key={eventType.value} value={eventType.value}>{TYPE_LABELS[eventType.value]}</option>
+            ))}
+          </select>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-3 gap-2">
+            <Stat label="Upcoming" value={upcoming.length} />
+            <Stat label="Ministry-led" value={events.filter((event) => event.ministryId).length} />
+            <Stat label="With location" value={events.filter((event) => event.location).length} />
+          </div>
+        </CardContent>
+      </Card>
+
+      <section className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-bold uppercase tracking-wider text-muted-foreground">Upcoming events</h2>
+          <Badge variant="outline">{upcoming.length}</Badge>
+        </div>
+        {upcoming.length === 0 ? (
+          <EmptyState text="No upcoming events yet." />
+        ) : (
+          upcoming.map((event) => (
+            <EventCard
+              key={event.id}
+              event={event}
+              canManage={canManage}
+              onOpen={() => navigate(`/app/events/${event.id}`)}
+              onEdit={() => openEditDialog(event)}
+              onDelete={() => setDeleteId(event.id)}
+            />
+          ))
+        )}
+      </section>
+
+      <section className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-bold uppercase tracking-wider text-muted-foreground">Past events</h2>
+          <Badge variant="outline">{past.length}</Badge>
+        </div>
+        {past.length === 0 ? (
+          <EmptyState text="Past events will appear here." />
+        ) : (
+          past.slice(0, 10).map((event) => (
+            <EventCard
+              key={event.id}
+              event={event}
+              compact
+              canManage={canManage}
+              onOpen={() => navigate(`/app/events/${event.id}`)}
+              onEdit={() => openEditDialog(event)}
+              onDelete={() => setDeleteId(event.id)}
+            />
+          ))
+        )}
+      </section>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent>
+        <DialogContent className="max-h-[92svh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>
-              {editingEvent ? "Edit Event" : "New Event"}
-            </DialogTitle>
+            <DialogTitle>{editingEvent ? "Edit event" : "Create event"}</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4">
-            <div>
+          <form onSubmit={handleSubmit} className="space-y-5">
+            <div className="grid gap-2 sm:grid-cols-2">
+              {EVENT_TYPES.map((eventType) => (
+                <button
+                  key={eventType.value}
+                  type="button"
+                  onClick={() => applyTemplate(eventType.value)}
+                  className={`rounded-2xl border p-3 text-left transition-colors ${
+                    form.type === eventType.value ? "border-primary bg-primary/5" : "bg-white hover:bg-muted/40"
+                  }`}
+                >
+                  <p className="text-sm font-semibold">{TYPE_LABELS[eventType.value]}</p>
+                  <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{eventType.description}</p>
+                </button>
+              ))}
+            </div>
+
+            <div className="space-y-3">
               <Input
+                required
                 placeholder="Event title"
-                value={formData.title}
-                onChange={(e) =>
-                  setFormData({ ...formData, title: e.target.value })
-                }
+                value={form.title}
+                onChange={(event) => setForm((prev) => ({ ...prev, title: event.target.value }))}
+                className="rounded-2xl"
               />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Input
-                  type="date"
-                  value={formData.date}
-                  onChange={(e) =>
-                    setFormData({ ...formData, date: e.target.value })
-                  }
-                />
-              </div>
-              <div>
-                <Input
-                  type="time"
-                  placeholder="Time (optional)"
-                  value={formData.time}
-                  onChange={(e) =>
-                    setFormData({ ...formData, time: e.target.value })
-                  }
-                />
-              </div>
-            </div>
-            <div>
-              <Select
-                value={formData.type}
-                onValueChange={(v) => setFormData({ ...formData, type: v })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select type" />
-                </SelectTrigger>
-                <SelectContent>
-                  {EVENT_TYPES.map((t) => (
-                    <SelectItem key={t.value} value={t.value}>
-                      {t.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Input
-                placeholder="Location"
-                value={formData.location}
-                onChange={(e) =>
-                  setFormData({ ...formData, location: e.target.value })
-                }
-              />
-            </div>
-            <div>
               <Textarea
-                placeholder="Description (optional)"
-                value={formData.description}
-                onChange={(e) =>
-                  setFormData({ ...formData, description: e.target.value })
-                }
+                rows={3}
+                placeholder="Short description"
+                value={form.description}
+                onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))}
+                className="resize-none rounded-2xl"
               />
             </div>
-            <div className="flex gap-2 justify-end">
-              <Button variant="outline" onClick={closeDialog}>
-                Cancel
-              </Button>
-              <Button
-                onClick={handleSubmit}
-                disabled={submitting || !formData.title.trim() || !formData.date}
-              >
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Input
+                type="datetime-local"
+                required
+                value={form.start}
+                onChange={(event) => updateStart(event.target.value)}
+                className="rounded-2xl"
+              />
+              <Input
+                type="datetime-local"
+                value={form.end}
+                onChange={(event) => setForm((prev) => ({ ...prev, end: event.target.value }))}
+                className="rounded-2xl"
+              />
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {DURATION_OPTIONS.map((option) => (
+                <Button
+                  key={option}
+                  type="button"
+                  variant={form.duration === option ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => updateDuration(option)}
+                  className="rounded-full"
+                >
+                  {option % 60 === 0 ? `${option / 60}h` : `${option}m`}
+                </Button>
+              ))}
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="space-y-1.5">
+                <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Organizing ministry</span>
+                <select
+                  value={form.ministryId}
+                  onChange={(event) => setForm((prev) => ({ ...prev, ministryId: event.target.value }))}
+                  className="w-full min-h-10 rounded-2xl border bg-white px-3 text-sm outline-none"
+                >
+                  <option value="">No ministry / church-wide</option>
+                  {ministries.map((ministry) => (
+                    <option key={ministry.id} value={ministry.id}>{ministry.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Event leader</span>
+                <select
+                  value={form.leaderId}
+                  onChange={(event) => setForm((prev) => ({ ...prev, leaderId: event.target.value }))}
+                  className="w-full min-h-10 rounded-2xl border bg-white px-3 text-sm outline-none"
+                >
+                  <option value="">Select a leader</option>
+                  {leaderOptions.map((user) => (
+                    <option key={user.id} value={user.id}>{displayName(user)}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <Input
+              placeholder="Location"
+              value={form.location}
+              onChange={(event) => setForm((prev) => ({ ...prev, location: event.target.value }))}
+              className="rounded-2xl"
+            />
+            <Textarea
+              rows={3}
+              placeholder="Special notes: setup, parking, childcare, what to bring..."
+              value={form.notes}
+              onChange={(event) => setForm((prev) => ({ ...prev, notes: event.target.value }))}
+              className="resize-none rounded-2xl"
+            />
+
+            <div className="rounded-2xl border bg-muted/40 p-4 text-sm">
+              <p className="font-semibold">{form.title || "Event preview"}</p>
+              <p className="mt-1 text-muted-foreground">{form.start ? `${formatDate(form.start)} · ${formatTime(form.start)}` : "Pick a time"}</p>
+              <p className="mt-1 text-muted-foreground">
+                {selectedMinistry?.name || selectedLeader ? [selectedMinistry?.name, selectedLeader ? displayName(selectedLeader) : ""].filter(Boolean).join(" · ") : "Choose a ministry or leader"}
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
+              <Button type="submit" disabled={submitting || !form.title.trim() || !form.start || (!form.ministryId && !form.leaderId)}>
+                {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
                 {submitting ? "Saving..." : editingEvent ? "Update" : "Create"}
               </Button>
             </div>
-          </div>
+          </form>
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={!!deleteId} onOpenChange={() => setDeleteId(null)}>
+      <AlertDialog open={!!deleteId} onOpenChange={(open) => !open && setDeleteId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Event</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete this event? This action cannot be
-              undone.
-            </AlertDialogDescription>
+            <AlertDialogTitle>Delete event</AlertDialogTitle>
+            <AlertDialogDescription>This cannot be undone.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
@@ -312,79 +535,90 @@ export default function Events() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
-      <div className="grid gap-3">
-        {events.length === 0 && (
-          <p className="text-sm text-muted-foreground">No events yet.</p>
-        )}
-        {events.map((ev) => (
-          <Card
-            key={ev.id}
-            className="hover:shadow-md transition-shadow cursor-pointer"
-            onClick={() => navigate(`/app/events/${ev.id}`)}
-          >
-            <CardContent className="p-4">
-              <div className="flex items-start gap-3">
-                <div className="w-1 h-10 rounded bg-primary shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium">{ev.name || ev.title}</p>
-                  <p className="text-sm text-muted-foreground">
-                    {ev.date
-                      ? new Date(ev.date).toLocaleDateString("en-US", {
-                          weekday: "short",
-                          month: "short",
-                          day: "numeric",
-                        })
-                      : ""}
-                    {ev.time ? ` · ${ev.time}` : ""}
-                    {ev.location ? ` · ${ev.location}` : ""}
-                  </p>
-                  {ev.description && (
-                    <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{ev.description}</p>
-                  )}
-                </div>
-                <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-                  <span className="text-xs text-muted-foreground capitalize mr-2">
-                    {ev.status || ""}
-                  </span>
-                  {isAdmin && (
-                    <>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => openEditDialog(ev)}
-                      >
-                        <Pencil className="w-4 h-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => setDeleteId(ev.id)}
-                      >
-                        <Trash2 className="w-4 h-4 text-destructive" />
-                      </Button>
-                    </>
-                  )}
-                </div>
-              </div>
-              <div className="flex gap-2 mt-3 ml-4">
-                {(["yes", "no", "maybe"] as const).map((status) => (
-                  <Button
-                    key={status}
-                    size="sm"
-                    variant={rsvps[ev.id] === status ? "default" : "outline"}
-                    onClick={(e) => { e.stopPropagation(); rsvps[ev.id] === status ? handleRemoveRsvp(ev.id) : handleRsvp(ev.id, status); }}
-                    className="capitalize"
-                  >
-                    {status === "yes" && <Check className="w-3 h-3 mr-1" />}
-                    {status}
-                  </Button>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
     </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-2xl bg-white/80 p-3 text-center shadow-sm">
+      <p className="text-2xl font-bold">{value}</p>
+      <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">{label}</p>
+    </div>
+  );
+}
+
+function EmptyState({ text }: { text: string }) {
+  return (
+    <Card>
+      <CardContent className="p-8 text-center text-sm text-muted-foreground">{text}</CardContent>
+    </Card>
+  );
+}
+
+function EventCard({
+  event,
+  canManage,
+  compact = false,
+  onOpen,
+  onEdit,
+  onDelete,
+}: {
+  event: EventItem;
+  canManage: boolean;
+  compact?: boolean;
+  onOpen: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const leader = leaderName(event);
+
+  return (
+    <Card className="cursor-pointer transition-shadow hover:shadow-md" onClick={onOpen}>
+      <CardContent className={compact ? "p-4" : "p-5"}>
+        <div className="flex items-start gap-3">
+          <div className="h-12 w-1 rounded-full bg-primary" />
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap gap-2">
+              <Badge variant="secondary">{typeLabel(event.type)}</Badge>
+              {event.ministryName && (
+                <Badge variant="outline" className="gap-1">
+                  <span className="h-2 w-2 rounded-full" style={{ backgroundColor: event.ministryColor || "#6366f1" }} />
+                  {event.ministryName}
+                </Badge>
+              )}
+            </div>
+            <h3 className="mt-2 font-semibold leading-tight">{event.title}</h3>
+            {event.description && <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{event.description}</p>}
+            <div className="mt-3 grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+              <span className="flex items-center gap-1.5">
+                <Clock className="h-3.5 w-3.5" />
+                {formatDate(event.date)} · {formatTime(event.date)}
+              </span>
+              {event.location && (
+                <span className="flex items-center gap-1.5">
+                  <MapPin className="h-3.5 w-3.5" />
+                  {event.location}
+                </span>
+              )}
+              {leader && (
+                <span className="flex items-center gap-1.5">
+                  <UserRound className="h-3.5 w-3.5" />
+                  {leader}
+                </span>
+              )}
+            </div>
+          </div>
+          {canManage && (
+            <div className="flex gap-1" onClick={(event) => event.stopPropagation()}>
+              <Button variant="ghost" size="sm" onClick={onEdit}>Edit</Button>
+              <Button variant="ghost" size="icon" onClick={onDelete}>
+                <Trash2 className="h-4 w-4 text-destructive" />
+              </Button>
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
   );
 }

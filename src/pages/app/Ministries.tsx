@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -55,6 +55,7 @@ interface Group {
   meetingDay?: string;
   meetingTime?: string;
   location?: string;
+  ministryId?: string;
 }
 
 interface Announcement {
@@ -63,6 +64,13 @@ interface Announcement {
   content?: string;
   imageUrl?: string | null;
   createdAt: string;
+}
+
+interface MemberSearchResult {
+  id: string;
+  firstName?: string | null;
+  lastName?: string | null;
+  email?: string | null;
 }
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -88,8 +96,8 @@ export default function Ministries() {
 
   const [addMemberDialogOpen, setAddMemberDialogOpen] = useState(false);
   const [memberSearch, setMemberSearch] = useState("");
-  const [members, setMembers] = useState<any[]>([]);
-  const [selectedMember, setSelectedMember] = useState<any>(null);
+  const [members, setMembers] = useState<MemberSearchResult[]>([]);
+  const [selectedMember, setSelectedMember] = useState<MemberSearchResult | null>(null);
 
   const [addGroupDialogOpen, setAddGroupDialogOpen] = useState(false);
   const [groupForm, setGroupForm] = useState({ name: "", description: "", meetingDay: "", meetingTime: "", location: "" });
@@ -97,17 +105,13 @@ export default function Ministries() {
   const [announcementFormOpen, setAnnouncementFormOpen] = useState(false);
   const [announcementForm, setAnnouncementForm] = useState({ title: "", content: "" });
 
-  useEffect(() => {
-    loadData();
-  }, [fetchApi]);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true);
     try {
       const [ministriesData, myMinistriesData, groupsData] = await Promise.allSettled([
-        fetchApi("/ministries"),
-        fetchApi("/my-ministries"),
-        fetchApi("/groups"),
+        fetchApi<Ministry[]>("/ministries"),
+        fetchApi<unknown>("/my-ministries"),
+        fetchApi<Group[]>("/groups"),
       ]);
       
       if (ministriesData.status === "fulfilled") {
@@ -124,14 +128,18 @@ export default function Ministries() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [fetchApi]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   const loadMinistryDetail = async (ministryId: string) => {
     try {
-      const data = await fetchApi(`/ministries/${ministryId}`);
-      setSelectedMinistry(data as Ministry);
+      const data = await fetchApi<Ministry>(`/ministries/${ministryId}`);
+      setSelectedMinistry(data);
 
-      const annData = await fetchApi(`/announcements?ministryId=${ministryId}`);
+      const annData = await fetchApi<Announcement[]>(`/announcements?ministryId=${ministryId}`);
       setAnnouncements(Array.isArray(annData) ? annData : []);
     } catch (e) {
       console.error("Failed to load ministry detail:", e);
@@ -152,7 +160,7 @@ export default function Ministries() {
     (m.name || "").toLowerCase().includes(search.toLowerCase())
   );
 
-  const ministryGroups = allGroups.filter((g: any) => g.ministryId === selectedMinistry?.id);
+  const ministryGroups = allGroups.filter((g) => g.ministryId === selectedMinistry?.id);
 
   const openNewDialog = () => {
     setEditingMinistry(null);
@@ -214,9 +222,9 @@ export default function Ministries() {
       return;
     }
     try {
-      const data = await fetchApi(`/members?search=${encodeURIComponent(query)}`);
+      const data = await fetchApi<MemberSearchResult[]>(`/members?search=${encodeURIComponent(query)}`);
       const existingIds = (selectedMinistry?.members || []).map((m) => m.userId);
-      const filtered = (Array.isArray(data) ? data : []).filter((m: any) => !existingIds.includes(m.id));
+      const filtered = (Array.isArray(data) ? data : []).filter((m) => !existingIds.includes(m.id));
       setMembers(filtered);
     } catch (e) {
       console.error("Failed to search members:", e);
@@ -296,7 +304,7 @@ export default function Ministries() {
       toast({ title: "Announcement created" });
       setAnnouncementFormOpen(false);
       setAnnouncementForm({ title: "", content: "" });
-      const annData = await fetchApi(`/announcements?ministryId=${selectedMinistry.id}`);
+      const annData = await fetchApi<Announcement[]>(`/announcements?ministryId=${selectedMinistry.id}`);
       setAnnouncements(Array.isArray(annData) ? annData : []);
     } catch (e) {
       toast({ title: "Failed to create announcement", variant: "destructive" });

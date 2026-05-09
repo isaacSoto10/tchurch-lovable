@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -15,7 +15,7 @@ import { useChurch } from "@/providers/ChurchProvider";
 type Attendee = {
   id: string;
   userId: string;
-  response: "yes" | "no" | "maybe";
+  status: "yes" | "no" | "maybe";
   user: { firstName: string | null; lastName: string | null; email: string } | null;
 };
 
@@ -27,10 +27,18 @@ type Event = {
   endDate: string | null;
   type: string;
   location: string | null;
-  rsvpDeadline: string | null;
-  maxAttendees: number | null;
+  notes?: string | null;
+  ministryName?: string | null;
+  ministryColor?: string | null;
+  leaderFirstName?: string | null;
+  leaderLastName?: string | null;
+  leaderEmail?: string | null;
   attendees: Attendee[];
   createdAt: string;
+};
+
+type EventResponse = Event & {
+  error?: string;
 };
 
 function getInitials(firstName?: string | null, lastName?: string | null, email?: string): string {
@@ -47,24 +55,29 @@ export default function EventDetail() {
   const [loading, setLoading] = useState(true);
   const [showDelete, setShowDelete] = useState(false);
   const [rsvpLoading, setRsvpLoading] = useState(false);
+  const [myRsvp, setMyRsvp] = useState<"yes" | "no" | "maybe" | null>(null);
 
-  const isAdmin = selectedChurch?.role === "ADMIN";
+  const canManage = selectedChurch?.role === "ADMIN" || selectedChurch?.role === "PLANNER";
+
+  const loadEvent = useCallback(async () => {
+    if (!id) return;
+    try {
+      const [data, attendees] = await Promise.all([
+        apiFetch<EventResponse>(`/events/${id}`),
+        apiFetch<Attendee[]>(`/events/${id}/rsvps`).catch(() => []),
+      ]);
+      if (data.error) { navigate("/app/events"); return; }
+      setEvent({ ...data, attendees: Array.isArray(attendees) ? attendees : [] });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  }, [id, navigate]);
 
   useEffect(() => {
-    if (!id) return;
-    async function load() {
-      try {
-        const data = await apiFetch<Event>(`/events/${id}`);
-        if (data.error) { navigate("/app/events"); return; }
-        setEvent(data);
-      } catch (e) {
-        console.error(e);
-      } finally {
-        setLoading(false);
-      }
-    }
-    load();
-  }, [id]);
+    loadEvent();
+  }, [loadEvent]);
 
   async function handleRSVP(response: "yes" | "no" | "maybe") {
     if (!id) return;
@@ -72,11 +85,10 @@ export default function EventDetail() {
     try {
       await apiFetch(`/events/${id}/rsvp`, {
         method: "POST",
-        body: JSON.stringify({ response }),
+        body: JSON.stringify({ status: response }),
       });
-      // Refresh event
-      const data = await apiFetch<Event>(`/events/${id}`);
-      setEvent(data);
+      setMyRsvp(response);
+      await loadEvent();
     } catch (e) {
       console.error(e);
     } finally {
@@ -111,10 +123,10 @@ export default function EventDetail() {
     );
   }
 
-  const yesCount = (event.attendees || []).filter((a) => a.response === "yes").length;
-  const noCount = (event.attendees || []).filter((a) => a.response === "no").length;
-  const maybeCount = (event.attendees || []).filter((a) => a.response === "maybe").length;
-  const myRsvp = (event.attendees || []).find((a) => a.user?.email);
+  const yesCount = (event.attendees || []).filter((a) => a.status === "yes").length;
+  const noCount = (event.attendees || []).filter((a) => a.status === "no").length;
+  const maybeCount = (event.attendees || []).filter((a) => a.status === "maybe").length;
+  const leaderName = [event.leaderFirstName, event.leaderLastName].filter(Boolean).join(" ") || event.leaderEmail || null;
 
   return (
     <div className="min-h-screen bg-zinc-50">
@@ -127,7 +139,7 @@ export default function EventDetail() {
           <div className="flex-1 min-w-0">
             <h1 className="font-semibold text-zinc-900 truncate">{event.title}</h1>
           </div>
-          {isAdmin && (
+          {canManage && (
             <Button variant="ghost" size="sm" className="text-red-500" onClick={() => setShowDelete(true)}>
               <Trash2 className="w-4 h-4" />
             </Button>
@@ -142,6 +154,7 @@ export default function EventDetail() {
           <CardContent className="p-4 space-y-3">
             <div className="flex items-center gap-2">
               <Badge variant="secondary">{event.type}</Badge>
+              {event.ministryName && <Badge variant="outline">{event.ministryName}</Badge>}
             </div>
 
             <div className="space-y-2 text-sm">
@@ -161,6 +174,12 @@ export default function EventDetail() {
                   <span>{event.location}</span>
                 </div>
               )}
+              {leaderName && (
+                <div className="flex items-center gap-3 text-zinc-600">
+                  <Users className="w-4 h-4 shrink-0" />
+                  <span>{leaderName}</span>
+                </div>
+              )}
             </div>
 
             {event.description && (
@@ -170,11 +189,14 @@ export default function EventDetail() {
               </>
             )}
 
-            {event.maxAttendees && (
-              <div className="flex items-center gap-2 text-sm text-zinc-500">
-                <Users className="w-4 h-4" />
-                <span>{yesCount} / {event.maxAttendees} spots filled</span>
-              </div>
+            {event.notes && (
+              <>
+                <Separator />
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Special notes</p>
+                  <p className="mt-1 whitespace-pre-wrap text-sm text-zinc-600">{event.notes}</p>
+                </div>
+              </>
             )}
           </CardContent>
         </Card>
@@ -186,7 +208,7 @@ export default function EventDetail() {
             <div className="flex gap-2">
               <Button
                 size="sm"
-                variant={myRsvp?.response === "yes" ? "default" : "outline"}
+                variant={myRsvp === "yes" ? "default" : "outline"}
                 className="flex-1"
                 onClick={() => handleRSVP("yes")}
                 disabled={rsvpLoading}
@@ -195,7 +217,7 @@ export default function EventDetail() {
               </Button>
               <Button
                 size="sm"
-                variant={myRsvp?.response === "no" ? "default" : "outline"}
+                variant={myRsvp === "no" ? "default" : "outline"}
                 className="flex-1"
                 onClick={() => handleRSVP("no")}
                 disabled={rsvpLoading}
@@ -204,7 +226,7 @@ export default function EventDetail() {
               </Button>
               <Button
                 size="sm"
-                variant={myRsvp?.response === "maybe" ? "default" : "outline"}
+                variant={myRsvp === "maybe" ? "default" : "outline"}
                 className="flex-1"
                 onClick={() => handleRSVP("maybe")}
                 disabled={rsvpLoading}
@@ -225,7 +247,7 @@ export default function EventDetail() {
                   <div>
                     <p className="text-xs text-emerald-600 font-medium mb-2">Going ({yesCount})</p>
                     <div className="space-y-2">
-                      {(event.attendees || []).filter((a) => a.response === "yes").map((a) => (
+                      {(event.attendees || []).filter((a) => a.status === "yes").map((a) => (
                         <div key={a.id} className="flex items-center gap-3">
                           <Avatar className="h-8 w-8 shrink-0">
                             <AvatarFallback className="bg-emerald-50 text-emerald-600 text-xs font-semibold">
@@ -244,7 +266,7 @@ export default function EventDetail() {
                   <div>
                     <p className="text-xs text-amber-600 font-medium mb-2">Maybe ({maybeCount})</p>
                     <div className="space-y-2">
-                      {(event.attendees || []).filter((a) => a.response === "maybe").map((a) => (
+                      {(event.attendees || []).filter((a) => a.status === "maybe").map((a) => (
                         <div key={a.id} className="flex items-center gap-3">
                           <Avatar className="h-8 w-8 shrink-0">
                             <AvatarFallback className="bg-amber-50 text-amber-600 text-xs font-semibold">
@@ -263,7 +285,7 @@ export default function EventDetail() {
                   <div>
                     <p className="text-xs text-zinc-400 font-medium mb-2">Not Going ({noCount})</p>
                     <div className="space-y-2">
-                      {(event.attendees || []).filter((a) => a.response === "no").map((a) => (
+                      {(event.attendees || []).filter((a) => a.status === "no").map((a) => (
                         <div key={a.id} className="flex items-center gap-3 opacity-50">
                           <Avatar className="h-8 w-8 shrink-0">
                             <AvatarFallback className="bg-zinc-50 text-zinc-500 text-xs font-semibold">

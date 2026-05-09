@@ -19,6 +19,7 @@ interface ChurchContextType {
   churches: Church[];
   selectedChurch: Church | null;
   selectChurch: (church: Church) => void;
+  switchChurch: (church: Church) => void;
   loading: boolean;
   error: string | null;
 }
@@ -40,49 +41,37 @@ export function ChurchProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     async function loadChurches() {
-      console.log("[ChurchProvider] Loading churches... isSignedIn:", isSignedIn, "userId:", userId);
-      
       if (!isSignedIn || !userId) {
-        console.log("[ChurchProvider] Not signed in, skipping");
         setLoading(false);
         return;
       }
 
       try {
         const token = await getToken();
-        console.log("[ChurchProvider] Got token:", token ? "yes" : "no");
-        
+
         if (!token) {
           setError("Not authenticated - no token");
           setLoading(false);
           return;
         }
 
-        console.log("[ChurchProvider] Fetching churches from API...");
-        const userChurches = await fetchUserChurches(token);
-        console.log("[ChurchProvider] Got churches:", userChurches);
-        
+        const userChurches = await fetchUserChurches<Church>(token);
+
         setChurches(userChurches);
 
         const savedChurchId = getChurchId();
-        console.log("[ChurchProvider] Saved church ID:", savedChurchId);
-        
+
         if (savedChurchId) {
           const saved = userChurches.find((c: Church) => c.id === savedChurchId);
           if (saved) {
             setSelectedChurch(saved);
-            console.log("[ChurchProvider] Using saved church:", saved.name);
           } else if (userChurches.length > 0) {
             setSelectedChurch(userChurches[0]);
             setChurchId(userChurches[0].id);
-            console.log("[ChurchProvider] Saved not found, using first:", userChurches[0].name);
           }
         } else if (userChurches.length > 0) {
           setSelectedChurch(userChurches[0]);
           setChurchId(userChurches[0].id);
-          console.log("[ChurchProvider] No saved, using first:", userChurches[0].name);
-        } else {
-          console.log("[ChurchProvider] No churches found for user");
         }
       } catch (e) {
         console.error("[ChurchProvider] Error loading churches:", e);
@@ -101,7 +90,7 @@ export function ChurchProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <ChurchContext.Provider value={{ churches, selectedChurch, selectChurch, loading, error }}>
+    <ChurchContext.Provider value={{ churches, selectedChurch, selectChurch, switchChurch: selectChurch, loading, error }}>
       {children}
     </ChurchContext.Provider>
   );

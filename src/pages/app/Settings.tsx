@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -8,7 +8,6 @@ import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useApi } from "@/hooks/useApi";
 import { useChurch } from "@/providers/ChurchProvider";
-import { useAuth } from "@clerk/clerk-react";
 import { User, Bell, Church, LogOut, Settings, Loader2, Check, X, Shield, CreditCard, Crown, Users, AlertCircle, CheckCircle } from "lucide-react";
 
 type PendingMember = {
@@ -31,13 +30,33 @@ type BillingData = {
   cancelAtPeriodEnd: boolean;
 };
 
+type Profile = {
+  id: string;
+  firstName?: string | null;
+  lastName?: string | null;
+  email?: string | null;
+  imageUrl?: string | null;
+};
+
+type ChurchMemberRecord = {
+  userId: string;
+  status?: string | null;
+  createdAt?: string | null;
+  joinedAt?: string | null;
+  user?: {
+    firstName?: string | null;
+    lastName?: string | null;
+    email?: string | null;
+    imageUrl?: string | null;
+  } | null;
+};
+
 export default function Settings() {
-  const { user } = useAuth();
   const { selectedChurch, churches, switchChurch } = useChurch();
   const { fetchApi } = useApi();
   const isAdmin = selectedChurch?.role === "ADMIN";
 
-  const [profile, setProfile] = useState<any>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   const [savingPrefs, setSavingPrefs] = useState(false);
   const [prefs, setPrefs] = useState({
@@ -46,7 +65,6 @@ export default function Settings() {
     weeklyDigest: false,
   });
 
-  const [churchInfo, setChurchInfo] = useState<any>(null);
   const [savingChurch, setSavingChurch] = useState(false);
   const [churchForm, setChurchForm] = useState({ name: "", brandColor: "" });
 
@@ -61,7 +79,7 @@ export default function Settings() {
   useEffect(() => {
     async function load() {
       try {
-        const data = await fetchApi<any>("/users/me");
+        const data = await fetchApi<Profile>("/users/me");
         setProfile(data);
       } catch (e) {
         console.error("Failed to load profile:", e);
@@ -78,25 +96,36 @@ export default function Settings() {
     }
   }, [selectedChurch]);
 
-  useEffect(() => {
-    if (isAdmin && selectedChurch?.id) {
-      loadPendingMembers();
-    }
-  }, [isAdmin, selectedChurch?.id]);
-
-  async function loadPendingMembers() {
+  const loadPendingMembers = useCallback(async () => {
+    if (!selectedChurch?.id) return;
     setLoadingPending(true);
     try {
-      const data = await fetchApi<{ users: PendingMember[] }>(`/churches/${selectedChurch.id}/pending-users`);
-      setPendingMembers(data.users || []);
+      const data = await fetchApi<{ members?: ChurchMemberRecord[] }>(`/churches/${selectedChurch.id}/members`);
+      const pending = (data.members || [])
+        .filter((member) => member.status === "PENDING" || !member.status)
+        .map((member) => ({
+          id: member.userId,
+          firstName: member.user?.firstName || "",
+          lastName: member.user?.lastName || "",
+          email: member.user?.email || "",
+          imageUrl: member.user?.imageUrl || "",
+          createdAt: member.createdAt || member.joinedAt || "",
+        }));
+      setPendingMembers(pending);
     } catch (e) {
       console.error("Failed to load pending members:", e);
     } finally {
       setLoadingPending(false);
     }
-  }
+  }, [fetchApi, selectedChurch?.id]);
 
-  async function loadBillingData() {
+  useEffect(() => {
+    if (isAdmin && selectedChurch?.id) {
+      loadPendingMembers();
+    }
+  }, [isAdmin, loadPendingMembers, selectedChurch?.id]);
+
+  const loadBillingData = useCallback(async () => {
     if (!selectedChurch?.id) return;
     setLoadingBilling(true);
     try {
@@ -107,13 +136,13 @@ export default function Settings() {
     } finally {
       setLoadingBilling(false);
     }
-  }
+  }, [fetchApi, selectedChurch?.id]);
 
   useEffect(() => {
     if (isAdmin && selectedChurch?.id) {
       loadBillingData();
     }
-  }, [isAdmin, selectedChurch?.id]);
+  }, [isAdmin, loadBillingData, selectedChurch?.id]);
 
   async function handleManageSubscription() {
     setOpeningPortal(true);
@@ -178,8 +207,9 @@ export default function Settings() {
   async function handleApprove(userId: string) {
     setProcessingId(userId);
     try {
-      await fetchApi(`/churches/${selectedChurch.id}/users/${userId}/approve`, {
-        method: "POST",
+      await fetchApi(`/churches/${selectedChurch.id}/members/${userId}/approve`, {
+        method: "PATCH",
+        body: JSON.stringify({ action: "approve" }),
       });
       setPendingMembers((prev) => prev.filter((u) => u.id !== userId));
     } catch (e) {
@@ -192,8 +222,9 @@ export default function Settings() {
   async function handleDeny(userId: string) {
     setProcessingId(userId);
     try {
-      await fetchApi(`/churches/${selectedChurch.id}/users/${userId}/deny`, {
-        method: "POST",
+      await fetchApi(`/churches/${selectedChurch.id}/members/${userId}/approve`, {
+        method: "PATCH",
+        body: JSON.stringify({ action: "deny" }),
       });
       setPendingMembers((prev) => prev.filter((u) => u.id !== userId));
     } catch (e) {
@@ -204,7 +235,7 @@ export default function Settings() {
   }
 
   async function handleSaveChurch() {
-    if (!churchInfo && !isAdmin) return;
+    if (!selectedChurch?.id || !isAdmin) return;
     setSavingChurch(true);
     try {
       await fetchApi(`/churches/${selectedChurch.id}`, {

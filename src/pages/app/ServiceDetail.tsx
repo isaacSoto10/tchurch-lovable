@@ -32,6 +32,8 @@ type Assignment = {
   userId: string;
   position: string;
   confirmed: boolean;
+  responseStatus?: "pending" | "accepted" | "declined" | null;
+  respondedAt?: string | null;
   user: { firstName: string | null; lastName: string | null; email: string } | null;
 };
 
@@ -44,6 +46,23 @@ type Service = {
   notes: string | null;
   items: ServiceItem[];
   assignments: Assignment[];
+};
+
+type ServiceResponse = Service & {
+  error?: string;
+};
+
+type SongOption = {
+  id: string;
+  title: string;
+  author?: string | null;
+};
+
+type UserOption = {
+  id: string;
+  firstName?: string | null;
+  lastName?: string | null;
+  email?: string | null;
 };
 
 type Tab = "flow" | "team";
@@ -70,19 +89,21 @@ export default function ServiceDetail() {
   const [showAddItem, setShowAddItem] = useState(false);
   const [showAssign, setShowAssign] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [respondingId, setRespondingId] = useState<string | null>(null);
 
   // Add item form
   const [itemTitle, setItemTitle] = useState("");
   const [itemType, setItemType] = useState("Song");
   const [itemDuration, setItemDuration] = useState("");
   const [songSearch, setSongSearch] = useState("");
-  const [songResults, setSongResults] = useState<any[]>([]);
-  const [selectedSong, setSelectedSong] = useState<any>(null);
+  const [songResults, setSongResults] = useState<SongOption[]>([]);
+  const [selectedSong, setSelectedSong] = useState<SongOption | null>(null);
 
   // Assign form
-  const [assignEmail, setAssignEmail] = useState("");
+  const [assignUserId, setAssignUserId] = useState("");
   const [assignPosition, setAssignPosition] = useState("");
-  const [availableSongs, setAvailableSongs] = useState<any[]>([]);
+  const [availableUsers, setAvailableUsers] = useState<UserOption[]>([]);
 
   const isAdmin = selectedChurch?.role === "ADMIN";
   const isPlanner = selectedChurch?.role === "PLANNER" || isAdmin;
@@ -91,7 +112,7 @@ export default function ServiceDetail() {
     if (!id) return;
     async function load() {
       try {
-        const data = await apiFetch<Service>(`/services/${id}`);
+        const data = await apiFetch<ServiceResponse>(`/services/${id}`);
         if (data.error) { navigate("/app/services"); return; }
         // Sort items by position
         const sorted = { ...data, items: [...(data.items || [])].sort((a, b) => a.position - b.position) };
@@ -103,13 +124,29 @@ export default function ServiceDetail() {
       }
     }
     load();
-  }, [id]);
+  }, [id, navigate]);
+
+  useEffect(() => {
+    apiFetch<{ id: string }>("/users/me")
+      .then((user) => setCurrentUserId(user.id))
+      .catch(() => setCurrentUserId(null));
+  }, []);
+
+  useEffect(() => {
+    if (!showAssign) return;
+    apiFetch<UserOption[]>("/users")
+      .then((data) => {
+        const existing = new Set(service?.assignments.map((assignment) => assignment.userId) || []);
+        setAvailableUsers((Array.isArray(data) ? data : []).filter((user) => !existing.has(user.id)));
+      })
+      .catch(() => setAvailableUsers([]));
+  }, [showAssign, service?.assignments]);
 
   useEffect(() => {
     if (itemType === "Song" && songSearch.length >= 2) {
       const timeout = setTimeout(async () => {
         try {
-          const data = await apiFetch<any[]>(`/songs?search=${encodeURIComponent(songSearch)}`);
+          const data = await apiFetch<SongOption[]>(`/songs?search=${encodeURIComponent(songSearch)}`);
           setSongResults(Array.isArray(data) ? data.slice(0, 5) : []);
         } catch { setSongResults([]); }
       }, 300);
@@ -177,17 +214,17 @@ export default function ServiceDetail() {
 
   async function handleAssignMember(e: React.FormEvent) {
     e.preventDefault();
-    if (!assignEmail.trim() || !id) return;
+    if (!assignUserId || !id) return;
     setSubmitting(true);
     try {
-      await apiFetch(`/services/${id}/assignments`, {
+      await apiFetch(`/service-assignments`, {
         method: "POST",
-        body: JSON.stringify({ email: assignEmail, position: assignPosition || "Member" }),
+        body: JSON.stringify({ userId: assignUserId, serviceId: id, position: assignPosition || "Member" }),
       });
       const data = await apiFetch<Service>(`/services/${id}`);
       setService(data);
       setShowAssign(false);
-      setAssignEmail("");
+      setAssignUserId("");
       setAssignPosition("");
     } catch (e) { console.error(e); }
     finally { setSubmitting(false); }
@@ -196,7 +233,7 @@ export default function ServiceDetail() {
   async function handleRemoveAssignment(assignmentId: string) {
     if (!id) return;
     try {
-      await apiFetch(`/services/${id}/assignments/${assignmentId}`, { method: "DELETE" });
+      await apiFetch(`/service-assignments/${assignmentId}`, { method: "DELETE" });
       setService((prev) => prev ? { ...prev, assignments: prev.assignments.filter((a) => a.id !== assignmentId) } : prev);
     } catch (e) { console.error(e); }
   }
@@ -204,7 +241,7 @@ export default function ServiceDetail() {
   async function handleConfirmAssignment(assignmentId: string, confirmed: boolean) {
     if (!id) return;
     try {
-      await apiFetch(`/services/${id}/assignments/${assignmentId}`, {
+      await apiFetch(`/service-assignments/${assignmentId}`, {
         method: "PUT",
         body: JSON.stringify({ confirmed }),
       });
@@ -213,6 +250,28 @@ export default function ServiceDetail() {
         assignments: prev.assignments.map((a) => a.id === assignmentId ? { ...a, confirmed } : a),
       } : prev);
     } catch (e) { console.error(e); }
+  }
+
+  async function handleAssignmentResponse(assignmentId: string, action: "accept" | "decline") {
+    setRespondingId(assignmentId);
+    try {
+      const result = await apiFetch<{ confirmed: boolean; responseStatus: "accepted" | "declined" }>(`/service-assignments/${assignmentId}/respond`, {
+        method: "PUT",
+        body: JSON.stringify({ action }),
+      });
+      setService((prev) => prev ? {
+        ...prev,
+        assignments: prev.assignments.map((assignment) =>
+          assignment.id === assignmentId
+            ? { ...assignment, confirmed: result.confirmed, responseStatus: result.responseStatus, respondedAt: new Date().toISOString() }
+            : assignment
+        ),
+      } : prev);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setRespondingId(null);
+    }
   }
 
   async function handleDeleteService() {
@@ -405,10 +464,35 @@ export default function ServiceDetail() {
                         <p className="text-xs text-zinc-500">{a.position}</p>
                       </div>
                       <div className="flex items-center gap-2">
-                        {a.confirmed ? (
+                        {(a.responseStatus === "accepted" || (!a.responseStatus && a.confirmed)) ? (
                           <Badge variant="default" className="text-xs bg-emerald-100 text-emerald-700">Confirmed</Badge>
+                        ) : a.responseStatus === "declined" ? (
+                          <Badge variant="secondary" className="text-xs bg-red-50 text-red-700">Declined</Badge>
                         ) : (
                           <Badge variant="secondary" className="text-xs">Pending</Badge>
+                        )}
+                        {a.userId === currentUserId && (
+                          <div className="flex gap-1">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-8 text-red-500 hover:bg-red-50 hover:text-red-600"
+                              disabled={respondingId === a.id}
+                              onClick={() => handleAssignmentResponse(a.id, "decline")}
+                            >
+                              <X className="w-3 h-3" />
+                              Deny
+                            </Button>
+                            <Button
+                              size="sm"
+                              className="h-8"
+                              disabled={respondingId === a.id}
+                              onClick={() => handleAssignmentResponse(a.id, "accept")}
+                            >
+                              <Check className="w-3 h-3" />
+                              Accept
+                            </Button>
+                          </div>
                         )}
                         {isPlanner && (
                           <button
@@ -494,8 +578,21 @@ export default function ServiceDetail() {
           </DialogHeader>
           <form onSubmit={handleAssignMember} className="space-y-4">
             <div className="space-y-2">
-              <Label>Email</Label>
-              <Input type="email" value={assignEmail} onChange={(e) => setAssignEmail(e.target.value)} placeholder="member@example.com" required />
+              <Label>Team member</Label>
+              <select
+                value={assignUserId}
+                onChange={(e) => setAssignUserId(e.target.value)}
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                required
+              >
+                <option value="">Choose a member</option>
+                {availableUsers.map((user) => (
+                  <option key={user.id} value={user.id}>
+                    {[user.firstName, user.lastName].filter(Boolean).join(" ") || user.email}
+                    {user.email ? ` (${user.email})` : ""}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="space-y-2">
               <Label>Position</Label>

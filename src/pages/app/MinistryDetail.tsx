@@ -14,11 +14,57 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, ArrowLeft, Plus, Check, X, UserMinus, Users, Clock, Star } from "lucide-react";
+import { Loader2, ArrowLeft, Plus, Check, X, UserMinus, Users, Clock } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useChurch } from "@/providers/ChurchProvider";
+import { MinistryResources } from "@/components/MinistryResources";
 
 type Tab = "members" | "join-requests" | "announcements" | "resources";
+
+type UserSummary = {
+  firstName?: string | null;
+  lastName?: string | null;
+  email?: string;
+};
+
+type MinistryMember = {
+  id: string;
+  userId: string;
+  role: string;
+  user?: UserSummary | null;
+};
+
+type Ministry = {
+  id: string;
+  name: string;
+  description?: string | null;
+  color?: string | null;
+  members?: MinistryMember[];
+};
+
+type MyMinistriesResponse = {
+  role?: string | null;
+  myMinistryIds?: string[];
+  pendingMinistryIds?: string[];
+  ministryRoles?: Record<string, string>;
+};
+
+type JoinRequest = {
+  id: string;
+  user?: UserSummary | null;
+};
+
+type JoinRequestsResponse = {
+  requests?: JoinRequest[];
+};
+
+type Announcement = {
+  id: string;
+  title: string;
+  content?: string | null;
+  imageUrl?: string | null;
+  createdAt: string;
+};
 
 function getInitials(firstName?: string | null, lastName?: string | null, email?: string): string {
   if (firstName || lastName) return `${firstName?.[0] || ""}${lastName?.[0] || ""}`.toUpperCase();
@@ -31,7 +77,7 @@ export default function MinistryDetail() {
   const [searchParams] = useSearchParams();
   const { selectedChurch } = useChurch();
 
-  const [ministry, setMinistry] = useState<any>(null);
+  const [ministry, setMinistry] = useState<Ministry | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<Tab>((searchParams.get("tab") as Tab) || "members");
   const [canManage, setCanManage] = useState(false);
@@ -40,11 +86,11 @@ export default function MinistryDetail() {
   const [myRole, setMyRole] = useState<string | null>(null);
 
   // Join requests
-  const [joinRequests, setJoinRequests] = useState<any[]>([]);
+  const [joinRequests, setJoinRequests] = useState<JoinRequest[]>([]);
   const [requestsLoading, setRequestsLoading] = useState(false);
 
   // Announcements
-  const [announcements, setAnnouncements] = useState<any[]>([]);
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
 
   // Dialogs
   const [showAddMember, setShowAddMember] = useState(false);
@@ -59,7 +105,7 @@ export default function MinistryDetail() {
     if (!id) return;
     async function load() {
       try {
-        const data = await apiFetch<any>(`/ministries/${id}`);
+        const data = await apiFetch<Ministry>(`/ministries/${id}`);
         setMinistry(data);
         setEditForm({
           name: data.name || "",
@@ -79,7 +125,7 @@ export default function MinistryDetail() {
   useEffect(() => {
     async function loadMyMinistries() {
       try {
-        const data = await apiFetch<any>("/my-ministries");
+        const data = await apiFetch<MyMinistriesResponse>("/my-ministries");
         const isAdmin = data.role === "ADMIN";
         const myIds: string[] = data.myMinistryIds || [];
         const pendingIds: string[] = data.pendingMinistryIds || [];
@@ -100,7 +146,7 @@ export default function MinistryDetail() {
   useEffect(() => {
     if (activeTab === "join-requests" && canManage && id) {
       setRequestsLoading(true);
-      apiFetch<any>(`/ministries/${id}/join-requests`)
+      apiFetch<JoinRequestsResponse>(`/ministries/${id}/join-requests`)
         .then((data) => setJoinRequests(data.requests || []))
         .catch(() => setJoinRequests([]))
         .finally(() => setRequestsLoading(false));
@@ -110,7 +156,7 @@ export default function MinistryDetail() {
   // Fetch announcements when tab is active
   useEffect(() => {
     if (activeTab === "announcements" && id) {
-      apiFetch<any>(`/announcements?ministryId=${id}`)
+      apiFetch<Announcement[]>(`/announcements?ministryId=${id}`)
         .then((data) => setAnnouncements(Array.isArray(data) ? data : []))
         .catch(() => setAnnouncements([]));
     }
@@ -168,7 +214,7 @@ export default function MinistryDetail() {
       setAddEmail("");
       setAddRole("MEMBER");
       // Refresh ministry
-      const data = await apiFetch<any>(`/ministries/${id}`);
+      const data = await apiFetch<Ministry>(`/ministries/${id}`);
       setMinistry(data);
     } catch (e) {
       console.error(e);
@@ -181,10 +227,10 @@ export default function MinistryDetail() {
     if (!id) return;
     try {
       await apiFetch(`/ministries/${id}/members/${userId}`, { method: "DELETE" });
-      setMinistry((prev: any) => ({
+      setMinistry((prev) => prev ? ({
         ...prev,
-        members: (prev.members || []).filter((m: any) => m.userId !== userId),
-      }));
+        members: (prev.members || []).filter((m) => m.userId !== userId),
+      }) : prev);
     } catch (e) {
       console.error(e);
     }
@@ -200,7 +246,7 @@ export default function MinistryDetail() {
         body: JSON.stringify(editForm),
       });
       setShowEditMinistry(false);
-      const data = await apiFetch<any>(`/ministries/${id}`);
+      const data = await apiFetch<Ministry>(`/ministries/${id}`);
       setMinistry(data);
     } catch (e) {
       console.error(e);
@@ -335,7 +381,7 @@ export default function MinistryDetail() {
               </Card>
             ) : (
               <div className="space-y-2">
-                {(ministry.members || []).map((member: any) => (
+                {(ministry.members || []).map((member) => (
                   <Card key={member.id}>
                     <CardContent className="p-3 flex items-center gap-3">
                       <Avatar className="h-10 w-10 shrink-0">
@@ -390,7 +436,7 @@ export default function MinistryDetail() {
                 </CardContent>
               </Card>
             ) : (
-              joinRequests.map((req: any) => (
+              joinRequests.map((req) => (
                 <Card key={req.id}>
                   <CardContent className="p-4">
                     <div className="flex items-center gap-3 mb-3">
@@ -440,7 +486,7 @@ export default function MinistryDetail() {
                 </CardContent>
               </Card>
             ) : (
-              announcements.map((ann: any) => (
+              announcements.map((ann) => (
                 <Card key={ann.id}>
                   <CardContent className="p-4">
                     {ann.imageUrl && (
@@ -462,17 +508,7 @@ export default function MinistryDetail() {
 
         {/* RESOURCES TAB */}
         {activeTab === "resources" && (
-          <Card>
-            <CardContent className="p-8 text-center space-y-3">
-              <div className="w-12 h-12 bg-zinc-100 rounded-full flex items-center justify-center mx-auto">
-                <Star className="w-6 h-6 text-zinc-400" />
-              </div>
-              <p className="font-medium text-zinc-900">Resources Coming Soon</p>
-              <p className="text-sm text-muted-foreground">
-                Ministry resources like documents, links, and files will appear here.
-              </p>
-            </CardContent>
-          </Card>
+          <MinistryResources ministryId={id!} canManage={canManage} />
         )}
       </div>
 
