@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, HashRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter, HashRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Capacitor } from "@capacitor/core";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
@@ -40,7 +40,8 @@ import Presets from "./pages/app/Presets";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
-const Router = Capacitor.isNativePlatform() ? HashRouter : BrowserRouter;
+const isNativePlatform = Capacitor.isNativePlatform();
+const Router = isNativePlatform ? HashRouter : BrowserRouter;
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
@@ -52,7 +53,7 @@ const App = () => (
           <ChurchProvider>
             <Routes>
               <Route path="/" element={<Landing />} />
-              <Route path="/pricing" element={<Pricing />} />
+              <Route path="/pricing" element={isNativePlatform ? <Navigate to="/" replace /> : <Pricing />} />
               <Route path="/login/*" element={<Login />} />
               <Route path="/signup/*" element={<Signup />} />
               <Route path="/app" element={<RequireAuth><AppLayout /></RequireAuth>}>

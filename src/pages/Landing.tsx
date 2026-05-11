@@ -1,11 +1,13 @@
 import { motion } from "framer-motion";
 import { useAuth } from "@clerk/clerk-react";
+import { Capacitor } from "@capacitor/core";
 import { Navigate } from "react-router-dom";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 
 export default function Landing() {
   const { isLoaded, isSignedIn } = useAuth();
+  const isNativePlatform = Capacitor.isNativePlatform();
 
   if (isLoaded && isSignedIn) {
     return <Navigate to="/app" replace />;
@@ -42,16 +44,18 @@ export default function Landing() {
         <Button size="lg" variant="outline" className="w-full text-base" asChild>
           <Link to="/login">Sign In</Link>
         </Button>
-        <Button
-          size="lg"
-          variant="ghost"
-          className="w-full text-base text-muted-foreground"
-          asChild
-        >
-          <a href="https://tchurchapp.com/pricing" target="_blank" rel="noopener noreferrer">
-            View Plans & Pricing
-          </a>
-        </Button>
+        {!isNativePlatform && (
+          <Button
+            size="lg"
+            variant="ghost"
+            className="w-full text-base text-muted-foreground"
+            asChild
+          >
+            <a href="https://tchurchapp.com/pricing" target="_blank" rel="noopener noreferrer">
+              View Plans & Pricing
+            </a>
+          </Button>
+        )}
       </motion.div>
 
       {/* Footer */}

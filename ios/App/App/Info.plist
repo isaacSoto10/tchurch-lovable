@@ -24,7 +24,7 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>com.tchurchapp.tchurch</string>
+			<string>app.lovable.e5ddf50ff80d4eb7a86a937f7a9f8a62.tchurch</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>tchurchapp</string>
@@ -33,6 +33,8 @@
 	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
 		<string>https</string>

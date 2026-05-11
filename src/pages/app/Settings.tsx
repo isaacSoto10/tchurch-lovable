@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Capacitor } from "@capacitor/core";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -79,6 +80,7 @@ export default function Settings() {
   const { selectedChurch, churches, switchChurch } = useChurch();
   const { fetchApi } = useApi();
   const isAdmin = selectedChurch?.role === "ADMIN";
+  const isNativePlatform = Capacitor.isNativePlatform();
 
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -185,12 +187,14 @@ export default function Settings() {
   }, [fetchApi, selectedChurch?.id]);
 
   useEffect(() => {
-    if (isAdmin && selectedChurch?.id) {
+    if (!isNativePlatform && isAdmin && selectedChurch?.id) {
       loadBillingData();
     }
-  }, [isAdmin, loadBillingData, selectedChurch?.id]);
+  }, [isNativePlatform, isAdmin, loadBillingData, selectedChurch?.id]);
 
   async function handleManageSubscription() {
+    if (isNativePlatform) return;
+
     setOpeningPortal(true);
     try {
       const data = await fetchApi<{ url: string }>(`/billing/portal`);
@@ -397,10 +401,12 @@ export default function Settings() {
                   </Badge>
                 )}
               </TabsTrigger>
-              <TabsTrigger value="billing">
-                <CreditCard className="w-4 h-4 mr-1.5" />
-                Billing
-              </TabsTrigger>
+              {!isNativePlatform && (
+                <TabsTrigger value="billing">
+                  <CreditCard className="w-4 h-4 mr-1.5" />
+                  Billing
+                </TabsTrigger>
+              )}
             </>
           )}
         </TabsList>
@@ -817,7 +823,8 @@ export default function Settings() {
               </Card>
             </TabsContent>
 
-            <TabsContent value="billing" className="mt-6">
+            {!isNativePlatform && (
+              <TabsContent value="billing" className="mt-6">
               {loadingBilling ? (
                 <div className="flex justify-center py-12">
                   <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
@@ -952,7 +959,8 @@ export default function Settings() {
                   </CardContent>
                 </Card>
               )}
-            </TabsContent>
+              </TabsContent>
+            )}
           </>
         )}
       </Tabs>
