@@ -1,4 +1,5 @@
 import { ClerkProvider as BaseClerkProvider } from "@clerk/clerk-react";
+import { Clerk as HeadlessClerk } from "@clerk/clerk-js/headless";
 import { Capacitor } from "@capacitor/core";
 import { useNavigate } from "react-router-dom";
 
@@ -35,6 +36,7 @@ export function ClerkProvider({ children }: { children: React.ReactNode }) {
       signInForceRedirectUrl={postAuthRedirect}
       signUpForceRedirectUrl={postAuthRedirect}
       standardBrowser={!isNative}
+      Clerk={isNative ? HeadlessClerk : undefined}
     >
       {children}
     </BaseClerkProvider>
