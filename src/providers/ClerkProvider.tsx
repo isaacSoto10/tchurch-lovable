@@ -1,14 +1,16 @@
 import { ClerkProvider as BaseClerkProvider } from "@clerk/clerk-react";
-import { Clerk as HeadlessClerk } from "@clerk/clerk-js/headless";
 import { Capacitor } from "@capacitor/core";
 import { useNavigate } from "react-router-dom";
 
 const CLERK_PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
+const CLERK_JS_VERSION = "5.125.10";
+const IOS_BUNDLE_ID = "app.lovable.e5ddf50ff80d4eb7a86a937f7a9f8a62.tchurch";
 
 export function ClerkProvider({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const isNative = Capacitor.isNativePlatform();
   const postAuthRedirect = isNative ? "/#/app" : "/app";
+  const allowedRedirectProtocols = isNative ? ["https", "tchurchapp", IOS_BUNDLE_ID] : undefined;
 
   if (!CLERK_PUBLISHABLE_KEY) {
     return (
@@ -35,8 +37,10 @@ export function ClerkProvider({ children }: { children: React.ReactNode }) {
       signUpFallbackRedirectUrl={postAuthRedirect}
       signInForceRedirectUrl={postAuthRedirect}
       signUpForceRedirectUrl={postAuthRedirect}
+      allowedRedirectProtocols={allowedRedirectProtocols}
+      clerkJSVariant={isNative ? "headless" : undefined}
+      clerkJSVersion={CLERK_JS_VERSION}
       standardBrowser={!isNative}
-      Clerk={isNative ? HeadlessClerk : undefined}
     >
       {children}
     </BaseClerkProvider>

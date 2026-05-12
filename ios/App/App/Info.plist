@@ -28,6 +28,7 @@
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>tchurchapp</string>
+				<string>app.lovable.e5ddf50ff80d4eb7a86a937f7a9f8a62.tchurch</string>
 			</array>
 		</dict>
 	</array>
@@ -46,6 +47,16 @@
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
+	<key>WKAppBoundDomains</key>
+	<array>
+		<string>localhost</string>
+		<string>tchurchapp.com</string>
+		<string>clerk.tchurchapp.com</string>
+		<string>api.clerk.com</string>
+		<string>img.clerk.com</string>
+		<string>images.clerk.dev</string>
+		<string>accounts.google.com</string>
+	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
