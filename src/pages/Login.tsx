@@ -1,12 +1,11 @@
 import { useEffect, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
-import { Capacitor } from "@capacitor/core";
 import { useAuth, useSignIn } from "@clerk/clerk-react";
-import { isClerkAPIResponseError } from "@clerk/clerk-react/errors";
 import { Loader2, Mail, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { getClerkErrorMessage } from "@/lib/clerkErrors";
 
 type Step = "email" | "code";
 type SupportedFirstFactor = {
@@ -19,13 +18,13 @@ function LoginInner() {
   const { isLoaded: authLoaded, isSignedIn } = useAuth();
   const { isLoaded, signIn, setActive } = useSignIn();
   const navigate = useNavigate();
-  const isNative = Capacitor.isNativePlatform();
   const [step, setStep] = useState<Step>("email");
   const [email, setEmail] = useState("");
   const [emailAddressId, setEmailAddressId] = useState("");
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const authReady = isLoaded && Boolean(signIn);
 
   useEffect(() => {
     if (isSignedIn) {
@@ -39,7 +38,12 @@ function LoginInner() {
 
   async function handleEmailSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!isLoaded || !email.trim()) return;
+    if (!email.trim()) return;
+
+    if (!authReady || !signIn) {
+      setError("Secure sign-in is still loading. Please try again in a moment.");
+      return;
+    }
 
     setLoading(true);
     setError("");
@@ -66,11 +70,7 @@ function LoginInner() {
       });
       setStep("code");
     } catch (err) {
-      if (isClerkAPIResponseError(err)) {
-        setError(err.errors[0]?.longMessage || err.errors[0]?.message || "Couldn't send a sign-in code.");
-      } else {
-        setError("Couldn't send a sign-in code.");
-      }
+      setError(getClerkErrorMessage(err, "Couldn't send a sign-in code. Please try again."));
     } finally {
       setLoading(false);
     }
@@ -78,7 +78,12 @@ function LoginInner() {
 
   async function handleCodeSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!isLoaded || !code.trim() || !emailAddressId) return;
+    if (!code.trim()) return;
+
+    if (!authReady || !emailAddressId) {
+      setError("Secure sign-in is still loading. Please try again in a moment.");
+      return;
+    }
 
     setLoading(true);
     setError("");
@@ -97,18 +102,17 @@ function LoginInner() {
 
       setError("Your sign-in is not complete yet. Please try again.");
     } catch (err) {
-      if (isClerkAPIResponseError(err)) {
-        setError(err.errors[0]?.longMessage || err.errors[0]?.message || "That code didn't work.");
-      } else {
-        setError("That code didn't work.");
-      }
+      setError(getClerkErrorMessage(err, "That code didn't work. Please try again."));
     } finally {
       setLoading(false);
     }
   }
 
   async function handleResendCode() {
-    if (!isLoaded || !signIn || !emailAddressId) return;
+    if (!authReady || !signIn || !emailAddressId) {
+      setError("Secure sign-in is still loading. Please try again in a moment.");
+      return;
+    }
 
     setLoading(true);
     setError("");
@@ -119,11 +123,7 @@ function LoginInner() {
         emailAddressId,
       });
     } catch (err) {
-      if (isClerkAPIResponseError(err)) {
-        setError(err.errors[0]?.longMessage || err.errors[0]?.message || "Couldn't resend the code.");
-      } else {
-        setError("Couldn't resend the code.");
-      }
+      setError(getClerkErrorMessage(err, "Couldn't resend the code. Please try again."));
     } finally {
       setLoading(false);
     }
@@ -147,7 +147,7 @@ function LoginInner() {
         </CardHeader>
         <CardContent className="space-y-4">
           {step === "email" ? (
-            <form className="space-y-4" onSubmit={handleEmailSubmit}>
+            <form className="space-y-4" noValidate onSubmit={handleEmailSubmit}>
               <div className="space-y-2">
                 <label className="text-sm font-medium text-slate-700" htmlFor="email">
                   Email address
@@ -165,13 +165,30 @@ function LoginInner() {
                   disabled={loading}
                 />
               </div>
-              {error ? <p className="text-sm text-red-600">{error}</p> : null}
-              <Button className="w-full" disabled={!isLoaded || loading || !email.trim()} type="submit">
-                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Continue"}
+              {error ? (
+                <p className="text-sm text-red-600" role="alert">
+                  {error}
+                </p>
+              ) : !authReady ? (
+                <p className="text-sm text-muted-foreground" aria-live="polite">
+                  Preparing secure sign-in...
+                </p>
+              ) : null}
+              <Button className="h-11 w-full" disabled={loading || !email.trim()} type="submit">
+                {loading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Sending code...
+                  </>
+                ) : authReady ? (
+                  "Continue"
+                ) : (
+                  "Preparing sign-in..."
+                )}
               </Button>
             </form>
           ) : (
-            <form className="space-y-4" onSubmit={handleCodeSubmit}>
+            <form className="space-y-4" noValidate onSubmit={handleCodeSubmit}>
               <div className="space-y-2">
                 <label className="text-sm font-medium text-slate-700" htmlFor="code">
                   Verification code
@@ -186,15 +203,26 @@ function LoginInner() {
                   disabled={loading}
                 />
               </div>
-              {error ? <p className="text-sm text-red-600">{error}</p> : null}
-              <Button className="w-full" disabled={!isLoaded || loading || code.length < 6} type="submit">
-                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Sign In"}
+              {error ? (
+                <p className="text-sm text-red-600" role="alert">
+                  {error}
+                </p>
+              ) : null}
+              <Button className="h-11 w-full" disabled={loading || code.length < 6} type="submit">
+                {loading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Signing in...
+                  </>
+                ) : (
+                  "Sign In"
+                )}
               </Button>
               <Button
                 className="w-full"
                 variant="outline"
                 type="button"
-                disabled={loading || !isLoaded}
+                disabled={loading}
                 onClick={handleResendCode}
               >
                 Resend code
@@ -215,13 +243,6 @@ function LoginInner() {
               </Button>
             </form>
           )}
-
-          {isNative ? (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-              Google sign-in is temporarily disabled in the iOS simulator because the browser redirect is not
-              restoring the Clerk session back into the Capacitor webview yet.
-            </div>
-          ) : null}
 
           <p className="text-center text-sm text-muted-foreground">
             Don&apos;t have an account?{" "}

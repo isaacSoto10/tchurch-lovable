@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { useAuth, useSignUp } from "@clerk/clerk-react";
-import { isClerkAPIResponseError } from "@clerk/clerk-react/errors";
 import { Loader2, MailPlus, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { getClerkErrorMessage } from "@/lib/clerkErrors";
 
 type Step = "email" | "code";
 
@@ -18,6 +18,7 @@ function SignupInner() {
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const authReady = isLoaded && Boolean(signUp);
 
   useEffect(() => {
     if (isSignedIn) {
@@ -31,7 +32,12 @@ function SignupInner() {
 
   async function handleSignupSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!isLoaded || !email.trim()) return;
+    if (!email.trim()) return;
+
+    if (!authReady || !signUp) {
+      setError("Secure sign-up is still loading. Please try again in a moment.");
+      return;
+    }
 
     setLoading(true);
     setError("");
@@ -41,11 +47,7 @@ function SignupInner() {
       await signUp.prepareVerification({ strategy: "email_code" });
       setStep("code");
     } catch (err) {
-      if (isClerkAPIResponseError(err)) {
-        setError(err.errors[0]?.longMessage || err.errors[0]?.message || "Couldn't start sign up.");
-      } else {
-        setError("Couldn't start sign up.");
-      }
+      setError(getClerkErrorMessage(err, "Couldn't start sign up. Please try again."));
     } finally {
       setLoading(false);
     }
@@ -53,7 +55,12 @@ function SignupInner() {
 
   async function handleVerifySubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!isLoaded || !code.trim()) return;
+    if (!code.trim()) return;
+
+    if (!authReady || !signUp) {
+      setError("Secure sign-up is still loading. Please try again in a moment.");
+      return;
+    }
 
     setLoading(true);
     setError("");
@@ -72,18 +79,17 @@ function SignupInner() {
 
       setError("Your sign up is not complete yet. Please try again.");
     } catch (err) {
-      if (isClerkAPIResponseError(err)) {
-        setError(err.errors[0]?.longMessage || err.errors[0]?.message || "That code didn't work.");
-      } else {
-        setError("That code didn't work.");
-      }
+      setError(getClerkErrorMessage(err, "That code didn't work. Please try again."));
     } finally {
       setLoading(false);
     }
   }
 
   async function handleResendCode() {
-    if (!isLoaded || !signUp) return;
+    if (!authReady || !signUp) {
+      setError("Secure sign-up is still loading. Please try again in a moment.");
+      return;
+    }
 
     setLoading(true);
     setError("");
@@ -91,11 +97,7 @@ function SignupInner() {
     try {
       await signUp.prepareVerification({ strategy: "email_code" });
     } catch (err) {
-      if (isClerkAPIResponseError(err)) {
-        setError(err.errors[0]?.longMessage || err.errors[0]?.message || "Couldn't resend the code.");
-      } else {
-        setError("Couldn't resend the code.");
-      }
+      setError(getClerkErrorMessage(err, "Couldn't resend the code. Please try again."));
     } finally {
       setLoading(false);
     }
@@ -119,7 +121,7 @@ function SignupInner() {
         </CardHeader>
         <CardContent className="space-y-4">
           {step === "email" ? (
-            <form className="space-y-4" onSubmit={handleSignupSubmit}>
+            <form className="space-y-4" noValidate onSubmit={handleSignupSubmit}>
               <div className="space-y-2">
                 <label className="text-sm font-medium text-slate-700" htmlFor="email">
                   Email address
@@ -137,13 +139,30 @@ function SignupInner() {
                   disabled={loading}
                 />
               </div>
-              {error ? <p className="text-sm text-red-600">{error}</p> : null}
-              <Button className="w-full" disabled={!isLoaded || loading || !email.trim()} type="submit">
-                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Continue"}
+              {error ? (
+                <p className="text-sm text-red-600" role="alert">
+                  {error}
+                </p>
+              ) : !authReady ? (
+                <p className="text-sm text-muted-foreground" aria-live="polite">
+                  Preparing secure sign-up...
+                </p>
+              ) : null}
+              <Button className="h-11 w-full" disabled={loading || !email.trim()} type="submit">
+                {loading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Sending code...
+                  </>
+                ) : authReady ? (
+                  "Continue"
+                ) : (
+                  "Preparing sign-up..."
+                )}
               </Button>
             </form>
           ) : (
-            <form className="space-y-4" onSubmit={handleVerifySubmit}>
+            <form className="space-y-4" noValidate onSubmit={handleVerifySubmit}>
               <div className="space-y-2">
                 <label className="text-sm font-medium text-slate-700" htmlFor="code">
                   Verification code
@@ -158,15 +177,26 @@ function SignupInner() {
                   disabled={loading}
                 />
               </div>
-              {error ? <p className="text-sm text-red-600">{error}</p> : null}
-              <Button className="w-full" disabled={!isLoaded || loading || code.length < 6} type="submit">
-                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Verify Email"}
+              {error ? (
+                <p className="text-sm text-red-600" role="alert">
+                  {error}
+                </p>
+              ) : null}
+              <Button className="h-11 w-full" disabled={loading || code.length < 6} type="submit">
+                {loading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Verifying...
+                  </>
+                ) : (
+                  "Verify Email"
+                )}
               </Button>
               <Button
                 className="w-full"
                 variant="outline"
                 type="button"
-                disabled={loading || !isLoaded}
+                disabled={loading}
                 onClick={handleResendCode}
               >
                 Resend code
