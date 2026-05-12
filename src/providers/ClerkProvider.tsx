@@ -6,7 +6,8 @@ const CLERK_PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
 export function ClerkProvider({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
-  const postAuthRedirect = Capacitor.isNativePlatform() ? "/#/app" : "/app";
+  const isNative = Capacitor.isNativePlatform();
+  const postAuthRedirect = isNative ? "/#/app" : "/app";
 
   if (!CLERK_PUBLISHABLE_KEY) {
     return (
@@ -33,6 +34,7 @@ export function ClerkProvider({ children }: { children: React.ReactNode }) {
       signUpFallbackRedirectUrl={postAuthRedirect}
       signInForceRedirectUrl={postAuthRedirect}
       signUpForceRedirectUrl={postAuthRedirect}
+      standardBrowser={!isNative}
     >
       {children}
     </BaseClerkProvider>
