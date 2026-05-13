@@ -181,16 +181,14 @@ function LoginInner() {
                   Preparing secure sign-in...
                 </p>
               ) : null}
-              <Button className="h-11 w-full" disabled={loading || !email.trim()} type="submit">
+              <Button className="h-11 w-full" disabled={loading || !authReady || !email.trim()} type="submit">
                 {loading ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
                     Sending code...
                   </>
-                ) : authReady ? (
-                  "Continue"
                 ) : (
-                  "Preparing sign-in..."
+                  "Continue"
                 )}
               </Button>
             </form>
@@ -215,7 +213,7 @@ function LoginInner() {
                   {error}
                 </p>
               ) : null}
-              <Button className="h-11 w-full" disabled={loading || code.length < 6} type="submit">
+              <Button className="h-11 w-full" disabled={loading || !authReady || code.length < 6} type="submit">
                 {loading ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -229,7 +227,7 @@ function LoginInner() {
                 className="w-full"
                 variant="outline"
                 type="button"
-                disabled={loading}
+                disabled={loading || !authReady}
                 onClick={handleResendCode}
               >
                 Resend code

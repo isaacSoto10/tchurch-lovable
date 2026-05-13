@@ -195,7 +195,7 @@ function SignupInner() {
               ) : null}
               <Button
                 className="h-11 w-full"
-                disabled={loading || !email.trim() || !password || !confirmPassword}
+                disabled={loading || !authReady || !email.trim() || !password || !confirmPassword}
                 type="submit"
               >
                 {loading ? (
@@ -203,10 +203,8 @@ function SignupInner() {
                     <Loader2 className="h-4 w-4 animate-spin" />
                     Sending code...
                   </>
-                ) : authReady ? (
-                  "Continue"
                 ) : (
-                  "Preparing sign-up..."
+                  "Continue"
                 )}
               </Button>
             </form>
@@ -231,7 +229,7 @@ function SignupInner() {
                   {error}
                 </p>
               ) : null}
-              <Button className="h-11 w-full" disabled={loading || code.length < 6} type="submit">
+              <Button className="h-11 w-full" disabled={loading || !authReady || code.length < 6} type="submit">
                 {loading ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -245,7 +243,7 @@ function SignupInner() {
                 className="w-full"
                 variant="outline"
                 type="button"
-                disabled={loading}
+                disabled={loading || !authReady}
                 onClick={handleResendCode}
               >
                 Resend code
