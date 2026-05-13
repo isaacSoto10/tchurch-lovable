@@ -56,6 +56,26 @@ function formatTime(dateStr: string) {
   });
 }
 
+function getItemTime(value: unknown) {
+  if (typeof value !== "string") return null;
+
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : null;
+}
+
+async function safeDashboardFetch<T>(
+  label: string,
+  request: () => Promise<T>,
+  fallback: T
+): Promise<T> {
+  try {
+    return await request();
+  } catch (error) {
+    console.warn(`[Dashboard] Failed to load ${label}:`, error);
+    return fallback;
+  }
+}
+
 export default function Dashboard() {
   const { fetchApi } = useApi();
   const { selectedChurch, loading: churchLoading } = useChurch();
@@ -75,20 +95,23 @@ export default function Dashboard() {
 
       try {
         const [statsData, servicesData, eventsData, announcementsData, ministriesData] = await Promise.all([
-          fetchApi("/dashboard/stats"),
-          fetchApi("/services"),
-          fetchApi("/events"),
-          fetchApi("/announcements"),
-          fetchApi("/my-ministries"),
+          safeDashboardFetch("stats", () => fetchApi("/dashboard/stats"), null),
+          safeDashboardFetch("services", () => fetchApi("/services"), []),
+          safeDashboardFetch("events", () => fetchApi("/events"), []),
+          safeDashboardFetch("announcements", () => fetchApi("/announcements"), []),
+          safeDashboardFetch("ministries", () => fetchApi("/my-ministries"), []),
         ]);
 
         if (statsData && typeof statsData === "object" && !statsData.error) {
           setStats(statsData as Stats);
         }
 
-        const now = new Date().toISOString();
+        const now = Date.now();
         const svcItems: TimelineItem[] = (Array.isArray(servicesData) ? servicesData : [])
-          .filter((s: Record<string, unknown>) => typeof s.date === "string" && s.date >= now)
+          .filter((s: Record<string, unknown>) => {
+            const time = getItemTime(s.date);
+            return time != null && time >= now;
+          })
           .map((s: Record<string, unknown>) => ({
             id: s.id as string,
             _type: "service" as const,
@@ -99,7 +122,10 @@ export default function Dashboard() {
           }));
 
         const evtItems: TimelineItem[] = (Array.isArray(eventsData) ? eventsData : [])
-          .filter((e: Record<string, unknown>) => typeof e.date === "string" && e.date >= now)
+          .filter((e: Record<string, unknown>) => {
+            const time = getItemTime(e.date);
+            return time != null && time >= now;
+          })
           .map((e: Record<string, unknown>) => ({
             id: e.id as string,
             _type: "event" as const,
@@ -278,7 +304,7 @@ export default function Dashboard() {
                   <Card
                     key={`${item._type}-${item.id}`}
                     className="min-w-0 cursor-pointer hover:shadow-md transition-shadow"
-                    onClick={() => navigate(item._type === "service" ? "/app/services" : "/app/events")}
+                    onClick={() => navigate(item._type === "service" ? `/app/services/${item.id}` : "/app/events")}
                   >
                     <CardContent className="p-3 flex items-center gap-3">
                       <div className={`w-1 h-10 rounded ${item._type === "service" ? "bg-primary" : "bg-amber-400"}`} />
@@ -317,7 +343,7 @@ export default function Dashboard() {
                   <Card
                     key={`${item._type}-${item.id}`}
                     className="min-w-0 cursor-pointer hover:shadow-md transition-shadow"
-                    onClick={() => navigate(item._type === "service" ? "/app/services" : "/app/events")}
+                    onClick={() => navigate(item._type === "service" ? `/app/services/${item.id}` : "/app/events")}
                   >
                     <CardContent className="p-3 flex items-center gap-3">
                       <div className={`w-1 h-10 rounded ${item._type === "service" ? "bg-primary" : "bg-amber-400"}`} />
