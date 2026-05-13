@@ -1,19 +1,16 @@
 import { ClerkProvider as BaseClerkProvider } from "@clerk/clerk-react";
-import { Clerk as HeadlessClerk } from "@clerk/clerk-js/headless";
-import { Capacitor } from "@capacitor/core";
 import { useNavigate } from "react-router-dom";
-
-const CLERK_PUBLISHABLE_KEY =
-  import.meta.env.VITE_CLERK_PUBLISHABLE_KEY ||
-  import.meta.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||
-  "pk_live_Y2xlcmsudGNodXJjaGFwcC5jb20k";
-const IOS_BUNDLE_ID = "app.lovable.e5ddf50ff80d4eb7a86a937f7a9f8a62.tchurch";
+import {
+  CLERK_PUBLISHABLE_KEY,
+  clerkAllowedRedirectOrigins,
+  clerkAllowedRedirectProtocols,
+  clerkRedirects,
+  headlessClerk,
+  isNativeClerkRuntime,
+} from "@/lib/clerkClient";
 
 export function ClerkProvider({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
-  const isNative = Capacitor.isNativePlatform();
-  const postAuthRedirect = isNative ? "/#/app" : "/app";
-  const allowedRedirectProtocols = isNative ? ["https", "tchurchapp", IOS_BUNDLE_ID] : undefined;
 
   if (!CLERK_PUBLISHABLE_KEY) {
     return (
@@ -32,16 +29,20 @@ export function ClerkProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <BaseClerkProvider
-      Clerk={HeadlessClerk}
+      Clerk={headlessClerk}
       publishableKey={CLERK_PUBLISHABLE_KEY}
       routerPush={(to) => navigate(to)}
       routerReplace={(to) => navigate(to, { replace: true })}
-      fallbackRedirectUrl={postAuthRedirect}
-      signInFallbackRedirectUrl={postAuthRedirect}
-      signUpFallbackRedirectUrl={postAuthRedirect}
-      signInForceRedirectUrl={postAuthRedirect}
-      signUpForceRedirectUrl={postAuthRedirect}
-      allowedRedirectProtocols={allowedRedirectProtocols}
+      signInUrl={clerkRedirects.signInUrl}
+      signUpUrl={clerkRedirects.signUpUrl}
+      fallbackRedirectUrl={clerkRedirects.postAuthRedirect}
+      signInFallbackRedirectUrl={clerkRedirects.postAuthRedirect}
+      signUpFallbackRedirectUrl={clerkRedirects.postAuthRedirect}
+      signInForceRedirectUrl={clerkRedirects.postAuthRedirect}
+      signUpForceRedirectUrl={clerkRedirects.postAuthRedirect}
+      standardBrowser={isNativeClerkRuntime}
+      allowedRedirectOrigins={clerkAllowedRedirectOrigins}
+      allowedRedirectProtocols={clerkAllowedRedirectProtocols}
     >
       {children}
     </BaseClerkProvider>

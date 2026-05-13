@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
-import { useAuth, useSignIn } from "@clerk/clerk-react";
+import { useAuth } from "@clerk/clerk-react";
 import { ArrowLeft, Loader2, Mail, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { ensureHeadlessClerkLoaded } from "@/lib/clerkClient";
 import { getClerkErrorMessage } from "@/lib/clerkErrors";
 
 type Step = "email" | "code";
@@ -16,7 +17,6 @@ type SupportedFirstFactor = {
 
 function LoginInner() {
   const { isLoaded: authLoaded, isSignedIn } = useAuth();
-  const { signIn, setActive } = useSignIn();
   const navigate = useNavigate();
   const [step, setStep] = useState<Step>("email");
   const [email, setEmail] = useState("");
@@ -24,14 +24,6 @@ function LoginInner() {
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const signInRef = useRef(signIn);
-  const setActiveRef = useRef(setActive);
-
-  useEffect(() => {
-    signInRef.current = signIn;
-    setActiveRef.current = setActive;
-  }, [setActive, signIn]);
-
   useEffect(() => {
     if (isSignedIn) {
       navigate("/app");
@@ -42,26 +34,6 @@ function LoginInner() {
     return <Navigate to="/app" replace />;
   }
 
-  async function waitForSignInClient() {
-    const getClient = () =>
-      signInRef.current && setActiveRef.current
-        ? { signIn: signInRef.current, setActive: setActiveRef.current }
-        : null;
-    const readyClient = getClient();
-    if (readyClient) return readyClient;
-
-    return new Promise<ReturnType<typeof getClient>>((resolve) => {
-      const deadline = Date.now() + 8000;
-      const interval = window.setInterval(() => {
-        const client = getClient();
-        if (client || Date.now() > deadline) {
-          window.clearInterval(interval);
-          resolve(client);
-        }
-      }, 100);
-    });
-  }
-
   async function handleEmailSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!email.trim()) return;
@@ -70,13 +42,15 @@ function LoginInner() {
     setError("");
 
     try {
-      const client = await waitForSignInClient();
-      if (!client) {
-        setError("Sign-in is unavailable. Please close and reopen the app, then try again.");
+      const clerk = await ensureHeadlessClerkLoaded();
+      const signIn = clerk.client?.signIn;
+
+      if (!signIn) {
+        setError("We couldn't connect to sign-in. Please close and reopen the app, then try again.");
         return;
       }
 
-      const result = await client.signIn.create({ identifier: email.trim() });
+      const result = await signIn.create({ identifier: email.trim() });
       const emailCodeFactor = (result.supportedFirstFactors as SupportedFirstFactor[] | undefined)?.find(
         (factor) => factor.strategy === "email_code" && factor.emailAddressId,
       );
@@ -91,7 +65,7 @@ function LoginInner() {
         setEmail(emailCodeFactor.safeIdentifier);
       }
 
-      await client.signIn.prepareFirstFactor({
+      await signIn.prepareFirstFactor({
         strategy: "email_code",
         emailAddressId: emailCodeFactor.emailAddressId,
       });
@@ -116,19 +90,21 @@ function LoginInner() {
     setError("");
 
     try {
-      const client = await waitForSignInClient();
-      if (!client) {
-        setError("Sign-in is unavailable. Please close and reopen the app, then try again.");
+      const clerk = await ensureHeadlessClerkLoaded();
+      const signIn = clerk.client?.signIn;
+
+      if (!signIn) {
+        setError("We couldn't connect to sign-in. Please close and reopen the app, then try again.");
         return;
       }
 
-      const result = await client.signIn.attemptFirstFactor({
+      const result = await signIn.attemptFirstFactor({
         strategy: "email_code",
         code: code.trim(),
       });
 
       if (result.status === "complete" && result.createdSessionId) {
-        await client.setActive({ session: result.createdSessionId });
+        await clerk.setActive({ session: result.createdSessionId });
         navigate("/app", { replace: true });
         return;
       }
@@ -151,13 +127,15 @@ function LoginInner() {
     setError("");
 
     try {
-      const client = await waitForSignInClient();
-      if (!client) {
-        setError("Sign-in is unavailable. Please close and reopen the app, then try again.");
+      const clerk = await ensureHeadlessClerkLoaded();
+      const signIn = clerk.client?.signIn;
+
+      if (!signIn) {
+        setError("We couldn't connect to sign-in. Please close and reopen the app, then try again.");
         return;
       }
 
-      await client.signIn.prepareFirstFactor({
+      await signIn.prepareFirstFactor({
         strategy: "email_code",
         emailAddressId,
       });

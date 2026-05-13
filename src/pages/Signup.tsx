@@ -1,17 +1,17 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
-import { useAuth, useSignUp } from "@clerk/clerk-react";
+import { useAuth } from "@clerk/clerk-react";
 import { ArrowLeft, Loader2, MailPlus, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { ensureHeadlessClerkLoaded } from "@/lib/clerkClient";
 import { getClerkErrorMessage } from "@/lib/clerkErrors";
 
 type Step = "email" | "code";
 
 function SignupInner() {
   const { isLoaded: authLoaded, isSignedIn } = useAuth();
-  const { signUp, setActive } = useSignUp();
   const navigate = useNavigate();
   const [step, setStep] = useState<Step>("email");
   const [email, setEmail] = useState("");
@@ -20,14 +20,6 @@ function SignupInner() {
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const signUpRef = useRef(signUp);
-  const setActiveRef = useRef(setActive);
-
-  useEffect(() => {
-    signUpRef.current = signUp;
-    setActiveRef.current = setActive;
-  }, [setActive, signUp]);
-
   useEffect(() => {
     if (isSignedIn) {
       navigate("/app");
@@ -36,26 +28,6 @@ function SignupInner() {
 
   if (authLoaded && isSignedIn) {
     return <Navigate to="/app" replace />;
-  }
-
-  async function waitForSignUpClient() {
-    const getClient = () =>
-      signUpRef.current && setActiveRef.current
-        ? { signUp: signUpRef.current, setActive: setActiveRef.current }
-        : null;
-    const readyClient = getClient();
-    if (readyClient) return readyClient;
-
-    return new Promise<ReturnType<typeof getClient>>((resolve) => {
-      const deadline = Date.now() + 8000;
-      const interval = window.setInterval(() => {
-        const client = getClient();
-        if (client || Date.now() > deadline) {
-          window.clearInterval(interval);
-          resolve(client);
-        }
-      }, 100);
-    });
   }
 
   async function handleSignupSubmit(e: React.FormEvent) {
@@ -74,14 +46,16 @@ function SignupInner() {
     setError("");
 
     try {
-      const client = await waitForSignUpClient();
-      if (!client) {
-        setError("Sign-up is unavailable. Please close and reopen the app, then try again.");
+      const clerk = await ensureHeadlessClerkLoaded();
+      const signUp = clerk.client?.signUp;
+
+      if (!signUp) {
+        setError("We couldn't connect to sign-up. Please close and reopen the app, then try again.");
         return;
       }
 
-      await client.signUp.create({ emailAddress: email.trim(), password });
-      await client.signUp.prepareVerification({ strategy: "email_code" });
+      await signUp.create({ emailAddress: email.trim(), password });
+      await signUp.prepareVerification({ strategy: "email_code" });
       setStep("code");
     } catch (err) {
       setError(getClerkErrorMessage(err, "Couldn't start sign up. Please try again."));
@@ -98,19 +72,21 @@ function SignupInner() {
     setError("");
 
     try {
-      const client = await waitForSignUpClient();
-      if (!client) {
-        setError("Sign-up is unavailable. Please close and reopen the app, then try again.");
+      const clerk = await ensureHeadlessClerkLoaded();
+      const signUp = clerk.client?.signUp;
+
+      if (!signUp) {
+        setError("We couldn't connect to sign-up. Please close and reopen the app, then try again.");
         return;
       }
 
-      const result = await client.signUp.attemptVerification({
+      const result = await signUp.attemptVerification({
         strategy: "email_code",
         code: code.trim(),
       });
 
       if (result.status === "complete" && result.createdSessionId) {
-        await client.setActive({ session: result.createdSessionId });
+        await clerk.setActive({ session: result.createdSessionId });
         navigate("/app", { replace: true });
         return;
       }
@@ -128,13 +104,15 @@ function SignupInner() {
     setError("");
 
     try {
-      const client = await waitForSignUpClient();
-      if (!client) {
-        setError("Sign-up is unavailable. Please close and reopen the app, then try again.");
+      const clerk = await ensureHeadlessClerkLoaded();
+      const signUp = clerk.client?.signUp;
+
+      if (!signUp) {
+        setError("We couldn't connect to sign-up. Please close and reopen the app, then try again.");
         return;
       }
 
-      await client.signUp.prepareVerification({ strategy: "email_code" });
+      await signUp.prepareVerification({ strategy: "email_code" });
     } catch (err) {
       setError(getClerkErrorMessage(err, "Couldn't resend the code. Please try again."));
     } finally {
