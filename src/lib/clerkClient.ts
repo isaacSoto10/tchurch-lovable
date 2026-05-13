@@ -8,7 +8,12 @@ export const CLERK_PUBLISHABLE_KEY =
 
 export const IOS_BUNDLE_ID = "app.lovable.e5ddf50ff80d4eb7a86a937f7a9f8a62.tchurch";
 export const isNativeClerkRuntime = Capacitor.isNativePlatform();
-export const isStandardBrowserRuntime = !isNativeClerkRuntime;
+
+const runtimeOrigin = typeof window === "undefined" ? "" : window.location.origin;
+const runtimeProtocol = typeof window === "undefined" ? "" : window.location.protocol;
+const runtimeUsesHttpOrigin = runtimeProtocol === "https:" || runtimeProtocol === "http:";
+
+export const isStandardBrowserRuntime = !isNativeClerkRuntime || runtimeUsesHttpOrigin;
 
 export const clerkRedirects = {
   postAuthRedirect: isNativeClerkRuntime ? "/#/app" : "/app",
@@ -17,7 +22,14 @@ export const clerkRedirects = {
 };
 
 export const clerkAllowedRedirectOrigins = isNativeClerkRuntime
-  ? ["https://tchurchapp.com", "https://www.tchurchapp.com", "https://accounts.tchurchapp.com"]
+  ? Array.from(
+      new Set([
+        runtimeOrigin,
+        "https://tchurchapp.com",
+        "https://www.tchurchapp.com",
+        "https://accounts.tchurchapp.com",
+      ].filter(Boolean)),
+    )
   : undefined;
 
 export const clerkAllowedRedirectProtocols = isNativeClerkRuntime
@@ -31,7 +43,7 @@ let loadPromise: Promise<typeof headlessClerk> | null = null;
 function getRuntimeDiagnostics() {
   return {
     href: window.location.href,
-    origin: window.location.origin,
+    origin: runtimeOrigin,
     platform: Capacitor.getPlatform(),
     standardBrowser: isStandardBrowserRuntime,
   };

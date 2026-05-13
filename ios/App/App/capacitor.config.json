@@ -3,6 +3,8 @@
 	"appName": "Tchurch",
 	"webDir": "dist",
 	"server": {
+		"url": "https://tchurchapp.com",
+		"cleartext": false,
 		"hostname": "tchurchapp.com",
 		"iosScheme": "tchurchapp",
 		"androidScheme": "https"
