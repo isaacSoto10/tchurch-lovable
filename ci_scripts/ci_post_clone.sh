@@ -3,12 +3,12 @@
 # Xcode Cloud post-clone script
 # Runs after the repo is cloned, before the build starts
 
-set -eux
+set -e
 
 cd "$CI_PRIMARY_REPOSITORY_PATH"
 
 # Install dependencies
-npm ci
+npm install
 
 # Build the web app
 npm run build

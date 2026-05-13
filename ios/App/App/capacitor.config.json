@@ -7,7 +7,5 @@
 		"iosScheme": "tchurchapp",
 		"androidScheme": "https"
 	},
-	"packageClassList": [
-		"CAPBrowserPlugin"
-	]
+	"packageClassList": []
 }
