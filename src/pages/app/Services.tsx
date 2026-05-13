@@ -942,12 +942,33 @@ export default function Services() {
         )}
         {!loading &&
           filteredServices.map((svc) => (
-            <Card key={svc.id} className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => navigate(`/app/services/${svc.id}`)}>
+            <Card
+              key={svc.id}
+              className="hover:shadow-md transition-shadow cursor-pointer"
+              onClick={() => toggleExpand(svc.id)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  toggleExpand(svc.id);
+                }
+              }}
+            >
               <CardContent className="p-4">
                 <div className="flex items-center gap-4">
                   <div className="w-1 h-10 rounded bg-primary" />
                   <div className="flex-1">
-                    <p className="font-medium">{svc.title}</p>
+                    <button
+                      type="button"
+                      className="text-left font-medium underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 rounded-sm"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        navigate(`/app/services/${svc.id}`);
+                      }}
+                    >
+                      {svc.title}
+                    </button>
                     <p className="text-sm text-muted-foreground">
                       {svc.date
                         ? new Date(svc.date).toLocaleDateString("en-US", {
@@ -976,6 +997,7 @@ export default function Services() {
                       variant="ghost"
                       size="sm"
                       onClick={() => toggleExpand(svc.id)}
+                      aria-label={expandedService === svc.id ? "Collapse service details" : "Expand service details"}
                     >
                       {expandedService === svc.id ? "−" : "+"}
                     </Button>

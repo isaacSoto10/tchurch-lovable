@@ -67,8 +67,9 @@ function creatorName(announcement: Announcement) {
     "A church member";
 }
 
-function whatsappShareLink(title: string, content: string) {
-  return `https://wa.me/?text=${encodeURIComponent(`📣 ${title}\n\n${content}`)}`;
+function whatsappShareLink(title: string, content: string, imageUrl?: string | null) {
+  const imageLine = imageUrl ? `\n\nImage: ${imageUrl}` : "";
+  return `https://wa.me/?text=${encodeURIComponent(`📣 ${title}\n\n${content}${imageLine}`)}`;
 }
 
 export default function Announcements() {
@@ -437,7 +438,7 @@ function AnnouncementCard({
           </p>
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" size="sm" asChild>
-              <a href={whatsappShareLink(announcement.title, announcement.content)} target="_blank" rel="noreferrer">
+              <a href={whatsappShareLink(announcement.title, announcement.content, announcement.imageUrl)} target="_blank" rel="noreferrer">
                 <MessageCircle className="h-4 w-4" />
                 WhatsApp
               </a>
