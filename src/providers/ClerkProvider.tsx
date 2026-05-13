@@ -3,8 +3,8 @@ import { Capacitor } from "@capacitor/core";
 import { useNavigate } from "react-router-dom";
 
 const CLERK_PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
-const CLERK_JS_VERSION = "5.125.10";
 const IOS_BUNDLE_ID = "app.lovable.e5ddf50ff80d4eb7a86a937f7a9f8a62.tchurch";
+const NATIVE_CLERK_JS_URL = "/clerk.headless.browser.js";
 
 export function ClerkProvider({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
@@ -38,9 +38,7 @@ export function ClerkProvider({ children }: { children: React.ReactNode }) {
       signInForceRedirectUrl={postAuthRedirect}
       signUpForceRedirectUrl={postAuthRedirect}
       allowedRedirectProtocols={allowedRedirectProtocols}
-      clerkJSVariant={isNative ? "headless" : undefined}
-      clerkJSVersion={CLERK_JS_VERSION}
-      standardBrowser={!isNative}
+      clerkJSUrl={isNative ? NATIVE_CLERK_JS_URL : undefined}
     >
       {children}
     </BaseClerkProvider>

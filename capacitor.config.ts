@@ -5,6 +5,7 @@ const config: CapacitorConfig = {
   appName: 'Tchurch',
   webDir: 'dist',
   server: {
+    hostname: 'tchurchapp.com',
     iosScheme: 'https',
     androidScheme: 'https',
   },
