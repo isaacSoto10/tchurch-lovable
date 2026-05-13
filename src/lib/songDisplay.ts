@@ -39,27 +39,38 @@ const SECTION_LABELS: Record<string, string> = {
   introduccion: "Intro",
   "introducción": "Intro",
   verse: "Verse",
-  verso: "Verso",
-  estrofa: "Verso",
-  chorus: "Coro",
-  coro: "Coro",
-  bridge: "Puente",
-  puente: "Puente",
-  "pre-chorus": "Pre-coro",
-  prechorus: "Pre-coro",
-  precoro: "Pre-coro",
-  "pre coro": "Pre-coro",
-  interlude: "Interludio",
-  interludio: "Interludio",
+  v: "Verse",
+  verso: "Verse",
+  estrofa: "Verse",
+  chorus: "Chorus",
+  c: "Chorus",
+  coro: "Chorus",
+  bridge: "Bridge",
+  b: "Bridge",
+  puente: "Bridge",
+  "pre-chorus": "Pre-Chorus",
+  "pre chorus": "Pre-Chorus",
+  prechorus: "Pre-Chorus",
+  pc: "Pre-Chorus",
+  precoro: "Pre-Chorus",
+  "pre coro": "Pre-Chorus",
+  "pre-coro": "Pre-Chorus",
+  interlude: "Interlude",
+  interludio: "Interlude",
   instrumental: "Instrumental",
+  solo: "Interlude",
   tag: "Tag",
-  outro: "Final",
-  final: "Final",
-  ending: "Final",
+  outro: "Outro",
+  final: "Outro",
+  ending: "Outro",
 };
+
+const METADATA_KEYS = new Set(["title", "artist", "key", "tempo", "capo", "time", "t", "a", "k"]);
 
 function normalizeLabel(value: string) {
   return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
     .replace(/[_-]/g, " ")
     .replace(/\s+/g, " ")
     .trim()
@@ -72,7 +83,12 @@ function getDirectiveLabel(raw: string) {
   if (!section) return null;
 
   const number = raw.match(/(\d+)$/)?.[1];
-  return number ? `${section} ${number}` : section;
+  return number && number !== "1" ? `${section} ${number}` : section;
+}
+
+function getPlainSectionLabel(raw: string) {
+  if (raw.includes("[") || raw.includes("{")) return null;
+  return getDirectiveLabel(raw);
 }
 
 export function parseSongNotes(notes: string | null | undefined): SongNotes {
@@ -187,13 +203,21 @@ export function chordProToDisplayLines(value: string | null | undefined, maxLine
       continue;
     }
 
+    const plainSectionLabel = getPlainSectionLabel(trimmed);
+    if (plainSectionLabel) {
+      lines.push({ kind: "section", label: plainSectionLabel });
+      continue;
+    }
+
     const directive = trimmed.match(/^\{([^}:]+)(?::\s*(.*))?\}$/);
     if (directive) {
-      const sectionLabel = getDirectiveLabel(directive[1]);
-      lines.push({
-        kind: sectionLabel ? "section" : "meta",
-        label: sectionLabel || `${directive[1]}${directive[2] ? `: ${directive[2]}` : ""}`,
-      });
+      const key = directive[1].toLowerCase();
+      if (METADATA_KEYS.has(key)) continue;
+
+      const sectionLabel = getDirectiveLabel(key);
+      if (sectionLabel) {
+        lines.push({ kind: "section", label: sectionLabel });
+      }
       continue;
     }
 
@@ -206,7 +230,7 @@ export function chordProToDisplayLines(value: string | null | undefined, maxLine
       }
     }
 
-    const { chords, lyrics } = splitChordProContentLine(rawLine);
+    const { chords, lyrics } = splitChordProContentLine(trimmed);
     lines.push({ kind: "line", chords, lyrics });
   }
 

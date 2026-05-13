@@ -53,14 +53,14 @@ export function ChordProPreview({
           }
 
           return (
-            <div key={index} className="py-0.5">
+            <div key={index} className="min-w-max py-0.5">
               {line.chords && (
-                <div className="whitespace-pre-wrap font-bold text-primary">
+                <div className="whitespace-pre font-bold text-primary">
                   {line.chords}
                 </div>
               )}
               {line.lyrics && (
-                <div className="whitespace-pre-wrap text-zinc-900">
+                <div className="whitespace-pre text-zinc-900">
                   {line.lyrics}
                 </div>
               )}
