@@ -64,8 +64,7 @@ export default function MyAssignments() {
       );
     } catch (e) {
       toast({
-        title: "Error",
-        description: "Failed to respond to assignment",
+        title: e instanceof Error ? e.message : "Failed to respond to assignment",
         variant: "destructive",
       });
     } finally {

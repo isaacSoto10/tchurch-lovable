@@ -1,16 +1,27 @@
+import { useMemo, useState } from "react";
 import { chordProToDisplayLines, hasChordPro } from "@/lib/songDisplay";
+import { ALL_KEYS, normalizeKey, transposeChordPro } from "@/lib/musicUtils";
 
 type ChordProPreviewProps = {
   value: string | null | undefined;
   maxLines?: number;
   emptyText?: string;
+  originalKey?: string | null;
 };
 
 export function ChordProPreview({
   value,
   maxLines = 48,
   emptyText = "No ChordPro lyrics saved yet.",
+  originalKey,
 }: ChordProPreviewProps) {
+  const [transposeKey, setTransposeKey] = useState("");
+  const normalizedOriginalKey = normalizeKey(originalKey);
+  const displayValue = useMemo(() => {
+    if (!value || !normalizedOriginalKey || !transposeKey) return value;
+    return transposeChordPro(value, normalizedOriginalKey, transposeKey);
+  }, [normalizedOriginalKey, transposeKey, value]);
+
   if (!hasChordPro(value)) {
     return (
       <div className="rounded-2xl border border-dashed border-zinc-200 bg-zinc-50 p-4 text-center text-sm text-zinc-500">
@@ -19,14 +30,31 @@ export function ChordProPreview({
     );
   }
 
-  const lines = chordProToDisplayLines(value, maxLines);
-  const isTruncated = Boolean(value && value.replace(/\r\n/g, "\n").split("\n").length > maxLines);
+  const lines = chordProToDisplayLines(displayValue, maxLines);
+  const isTruncated = Boolean(displayValue && displayValue.replace(/\r\n/g, "\n").split("\n").length > maxLines);
 
   return (
     <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white">
-      <div className="flex items-center justify-between border-b border-zinc-100 bg-zinc-50 px-4 py-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-100 bg-zinc-50 px-4 py-2">
         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">ChordPro</p>
-        {isTruncated && <p className="text-xs text-zinc-400">Preview</p>}
+        <div className="flex items-center gap-2">
+          {normalizedOriginalKey && (
+            <label className="flex items-center gap-1 text-xs text-zinc-500">
+              Key
+              <select
+                value={transposeKey}
+                onChange={(event) => setTransposeKey(event.target.value)}
+                className="rounded-lg border border-zinc-200 bg-white px-2 py-1 text-xs font-semibold text-zinc-700 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+              >
+                <option value="">Original {originalKey}</option>
+                {ALL_KEYS.map((key) => (
+                  <option key={key} value={key}>{key}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          {isTruncated && <p className="text-xs text-zinc-400">Preview</p>}
+        </div>
       </div>
       <div className="max-h-[30rem] overflow-auto px-4 py-3 font-mono text-[13px] leading-6">
         {lines.map((line, index) => {

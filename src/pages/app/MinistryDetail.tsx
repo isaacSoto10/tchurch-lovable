@@ -18,6 +18,7 @@ import { Loader2, ArrowLeft, Plus, Check, X, UserMinus, Users, Clock, MessageCir
 import { apiFetch } from "@/lib/api";
 import { useChurch } from "@/providers/ChurchProvider";
 import { MinistryResources } from "@/components/MinistryResources";
+import { useToast } from "@/components/ui/use-toast";
 
 type Tab = "members" | "join-requests" | "announcements" | "resources";
 
@@ -77,6 +78,7 @@ export default function MinistryDetail() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { selectedChurch } = useChurch();
+  const { toast } = useToast();
 
   const [ministry, setMinistry] = useState<Ministry | null>(null);
   const [loading, setLoading] = useState(true);
@@ -128,7 +130,7 @@ export default function MinistryDetail() {
     async function loadMyMinistries() {
       try {
         const data = await apiFetch<MyMinistriesResponse>("/my-ministries");
-        const isAdmin = data.role === "ADMIN";
+        const isAdmin = data.role === "ADMIN" || selectedChurch?.role === "ADMIN";
         const myIds: string[] = data.myMinistryIds || [];
         const pendingIds: string[] = data.pendingMinistryIds || [];
         const ministryRoles: Record<string, string> = data.ministryRoles || {};
@@ -142,7 +144,7 @@ export default function MinistryDetail() {
       }
     }
     loadMyMinistries();
-  }, [id]);
+  }, [id, selectedChurch?.role]);
 
   // Fetch join requests when tab is active
   useEffect(() => {
@@ -181,12 +183,13 @@ export default function MinistryDetail() {
     if (!id) return;
     try {
       await apiFetch(`/ministries/${id}/join-requests/${requestId}`, {
-        method: "PUT",
-        body: JSON.stringify({ action: "APPROVE" }),
+        method: "PATCH",
+        body: JSON.stringify({ action: "approve" }),
       });
       setJoinRequests((prev) => prev.filter((r) => r.id !== requestId));
     } catch (e) {
       console.error(e);
+      toast({ title: e instanceof Error ? e.message : "Failed to approve request", variant: "destructive" });
     }
   }
 
@@ -194,12 +197,13 @@ export default function MinistryDetail() {
     if (!id) return;
     try {
       await apiFetch(`/ministries/${id}/join-requests/${requestId}`, {
-        method: "PUT",
-        body: JSON.stringify({ action: "DENY" }),
+        method: "PATCH",
+        body: JSON.stringify({ action: "deny" }),
       });
       setJoinRequests((prev) => prev.filter((r) => r.id !== requestId));
     } catch (e) {
       console.error(e);
+      toast({ title: e instanceof Error ? e.message : "Failed to deny request", variant: "destructive" });
     }
   }
 

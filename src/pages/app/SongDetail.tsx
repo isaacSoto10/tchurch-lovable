@@ -462,7 +462,7 @@ export default function SongDetail() {
             {previewLyrics ? (
               <>
                 <p className="text-sm font-medium text-zinc-600">{activeArrangement?.name || "Song master"} — Chord chart</p>
-                <ChordProPreview value={previewLyrics} maxLines={120} />
+                <ChordProPreview value={previewLyrics} maxLines={120} originalKey={activeArrangement?.key || song.key} />
                 <p className="text-xs text-zinc-400">{splitSlides(previewLyrics).length} slides</p>
                 <div className="space-y-3">
                   {splitSlides(previewLyrics).map((slide, i) => (

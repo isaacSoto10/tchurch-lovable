@@ -3,7 +3,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { MessageCircle, Send, Hash, Plus } from "lucide-react";
+import { MessageCircle, Send, Hash, Plus, Trash2 } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
 import {
@@ -23,9 +23,21 @@ interface Channel {
 interface Message {
   id: string;
   content: string;
-  senderId: string;
-  senderName?: string;
+  userId: string;
+  authorName?: string;
   createdAt: string;
+  updatedAt?: string | null;
+  isMine?: boolean;
+}
+
+function formatMessageTime(value: string) {
+  const date = new Date(value);
+  return date.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 export default function Messages() {
@@ -92,6 +104,19 @@ export default function Messages() {
       toast({ title: "Failed to create channel", variant: "destructive" });
     } finally {
       setCreating(false);
+    }
+  };
+
+  const handleDeleteMessage = async (messageId: string) => {
+    if (!selectedChannel) return;
+    try {
+      await fetchApi(`/channels/${selectedChannel.id}/messages/${messageId}`, { method: "DELETE" });
+      setMessages((prev) => prev.filter((message) => message.id !== messageId));
+    } catch (e) {
+      toast({
+        title: e instanceof Error ? e.message : "Failed to delete message",
+        variant: "destructive",
+      });
     }
   };
 
@@ -193,13 +218,26 @@ export default function Messages() {
                   <MessageCircle className="w-4 h-4 text-primary" />
                 </div>
                 <div className="flex-1">
-                  <div className="flex items-baseline gap-2">
-                    <span className="font-medium text-sm">{msg.senderName || "User"}</span>
-                    <span className="text-xs text-muted-foreground">
-                      {new Date(msg.createdAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
-                    </span>
+                  <div className="flex items-start gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-baseline gap-2">
+                        <span className="font-medium text-sm">{msg.authorName || "User"}</span>
+                        <span className="text-xs text-muted-foreground">{formatMessageTime(msg.createdAt)}</span>
+                      </div>
+                      <p className="text-sm mt-0.5 whitespace-pre-wrap">{msg.content}</p>
+                    </div>
+                    {msg.isMine && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-muted-foreground hover:bg-red-50 hover:text-red-500"
+                        onClick={() => handleDeleteMessage(msg.id)}
+                        aria-label="Delete message"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
                   </div>
-                  <p className="text-sm mt-0.5">{msg.content}</p>
                 </div>
               </div>
             ))}

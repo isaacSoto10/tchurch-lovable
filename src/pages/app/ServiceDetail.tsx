@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type DragEvent, type PointerEvent } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -121,6 +121,8 @@ export default function ServiceDetail() {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [respondingId, setRespondingId] = useState<string | null>(null);
   const [expandedSongItems, setExpandedSongItems] = useState<Record<string, boolean>>({});
+  const [draggingItemId, setDraggingItemId] = useState<string | null>(null);
+  const [dragOverItemId, setDragOverItemId] = useState<string | null>(null);
 
   // Add item form
   const [itemTitle, setItemTitle] = useState("");
@@ -245,6 +247,73 @@ export default function ServiceDetail() {
     }
   }
 
+  async function reorderItem(draggedId: string, targetId: string) {
+    if (!service || !id || draggedId === targetId) return;
+    const fromIndex = service.items.findIndex((item) => item.id === draggedId);
+    const toIndex = service.items.findIndex((item) => item.id === targetId);
+    if (fromIndex < 0 || toIndex < 0) return;
+
+    const reordered = [...service.items];
+    const [dragged] = reordered.splice(fromIndex, 1);
+    reordered.splice(toIndex, 0, dragged);
+    const withPositions = reordered.map((serviceItem, position) => ({ ...serviceItem, position }));
+
+    setService({ ...service, items: withPositions });
+    try {
+      await apiFetch(`/service-items/reorder`, {
+        method: "PATCH",
+        body: JSON.stringify({ items: withPositions.map(({ id, position }) => ({ id, position })) }),
+      });
+    } catch (e) {
+      console.error(e);
+      setService(service);
+      toast({ title: e instanceof Error ? e.message : "Failed to reorder service", variant: "destructive" });
+    }
+  }
+
+  function handleDragStart(event: DragEvent, itemId: string) {
+    event.dataTransfer.effectAllowed = "move";
+    setDraggingItemId(itemId);
+  }
+
+  function handleDragOver(event: DragEvent, itemId: string) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setDragOverItemId(itemId);
+  }
+
+  async function handleDrop(event: DragEvent, targetId: string) {
+    event.preventDefault();
+    if (draggingItemId) {
+      await reorderItem(draggingItemId, targetId);
+    }
+    setDraggingItemId(null);
+    setDragOverItemId(null);
+  }
+
+  function handleDragEnd() {
+    setDraggingItemId(null);
+    setDragOverItemId(null);
+  }
+
+  function handlePointerMove(event: PointerEvent) {
+    if (!draggingItemId) return;
+    const target = document
+      .elementFromPoint(event.clientX, event.clientY)
+      ?.closest<HTMLElement>("[data-service-item-id]");
+    if (target?.dataset.serviceItemId) {
+      setDragOverItemId(target.dataset.serviceItemId);
+    }
+  }
+
+  async function handlePointerUp() {
+    if (draggingItemId && dragOverItemId) {
+      await reorderItem(draggingItemId, dragOverItemId);
+    }
+    setDraggingItemId(null);
+    setDragOverItemId(null);
+  }
+
   async function handleMoveUp(item: ServiceItem) {
     await moveItem(item, "up");
   }
@@ -346,11 +415,10 @@ export default function ServiceDetail() {
     setExpandedSongItems((prev) => ({ ...prev, [itemId]: !prev[itemId] }));
   }
 
-  const statusColors: Record<string, string> = {
-    draft: "bg-zinc-100 text-zinc-600",
-    confirmed: "bg-emerald-100 text-emerald-700",
-    completed: "bg-zinc-100 text-muted-foreground",
-  };
+  function getDisplayKey(item: ServiceItem) {
+    if (!item.song) return null;
+    return getPrimaryArrangement(item.song)?.key || item.song.key || null;
+  }
 
   if (loading) {
     return (
@@ -381,9 +449,6 @@ export default function ServiceDetail() {
             <h1 className="font-semibold text-zinc-900 truncate">{service.title}</h1>
             <p className="text-xs text-zinc-500">{formatDate(service.date)}</p>
           </div>
-          <Badge className={statusColors[service.status] || statusColors.draft}>
-            {service.status}
-          </Badge>
           {isAdmin && (
             <Button variant="ghost" size="sm" className="text-red-500" onClick={handleDeleteService}>
               <Trash2 className="w-4 h-4" />
@@ -443,7 +508,18 @@ export default function ServiceDetail() {
             ) : (
               <div className="space-y-2">
                 {service.items.map((item, idx) => (
-                  <Card key={item.id}>
+                  <Card
+                    key={item.id}
+                    data-service-item-id={item.id}
+                    className={`${draggingItemId === item.id ? "opacity-50" : ""} ${
+                      dragOverItemId === item.id && draggingItemId !== item.id ? "ring-2 ring-primary ring-offset-2" : ""
+                    }`}
+                    draggable
+                    onDragStart={(event) => handleDragStart(event, item.id)}
+                    onDragOver={(event) => handleDragOver(event, item.id)}
+                    onDrop={(event) => handleDrop(event, item.id)}
+                    onDragEnd={handleDragEnd}
+                  >
                     <CardContent className="p-0">
                       <div className="flex items-center gap-3 p-3">
                         <div className="flex flex-col gap-1 shrink-0">
@@ -452,7 +528,17 @@ export default function ServiceDetail() {
                               <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path d="M5 15l7-7 7 7" /></svg>
                             </button>
                           )}
-                          <GripVertical className="w-4 h-4 text-zinc-300" />
+                          <GripVertical
+                            className="w-4 h-4 cursor-grab touch-none text-zinc-300 active:cursor-grabbing"
+                            onPointerDown={(event) => {
+                              event.currentTarget.setPointerCapture(event.pointerId);
+                              setDraggingItemId(item.id);
+                              setDragOverItemId(item.id);
+                            }}
+                            onPointerMove={handlePointerMove}
+                            onPointerUp={handlePointerUp}
+                            onPointerCancel={handlePointerUp}
+                          />
                           {idx < service.items.length - 1 && (
                             <button onClick={() => handleMoveDown(item)} className="p-0.5 rounded hover:bg-zinc-100 text-zinc-400">
                               <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7" /></svg>
@@ -469,6 +555,9 @@ export default function ServiceDetail() {
                             {item.song?.author ? ` · ${item.song.author}` : ""}
                           </p>
                         </div>
+                        {getDisplayKey(item) && (
+                          <Badge variant="secondary" className="shrink-0 text-xs">Key {getDisplayKey(item)}</Badge>
+                        )}
                         {item.song && (
                           <div className="flex shrink-0 items-center gap-1">
                             <Button variant="outline" size="sm" onClick={() => navigate(`/app/songs/${item.song?.id}`)}>
@@ -536,6 +625,7 @@ export default function ServiceDetail() {
 
                           <ChordProPreview
                             value={getSongChordPro(item.song)}
+                            originalKey={getDisplayKey(item)}
                             maxLines={36}
                             emptyText="No ChordPro chart saved for this song yet."
                           />

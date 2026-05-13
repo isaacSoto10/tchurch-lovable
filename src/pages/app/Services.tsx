@@ -93,12 +93,6 @@ const SERVICE_TYPES = [
   { label: "Rehearsal", value: "Rehearsal" },
 ];
 
-const SERVICE_STATUSES = [
-  { label: "Draft", value: "draft" },
-  { label: "Confirmed", value: "confirmed" },
-  { label: "Completed", value: "completed" },
-];
-
 const ITEM_TYPES = [
   { label: "Song", value: "song", icon: Music },
   { label: "Header", value: "header", icon: FileText },
@@ -155,7 +149,6 @@ export default function Services() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [filterType, setFilterType] = useState<string>("all");
-  const [filterStatus, setFilterStatus] = useState<string>("all");
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingService, setEditingService] = useState<Service | null>(null);
@@ -165,7 +158,7 @@ export default function Services() {
     title: "",
     date: "",
     type: "Sunday Service",
-    status: "draft",
+    status: "confirmed",
     notes: "",
   });
 
@@ -241,13 +234,12 @@ export default function Services() {
   const filteredServices = services.filter((s) => {
     const matchesSearch = s.title.toLowerCase().includes(search.toLowerCase());
     const matchesType = filterType === "all" || s.type === filterType;
-    const matchesStatus = filterStatus === "all" || s.status === filterStatus;
-    return matchesSearch && matchesType && matchesStatus;
+    return matchesSearch && matchesType;
   });
 
   const openNewDialog = () => {
     setEditingService(null);
-    setFormData({ title: "", date: "", type: "Sunday Service", status: "draft", notes: "" });
+    setFormData({ title: "", date: "", type: "Sunday Service", status: "confirmed", notes: "" });
     setDialogOpen(true);
   };
 
@@ -295,24 +287,6 @@ export default function Services() {
       toast({ title: "Failed to save service", variant: "destructive" });
     } finally {
       setSubmitting(false);
-    }
-  };
-
-  const handleStatusToggle = async (service: Service) => {
-    const statusOrder = ["draft", "confirmed", "completed"];
-    const currentIndex = statusOrder.indexOf(service.status);
-    if (currentIndex === -1 || currentIndex >= statusOrder.length - 1) return;
-
-    const newStatus = statusOrder[currentIndex + 1];
-    try {
-      await fetchApi(`/services/${service.id}`, {
-        method: "PUT",
-        body: JSON.stringify({ ...service, status: newStatus }),
-      });
-      toast({ title: `Status updated to ${newStatus}` });
-      loadServices();
-    } catch (e) {
-      toast({ title: "Failed to update status", variant: "destructive" });
     }
   };
 
@@ -601,17 +575,6 @@ export default function Services() {
     }
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "confirmed":
-        return "bg-green-100 text-green-800";
-      case "completed":
-        return "bg-indigo-100 text-indigo-800";
-      default:
-        return "bg-gray-100 text-gray-800";
-    }
-  };
-
   const getItemIcon = (type: string) => {
     const itemType = ITEM_TYPES.find((t) => t.value === type);
     const Icon = itemType?.icon || FileText;
@@ -647,17 +610,6 @@ export default function Services() {
             <SelectItem value="all">All Types</SelectItem>
             {SERVICE_TYPES.map((t) => (
               <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={filterStatus} onValueChange={setFilterStatus}>
-          <SelectTrigger className="w-32">
-            <SelectValue placeholder="Status" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Status</SelectItem>
-            {SERVICE_STATUSES.map((s) => (
-              <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -704,25 +656,6 @@ export default function Services() {
                   {SERVICE_TYPES.map((t) => (
                     <SelectItem key={t.value} value={t.value}>
                       {t.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Select
-                value={formData.status}
-                onValueChange={(v) =>
-                  setFormData({ ...formData, status: v })
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select status" />
-                </SelectTrigger>
-                <SelectContent>
-                  {SERVICE_STATUSES.map((s) => (
-                    <SelectItem key={s.value} value={s.value}>
-                      {s.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -995,13 +928,6 @@ export default function Services() {
                         : ""}
                     </p>
                   </div>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleStatusToggle(svc); }}
-                    className={`text-xs px-2 py-1 rounded cursor-pointer ${getStatusColor(svc.status)}`}
-                    disabled={svc.status === "completed"}
-                  >
-                    {svc.status}
-                  </button>
                   <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
                     <Button
                       variant="ghost"
@@ -1081,6 +1007,9 @@ export default function Services() {
                                       <p className="truncate text-xs text-muted-foreground">{item.song.author}</p>
                                     )}
                                   </div>
+                                  {(arrangement?.key || item.song?.key) && (
+                                    <Badge variant="secondary" className="shrink-0 text-xs">Key {arrangement?.key || item.song?.key}</Badge>
+                                  )}
                                   {item.duration && (
                                     <span className="text-xs text-muted-foreground flex items-center">
                                       <Clock className="w-3 h-3 mr-1" />
@@ -1159,6 +1088,7 @@ export default function Services() {
 
                                     <ChordProPreview
                                       value={chordPro}
+                                      originalKey={arrangement?.key || item.song?.key}
                                       maxLines={24}
                                       emptyText="No ChordPro chart saved for this song yet."
                                     />
