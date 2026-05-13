@@ -133,6 +133,47 @@ export function isSongItemType(type: string | null | undefined) {
   return (type || "").toLowerCase() === "song";
 }
 
+function splitChordProContentLine(rawLine: string): { chords: string; lyrics: string } {
+  const chordMatches = [...rawLine.matchAll(/\[([^\]]+)\]/g)];
+  if (chordMatches.length === 0) {
+    return { chords: "", lyrics: rawLine.trimEnd() };
+  }
+
+  let chords = "";
+  let lyrics = "";
+  let cursor = 0;
+
+  for (const match of chordMatches) {
+    const matchIndex = match.index ?? 0;
+    const textBeforeChord = rawLine.slice(cursor, matchIndex);
+    lyrics += textBeforeChord;
+
+    const targetColumn = lyrics.length;
+    if (chords.length < targetColumn) {
+      chords += " ".repeat(targetColumn - chords.length);
+    } else if (chords.length > 0) {
+      chords += " ";
+    }
+
+    chords += match[1];
+    cursor = matchIndex + match[0].length;
+  }
+
+  lyrics += rawLine.slice(cursor);
+
+  if (!lyrics.trim()) {
+    return {
+      chords: chordMatches.map((match) => match[1]).join("   "),
+      lyrics: "",
+    };
+  }
+
+  return {
+    chords: chords.trimEnd(),
+    lyrics: lyrics.trimEnd(),
+  };
+}
+
 export function chordProToDisplayLines(value: string | null | undefined, maxLines = 80): ChordProDisplayLine[] {
   if (!value) return [];
 
@@ -165,8 +206,7 @@ export function chordProToDisplayLines(value: string | null | undefined, maxLine
       }
     }
 
-    const chords = [...rawLine.matchAll(/\[([^\]]+)\]/g)].map((match) => match[1]).join("   ");
-    const lyrics = rawLine.replace(/\[[^\]]+\]/g, "").trim();
+    const { chords, lyrics } = splitChordProContentLine(rawLine);
     lines.push({ kind: "line", chords, lyrics });
   }
 
