@@ -11,7 +11,7 @@ import { Plus, Search, Pencil, Trash2 } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
 import { useChurch } from "@/providers/ChurchProvider";
-import { getPrimaryArrangement, type SongArrangement } from "@/lib/songDisplay";
+import { getSongDisplayKey, type SongArrangement } from "@/lib/songDisplay";
 
 interface Song {
   id: string;
@@ -132,7 +132,7 @@ export default function Songs() {
   };
 
   const getTitle = (song: Song) => song.title || song.name || "";
-  const getEffectiveKey = (song: Song) => song.key || getPrimaryArrangement(song)?.key || "";
+  const getEffectiveKey = (song: Song) => getSongDisplayKey(song) || "";
   const getTime = (value?: string | null) => (value ? new Date(value).getTime() || 0 : 0);
 
   const artists = useMemo(

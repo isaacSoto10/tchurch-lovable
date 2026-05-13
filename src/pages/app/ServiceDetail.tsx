@@ -21,6 +21,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { ChordProPreview } from "@/components/ChordProPreview";
 import {
   getPrimaryArrangement,
+  getSongDisplayKey,
   getSongChordPro,
   getSongPlainNotes,
   getSongYoutubeUrl,
@@ -433,7 +434,7 @@ export default function ServiceDetail() {
 
   function getDisplayKey(item: ServiceItem) {
     if (!item.song) return null;
-    return getPrimaryArrangement(item.song)?.key || item.song.key || null;
+    return getSongDisplayKey(item.song);
   }
 
   if (loading) {
@@ -613,8 +614,8 @@ export default function ServiceDetail() {
                           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                             <div className="min-w-0 space-y-2">
                               <div className="flex flex-wrap gap-2">
-                                {(getPrimaryArrangement(item.song)?.key || item.song.key) && (
-                                  <Badge variant="secondary">Key {getPrimaryArrangement(item.song)?.key || item.song.key}</Badge>
+                                {getDisplayKey(item) && (
+                                  <Badge variant="secondary">Key {getDisplayKey(item)}</Badge>
                                 )}
                                 {(getPrimaryArrangement(item.song)?.bpm || item.song.bpm) && (
                                   <Badge variant="secondary">{getPrimaryArrangement(item.song)?.bpm || item.song.bpm} BPM</Badge>

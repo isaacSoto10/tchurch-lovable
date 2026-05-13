@@ -23,11 +23,27 @@ const SPANISH_KEY_EQUIVALENTS: Record<string, string> = {
   si: "B",
 };
 
+const CHORD_ROOT_PATTERN = /^(Do|Re|Mi|Fa|Sol|La|Si|[A-G](?:#|b)?)(?=$|m|maj|min|sus|add|dim|aug|[0-9/#b+\-\s])/i;
+
 export function normalizeKey(key: string | null | undefined): string {
   if (!key) return "";
   const root = key.trim().match(/^([A-G][#b]?|Do|Re|Mi|Fa|Sol|La|Si)/i)?.[1] || key.trim();
   const spanishRoot = SPANISH_KEY_EQUIVALENTS[root.toLowerCase()];
   return FLAT_EQUIVALENTS[spanishRoot || root] || spanishRoot || root;
+}
+
+export function inferChordProKey(value: string | null | undefined): string {
+  if (!value) return "";
+
+  for (const match of value.matchAll(/\[([^\]]+)\]/g)) {
+    const token = match[1]?.trim();
+    if (!token || /^n\.?c\.?$/i.test(token)) continue;
+
+    const root = token.match(CHORD_ROOT_PATTERN)?.[1];
+    if (root) return root;
+  }
+
+  return value.match(/\{(?:key|k):\s*([^}]+)\}/i)?.[1]?.trim() || "";
 }
 
 function getNoteIndex(note: string): number {

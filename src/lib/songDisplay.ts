@@ -1,3 +1,5 @@
+import { inferChordProKey } from "./musicUtils";
+
 export type SongArrangement = {
   id: string;
   name: string;
@@ -139,6 +141,12 @@ export function getPrimaryArrangement(song: SongLike | null | undefined) {
 export function getSongChordPro(song: SongLike | null | undefined) {
   if (!song) return null;
   return getPrimaryArrangement(song)?.lyrics || song.lyrics || null;
+}
+
+export function getSongDisplayKey(song: SongLike | null | undefined) {
+  if (!song) return null;
+  const arrangement = getPrimaryArrangement(song);
+  return arrangement?.key || song.key || inferChordProKey(arrangement?.lyrics || song.lyrics) || null;
 }
 
 export function hasChordPro(value: string | null | undefined) {

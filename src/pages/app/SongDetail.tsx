@@ -19,6 +19,7 @@ import { apiFetch } from "@/lib/api";
 import { useChurch } from "@/providers/ChurchProvider";
 import { ChordProPreview } from "@/components/ChordProPreview";
 import { buildSongNotes, getSongYoutubeUrl, parseSongNotes } from "@/lib/songDisplay";
+import { inferChordProKey } from "@/lib/musicUtils";
 
 const MUSICAL_KEYS = ["C", "C#/Db", "D", "D#/Eb", "E", "F", "F#/Gb", "G", "G#/Ab", "A", "A#/Bb", "B",
   "Cm", "C#m", "Dm", "D#m", "Em", "Fm", "F#m", "Gm", "G#m", "Am", "A#m", "Bm"];
@@ -465,7 +466,7 @@ export default function SongDetail() {
                 <ChordProPreview
                   value={previewLyrics}
                   maxLines={120}
-                  originalKey={activeArrangement?.key || song.key}
+                  originalKey={activeArrangement?.key || song.key || inferChordProKey(previewLyrics)}
                   title={song.title}
                   artist={song.author}
                 />

@@ -12,6 +12,7 @@ import { useChurch } from "@/providers/ChurchProvider";
 import { ChordProPreview } from "@/components/ChordProPreview";
 import {
   getPrimaryArrangement,
+  getSongDisplayKey,
   getSongChordPro,
   getSongPlainNotes,
   getSongYoutubeUrl,
@@ -1006,6 +1007,7 @@ export default function Services() {
                             const youtubeUrl = isSong ? getSongYoutubeUrl(item.song) : null;
                             const plainNotes = isSong ? getSongPlainNotes(item.song) : null;
                             const arrangement = isSong ? getPrimaryArrangement(item.song) : null;
+                            const displayKey = isSong ? getSongDisplayKey(item.song) : null;
                             const chordPro = isSong ? getSongChordPro(item.song) : null;
 
                             return (
@@ -1053,8 +1055,8 @@ export default function Services() {
                                       <p className="truncate text-xs text-muted-foreground">{item.song.author}</p>
                                     )}
                                   </div>
-                                  {(arrangement?.key || item.song?.key) && (
-                                    <Badge variant="secondary" className="shrink-0 text-xs">Key {arrangement?.key || item.song?.key}</Badge>
+                                  {displayKey && (
+                                    <Badge variant="secondary" className="shrink-0 text-xs">Key {displayKey}</Badge>
                                   )}
                                   {item.duration && (
                                     <span className="text-xs text-muted-foreground flex items-center">
@@ -1094,8 +1096,8 @@ export default function Services() {
                                 {isSong && expandedSongItems[item.id] && (
                                   <div className="space-y-3 border-t bg-white/80 p-3" onClick={stopInteractiveTap} onPointerDown={stopInteractiveTap} onTouchStart={stopInteractiveTap}>
                                     <div className="flex flex-wrap gap-2">
-                                      {(arrangement?.key || item.song?.key) && (
-                                        <Badge variant="secondary">Key {arrangement?.key || item.song?.key}</Badge>
+                                      {displayKey && (
+                                        <Badge variant="secondary">Key {displayKey}</Badge>
                                       )}
                                       {(arrangement?.bpm || item.song?.bpm) && (
                                         <Badge variant="secondary">{arrangement?.bpm || item.song?.bpm} BPM</Badge>
@@ -1134,7 +1136,7 @@ export default function Services() {
 
                                     <ChordProPreview
                                       value={chordPro}
-                                      originalKey={arrangement?.key || item.song?.key}
+                                      originalKey={displayKey}
                                       title={item.song?.title || item.title}
                                       artist={item.song?.author}
                                       maxLines={24}
