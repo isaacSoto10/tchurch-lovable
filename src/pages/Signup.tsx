@@ -66,7 +66,7 @@ function SignupInner() {
       await signUp.prepareVerification({ strategy: "email_code" });
       setStep("code");
     } catch (err) {
-      setError(getClerkErrorMessage(err, "Couldn't start sign up. Please try again."));
+      setError(isNativeMobileAuth && err instanceof Error ? err.message : getClerkErrorMessage(err, "Couldn't start sign up. Please try again."));
     } finally {
       setLoading(false);
     }
@@ -107,7 +107,7 @@ function SignupInner() {
 
       setError("Your sign up is not complete yet. Please try again.");
     } catch (err) {
-      setError(getClerkErrorMessage(err, "That code didn't work. Please try again."));
+      setError(isNativeMobileAuth && err instanceof Error ? err.message : getClerkErrorMessage(err, "That code didn't work. Please try again."));
     } finally {
       setLoading(false);
     }
@@ -133,7 +133,7 @@ function SignupInner() {
 
       await signUp.prepareVerification({ strategy: "email_code" });
     } catch (err) {
-      setError(getClerkErrorMessage(err, "Couldn't resend the code. Please try again."));
+      setError(isNativeMobileAuth && err instanceof Error ? err.message : getClerkErrorMessage(err, "Couldn't resend the code. Please try again."));
     } finally {
       setLoading(false);
     }

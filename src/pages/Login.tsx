@@ -80,7 +80,7 @@ function LoginInner() {
       });
       setStep("code");
     } catch (err) {
-      setError(getClerkErrorMessage(err, "Couldn't send a sign-in code. Please try again."));
+      setError(isNativeMobileAuth && err instanceof Error ? err.message : getClerkErrorMessage(err, "Couldn't send a sign-in code. Please try again."));
     } finally {
       setLoading(false);
     }
@@ -126,7 +126,7 @@ function LoginInner() {
 
       setError("Your sign-in is not complete yet. Please try again.");
     } catch (err) {
-      setError(getClerkErrorMessage(err, "That code didn't work. Please try again."));
+      setError(isNativeMobileAuth && err instanceof Error ? err.message : getClerkErrorMessage(err, "That code didn't work. Please try again."));
     } finally {
       setLoading(false);
     }
@@ -160,7 +160,7 @@ function LoginInner() {
         emailAddressId,
       });
     } catch (err) {
-      setError(getClerkErrorMessage(err, "Couldn't resend the code. Please try again."));
+      setError(isNativeMobileAuth && err instanceof Error ? err.message : getClerkErrorMessage(err, "Couldn't resend the code. Please try again."));
     } finally {
       setLoading(false);
     }

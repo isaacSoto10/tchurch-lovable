@@ -29,11 +29,18 @@ function emitChange() {
 }
 
 async function postJson<T>(path: string, body: Record<string, unknown>): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  let response: Response;
+
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (error) {
+    console.error("[mobileAuth] Network request failed", { path, error });
+    throw new Error("The app could not reach the Tchurch sign-in server. Please check your connection and try again.");
+  }
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
