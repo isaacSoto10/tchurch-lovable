@@ -14,9 +14,11 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Loader2, ArrowLeft, Plus, Trash2, Music2, Play } from "lucide-react";
+import { Loader2, ArrowLeft, Plus, Trash2, Music2, Play, PlayCircle } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useChurch } from "@/providers/ChurchProvider";
+import { ChordProPreview } from "@/components/ChordProPreview";
+import { buildSongNotes, getSongYoutubeUrl, parseSongNotes } from "@/lib/songDisplay";
 
 const MUSICAL_KEYS = ["C", "C#/Db", "D", "D#/Eb", "E", "F", "F#/Gb", "G", "G#/Ab", "A", "A#/Bb", "B",
   "Cm", "C#m", "Dm", "D#m", "Em", "Fm", "F#m", "Gm", "G#m", "Am", "A#m", "Bm"];
@@ -90,12 +92,13 @@ export default function SongDetail() {
 
   // Info form
   const [infoForm, setInfoForm] = useState({
-    title: "", author: "", ccliNumber: "", copyright: "", tags: "", scriptureRef: "", key: "", bpm: "", meter: "",
+    title: "", author: "", ccliNumber: "", copyright: "", tags: "", scriptureRef: "", key: "", bpm: "", meter: "", youtubeUrl: "", notes: "",
   });
 
   // Arrangement form
   const [arrForm, setArrForm] = useState({ name: "", key: "", bpm: "", meter: "", lyrics: "" });
   const [saving, setSaving] = useState(false);
+  const previewLyrics = activeArrangement?.lyrics || song?.lyrics || "";
 
   useEffect(() => {
     if (!id) return;
@@ -110,6 +113,7 @@ export default function SongDetail() {
           return;
         }
         setSong(songData);
+        const songNotes = parseSongNotes(songData.notes);
         setInfoForm({
           title: songData.title || "",
           author: songData.author || "",
@@ -120,6 +124,8 @@ export default function SongDetail() {
           key: songData.key || "",
           bpm: songData.bpm?.toString() || "",
           meter: songData.meter || "",
+          youtubeUrl: songData.youtubeUrl || songNotes.youtubeUrl || "",
+          notes: songNotes.plainNotes || "",
         });
         setArrangements(arrData || []);
         if (arrData?.length > 0) setActiveArrangement(arrData[0]);
@@ -159,6 +165,7 @@ export default function SongDetail() {
         key: infoForm.key || null,
         bpm: infoForm.bpm ? parseInt(infoForm.bpm) : null,
         meter: infoForm.meter || null,
+        notes: buildSongNotes(infoForm.youtubeUrl.trim() || null, infoForm.notes.trim() || null),
       };
       await apiFetch(`/songs/${id}`, {
         method: "PUT",
@@ -265,6 +272,13 @@ export default function SongDetail() {
             <h1 className="font-semibold text-zinc-900 truncate">{song.title}</h1>
             {song.author && <p className="text-xs text-zinc-500 truncate">by {song.author}</p>}
           </div>
+          {getSongYoutubeUrl(song) && (
+            <Button asChild variant="outline" size="sm">
+              <a href={getSongYoutubeUrl(song) || "#"} target="_blank" rel="noreferrer">
+                <PlayCircle className="w-4 h-4" />
+              </a>
+            </Button>
+          )}
           <Button variant="ghost" size="sm" className="text-red-500" onClick={() => setShowDeleteSong(true)}>
             <Trash2 className="w-4 h-4" />
           </Button>
@@ -315,6 +329,15 @@ export default function SongDetail() {
                   <Label>Scripture Reference</Label>
                   <Input value={infoForm.scriptureRef} onChange={(e) => setInfoForm({ ...infoForm, scriptureRef: e.target.value })} onBlur={() => saveField("scriptureRef", infoForm.scriptureRef)} placeholder="e.g. Psalm 23" />
                 </div>
+                <div className="space-y-2">
+                  <Label>YouTube link</Label>
+                  <Input
+                    type="url"
+                    value={infoForm.youtubeUrl}
+                    onChange={(e) => setInfoForm({ ...infoForm, youtubeUrl: e.target.value })}
+                    placeholder="https://youtube.com/watch?v=..."
+                  />
+                </div>
                 <div className="grid grid-cols-3 gap-3">
                   <div className="space-y-2">
                     <Label>Key</Label>
@@ -338,6 +361,19 @@ export default function SongDetail() {
                       </SelectContent>
                     </Select>
                   </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Team notes</Label>
+                  <Textarea
+                    value={infoForm.notes}
+                    onChange={(e) => setInfoForm({ ...infoForm, notes: e.target.value })}
+                    placeholder="Arrangement notes, capo, intro cues, rehearsal details..."
+                  />
+                </div>
+                <div className="flex justify-end">
+                  <Button size="sm" onClick={handleSaveInfo} disabled={saving}>
+                    {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Save details"}
+                  </Button>
                 </div>
               </CardContent>
             </Card>
@@ -423,12 +459,13 @@ export default function SongDetail() {
         {/* PREVIEW TAB */}
         {activeSection === "preview" && (
           <div className="space-y-3">
-            {activeArrangement?.lyrics ? (
+            {previewLyrics ? (
               <>
-                <p className="text-sm font-medium text-zinc-600">{activeArrangement.name} — Presentation</p>
-                <p className="text-xs text-zinc-400">{splitSlides(activeArrangement.lyrics).length} slides</p>
+                <p className="text-sm font-medium text-zinc-600">{activeArrangement?.name || "Song master"} — Chord chart</p>
+                <ChordProPreview value={previewLyrics} maxLines={120} />
+                <p className="text-xs text-zinc-400">{splitSlides(previewLyrics).length} slides</p>
                 <div className="space-y-3">
-                  {splitSlides(activeArrangement.lyrics).map((slide, i) => (
+                  {splitSlides(previewLyrics).map((slide, i) => (
                     <PresentationSlide key={i} text={slide} />
                   ))}
                 </div>

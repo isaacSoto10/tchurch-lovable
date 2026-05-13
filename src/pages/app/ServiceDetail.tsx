@@ -14,9 +14,19 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, ArrowLeft, Plus, Trash2, GripVertical, Check, X, Clock, Users, Music, Download } from "lucide-react";
+import { Loader2, ArrowLeft, Plus, Trash2, GripVertical, Check, X, Clock, Users, Music, ExternalLink, PlayCircle, FileText } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useChurch } from "@/providers/ChurchProvider";
+import { ChordProPreview } from "@/components/ChordProPreview";
+import {
+  getPrimaryArrangement,
+  getSongChordPro,
+  getSongPlainNotes,
+  getSongYoutubeUrl,
+  isSongItemType,
+  type SongArrangement,
+  type SongLike,
+} from "@/lib/songDisplay";
 
 type ServiceItem = {
   id: string;
@@ -24,7 +34,7 @@ type ServiceItem = {
   type: string;
   position: number;
   duration: number | null;
-  song: { id: string; title: string; author: string | null } | null;
+  song: SongLike | null;
 };
 
 type Assignment = {
@@ -56,6 +66,12 @@ type SongOption = {
   id: string;
   title: string;
   author?: string | null;
+  key?: string | null;
+  bpm?: number | null;
+  meter?: string | null;
+  notes?: string | null;
+  lyrics?: string | null;
+  arrangements?: SongArrangement[] | null;
 };
 
 type UserOption = {
@@ -76,7 +92,18 @@ function getInitials(firstName?: string | null, lastName?: string | null, email?
   return (email?.[0] || "?").toUpperCase();
 }
 
-const ITEM_TYPES = ["Song", "Prayer", "Scripture", "Announcement", "Video", "Other"];
+const ITEM_TYPES = [
+  { label: "Song", value: "song" },
+  { label: "Prayer", value: "prayer" },
+  { label: "Scripture", value: "scripture" },
+  { label: "Announcement", value: "announcement" },
+  { label: "Video", value: "video" },
+  { label: "Other", value: "other" },
+];
+
+function formatItemType(type: string) {
+  return ITEM_TYPES.find((item) => item.value === type.toLowerCase())?.label || type;
+}
 
 export default function ServiceDetail() {
   const { id } = useParams<{ id: string }>();
@@ -94,7 +121,7 @@ export default function ServiceDetail() {
 
   // Add item form
   const [itemTitle, setItemTitle] = useState("");
-  const [itemType, setItemType] = useState("Song");
+  const [itemType, setItemType] = useState("song");
   const [itemDuration, setItemDuration] = useState("");
   const [songSearch, setSongSearch] = useState("");
   const [songResults, setSongResults] = useState<SongOption[]>([]);
@@ -143,10 +170,10 @@ export default function ServiceDetail() {
   }, [showAssign, service?.assignments]);
 
   useEffect(() => {
-    if (itemType === "Song" && songSearch.length >= 2) {
+    if (isSongItemType(itemType) && songSearch.length >= 2) {
       const timeout = setTimeout(async () => {
         try {
-          const data = await apiFetch<SongOption[]>(`/songs?search=${encodeURIComponent(songSearch)}`);
+          const data = await apiFetch<SongOption[]>(`/songs?q=${encodeURIComponent(songSearch)}`);
           setSongResults(Array.isArray(data) ? data.slice(0, 5) : []);
         } catch { setSongResults([]); }
       }, 300);
@@ -156,16 +183,22 @@ export default function ServiceDetail() {
 
   async function handleAddItem(e: React.FormEvent) {
     e.preventDefault();
-    if (!itemTitle.trim() || !id) return;
+    if (!id) return;
+    if (isSongItemType(itemType) && !selectedSong) return;
+    if (!isSongItemType(itemType) && !itemTitle.trim()) return;
+
     setSubmitting(true);
     try {
       const item = {
-        title: selectedSong ? `${selectedSong.title} (${selectedSong.author || "Unknown"})` : itemTitle,
-        type: itemType,
+        serviceId: id,
+        title: selectedSong ? selectedSong.title : itemTitle,
+        type: itemType.toLowerCase(),
         duration: itemDuration ? parseInt(itemDuration) : null,
         songId: selectedSong?.id || null,
+        position: service?.items.length || 0,
+        details: {},
       };
-      await apiFetch(`/services/${id}/items`, {
+      await apiFetch(`/service-items`, {
         method: "POST",
         body: JSON.stringify(item),
       });
@@ -180,36 +213,41 @@ export default function ServiceDetail() {
   async function handleDeleteItem(itemId: string) {
     if (!id) return;
     try {
-      await apiFetch(`/services/${id}/items/${itemId}`, { method: "DELETE" });
+      await apiFetch(`/service-items/${itemId}`, { method: "DELETE" });
       setService((prev) => prev ? { ...prev, items: prev.items.filter((i) => i.id !== itemId) } : prev);
     } catch (e) { console.error(e); }
   }
 
-  async function handleMoveUp(item: ServiceItem) {
+  async function moveItem(item: ServiceItem, direction: "up" | "down") {
     if (!service || !id) return;
     const idx = service.items.findIndex((i) => i.id === item.id);
-    if (idx <= 0) return;
-    const prev = service.items[idx - 1];
-    // Swap positions
+    const targetIdx = direction === "up" ? idx - 1 : idx + 1;
+    if (idx < 0 || targetIdx < 0 || targetIdx >= service.items.length) return;
+
+    const reordered = [...service.items];
+    [reordered[idx], reordered[targetIdx]] = [reordered[targetIdx], reordered[idx]];
+    const withPositions = reordered.map((serviceItem, position) => ({ ...serviceItem, position }));
+
+    setService({ ...service, items: withPositions });
     try {
-      await apiFetch(`/services/${id}/items/${item.id}`, { method: "PUT", body: JSON.stringify({ position: prev.position }) });
-      await apiFetch(`/services/${id}/items/${prev.id}`, { method: "PUT", body: JSON.stringify({ position: item.position }) });
+      await apiFetch(`/service-items/reorder`, {
+        method: "PATCH",
+        body: JSON.stringify({ items: withPositions.map(({ id, position }) => ({ id, position })) }),
+      });
       const data = await apiFetch<Service>(`/services/${id}`);
       setService({ ...data, items: [...(data.items || [])].sort((a, b) => a.position - b.position) });
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      setService(service);
+    }
+  }
+
+  async function handleMoveUp(item: ServiceItem) {
+    await moveItem(item, "up");
   }
 
   async function handleMoveDown(item: ServiceItem) {
-    if (!service || !id) return;
-    const idx = service.items.findIndex((i) => i.id === item.id);
-    if (idx < 0 || idx >= service.items.length - 1) return;
-    const next = service.items[idx + 1];
-    try {
-      await apiFetch(`/services/${id}/items/${item.id}`, { method: "PUT", body: JSON.stringify({ position: next.position }) });
-      await apiFetch(`/services/${id}/items/${next.id}`, { method: "PUT", body: JSON.stringify({ position: item.position }) });
-      const data = await apiFetch<Service>(`/services/${id}`);
-      setService({ ...data, items: [...(data.items || [])].sort((a, b) => a.position - b.position) });
-    } catch (e) { console.error(e); }
+    await moveItem(item, "down");
   }
 
   async function handleAssignMember(e: React.FormEvent) {
@@ -284,7 +322,7 @@ export default function ServiceDetail() {
 
   function resetItemForm() {
     setItemTitle("");
-    setItemType("Song");
+    setItemType("song");
     setItemDuration("");
     setSongSearch("");
     setSongResults([]);
@@ -389,37 +427,91 @@ export default function ServiceDetail() {
               <div className="space-y-2">
                 {service.items.map((item, idx) => (
                   <Card key={item.id}>
-                    <CardContent className="p-3 flex items-center gap-3">
-                      <div className="flex flex-col gap-1 shrink-0">
-                        {idx > 0 && (
-                          <button onClick={() => handleMoveUp(item)} className="p-0.5 rounded hover:bg-zinc-100 text-zinc-400">
-                            <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path d="M5 15l7-7 7 7" /></svg>
+                    <CardContent className="p-0">
+                      <div className="flex items-center gap-3 p-3">
+                        <div className="flex flex-col gap-1 shrink-0">
+                          {idx > 0 && (
+                            <button onClick={() => handleMoveUp(item)} className="p-0.5 rounded hover:bg-zinc-100 text-zinc-400">
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path d="M5 15l7-7 7 7" /></svg>
+                            </button>
+                          )}
+                          <GripVertical className="w-4 h-4 text-zinc-300" />
+                          {idx < service.items.length - 1 && (
+                            <button onClick={() => handleMoveDown(item)} className="p-0.5 rounded hover:bg-zinc-100 text-zinc-400">
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7" /></svg>
+                            </button>
+                          )}
+                        </div>
+                        <div className="w-8 h-8 bg-primary/10 rounded-lg flex items-center justify-center shrink-0">
+                          {isSongItemType(item.type) ? <Music className="w-4 h-4 text-primary" /> : <Clock className="w-4 h-4 text-primary" />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium text-sm">{item.song?.title || item.title}</p>
+                          <p className="text-xs text-zinc-500">
+                            {formatItemType(item.type)}{item.duration ? ` · ${item.duration} min` : ""}
+                            {item.song?.author ? ` · ${item.song.author}` : ""}
+                          </p>
+                        </div>
+                        {item.song && (
+                          <Button variant="outline" size="sm" onClick={() => navigate(`/app/songs/${item.song?.id}`)}>
+                            <FileText className="w-3 h-3" />
+                            Song
+                          </Button>
+                        )}
+                        {isPlanner && (
+                          <button
+                            onClick={() => handleDeleteItem(item.id)}
+                            className="p-1.5 rounded-lg hover:bg-red-50 text-zinc-400 hover:text-red-500 transition-colors"
+                          >
+                            <Trash2 className="w-4 h-4" />
                           </button>
                         )}
-                        <GripVertical className="w-4 h-4 text-zinc-300" />
-                        {idx < service.items.length - 1 && (
-                          <button onClick={() => handleMoveDown(item)} className="p-0.5 rounded hover:bg-zinc-100 text-zinc-400">
-                            <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7" /></svg>
-                          </button>
-                        )}
                       </div>
-                      <div className="w-8 h-8 bg-primary/10 rounded-lg flex items-center justify-center shrink-0">
-                        {item.type === "Song" ? <Music className="w-4 h-4 text-primary" /> : <Clock className="w-4 h-4 text-primary" />}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium text-sm">{item.title}</p>
-                        <p className="text-xs text-zinc-500">
-                          {item.type}{item.duration ? ` · ${item.duration} min` : ""}
-                          {item.song && ` · ${item.song.title}`}
-                        </p>
-                      </div>
-                      {isPlanner && (
-                        <button
-                          onClick={() => handleDeleteItem(item.id)}
-                          className="p-1.5 rounded-lg hover:bg-red-50 text-zinc-400 hover:text-red-500 transition-colors"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+
+                      {isSongItemType(item.type) && item.song && (
+                        <div className="border-t border-zinc-100 bg-gradient-to-br from-white to-zinc-50/80 p-3 space-y-3">
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                            <div className="min-w-0 space-y-2">
+                              <div className="flex flex-wrap gap-2">
+                                {(getPrimaryArrangement(item.song)?.key || item.song.key) && (
+                                  <Badge variant="secondary">Key {getPrimaryArrangement(item.song)?.key || item.song.key}</Badge>
+                                )}
+                                {(getPrimaryArrangement(item.song)?.bpm || item.song.bpm) && (
+                                  <Badge variant="secondary">{getPrimaryArrangement(item.song)?.bpm || item.song.bpm} BPM</Badge>
+                                )}
+                                {(getPrimaryArrangement(item.song)?.meter || item.song.meter) && (
+                                  <Badge variant="secondary">{getPrimaryArrangement(item.song)?.meter || item.song.meter}</Badge>
+                                )}
+                                {item.song.arrangements?.length ? (
+                                  <Badge variant="outline">{item.song.arrangements.length} arrangement{item.song.arrangements.length === 1 ? "" : "s"}</Badge>
+                                ) : null}
+                              </div>
+                              {getSongPlainNotes(item.song) && (
+                                <p className="text-xs leading-5 text-zinc-500">{getSongPlainNotes(item.song)}</p>
+                              )}
+                            </div>
+                            <div className="flex shrink-0 flex-wrap gap-2">
+                              {getSongYoutubeUrl(item.song) && (
+                                <Button asChild variant="outline" size="sm">
+                                  <a href={getSongYoutubeUrl(item.song) || "#"} target="_blank" rel="noreferrer">
+                                    <PlayCircle className="w-3 h-3" />
+                                    YouTube
+                                  </a>
+                                </Button>
+                              )}
+                              <Button variant="ghost" size="sm" onClick={() => navigate(`/app/songs/${item.song?.id}`)}>
+                                <ExternalLink className="w-3 h-3" />
+                                Full chart
+                              </Button>
+                            </div>
+                          </div>
+
+                          <ChordProPreview
+                            value={getSongChordPro(item.song)}
+                            maxLines={36}
+                            emptyText="No ChordPro chart saved for this song yet."
+                          />
+                        </div>
                       )}
                     </CardContent>
                   </Card>
@@ -524,11 +616,11 @@ export default function ServiceDetail() {
               <Select value={itemType} onValueChange={setItemType}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {ITEM_TYPES.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                  {ITEM_TYPES.map((t) => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
-            {itemType === "Song" ? (
+            {isSongItemType(itemType) ? (
               <div className="space-y-2">
                 <Label>Song</Label>
                 <Input
@@ -547,6 +639,9 @@ export default function ServiceDetail() {
                       >
                         <p className="font-medium">{s.title}</p>
                         {s.author && <p className="text-xs text-zinc-500">{s.author}</p>}
+                        <p className="text-xs text-zinc-400">
+                          {[s.key, s.bpm ? `${s.bpm} BPM` : null].filter(Boolean).join(" · ") || "Song library"}
+                        </p>
                       </button>
                     ))}
                   </div>
@@ -564,7 +659,7 @@ export default function ServiceDetail() {
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setShowAddItem(false)}>Cancel</Button>
-              <Button type="submit" disabled={submitting}>{submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Add Item"}</Button>
+              <Button type="submit" disabled={submitting || (isSongItemType(itemType) ? !selectedSong : !itemTitle.trim())}>{submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Add Item"}</Button>
             </DialogFooter>
           </form>
         </DialogContent>
