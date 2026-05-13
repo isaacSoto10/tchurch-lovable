@@ -6,7 +6,7 @@ import {
   clerkAllowedRedirectProtocols,
   clerkRedirects,
   headlessClerk,
-  isNativeClerkRuntime,
+  isStandardBrowserRuntime,
 } from "@/lib/clerkClient";
 
 export function ClerkProvider({ children }: { children: React.ReactNode }) {
@@ -40,7 +40,7 @@ export function ClerkProvider({ children }: { children: React.ReactNode }) {
       signUpFallbackRedirectUrl={clerkRedirects.postAuthRedirect}
       signInForceRedirectUrl={clerkRedirects.postAuthRedirect}
       signUpForceRedirectUrl={clerkRedirects.postAuthRedirect}
-      standardBrowser={isNativeClerkRuntime}
+      standardBrowser={isStandardBrowserRuntime}
       allowedRedirectOrigins={clerkAllowedRedirectOrigins}
       allowedRedirectProtocols={clerkAllowedRedirectProtocols}
     >
