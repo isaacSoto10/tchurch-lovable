@@ -9,7 +9,7 @@ import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useApi } from "@/hooks/useApi";
 import { useChurch } from "@/providers/ChurchProvider";
-import { User, Bell, Church, LogOut, Settings, Loader2, Check, X, Shield, CreditCard, Crown, Users, AlertCircle, CheckCircle, MessageCircle } from "lucide-react";
+import { User, Bell, Church, LogOut, Settings as SettingsIcon, Loader2, Check, X, Shield, CreditCard, Crown, Users, AlertCircle, CheckCircle, MessageCircle } from "lucide-react";
 
 type PendingMember = {
   id: string;
@@ -488,7 +488,7 @@ export default function Settings() {
           <Card className="mt-6">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Settings className="w-5 h-5" />
+                <SettingsIcon className="w-5 h-5" />
                 App
               </CardTitle>
             </CardHeader>
