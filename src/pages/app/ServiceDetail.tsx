@@ -1,4 +1,4 @@
-import { useState, useEffect, type DragEvent, type PointerEvent } from "react";
+import { useRef, useState, useEffect, type DragEvent, type PointerEvent, type SyntheticEvent } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -123,6 +123,7 @@ export default function ServiceDetail() {
   const [expandedSongItems, setExpandedSongItems] = useState<Record<string, boolean>>({});
   const [draggingItemId, setDraggingItemId] = useState<string | null>(null);
   const [dragOverItemId, setDragOverItemId] = useState<string | null>(null);
+  const suppressNextCardClickRef = useRef(false);
 
   // Add item form
   const [itemTitle, setItemTitle] = useState("");
@@ -273,6 +274,7 @@ export default function ServiceDetail() {
 
   function handleDragStart(event: DragEvent, itemId: string) {
     event.dataTransfer.effectAllowed = "move";
+    suppressNextCardClickRef.current = true;
     setDraggingItemId(itemId);
   }
 
@@ -294,10 +296,14 @@ export default function ServiceDetail() {
   function handleDragEnd() {
     setDraggingItemId(null);
     setDragOverItemId(null);
+    window.setTimeout(() => {
+      suppressNextCardClickRef.current = false;
+    }, 0);
   }
 
   function handlePointerMove(event: PointerEvent) {
     if (!draggingItemId) return;
+    event.preventDefault();
     const target = document
       .elementFromPoint(event.clientX, event.clientY)
       ?.closest<HTMLElement>("[data-service-item-id]");
@@ -306,12 +312,18 @@ export default function ServiceDetail() {
     }
   }
 
-  async function handlePointerUp() {
+  async function handlePointerUp(event: PointerEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    suppressNextCardClickRef.current = true;
     if (draggingItemId && dragOverItemId) {
       await reorderItem(draggingItemId, dragOverItemId);
     }
     setDraggingItemId(null);
     setDragOverItemId(null);
+    window.setTimeout(() => {
+      suppressNextCardClickRef.current = false;
+    }, 0);
   }
 
   async function handleMoveUp(item: ServiceItem) {
@@ -413,6 +425,10 @@ export default function ServiceDetail() {
 
   function toggleSongItem(itemId: string) {
     setExpandedSongItems((prev) => ({ ...prev, [itemId]: !prev[itemId] }));
+  }
+
+  function stopInteractiveTap(event: SyntheticEvent) {
+    event.stopPropagation();
   }
 
   function getDisplayKey(item: ServiceItem) {
@@ -519,19 +535,26 @@ export default function ServiceDetail() {
                     onDragOver={(event) => handleDragOver(event, item.id)}
                     onDrop={(event) => handleDrop(event, item.id)}
                     onDragEnd={handleDragEnd}
+                    onClick={() => {
+                      if (suppressNextCardClickRef.current) return;
+                      if (isSongItemType(item.type) && item.song) toggleSongItem(item.id);
+                    }}
                   >
                     <CardContent className="p-0">
                       <div className="flex items-center gap-3 p-3">
                         <div className="flex flex-col gap-1 shrink-0">
                           {idx > 0 && (
-                            <button onClick={() => handleMoveUp(item)} className="p-0.5 rounded hover:bg-zinc-100 text-zinc-400">
+                            <button onClick={(event) => { event.stopPropagation(); handleMoveUp(item); }} className="p-0.5 rounded hover:bg-zinc-100 text-zinc-400">
                               <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path d="M5 15l7-7 7 7" /></svg>
                             </button>
                           )}
                           <GripVertical
                             className="w-4 h-4 cursor-grab touch-none text-zinc-300 active:cursor-grabbing"
                             onPointerDown={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
                               event.currentTarget.setPointerCapture(event.pointerId);
+                              suppressNextCardClickRef.current = true;
                               setDraggingItemId(item.id);
                               setDragOverItemId(item.id);
                             }}
@@ -540,7 +563,7 @@ export default function ServiceDetail() {
                             onPointerCancel={handlePointerUp}
                           />
                           {idx < service.items.length - 1 && (
-                            <button onClick={() => handleMoveDown(item)} className="p-0.5 rounded hover:bg-zinc-100 text-zinc-400">
+                            <button onClick={(event) => { event.stopPropagation(); handleMoveDown(item); }} className="p-0.5 rounded hover:bg-zinc-100 text-zinc-400">
                               <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7" /></svg>
                             </button>
                           )}
@@ -560,7 +583,7 @@ export default function ServiceDetail() {
                         )}
                         {item.song && (
                           <div className="flex shrink-0 items-center gap-1">
-                            <Button variant="outline" size="sm" onClick={() => navigate(`/app/songs/${item.song?.id}`)}>
+                            <Button variant="outline" size="sm" onClick={(event) => { event.stopPropagation(); navigate(`/app/songs/${item.song?.id}`); }}>
                               <FileText className="w-3 h-3" />
                               Song
                             </Button>
@@ -569,7 +592,7 @@ export default function ServiceDetail() {
                               size="icon"
                               className="h-8 w-8"
                               aria-label={expandedSongItems[item.id] ? "Collapse song details" : "Expand song details"}
-                              onClick={() => toggleSongItem(item.id)}
+                              onClick={(event) => { event.stopPropagation(); toggleSongItem(item.id); }}
                             >
                               {expandedSongItems[item.id] ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                             </Button>
@@ -577,7 +600,7 @@ export default function ServiceDetail() {
                         )}
                         {isPlanner && (
                           <button
-                            onClick={() => handleDeleteItem(item.id)}
+                            onClick={(event) => { event.stopPropagation(); handleDeleteItem(item.id); }}
                             className="p-1.5 rounded-lg hover:bg-red-50 text-zinc-400 hover:text-red-500 transition-colors"
                           >
                             <Trash2 className="w-4 h-4" />
@@ -586,7 +609,7 @@ export default function ServiceDetail() {
                       </div>
 
                       {isSongItemType(item.type) && item.song && expandedSongItems[item.id] && (
-                        <div className="border-t border-zinc-100 bg-gradient-to-br from-white to-zinc-50/80 p-3 space-y-3">
+                        <div className="border-t border-zinc-100 bg-gradient-to-br from-white to-zinc-50/80 p-3 space-y-3" onClick={stopInteractiveTap} onPointerDown={stopInteractiveTap} onTouchStart={stopInteractiveTap}>
                           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                             <div className="min-w-0 space-y-2">
                               <div className="flex flex-wrap gap-2">
@@ -616,7 +639,7 @@ export default function ServiceDetail() {
                                   </a>
                                 </Button>
                               )}
-                              <Button variant="ghost" size="sm" onClick={() => navigate(`/app/songs/${item.song?.id}`)}>
+                              <Button variant="ghost" size="sm" onClick={(event) => { event.stopPropagation(); navigate(`/app/songs/${item.song?.id}`); }}>
                                 <ExternalLink className="w-3 h-3" />
                                 Full chart
                               </Button>
@@ -626,6 +649,8 @@ export default function ServiceDetail() {
                           <ChordProPreview
                             value={getSongChordPro(item.song)}
                             originalKey={getDisplayKey(item)}
+                            title={item.song.title}
+                            artist={item.song.author}
                             maxLines={36}
                             emptyText="No ChordPro chart saved for this song yet."
                           />

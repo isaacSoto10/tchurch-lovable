@@ -1,11 +1,11 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, type PointerEvent, type SyntheticEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Pencil, Trash2, Search, ChevronUp, ChevronDown, Music, FileText, Bell, X, Check, Clock, Users, ExternalLink, PlayCircle } from "lucide-react";
+import { Plus, Pencil, Trash2, Search, ChevronUp, ChevronDown, Music, FileText, Bell, X, Check, Clock, Users, ExternalLink, PlayCircle, GripVertical } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
 import { useChurch } from "@/providers/ChurchProvider";
@@ -170,6 +170,7 @@ export default function Services() {
   const [draggingItemId, setDraggingItemId] = useState<string | null>(null);
   const [dragOverItemId, setDragOverItemId] = useState<string | null>(null);
   const [dragServiceId, setDragServiceId] = useState<string | null>(null);
+  const suppressNextCardClickRef = useRef(false);
 
   const [addItemDialogOpen, setAddItemDialogOpen] = useState(false);
   const [assignDialogOpen, setAssignDialogOpen] = useState(false);
@@ -229,6 +230,10 @@ export default function Services() {
 
   const toggleSongItem = (itemId: string) => {
     setExpandedSongItems((prev) => ({ ...prev, [itemId]: !prev[itemId] }));
+  };
+
+  const stopInteractiveTap = (event: SyntheticEvent) => {
+    event.stopPropagation();
   };
 
   const filteredServices = services.filter((s) => {
@@ -393,6 +398,7 @@ export default function Services() {
 
   const handleDragStart = (e: React.DragEvent, serviceId: string, itemId: string) => {
     e.dataTransfer.effectAllowed = "move";
+    suppressNextCardClickRef.current = true;
     setDraggingItemId(itemId);
     setDragServiceId(serviceId);
   };
@@ -405,30 +411,7 @@ export default function Services() {
     }
   };
 
-  const handleDrop = async (e: React.DragEvent, targetServiceId: string, targetItemId: string) => {
-    e.preventDefault();
-    if (!draggingItemId || !dragServiceId || draggingItemId === targetItemId) {
-      setDraggingItemId(null);
-      setDragOverItemId(null);
-      setDragServiceId(null);
-      return;
-    }
-
-    const items = serviceItems[targetServiceId] || [];
-    const draggingIndex = items.findIndex((i) => i.id === draggingItemId);
-    const targetIndex = items.findIndex((i) => i.id === targetItemId);
-
-    if (draggingIndex === -1 || targetIndex === -1) {
-      setDraggingItemId(null);
-      setDragOverItemId(null);
-      setDragServiceId(null);
-      return;
-    }
-
-    const newItems = [...items];
-    const [draggedItem] = newItems.splice(draggingIndex, 1);
-    newItems.splice(targetIndex, 0, draggedItem);
-
+  const persistItemOrder = async (targetServiceId: string, newItems: ServiceItem[], previousItems: ServiceItem[]) => {
     setServiceItems((prev) => ({ ...prev, [targetServiceId]: newItems }));
 
     const updates = newItems.map((item, idx) => ({
@@ -443,12 +426,35 @@ export default function Services() {
       });
     } catch (e) {
       toast({ title: "Failed to reorder items", variant: "destructive" });
-      const serviceRes = await fetchApi(`/services/${targetServiceId}`);
-      if (serviceRes && typeof serviceRes === 'object') {
-        const items = (serviceRes as Record<string, unknown>).items || [];
-        setServiceItems((prev) => ({ ...prev, [targetServiceId]: Array.isArray(items) ? items as ServiceItem[] : [] }));
-      }
+      setServiceItems((prev) => ({ ...prev, [targetServiceId]: previousItems }));
     }
+  };
+
+  const reorderItem = async (targetServiceId: string, draggedItemId: string, targetItemId: string) => {
+    if (draggedItemId === targetItemId) return;
+
+    const items = serviceItems[targetServiceId] || [];
+    const draggingIndex = items.findIndex((i) => i.id === draggedItemId);
+    const targetIndex = items.findIndex((i) => i.id === targetItemId);
+
+    if (draggingIndex === -1 || targetIndex === -1) return;
+
+    const newItems = [...items];
+    const [draggedItem] = newItems.splice(draggingIndex, 1);
+    newItems.splice(targetIndex, 0, draggedItem);
+    await persistItemOrder(targetServiceId, newItems, items);
+  };
+
+  const handleDrop = async (e: React.DragEvent, targetServiceId: string, targetItemId: string) => {
+    e.preventDefault();
+    if (!draggingItemId || !dragServiceId || draggingItemId === targetItemId) {
+      setDraggingItemId(null);
+      setDragOverItemId(null);
+      setDragServiceId(null);
+      return;
+    }
+
+    await reorderItem(targetServiceId, draggingItemId, targetItemId);
 
     setDraggingItemId(null);
     setDragOverItemId(null);
@@ -459,6 +465,9 @@ export default function Services() {
     setDraggingItemId(null);
     setDragOverItemId(null);
     setDragServiceId(null);
+    window.setTimeout(() => {
+      suppressNextCardClickRef.current = false;
+    }, 0);
   };
 
   const handleMoveItem = async (serviceId: string, itemId: string, direction: "up" | "down") => {
@@ -472,22 +481,34 @@ export default function Services() {
     const newItems = [...items];
     [newItems[itemIndex], newItems[newIndex]] = [newItems[newIndex], newItems[itemIndex]];
 
-    const updates = newItems.map((item, idx) => ({
-      id: item.id,
-      position: idx,
-    }));
+    await persistItemOrder(serviceId, newItems, items);
+  };
 
-    setServiceItems((prev) => ({ ...prev, [serviceId]: newItems }));
-
-    try {
-      await fetchApi("/service-items/reorder", {
-        method: "PATCH",
-        body: JSON.stringify({ items: updates }),
-      });
-    } catch (e) {
-      toast({ title: "Failed to reorder items", variant: "destructive" });
-      setServiceItems((prev) => ({ ...prev, [serviceId]: items }));
+  const handlePointerMove = (event: PointerEvent<HTMLElement>) => {
+    if (!draggingItemId || !dragServiceId) return;
+    event.preventDefault();
+    const target = document
+      .elementFromPoint(event.clientX, event.clientY)
+      ?.closest<HTMLElement>("[data-service-item-id]");
+    const targetItemId = target?.dataset.serviceItemId;
+    if (targetItemId && target.dataset.serviceId === dragServiceId) {
+      setDragOverItemId(targetItemId);
     }
+  };
+
+  const handlePointerUp = async (event: PointerEvent<HTMLElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    suppressNextCardClickRef.current = true;
+    if (draggingItemId && dragOverItemId && dragServiceId) {
+      await reorderItem(dragServiceId, draggingItemId, dragOverItemId);
+    }
+    setDraggingItemId(null);
+    setDragOverItemId(null);
+    setDragServiceId(null);
+    window.setTimeout(() => {
+      suppressNextCardClickRef.current = false;
+    }, 0);
   };
 
   const openAssignDialog = (serviceId: string) => {
@@ -888,7 +909,10 @@ export default function Services() {
             <Card
               key={svc.id}
               className="hover:shadow-md transition-shadow cursor-pointer"
-              onClick={() => toggleExpand(svc.id)}
+              onClick={() => {
+                if (suppressNextCardClickRef.current) return;
+                toggleExpand(svc.id);
+              }}
               role="button"
               tabIndex={0}
               onKeyDown={(event) => {
@@ -959,7 +983,7 @@ export default function Services() {
                 </div>
 
                 {expandedService === svc.id && (
-                  <div className="mt-4 pt-4 border-t space-y-4">
+                  <div className="mt-4 pt-4 border-t space-y-4" onClick={stopInteractiveTap}>
                     {svc.notes && (
                       <p className="text-sm text-muted-foreground">{svc.notes}</p>
                     )}
@@ -992,13 +1016,35 @@ export default function Services() {
                                 } ${dragOverItemId === item.id && draggingItemId !== item.id ? "ring-2 ring-primary ring-offset-2" : ""}`}
                               >
                                 <div
-                                  draggable
+                                  data-service-item-id={item.id}
+                                  data-service-id={svc.id}
                                   onDragStart={(e) => handleDragStart(e, svc.id, item.id)}
                                   onDragOver={(e) => handleDragOver(e, item.id)}
                                   onDrop={(e) => handleDrop(e, svc.id, item.id)}
                                   onDragEnd={handleDragEnd}
-                                  className="flex items-center gap-2 p-2 cursor-grab active:cursor-grabbing"
+                                  draggable
+                                  className="flex items-center gap-2 p-2"
+                                  onClick={() => {
+                                    if (isSong) toggleSongItem(item.id);
+                                  }}
                                 >
+                                  <GripVertical
+                                    className="h-4 w-4 shrink-0 cursor-grab touch-none text-muted-foreground/60 active:cursor-grabbing"
+                                    onClick={stopInteractiveTap}
+                                    onPointerDown={(event) => {
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      event.currentTarget.setPointerCapture(event.pointerId);
+                                      suppressNextCardClickRef.current = true;
+                                      setDraggingItemId(item.id);
+                                      setDragOverItemId(item.id);
+                                      setDragServiceId(svc.id);
+                                    }}
+                                    onPointerMove={handlePointerMove}
+                                    onPointerUp={handlePointerUp}
+                                    onPointerCancel={handlePointerUp}
+                                    aria-label="Drag to reorder"
+                                  />
                                   <span className="text-xs text-muted-foreground w-4">{idx + 1}</span>
                                   {getItemIcon(item.type)}
                                   <div className="min-w-0 flex-1">
@@ -1046,7 +1092,7 @@ export default function Services() {
                                 </div>
 
                                 {isSong && expandedSongItems[item.id] && (
-                                  <div className="space-y-3 border-t bg-white/80 p-3">
+                                  <div className="space-y-3 border-t bg-white/80 p-3" onClick={stopInteractiveTap} onPointerDown={stopInteractiveTap} onTouchStart={stopInteractiveTap}>
                                     <div className="flex flex-wrap gap-2">
                                       {(arrangement?.key || item.song?.key) && (
                                         <Badge variant="secondary">Key {arrangement?.key || item.song?.key}</Badge>
@@ -1089,6 +1135,8 @@ export default function Services() {
                                     <ChordProPreview
                                       value={chordPro}
                                       originalKey={arrangement?.key || item.song?.key}
+                                      title={item.song?.title || item.title}
+                                      artist={item.song?.author}
                                       maxLines={24}
                                       emptyText="No ChordPro chart saved for this song yet."
                                     />
