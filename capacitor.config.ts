@@ -9,9 +9,6 @@ const config: CapacitorConfig = {
     iosScheme: 'https',
     androidScheme: 'https',
   },
-  ios: {
-    limitsNavigationsToAppBoundDomains: true,
-  },
 };
 
 export default config;

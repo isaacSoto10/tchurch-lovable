@@ -15,6 +15,8 @@ function SignupInner() {
   const navigate = useNavigate();
   const [step, setStep] = useState<Step>("email");
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -33,6 +35,14 @@ function SignupInner() {
   async function handleSignupSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!email.trim()) return;
+    if (password.length < 8) {
+      setError("Please enter a password with at least 8 characters.");
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError("Passwords do not match.");
+      return;
+    }
 
     if (!authReady || !signUp) {
       setError("Secure sign-up is still loading. Please try again in a moment.");
@@ -43,7 +53,7 @@ function SignupInner() {
     setError("");
 
     try {
-      await signUp.create({ emailAddress: email.trim() });
+      await signUp.create({ emailAddress: email.trim(), password });
       await signUp.prepareVerification({ strategy: "email_code" });
       setStep("code");
     } catch (err) {
@@ -121,7 +131,7 @@ function SignupInner() {
             <CardTitle>Create your tchurch account</CardTitle>
             <CardDescription>
               {step === "email"
-                ? "Start with your email and we'll send a verification code."
+                ? "Create your account, then verify your email with a one-time code."
                 : `Enter the code we sent to ${email}.`}
             </CardDescription>
           </div>
@@ -146,6 +156,34 @@ function SignupInner() {
                   disabled={loading}
                 />
               </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-slate-700" htmlFor="password">
+                  Password
+                </label>
+                <Input
+                  id="password"
+                  type="password"
+                  autoComplete="new-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="At least 8 characters"
+                  disabled={loading}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-slate-700" htmlFor="confirmPassword">
+                  Confirm password
+                </label>
+                <Input
+                  id="confirmPassword"
+                  type="password"
+                  autoComplete="new-password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="Re-enter your password"
+                  disabled={loading}
+                />
+              </div>
               {error ? (
                 <p className="text-sm text-red-600" role="alert">
                   {error}
@@ -155,7 +193,11 @@ function SignupInner() {
                   Preparing secure sign-up...
                 </p>
               ) : null}
-              <Button className="h-11 w-full" disabled={loading || !email.trim()} type="submit">
+              <Button
+                className="h-11 w-full"
+                disabled={loading || !email.trim() || !password || !confirmPassword}
+                type="submit"
+              >
                 {loading ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />

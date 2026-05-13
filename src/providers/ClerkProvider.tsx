@@ -1,10 +1,13 @@
 import { ClerkProvider as BaseClerkProvider } from "@clerk/clerk-react";
+import { Clerk as HeadlessClerk } from "@clerk/clerk-js/headless";
 import { Capacitor } from "@capacitor/core";
 import { useNavigate } from "react-router-dom";
 
-const CLERK_PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
+const CLERK_PUBLISHABLE_KEY =
+  import.meta.env.VITE_CLERK_PUBLISHABLE_KEY ||
+  import.meta.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||
+  "pk_live_Y2xlcmsudGNodXJjaGFwcC5jb20k";
 const IOS_BUNDLE_ID = "app.lovable.e5ddf50ff80d4eb7a86a937f7a9f8a62.tchurch";
-const NATIVE_CLERK_JS_URL = "/clerk.headless.browser.js";
 
 export function ClerkProvider({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
@@ -29,6 +32,7 @@ export function ClerkProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <BaseClerkProvider
+      Clerk={HeadlessClerk}
       publishableKey={CLERK_PUBLISHABLE_KEY}
       routerPush={(to) => navigate(to)}
       routerReplace={(to) => navigate(to, { replace: true })}
@@ -38,7 +42,6 @@ export function ClerkProvider({ children }: { children: React.ReactNode }) {
       signInForceRedirectUrl={postAuthRedirect}
       signUpForceRedirectUrl={postAuthRedirect}
       allowedRedirectProtocols={allowedRedirectProtocols}
-      clerkJSUrl={isNative ? NATIVE_CLERK_JS_URL : undefined}
     >
       {children}
     </BaseClerkProvider>

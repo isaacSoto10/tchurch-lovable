@@ -7,8 +7,5 @@
 		"iosScheme": "https",
 		"androidScheme": "https"
 	},
-	"ios": {
-		"limitsNavigationsToAppBoundDomains": true
-	},
 	"packageClassList": []
 }
