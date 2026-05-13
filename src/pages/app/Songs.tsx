@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -54,17 +54,23 @@ export default function Songs() {
     notes: "",
   });
 
-  useEffect(() => {
-    loadSongs();
-  }, [fetchApi]);
+  const loadSongs = useCallback((nextSearch = search) => {
+    const params = new URLSearchParams();
+    const trimmedSearch = nextSearch.trim();
+    params.set("limit", trimmedSearch ? "150" : "400");
+    if (trimmedSearch) params.set("q", trimmedSearch);
 
-  const loadSongs = () => {
     setLoading(true);
-    fetchApi("/songs")
+    fetchApi(`/songs?${params.toString()}`)
       .then((data) => setSongs(Array.isArray(data) ? data : []))
       .catch((e) => console.error("Failed to load songs:", e))
       .finally(() => setLoading(false));
-  };
+  }, [fetchApi, search]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => loadSongs(search), search.trim() ? 250 : 0);
+    return () => window.clearTimeout(timer);
+  }, [loadSongs, search]);
 
   const openNewDialog = () => {
     setEditingSong(null);

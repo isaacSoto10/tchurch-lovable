@@ -189,17 +189,17 @@ export default function Services() {
   const [selectedMember, setSelectedMember] = useState<Member | null>(null);
   const [selectedPosition, setSelectedPosition] = useState("Vocals");
 
-  useEffect(() => {
-    loadServices();
-  }, [fetchApi]);
-
-  const loadServices = () => {
+  const loadServices = useCallback(() => {
     setLoading(true);
     fetchApi("/services")
       .then((data) => setServices(Array.isArray(data) ? data : []))
       .catch((e) => console.error("Failed to load services:", e))
       .finally(() => setLoading(false));
-  };
+  }, [fetchApi]);
+
+  useEffect(() => {
+    loadServices();
+  }, [loadServices]);
 
   const loadServiceDetails = useCallback(async (serviceId: string) => {
     if (serviceItems[serviceId] || itemsLoading[serviceId]) return;
@@ -327,7 +327,7 @@ export default function Services() {
       return;
     }
     try {
-      const data = await fetchApi(`/songs?q=${encodeURIComponent(query)}`);
+      const data = await fetchApi(`/songs?q=${encodeURIComponent(query)}&limit=20`);
       setSongs(Array.isArray(data) ? data.slice(0, 10) : []);
     } catch (e) {
       console.error("Failed to search songs:", e);

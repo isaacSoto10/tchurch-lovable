@@ -180,7 +180,7 @@ export default function ServiceDetail() {
     if (isSongItemType(itemType) && songSearch.length >= 2) {
       const timeout = setTimeout(async () => {
         try {
-          const data = await apiFetch<SongOption[]>(`/songs?q=${encodeURIComponent(songSearch)}`);
+          const data = await apiFetch<SongOption[]>(`/songs?q=${encodeURIComponent(songSearch)}&limit=20`);
           setSongResults(Array.isArray(data) ? data.slice(0, 5) : []);
         } catch { setSongResults([]); }
       }, 300);

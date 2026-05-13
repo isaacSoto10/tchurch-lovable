@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState, type SyntheticEvent } from "react";
 import { chordProToDisplayLines, hasChordPro } from "@/lib/songDisplay";
 import { ALL_KEYS, normalizeKey, transposeChordPro } from "@/lib/musicUtils";
-import { generateChordChartPdf } from "@/lib/chordChartPdf";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
 import { FileDown, Minus, Plus } from "lucide-react";
@@ -54,6 +53,7 @@ export function ChordProPreview({
     if (!displayValue) return;
     setCreatingPdf(true);
     try {
+      const { generateChordChartPdf } = await import("@/lib/chordChartPdf");
       await generateChordChartPdf({
         title: title || "Chord Chart",
         artist,

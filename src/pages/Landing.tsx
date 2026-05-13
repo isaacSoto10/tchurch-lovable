@@ -4,6 +4,7 @@ import { Navigate } from "react-router-dom";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useAppAuth } from "@/hooks/useAppAuth";
+import { openSignupInBrowser } from "@/lib/externalLinks";
 
 export default function Landing() {
   const { isLoaded, isSignedIn } = useAppAuth();
@@ -38,9 +39,15 @@ export default function Landing() {
         transition={{ duration: 0.6, delay: 0.2 }}
         className="flex flex-col gap-3 w-full max-w-xs"
       >
-        <Button size="lg" className="w-full text-base" asChild>
-          <Link to="/signup">Get Started Free</Link>
-        </Button>
+        {isNativePlatform ? (
+          <Button size="lg" className="w-full text-base" onClick={() => openSignupInBrowser()}>
+            Get Started Free
+          </Button>
+        ) : (
+          <Button size="lg" className="w-full text-base" asChild>
+            <Link to="/signup">Get Started Free</Link>
+          </Button>
+        )}
         <Button size="lg" variant="outline" className="w-full text-base" asChild>
           <Link to="/login">Sign In</Link>
         </Button>
