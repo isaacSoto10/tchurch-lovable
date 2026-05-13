@@ -14,9 +14,10 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, ArrowLeft, Plus, Trash2, GripVertical, Check, X, Clock, Users, Music, ExternalLink, PlayCircle, FileText } from "lucide-react";
+import { Loader2, ArrowLeft, Plus, Trash2, GripVertical, Check, X, Clock, Users, Music, ExternalLink, PlayCircle, FileText, ChevronDown, ChevronUp } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useChurch } from "@/providers/ChurchProvider";
+import { useToast } from "@/components/ui/use-toast";
 import { ChordProPreview } from "@/components/ChordProPreview";
 import {
   getPrimaryArrangement,
@@ -109,6 +110,7 @@ export default function ServiceDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { selectedChurch } = useChurch();
+  const { toast } = useToast();
 
   const [service, setService] = useState<Service | null>(null);
   const [loading, setLoading] = useState(true);
@@ -118,6 +120,7 @@ export default function ServiceDetail() {
   const [submitting, setSubmitting] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [respondingId, setRespondingId] = useState<string | null>(null);
+  const [expandedSongItems, setExpandedSongItems] = useState<Record<string, boolean>>({});
 
   // Add item form
   const [itemTitle, setItemTitle] = useState("");
@@ -264,7 +267,13 @@ export default function ServiceDetail() {
       setShowAssign(false);
       setAssignUserId("");
       setAssignPosition("");
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      toast({
+        title: e instanceof Error ? e.message : "Failed to assign member",
+        variant: "destructive",
+      });
+    }
     finally { setSubmitting(false); }
   }
 
@@ -307,6 +316,10 @@ export default function ServiceDetail() {
       } : prev);
     } catch (e) {
       console.error(e);
+      toast({
+        title: e instanceof Error ? e.message : "Failed to respond to assignment",
+        variant: "destructive",
+      });
     } finally {
       setRespondingId(null);
     }
@@ -327,6 +340,10 @@ export default function ServiceDetail() {
     setSongSearch("");
     setSongResults([]);
     setSelectedSong(null);
+  }
+
+  function toggleSongItem(itemId: string) {
+    setExpandedSongItems((prev) => ({ ...prev, [itemId]: !prev[itemId] }));
   }
 
   const statusColors: Record<string, string> = {
@@ -453,10 +470,21 @@ export default function ServiceDetail() {
                           </p>
                         </div>
                         {item.song && (
-                          <Button variant="outline" size="sm" onClick={() => navigate(`/app/songs/${item.song?.id}`)}>
-                            <FileText className="w-3 h-3" />
-                            Song
-                          </Button>
+                          <div className="flex shrink-0 items-center gap-1">
+                            <Button variant="outline" size="sm" onClick={() => navigate(`/app/songs/${item.song?.id}`)}>
+                              <FileText className="w-3 h-3" />
+                              Song
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              aria-label={expandedSongItems[item.id] ? "Collapse song details" : "Expand song details"}
+                              onClick={() => toggleSongItem(item.id)}
+                            >
+                              {expandedSongItems[item.id] ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                            </Button>
+                          </div>
                         )}
                         {isPlanner && (
                           <button
@@ -468,7 +496,7 @@ export default function ServiceDetail() {
                         )}
                       </div>
 
-                      {isSongItemType(item.type) && item.song && (
+                      {isSongItemType(item.type) && item.song && expandedSongItems[item.id] && (
                         <div className="border-t border-zinc-100 bg-gradient-to-br from-white to-zinc-50/80 p-3 space-y-3">
                           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                             <div className="min-w-0 space-y-2">

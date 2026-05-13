@@ -4,10 +4,20 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Plus, Pencil, Trash2, Search, ChevronUp, ChevronDown, Music, FileText, Bell, X, Check, Clock, Users } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Plus, Pencil, Trash2, Search, ChevronUp, ChevronDown, Music, FileText, Bell, X, Check, Clock, Users, ExternalLink, PlayCircle } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
 import { useChurch } from "@/providers/ChurchProvider";
+import { ChordProPreview } from "@/components/ChordProPreview";
+import {
+  getPrimaryArrangement,
+  getSongChordPro,
+  getSongPlainNotes,
+  getSongYoutubeUrl,
+  isSongItemType,
+  type SongLike,
+} from "@/lib/songDisplay";
 import {
   Dialog,
   DialogContent,
@@ -51,12 +61,7 @@ interface ServiceItem {
   position: number;
   duration?: number;
   details?: Record<string, unknown>;
-  song?: {
-    id: string;
-    title: string;
-    author?: string;
-    key?: string;
-  };
+  song?: SongLike | null;
 }
 
 interface ServiceAssignment {
@@ -165,6 +170,7 @@ export default function Services() {
   });
 
   const [expandedService, setExpandedService] = useState<string | null>(null);
+  const [expandedSongItems, setExpandedSongItems] = useState<Record<string, boolean>>({});
   const [serviceItems, setServiceItems] = useState<Record<string, ServiceItem[]>>({});
   const [serviceAssignments, setServiceAssignments] = useState<Record<string, ServiceAssignment[]>>({});
   const [itemsLoading, setItemsLoading] = useState<Record<string, boolean>>({});
@@ -177,7 +183,7 @@ export default function Services() {
   const [selectedServiceId, setSelectedServiceId] = useState<string | null>(null);
   const [newItemType, setNewItemType] = useState<"song" | "template">("template");
   const [songSearch, setSongSearch] = useState("");
-  const [songs, setSongs] = useState<Array<{ id: string; title: string; author?: string; key?: string }>>([]);
+  const [songs, setSongs] = useState<SongLike[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<typeof TEMPLATE_ITEMS[0] | null>(null);
   const [selectedSong, setSelectedSong] = useState<typeof songs[0] | null>(null);
   const [itemType, setItemType] = useState<ServiceItem["type"]>("song");
@@ -226,6 +232,10 @@ export default function Services() {
       setExpandedService(serviceId);
       await loadServiceDetails(serviceId);
     }
+  };
+
+  const toggleSongItem = (itemId: string) => {
+    setExpandedSongItems((prev) => ({ ...prev, [itemId]: !prev[itemId] }));
   };
 
   const filteredServices = services.filter((s) => {
@@ -552,11 +562,11 @@ export default function Services() {
         setServiceAssignments((prev) => ({ ...prev, [selectedServiceId]: Array.isArray(assignments) ? assignments as ServiceAssignment[] : [] }));
       }
     } catch (e: unknown) {
-      const error = e as { blocked?: boolean };
+      const error = e as { blocked?: boolean; message?: string };
       if (error?.blocked) {
         toast({ title: "Member has a blockout on this date", variant: "destructive" });
       } else {
-        toast({ title: "Failed to assign member", variant: "destructive" });
+        toast({ title: error?.message || "Failed to assign member", variant: "destructive" });
       }
     }
   };
@@ -574,7 +584,7 @@ export default function Services() {
         ),
       }));
     } catch (e) {
-      toast({ title: "Failed to update assignment", variant: "destructive" });
+      toast({ title: e instanceof Error ? e.message : "Failed to update assignment", variant: "destructive" });
     }
   };
 
@@ -587,7 +597,7 @@ export default function Services() {
       }));
       toast({ title: "Assignment removed" });
     } catch (e) {
-      toast({ title: "Failed to remove assignment", variant: "destructive" });
+      toast({ title: e instanceof Error ? e.message : "Failed to remove assignment", variant: "destructive" });
     }
   };
 
@@ -1041,39 +1051,122 @@ export default function Services() {
                         </div>
                       ) : (
                         <div className="space-y-1">
-                          {(serviceItems[svc.id] || []).map((item, idx) => (
-                            <div
-                              key={item.id}
-                              draggable
-                              onDragStart={(e) => handleDragStart(e, svc.id, item.id)}
-                              onDragOver={(e) => handleDragOver(e, item.id)}
-                              onDrop={(e) => handleDrop(e, svc.id, item.id)}
-                              onDragEnd={handleDragEnd}
-                              className={`flex items-center gap-2 p-2 bg-muted/50 rounded cursor-grab active:cursor-grabbing transition-all ${
-                                draggingItemId === item.id ? "opacity-50" : ""
-                              } ${dragOverItemId === item.id && draggingItemId !== item.id ? "ring-2 ring-primary ring-offset-2" : ""}`}
-                            >
-                              <span className="text-xs text-muted-foreground w-4">{idx + 1}</span>
-                              {getItemIcon(item.type)}
-                              <span className="flex-1 text-sm">{item.title}</span>
-                              {item.duration && (
-                                <span className="text-xs text-muted-foreground flex items-center">
-                                  <Clock className="w-3 h-3 mr-1" />
-                                  {item.duration}m
-                                </span>
-                              )}
-                              {isAdmin && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="w-6 h-6"
-                                  onClick={() => handleDeleteItem(svc.id, item.id)}
+                          {(serviceItems[svc.id] || []).map((item, idx) => {
+                            const isSong = isSongItemType(item.type) && item.song;
+                            const youtubeUrl = isSong ? getSongYoutubeUrl(item.song) : null;
+                            const plainNotes = isSong ? getSongPlainNotes(item.song) : null;
+                            const arrangement = isSong ? getPrimaryArrangement(item.song) : null;
+                            const chordPro = isSong ? getSongChordPro(item.song) : null;
+
+                            return (
+                              <div
+                                key={item.id}
+                                className={`overflow-hidden rounded bg-muted/50 transition-all ${
+                                  draggingItemId === item.id ? "opacity-50" : ""
+                                } ${dragOverItemId === item.id && draggingItemId !== item.id ? "ring-2 ring-primary ring-offset-2" : ""}`}
+                              >
+                                <div
+                                  draggable
+                                  onDragStart={(e) => handleDragStart(e, svc.id, item.id)}
+                                  onDragOver={(e) => handleDragOver(e, item.id)}
+                                  onDrop={(e) => handleDrop(e, svc.id, item.id)}
+                                  onDragEnd={handleDragEnd}
+                                  className="flex items-center gap-2 p-2 cursor-grab active:cursor-grabbing"
                                 >
-                                  <X className="w-3 h-3" />
-                                </Button>
-                              )}
-                            </div>
-                          ))}
+                                  <span className="text-xs text-muted-foreground w-4">{idx + 1}</span>
+                                  {getItemIcon(item.type)}
+                                  <div className="min-w-0 flex-1">
+                                    <p className="truncate text-sm font-medium">{item.song?.title || item.title}</p>
+                                    {item.song?.author && (
+                                      <p className="truncate text-xs text-muted-foreground">{item.song.author}</p>
+                                    )}
+                                  </div>
+                                  {item.duration && (
+                                    <span className="text-xs text-muted-foreground flex items-center">
+                                      <Clock className="w-3 h-3 mr-1" />
+                                      {item.duration}m
+                                    </span>
+                                  )}
+                                  {isSong && (
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="w-7 h-7"
+                                      aria-label={expandedSongItems[item.id] ? "Collapse song details" : "Expand song details"}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        toggleSongItem(item.id);
+                                      }}
+                                    >
+                                      {expandedSongItems[item.id] ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                                    </Button>
+                                  )}
+                                  {isAdmin && (
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="w-6 h-6"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        handleDeleteItem(svc.id, item.id);
+                                      }}
+                                    >
+                                      <X className="w-3 h-3" />
+                                    </Button>
+                                  )}
+                                </div>
+
+                                {isSong && expandedSongItems[item.id] && (
+                                  <div className="space-y-3 border-t bg-white/80 p-3">
+                                    <div className="flex flex-wrap gap-2">
+                                      {(arrangement?.key || item.song?.key) && (
+                                        <Badge variant="secondary">Key {arrangement?.key || item.song?.key}</Badge>
+                                      )}
+                                      {(arrangement?.bpm || item.song?.bpm) && (
+                                        <Badge variant="secondary">{arrangement?.bpm || item.song?.bpm} BPM</Badge>
+                                      )}
+                                      {(arrangement?.meter || item.song?.meter) && (
+                                        <Badge variant="secondary">{arrangement?.meter || item.song?.meter}</Badge>
+                                      )}
+                                      {item.song?.arrangements?.length ? (
+                                        <Badge variant="outline">{item.song.arrangements.length} arrangement{item.song.arrangements.length === 1 ? "" : "s"}</Badge>
+                                      ) : null}
+                                    </div>
+
+                                    {plainNotes && <p className="text-xs leading-5 text-muted-foreground">{plainNotes}</p>}
+
+                                    <div className="flex flex-wrap gap-2">
+                                      {youtubeUrl && (
+                                        <Button asChild variant="outline" size="sm">
+                                          <a href={youtubeUrl} target="_blank" rel="noreferrer">
+                                            <PlayCircle className="w-3 h-3" />
+                                            YouTube
+                                          </a>
+                                        </Button>
+                                      )}
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          navigate(`/app/songs/${item.song?.id}`);
+                                        }}
+                                      >
+                                        <ExternalLink className="w-3 h-3" />
+                                        Full chart
+                                      </Button>
+                                    </div>
+
+                                    <ChordProPreview
+                                      value={chordPro}
+                                      maxLines={24}
+                                      emptyText="No ChordPro chart saved for this song yet."
+                                    />
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
                           {(serviceItems[svc.id] || []).length === 0 && (
                             <p className="text-sm text-muted-foreground text-center py-2">No items yet</p>
                           )}

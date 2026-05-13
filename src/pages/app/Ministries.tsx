@@ -9,6 +9,7 @@ import { Plus, Search, Pencil, Trash2, ArrowLeft, Users, Megaphone, FolderOpen, 
 import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
 import { useChurch } from "@/providers/ChurchProvider";
+import { MinistryResources } from "@/components/MinistryResources";
 import {
   Dialog,
   DialogContent,
@@ -104,6 +105,7 @@ export default function Ministries() {
 
   const [announcementFormOpen, setAnnouncementFormOpen] = useState(false);
   const [announcementForm, setAnnouncementForm] = useState({ title: "", content: "" });
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -134,6 +136,12 @@ export default function Ministries() {
     loadData();
   }, [loadData]);
 
+  useEffect(() => {
+    fetchApi<{ id: string }>("/users/me")
+      .then((user) => setCurrentUserId(user.id))
+      .catch(() => setCurrentUserId(null));
+  }, [fetchApi]);
+
   const loadMinistryDetail = async (ministryId: string) => {
     try {
       const data = await fetchApi<Ministry>(`/ministries/${ministryId}`);
@@ -161,6 +169,13 @@ export default function Ministries() {
   );
 
   const ministryGroups = allGroups.filter((g) => g.ministryId === selectedMinistry?.id);
+  const canManageSelectedMinistry =
+    isAdmin ||
+    Boolean(
+      selectedMinistry?.members?.some(
+        (member) => member.userId === currentUserId && member.role?.toUpperCase() === "LEADER"
+      )
+    );
 
   const openNewDialog = () => {
     setEditingMinistry(null);
@@ -448,10 +463,7 @@ export default function Ministries() {
           </TabsContent>
 
           <TabsContent value="resources">
-            <div className="text-center py-12">
-              <FolderOpen className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
-              <p className="text-sm text-muted-foreground">Resources coming soon.</p>
-            </div>
+            <MinistryResources ministryId={selectedMinistry.id} canManage={canManageSelectedMinistry} />
           </TabsContent>
 
           <TabsContent value="groups">

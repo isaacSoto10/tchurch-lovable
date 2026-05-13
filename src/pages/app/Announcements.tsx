@@ -103,17 +103,33 @@ export default function Announcements() {
   const loadPage = useCallback(async () => {
     setLoading(true);
     try {
-      const [announcementData, mineData] = await Promise.all([
+      const [announcementResult, mineResult] = await Promise.allSettled([
         fetchApi<Announcement[]>("/announcements?includePending=1"),
         fetchApi<MyMinistriesResponse>("/my-ministries"),
       ]);
-      setAnnouncements(Array.isArray(announcementData) ? announcementData : []);
-      setMinistries(mineData.ministries || []);
-      setRole(mineData.role || null);
-      setMinistryRoles(mineData.ministryRoles || {});
+
+      if (announcementResult.status === "fulfilled") {
+        setAnnouncements(Array.isArray(announcementResult.value) ? announcementResult.value : []);
+      } else {
+        throw announcementResult.reason;
+      }
+
+      if (mineResult.status === "fulfilled") {
+        setMinistries(mineResult.value.ministries || []);
+        setRole(mineResult.value.role || null);
+        setMinistryRoles(mineResult.value.ministryRoles || {});
+      } else {
+        console.warn("Ministry context unavailable for announcements:", mineResult.reason);
+        setMinistries([]);
+        setRole(null);
+        setMinistryRoles({});
+      }
     } catch (error) {
       console.error("Failed to load announcements:", error);
-      toast({ title: "Failed to load announcements", variant: "destructive" });
+      toast({
+        title: error instanceof Error ? error.message : "Failed to load announcements",
+        variant: "destructive",
+      });
     } finally {
       setLoading(false);
     }
@@ -164,7 +180,10 @@ export default function Announcements() {
       await loadPage();
     } catch (error) {
       console.error("Failed to submit announcement:", error);
-      toast({ title: "Failed to submit announcement", variant: "destructive" });
+      toast({
+        title: error instanceof Error ? error.message : "Failed to submit announcement",
+        variant: "destructive",
+      });
     } finally {
       setSubmitting(false);
     }
@@ -181,7 +200,10 @@ export default function Announcements() {
       await loadPage();
     } catch (error) {
       console.error("Failed to review announcement:", error);
-      toast({ title: "Failed to review announcement", variant: "destructive" });
+      toast({
+        title: error instanceof Error ? error.message : "Failed to review announcement",
+        variant: "destructive",
+      });
     } finally {
       setProcessingId(null);
     }
@@ -196,7 +218,10 @@ export default function Announcements() {
       await loadPage();
     } catch (error) {
       console.error("Failed to delete announcement:", error);
-      toast({ title: "Failed to delete announcement", variant: "destructive" });
+      toast({
+        title: error instanceof Error ? error.message : "Failed to delete announcement",
+        variant: "destructive",
+      });
     }
   }
 

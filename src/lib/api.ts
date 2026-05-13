@@ -3,6 +3,23 @@ import { getMobileAuthSession, isNativeMobileAuth } from "@/lib/mobileAuth";
 
 const CHURCH_ID_KEY = "tchurch_church_id";
 
+export class ApiError extends Error {
+  status: number;
+  body: unknown;
+  blocked?: boolean;
+
+  constructor(message: string, status: number, body: unknown) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.body = body;
+
+    if (body && typeof body === "object" && "blocked" in body) {
+      this.blocked = Boolean((body as { blocked?: unknown }).blocked);
+    }
+  }
+}
+
 declare global {
   interface Window {
     Clerk?: {
@@ -57,8 +74,25 @@ export async function apiFetch<T = unknown>(
   });
 
   if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`API error ${res.status}: ${body}`);
+    const text = await res.text();
+    let parsed: unknown = text;
+
+    try {
+      parsed = text ? JSON.parse(text) : null;
+    } catch {
+      parsed = text;
+    }
+
+    const message =
+      parsed && typeof parsed === "object"
+        ? String(
+            (parsed as { error?: unknown; message?: unknown }).error ||
+              (parsed as { message?: unknown }).message ||
+              `API error ${res.status}`
+          )
+        : String(parsed || `API error ${res.status}`);
+
+    throw new ApiError(message, res.status, parsed);
   }
 
   const data = await res.json();

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,14 +11,20 @@ import { Plus, Search, Pencil, Trash2 } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
 import { useChurch } from "@/providers/ChurchProvider";
+import { getPrimaryArrangement, type SongArrangement } from "@/lib/songDisplay";
 
 interface Song {
   id: string;
   title: string;
+  name?: string;
   author?: string;
   key?: string;
   bpm?: number;
   notes?: string;
+  tags?: string | null;
+  createdAt?: string | null;
+  lastUsedAt?: string | null;
+  arrangements?: SongArrangement[] | null;
 }
 
 const MUSICAL_KEYS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B", "Cm", "C#m", "Dm", "D#m", "Em", "Fm", "F#m", "Gm", "G#m", "Am", "A#m", "Bm"];
@@ -31,6 +37,9 @@ export default function Songs() {
   const isAdmin = selectedChurch?.role === "ADMIN";
   const [songs, setSongs] = useState<Song[]>([]);
   const [search, setSearch] = useState("");
+  const [artistFilter, setArtistFilter] = useState("all");
+  const [keyFilter, setKeyFilter] = useState("all");
+  const [sortBy, setSortBy] = useState("lastUsed");
   const [loading, setLoading] = useState(true);
 
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -122,9 +131,46 @@ export default function Songs() {
     }
   };
 
-  const filtered = songs.filter((s) =>
-    (s.title || s.name || "").toLowerCase().includes(search.toLowerCase())
+  const getTitle = (song: Song) => song.title || song.name || "";
+  const getEffectiveKey = (song: Song) => song.key || getPrimaryArrangement(song)?.key || "";
+  const getTime = (value?: string | null) => (value ? new Date(value).getTime() || 0 : 0);
+
+  const artists = useMemo(
+    () => Array.from(new Set(songs.map((song) => song.author).filter(Boolean) as string[])).sort(),
+    [songs]
   );
+
+  const keys = useMemo(
+    () => Array.from(new Set(songs.map(getEffectiveKey).filter(Boolean))).sort(),
+    [songs]
+  );
+
+  const filtered = useMemo(() => {
+    const normalizedSearch = search.trim().toLowerCase();
+
+    return [...songs]
+      .filter((song) => {
+        const title = getTitle(song);
+        const effectiveKey = getEffectiveKey(song);
+        const searchable = [title, song.author, effectiveKey, song.tags, song.notes]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+
+        return (
+          (!normalizedSearch || searchable.includes(normalizedSearch)) &&
+          (artistFilter === "all" || song.author === artistFilter) &&
+          (keyFilter === "all" || effectiveKey === keyFilter)
+        );
+      })
+      .sort((a, b) => {
+        if (sortBy === "lastUsed") return getTime(b.lastUsedAt) - getTime(a.lastUsedAt) || getTitle(a).localeCompare(getTitle(b));
+        if (sortBy === "recent") return getTime(b.createdAt) - getTime(a.createdAt) || getTitle(a).localeCompare(getTitle(b));
+        if (sortBy === "artist") return (a.author || "").localeCompare(b.author || "") || getTitle(a).localeCompare(getTitle(b));
+        if (sortBy === "key") return getEffectiveKey(a).localeCompare(getEffectiveKey(b)) || getTitle(a).localeCompare(getTitle(b));
+        return getTitle(a).localeCompare(getTitle(b));
+      });
+  }, [artistFilter, keyFilter, search, songs, sortBy]);
 
   if (loading) {
     return <div className="flex items-center justify-center py-20"><div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full" /></div>;
@@ -136,14 +182,50 @@ export default function Songs() {
         <h1 className="text-2xl font-bold">Songs</h1>
         {isAdmin && <Button size="sm" onClick={openNewDialog}><Plus className="w-4 h-4 mr-1" /> New Song</Button>}
       </div>
-      <div className="relative mb-6 max-w-sm">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <Input
-          placeholder="Search songs..."
-          className="pl-9"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
+      <div className="mb-6 grid gap-3 md:grid-cols-[minmax(0,1fr)_180px_160px_180px]">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            placeholder="Search by title, artist, key..."
+            className="pl-9"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+        <Select value={artistFilter} onValueChange={setArtistFilter}>
+          <SelectTrigger>
+            <SelectValue placeholder="Artist" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All artists</SelectItem>
+            {artists.map((artist) => (
+              <SelectItem key={artist} value={artist}>{artist}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={keyFilter} onValueChange={setKeyFilter}>
+          <SelectTrigger>
+            <SelectValue placeholder="Key" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All keys</SelectItem>
+            {keys.map((key) => (
+              <SelectItem key={key} value={key}>{key}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={sortBy} onValueChange={setSortBy}>
+          <SelectTrigger>
+            <SelectValue placeholder="Sort" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="lastUsed">Last used</SelectItem>
+            <SelectItem value="recent">Most recent</SelectItem>
+            <SelectItem value="title">Title</SelectItem>
+            <SelectItem value="artist">Artist</SelectItem>
+            <SelectItem value="key">Key</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -230,8 +312,11 @@ export default function Songs() {
                   {s.key || "—"}
                 </div>
                 <div>
-                  <div className="font-medium">{s.title || s.name}</div>
+                  <div className="font-medium">{getTitle(s)}</div>
                   {s.author && <div className="text-sm text-muted-foreground">{s.author}</div>}
+                  {s.lastUsedAt && (
+                    <div className="text-xs text-muted-foreground">Last used {new Date(s.lastUsedAt).toLocaleDateString()}</div>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
