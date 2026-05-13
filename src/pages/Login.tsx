@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { useAuth, useSignIn } from "@clerk/clerk-react";
 import { ArrowLeft, Loader2, Mail, ShieldCheck } from "lucide-react";
@@ -16,7 +16,7 @@ type SupportedFirstFactor = {
 
 function LoginInner() {
   const { isLoaded: authLoaded, isSignedIn } = useAuth();
-  const { isLoaded, signIn, setActive } = useSignIn();
+  const { signIn, setActive } = useSignIn();
   const navigate = useNavigate();
   const [step, setStep] = useState<Step>("email");
   const [email, setEmail] = useState("");
@@ -24,7 +24,13 @@ function LoginInner() {
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const authReady = isLoaded && Boolean(signIn);
+  const signInRef = useRef(signIn);
+  const setActiveRef = useRef(setActive);
+
+  useEffect(() => {
+    signInRef.current = signIn;
+    setActiveRef.current = setActive;
+  }, [setActive, signIn]);
 
   useEffect(() => {
     if (isSignedIn) {
@@ -36,20 +42,41 @@ function LoginInner() {
     return <Navigate to="/app" replace />;
   }
 
+  async function waitForSignInClient() {
+    const getClient = () =>
+      signInRef.current && setActiveRef.current
+        ? { signIn: signInRef.current, setActive: setActiveRef.current }
+        : null;
+    const readyClient = getClient();
+    if (readyClient) return readyClient;
+
+    return new Promise<ReturnType<typeof getClient>>((resolve) => {
+      const deadline = Date.now() + 8000;
+      const interval = window.setInterval(() => {
+        const client = getClient();
+        if (client || Date.now() > deadline) {
+          window.clearInterval(interval);
+          resolve(client);
+        }
+      }, 100);
+    });
+  }
+
   async function handleEmailSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!email.trim()) return;
-
-    if (!authReady || !signIn) {
-      setError("Secure sign-in is still loading. Please try again in a moment.");
-      return;
-    }
 
     setLoading(true);
     setError("");
 
     try {
-      const result = await signIn.create({ identifier: email.trim() });
+      const client = await waitForSignInClient();
+      if (!client) {
+        setError("Sign-in is unavailable. Please close and reopen the app, then try again.");
+        return;
+      }
+
+      const result = await client.signIn.create({ identifier: email.trim() });
       const emailCodeFactor = (result.supportedFirstFactors as SupportedFirstFactor[] | undefined)?.find(
         (factor) => factor.strategy === "email_code" && factor.emailAddressId,
       );
@@ -64,7 +91,7 @@ function LoginInner() {
         setEmail(emailCodeFactor.safeIdentifier);
       }
 
-      await signIn.prepareFirstFactor({
+      await client.signIn.prepareFirstFactor({
         strategy: "email_code",
         emailAddressId: emailCodeFactor.emailAddressId,
       });
@@ -80,8 +107,8 @@ function LoginInner() {
     e.preventDefault();
     if (!code.trim()) return;
 
-    if (!authReady || !emailAddressId) {
-      setError("Secure sign-in is still loading. Please try again in a moment.");
+    if (!emailAddressId) {
+      setError("Please request a new verification code.");
       return;
     }
 
@@ -89,13 +116,19 @@ function LoginInner() {
     setError("");
 
     try {
-      const result = await signIn.attemptFirstFactor({
+      const client = await waitForSignInClient();
+      if (!client) {
+        setError("Sign-in is unavailable. Please close and reopen the app, then try again.");
+        return;
+      }
+
+      const result = await client.signIn.attemptFirstFactor({
         strategy: "email_code",
         code: code.trim(),
       });
 
       if (result.status === "complete" && result.createdSessionId) {
-        await setActive({ session: result.createdSessionId });
+        await client.setActive({ session: result.createdSessionId });
         navigate("/app", { replace: true });
         return;
       }
@@ -109,8 +142,8 @@ function LoginInner() {
   }
 
   async function handleResendCode() {
-    if (!authReady || !signIn || !emailAddressId) {
-      setError("Secure sign-in is still loading. Please try again in a moment.");
+    if (!emailAddressId) {
+      setError("Please request a new verification code.");
       return;
     }
 
@@ -118,7 +151,13 @@ function LoginInner() {
     setError("");
 
     try {
-      await signIn.prepareFirstFactor({
+      const client = await waitForSignInClient();
+      if (!client) {
+        setError("Sign-in is unavailable. Please close and reopen the app, then try again.");
+        return;
+      }
+
+      await client.signIn.prepareFirstFactor({
         strategy: "email_code",
         emailAddressId,
       });
@@ -176,12 +215,8 @@ function LoginInner() {
                 <p className="text-sm text-red-600" role="alert">
                   {error}
                 </p>
-              ) : !authReady ? (
-                <p className="text-sm text-muted-foreground" aria-live="polite">
-                  Preparing secure sign-in...
-                </p>
               ) : null}
-              <Button className="h-11 w-full" disabled={loading || !authReady || !email.trim()} type="submit">
+              <Button className="h-11 w-full" disabled={loading || !email.trim()} type="submit">
                 {loading ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -213,7 +248,7 @@ function LoginInner() {
                   {error}
                 </p>
               ) : null}
-              <Button className="h-11 w-full" disabled={loading || !authReady || code.length < 6} type="submit">
+              <Button className="h-11 w-full" disabled={loading || code.length < 6} type="submit">
                 {loading ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -227,7 +262,7 @@ function LoginInner() {
                 className="w-full"
                 variant="outline"
                 type="button"
-                disabled={loading || !authReady}
+                disabled={loading}
                 onClick={handleResendCode}
               >
                 Resend code

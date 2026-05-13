@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { useAuth, useSignUp } from "@clerk/clerk-react";
 import { ArrowLeft, Loader2, MailPlus, ShieldCheck } from "lucide-react";
@@ -11,7 +11,7 @@ type Step = "email" | "code";
 
 function SignupInner() {
   const { isLoaded: authLoaded, isSignedIn } = useAuth();
-  const { isLoaded, signUp, setActive } = useSignUp();
+  const { signUp, setActive } = useSignUp();
   const navigate = useNavigate();
   const [step, setStep] = useState<Step>("email");
   const [email, setEmail] = useState("");
@@ -20,7 +20,13 @@ function SignupInner() {
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const authReady = isLoaded && Boolean(signUp);
+  const signUpRef = useRef(signUp);
+  const setActiveRef = useRef(setActive);
+
+  useEffect(() => {
+    signUpRef.current = signUp;
+    setActiveRef.current = setActive;
+  }, [setActive, signUp]);
 
   useEffect(() => {
     if (isSignedIn) {
@@ -30,6 +36,26 @@ function SignupInner() {
 
   if (authLoaded && isSignedIn) {
     return <Navigate to="/app" replace />;
+  }
+
+  async function waitForSignUpClient() {
+    const getClient = () =>
+      signUpRef.current && setActiveRef.current
+        ? { signUp: signUpRef.current, setActive: setActiveRef.current }
+        : null;
+    const readyClient = getClient();
+    if (readyClient) return readyClient;
+
+    return new Promise<ReturnType<typeof getClient>>((resolve) => {
+      const deadline = Date.now() + 8000;
+      const interval = window.setInterval(() => {
+        const client = getClient();
+        if (client || Date.now() > deadline) {
+          window.clearInterval(interval);
+          resolve(client);
+        }
+      }, 100);
+    });
   }
 
   async function handleSignupSubmit(e: React.FormEvent) {
@@ -44,17 +70,18 @@ function SignupInner() {
       return;
     }
 
-    if (!authReady || !signUp) {
-      setError("Secure sign-up is still loading. Please try again in a moment.");
-      return;
-    }
-
     setLoading(true);
     setError("");
 
     try {
-      await signUp.create({ emailAddress: email.trim(), password });
-      await signUp.prepareVerification({ strategy: "email_code" });
+      const client = await waitForSignUpClient();
+      if (!client) {
+        setError("Sign-up is unavailable. Please close and reopen the app, then try again.");
+        return;
+      }
+
+      await client.signUp.create({ emailAddress: email.trim(), password });
+      await client.signUp.prepareVerification({ strategy: "email_code" });
       setStep("code");
     } catch (err) {
       setError(getClerkErrorMessage(err, "Couldn't start sign up. Please try again."));
@@ -67,22 +94,23 @@ function SignupInner() {
     e.preventDefault();
     if (!code.trim()) return;
 
-    if (!authReady || !signUp) {
-      setError("Secure sign-up is still loading. Please try again in a moment.");
-      return;
-    }
-
     setLoading(true);
     setError("");
 
     try {
-      const result = await signUp.attemptVerification({
+      const client = await waitForSignUpClient();
+      if (!client) {
+        setError("Sign-up is unavailable. Please close and reopen the app, then try again.");
+        return;
+      }
+
+      const result = await client.signUp.attemptVerification({
         strategy: "email_code",
         code: code.trim(),
       });
 
       if (result.status === "complete" && result.createdSessionId) {
-        await setActive({ session: result.createdSessionId });
+        await client.setActive({ session: result.createdSessionId });
         navigate("/app", { replace: true });
         return;
       }
@@ -96,16 +124,17 @@ function SignupInner() {
   }
 
   async function handleResendCode() {
-    if (!authReady || !signUp) {
-      setError("Secure sign-up is still loading. Please try again in a moment.");
-      return;
-    }
-
     setLoading(true);
     setError("");
 
     try {
-      await signUp.prepareVerification({ strategy: "email_code" });
+      const client = await waitForSignUpClient();
+      if (!client) {
+        setError("Sign-up is unavailable. Please close and reopen the app, then try again.");
+        return;
+      }
+
+      await client.signUp.prepareVerification({ strategy: "email_code" });
     } catch (err) {
       setError(getClerkErrorMessage(err, "Couldn't resend the code. Please try again."));
     } finally {
@@ -188,14 +217,10 @@ function SignupInner() {
                 <p className="text-sm text-red-600" role="alert">
                   {error}
                 </p>
-              ) : !authReady ? (
-                <p className="text-sm text-muted-foreground" aria-live="polite">
-                  Preparing secure sign-up...
-                </p>
               ) : null}
               <Button
                 className="h-11 w-full"
-                disabled={loading || !authReady || !email.trim() || !password || !confirmPassword}
+                disabled={loading || !email.trim() || !password || !confirmPassword}
                 type="submit"
               >
                 {loading ? (
@@ -229,7 +254,7 @@ function SignupInner() {
                   {error}
                 </p>
               ) : null}
-              <Button className="h-11 w-full" disabled={loading || !authReady || code.length < 6} type="submit">
+              <Button className="h-11 w-full" disabled={loading || code.length < 6} type="submit">
                 {loading ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -243,7 +268,7 @@ function SignupInner() {
                 className="w-full"
                 variant="outline"
                 type="button"
-                disabled={loading || !authReady}
+                disabled={loading}
                 onClick={handleResendCode}
               >
                 Resend code
