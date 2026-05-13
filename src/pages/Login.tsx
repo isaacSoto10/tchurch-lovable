@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
-import { useAuth } from "@clerk/clerk-react";
 import { ArrowLeft, Loader2, Mail, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { useAppAuth } from "@/hooks/useAppAuth";
 import { ensureHeadlessClerkLoaded } from "@/lib/clerkClient";
 import { getClerkErrorMessage } from "@/lib/clerkErrors";
+import { isNativeMobileAuth, requestMobileAuthCode, verifyMobileAuthCode } from "@/lib/mobileAuth";
 
 type Step = "email" | "code";
 type SupportedFirstFactor = {
@@ -16,7 +17,7 @@ type SupportedFirstFactor = {
 };
 
 function LoginInner() {
-  const { isLoaded: authLoaded, isSignedIn } = useAuth();
+  const { isLoaded: authLoaded, isSignedIn } = useAppAuth();
   const navigate = useNavigate();
   const [step, setStep] = useState<Step>("email");
   const [email, setEmail] = useState("");
@@ -42,6 +43,14 @@ function LoginInner() {
     setError("");
 
     try {
+      if (isNativeMobileAuth) {
+        const result = await requestMobileAuthCode(email.trim());
+        setEmail(result.email);
+        setEmailAddressId("mobile");
+        setStep("code");
+        return;
+      }
+
       const clerk = await ensureHeadlessClerkLoaded();
       const signIn = clerk.client?.signIn;
 
@@ -90,6 +99,12 @@ function LoginInner() {
     setError("");
 
     try {
+      if (isNativeMobileAuth) {
+        await verifyMobileAuthCode(email, code.trim());
+        navigate("/app", { replace: true });
+        return;
+      }
+
       const clerk = await ensureHeadlessClerkLoaded();
       const signIn = clerk.client?.signIn;
 
@@ -127,6 +142,11 @@ function LoginInner() {
     setError("");
 
     try {
+      if (isNativeMobileAuth) {
+        await requestMobileAuthCode(email.trim());
+        return;
+      }
+
       const clerk = await ensureHeadlessClerkLoaded();
       const signIn = clerk.client?.signIn;
 

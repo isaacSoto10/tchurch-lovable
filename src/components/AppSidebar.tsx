@@ -19,7 +19,6 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
-import { useClerk, useUser } from "@clerk/clerk-react";
 import {
   Sidebar,
   SidebarContent,
@@ -32,6 +31,7 @@ import {
 } from "@/components/ui/sidebar";
 import { useChurch } from "@/providers/ChurchProvider";
 import { useApi } from "@/hooks/useApi";
+import { useAppAuth } from "@/hooks/useAppAuth";
 import { useCallback, useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 
@@ -131,8 +131,7 @@ const navItems: NavItem[] = [
 export function AppSidebar() {
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
-  const { signOut } = useClerk();
-  const { user } = useUser();
+  const { signOut, user } = useAppAuth();
   const { selectedChurch } = useChurch();
   const { fetchApi } = useApi();
 
@@ -257,7 +256,7 @@ export function AppSidebar() {
           </p>
         )}
         <button
-          onClick={() => signOut({ redirectUrl: "/" })}
+          onClick={() => signOut("/")}
           className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground w-full px-2 py-1.5 rounded-md hover:bg-muted/50 transition-colors"
         >
           <LogOut className="w-4 h-4" />

@@ -1,5 +1,6 @@
-// Use deployed API in production, localhost in development
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3000/api";
+import { API_BASE } from "@/lib/apiConfig";
+import { getMobileAuthSession, isNativeMobileAuth } from "@/lib/mobileAuth";
+
 const CHURCH_ID_KEY = "tchurch_church_id";
 
 declare global {
@@ -30,7 +31,11 @@ export async function apiFetch<T = unknown>(
   token?: string | null
 ): Promise<T> {
   const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
-  const resolvedToken = token ?? (await window.Clerk?.session?.getToken?.()) ?? null;
+  const resolvedToken =
+    token ??
+    (isNativeMobileAuth ? getMobileAuthSession()?.token : null) ??
+    (await window.Clerk?.session?.getToken?.()) ??
+    null;
   const headers: Record<string, string> = {
     ...(!isFormData ? { "Content-Type": "application/json" } : {}),
     ...(options.headers as Record<string, string>),

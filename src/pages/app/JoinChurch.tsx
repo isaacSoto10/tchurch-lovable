@@ -6,11 +6,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2, ArrowLeft, CheckCircle2, XCircle } from "lucide-react";
 import { apiFetch } from "@/lib/api";
-import { useAuth } from "@clerk/clerk-react";
+import { useAppAuth } from "@/hooks/useAppAuth";
 
 export default function JoinChurch() {
   const navigate = useNavigate();
-  const { isSignedIn } = useAuth();
+  const { isSignedIn } = useAppAuth();
   const [joinCode, setJoinCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");

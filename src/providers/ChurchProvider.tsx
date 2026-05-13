@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
-import { useAuth } from "@clerk/clerk-react";
+import { useAppAuth } from "@/hooks/useAppAuth";
 import { fetchUserChurches, getChurchId, setChurchId } from "@/lib/api";
 
 interface Church {
@@ -33,7 +33,7 @@ export function useChurch() {
 }
 
 export function ChurchProvider({ children }: { children: ReactNode }) {
-  const { getToken, userId, isSignedIn } = useAuth();
+  const { getToken, userId, isSignedIn } = useAppAuth();
   const [churches, setChurches] = useState<Church[]>([]);
   const [selectedChurch, setSelectedChurch] = useState<Church | null>(null);
   const [loading, setLoading] = useState(true);

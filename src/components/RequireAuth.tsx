@@ -1,8 +1,8 @@
-import { useAuth } from "@clerk/clerk-react";
 import { Navigate } from "react-router-dom";
+import { useAppAuth } from "@/hooks/useAppAuth";
 
 export function RequireAuth({ children }: { children: React.ReactNode }) {
-  const { isSignedIn, isLoaded } = useAuth();
+  const { isSignedIn, isLoaded } = useAppAuth();
 
   if (!isLoaded) {
     return (

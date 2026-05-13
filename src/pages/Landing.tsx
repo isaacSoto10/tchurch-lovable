@@ -1,12 +1,12 @@
 import { motion } from "framer-motion";
-import { useAuth } from "@clerk/clerk-react";
 import { Capacitor } from "@capacitor/core";
 import { Navigate } from "react-router-dom";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
+import { useAppAuth } from "@/hooks/useAppAuth";
 
 export default function Landing() {
-  const { isLoaded, isSignedIn } = useAuth();
+  const { isLoaded, isSignedIn } = useAppAuth();
   const isNativePlatform = Capacitor.isNativePlatform();
 
   if (isLoaded && isSignedIn) {

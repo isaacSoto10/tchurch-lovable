@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { useAuth } from "@clerk/clerk-react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -7,9 +6,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2, Users, Plus, ArrowLeft } from "lucide-react";
 import { apiFetch } from "@/lib/api";
+import { useAppAuth } from "@/hooks/useAppAuth";
 
 export default function Onboarding() {
-  const { user } = useAuth();
+  const { user } = useAppAuth();
   const navigate = useNavigate();
   const [mode, setMode] = useState<"choose" | "join">("choose");
   const [joinCode, setJoinCode] = useState("");

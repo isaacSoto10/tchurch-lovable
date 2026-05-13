@@ -1,17 +1,18 @@
 import { useEffect, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
-import { useAuth } from "@clerk/clerk-react";
 import { ArrowLeft, Loader2, MailPlus, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { useAppAuth } from "@/hooks/useAppAuth";
 import { ensureHeadlessClerkLoaded } from "@/lib/clerkClient";
 import { getClerkErrorMessage } from "@/lib/clerkErrors";
+import { isNativeMobileAuth, requestMobileAuthCode, verifyMobileAuthCode } from "@/lib/mobileAuth";
 
 type Step = "email" | "code";
 
 function SignupInner() {
-  const { isLoaded: authLoaded, isSignedIn } = useAuth();
+  const { isLoaded: authLoaded, isSignedIn } = useAppAuth();
   const navigate = useNavigate();
   const [step, setStep] = useState<Step>("email");
   const [email, setEmail] = useState("");
@@ -33,11 +34,11 @@ function SignupInner() {
   async function handleSignupSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!email.trim()) return;
-    if (password.length < 8) {
+    if (!isNativeMobileAuth && password.length < 8) {
       setError("Please enter a password with at least 8 characters.");
       return;
     }
-    if (password !== confirmPassword) {
+    if (!isNativeMobileAuth && password !== confirmPassword) {
       setError("Passwords do not match.");
       return;
     }
@@ -46,6 +47,13 @@ function SignupInner() {
     setError("");
 
     try {
+      if (isNativeMobileAuth) {
+        const result = await requestMobileAuthCode(email.trim());
+        setEmail(result.email);
+        setStep("code");
+        return;
+      }
+
       const clerk = await ensureHeadlessClerkLoaded();
       const signUp = clerk.client?.signUp;
 
@@ -72,6 +80,12 @@ function SignupInner() {
     setError("");
 
     try {
+      if (isNativeMobileAuth) {
+        await verifyMobileAuthCode(email, code.trim());
+        navigate("/app", { replace: true });
+        return;
+      }
+
       const clerk = await ensureHeadlessClerkLoaded();
       const signUp = clerk.client?.signUp;
 
@@ -104,6 +118,11 @@ function SignupInner() {
     setError("");
 
     try {
+      if (isNativeMobileAuth) {
+        await requestMobileAuthCode(email.trim());
+        return;
+      }
+
       const clerk = await ensureHeadlessClerkLoaded();
       const signUp = clerk.client?.signUp;
 
@@ -163,34 +182,38 @@ function SignupInner() {
                   disabled={loading}
                 />
               </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-700" htmlFor="password">
-                  Password
-                </label>
-                <Input
-                  id="password"
-                  type="password"
-                  autoComplete="new-password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="At least 8 characters"
-                  disabled={loading}
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-700" htmlFor="confirmPassword">
-                  Confirm password
-                </label>
-                <Input
-                  id="confirmPassword"
-                  type="password"
-                  autoComplete="new-password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  placeholder="Re-enter your password"
-                  disabled={loading}
-                />
-              </div>
+              {!isNativeMobileAuth ? (
+                <>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700" htmlFor="password">
+                      Password
+                    </label>
+                    <Input
+                      id="password"
+                      type="password"
+                      autoComplete="new-password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="At least 8 characters"
+                      disabled={loading}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700" htmlFor="confirmPassword">
+                      Confirm password
+                    </label>
+                    <Input
+                      id="confirmPassword"
+                      type="password"
+                      autoComplete="new-password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="Re-enter your password"
+                      disabled={loading}
+                    />
+                  </div>
+                </>
+              ) : null}
               {error ? (
                 <p className="text-sm text-red-600" role="alert">
                   {error}
@@ -198,7 +221,7 @@ function SignupInner() {
               ) : null}
               <Button
                 className="h-11 w-full"
-                disabled={loading || !email.trim() || !password || !confirmPassword}
+                disabled={loading || !email.trim() || (!isNativeMobileAuth && (!password || !confirmPassword))}
                 type="submit"
               >
                 {loading ? (
