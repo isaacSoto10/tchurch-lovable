@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { ArrowLeft, Loader2, MailPlus, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -8,15 +8,10 @@ import { useAppAuth } from "@/hooks/useAppAuth";
 import { ensureHeadlessClerkLoaded } from "@/lib/clerkClient";
 import { getClerkErrorMessage } from "@/lib/clerkErrors";
 import { isNativeMobileAuth, requestMobileAuthCode, verifyMobileAuthCode } from "@/lib/mobileAuth";
-import { openSignupInBrowser } from "@/lib/externalLinks";
 
 type Step = "email" | "code";
 
 function NativeSignupRedirect() {
-  useEffect(() => {
-    openSignupInBrowser();
-  }, []);
-
   return (
     <div className="relative flex min-h-svh items-center justify-center bg-gradient-to-br from-indigo-50 via-white to-violet-50 p-4">
       <Link
@@ -32,17 +27,14 @@ function NativeSignupRedirect() {
             <MailPlus className="h-6 w-6" />
           </div>
           <div className="space-y-1">
-            <CardTitle>Create your account on the web</CardTitle>
+            <CardTitle>Account access is managed by your church</CardTitle>
             <CardDescription>
-              Sign up opens in your browser so account creation stays reliable and secure.
+              Tchurch mobile is for existing church accounts. Ask your church administrator to invite you.
             </CardDescription>
           </div>
         </CardHeader>
         <CardContent className="space-y-3">
-          <Button className="h-11 w-full" onClick={() => openSignupInBrowser()}>
-            Open sign up
-          </Button>
-          <Button className="w-full" variant="ghost" asChild>
+          <Button className="h-11 w-full" asChild>
             <Link to="/login">I already have an account</Link>
           </Button>
         </CardContent>

@@ -4,7 +4,6 @@ import { Navigate } from "react-router-dom";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useAppAuth } from "@/hooks/useAppAuth";
-import { openSignupInBrowser } from "@/lib/externalLinks";
 
 export default function Landing() {
   const { isLoaded, isSignedIn } = useAppAuth();
@@ -40,28 +39,23 @@ export default function Landing() {
         className="flex flex-col gap-3 w-full max-w-xs"
       >
         {isNativePlatform ? (
-          <Button size="lg" className="w-full text-base" onClick={() => openSignupInBrowser()}>
-            Get Started Free
+          <Button size="lg" className="w-full text-base" asChild>
+            <Link to="/login">Sign In</Link>
           </Button>
         ) : (
           <Button size="lg" className="w-full text-base" asChild>
-            <Link to="/signup">Get Started Free</Link>
+            <Link to="/signup">Create Account</Link>
           </Button>
         )}
-        <Button size="lg" variant="outline" className="w-full text-base" asChild>
-          <Link to="/login">Sign In</Link>
-        </Button>
         {!isNativePlatform && (
-          <Button
-            size="lg"
-            variant="ghost"
-            className="w-full text-base text-muted-foreground"
-            asChild
-          >
-            <a href="https://tchurchapp.com/pricing" target="_blank" rel="noopener noreferrer">
-              View Plans & Pricing
-            </a>
+          <Button size="lg" variant="outline" className="w-full text-base" asChild>
+            <Link to="/login">Sign In</Link>
           </Button>
+        )}
+        {isNativePlatform && (
+          <p className="text-center text-sm text-muted-foreground">
+            Tchurch mobile access is for existing church accounts. If you need access, contact your church administrator.
+          </p>
         )}
       </motion.div>
 

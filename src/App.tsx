@@ -9,7 +9,6 @@ import { ChurchProvider } from "@/providers/ChurchProvider";
 import { RequireAuth } from "@/components/RequireAuth";
 
 import Landing from "./pages/Landing";
-import Pricing from "./pages/Pricing";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import { AppLayout } from "./layouts/AppLayout";
@@ -53,7 +52,7 @@ const App = () => (
           <ChurchProvider>
             <Routes>
               <Route path="/" element={<Landing />} />
-              <Route path="/pricing" element={isNativePlatform ? <Navigate to="/" replace /> : <Pricing />} />
+              <Route path="/pricing" element={<Navigate to="/" replace />} />
               <Route path="/login/*" element={<Login />} />
               <Route path="/signup/*" element={<Signup />} />
               <Route path="/app" element={<RequireAuth><AppLayout /></RequireAuth>}>

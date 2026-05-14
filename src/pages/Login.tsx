@@ -8,7 +8,6 @@ import { useAppAuth } from "@/hooks/useAppAuth";
 import { ensureHeadlessClerkLoaded } from "@/lib/clerkClient";
 import { getClerkErrorMessage } from "@/lib/clerkErrors";
 import { isNativeMobileAuth, requestMobileAuthCode, verifyMobileAuthCode } from "@/lib/mobileAuth";
-import { openSignupInBrowser } from "@/lib/externalLinks";
 
 type Step = "email" | "code";
 type SupportedFirstFactor = {
@@ -283,22 +282,18 @@ function LoginInner() {
             </form>
           )}
 
-          <p className="text-center text-sm text-muted-foreground">
-            Don&apos;t have an account?{" "}
-            {isNativeMobileAuth ? (
-              <button
-                type="button"
-                className="font-medium text-primary underline-offset-4 hover:underline"
-                onClick={() => openSignupInBrowser()}
-              >
-                Sign up
-              </button>
-            ) : (
+          {isNativeMobileAuth ? (
+            <p className="text-center text-sm text-muted-foreground">
+              Need access? Contact your church administrator to be invited.
+            </p>
+          ) : (
+            <p className="text-center text-sm text-muted-foreground">
+              Don&apos;t have an account?{" "}
               <Link className="font-medium text-primary underline-offset-4 hover:underline" to="/signup">
                 Sign up
               </Link>
-            )}
-          </p>
+            </p>
+          )}
         </CardContent>
       </Card>
     </div>
