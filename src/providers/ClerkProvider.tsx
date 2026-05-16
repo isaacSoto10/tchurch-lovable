@@ -16,11 +16,10 @@ export function ClerkProvider({ children }: { children: React.ReactNode }) {
     return (
       <div className="flex min-h-svh items-center justify-center bg-slate-950 px-6 text-slate-50">
         <div className="w-full max-w-lg rounded-3xl border border-slate-800 bg-slate-900 p-6 shadow-2xl">
-          <p className="text-sm font-semibold uppercase tracking-[0.2em] text-amber-300">Clerk setup required</p>
-          <h1 className="mt-3 text-2xl font-semibold">Add your Clerk publishable key</h1>
+          <p className="text-sm font-semibold uppercase tracking-[0.2em] text-amber-300">Configuración de Clerk requerida</p>
+          <h1 className="mt-3 text-2xl font-semibold">Agrega tu llave pública de Clerk</h1>
           <p className="mt-3 text-sm leading-6 text-slate-300">
-            Set <code>VITE_CLERK_PUBLISHABLE_KEY</code> in your local environment before opening the sign-in
-            page.
+            Configura <code>VITE_CLERK_PUBLISHABLE_KEY</code> en tu entorno local antes de abrir la página de inicio de sesión.
           </p>
         </div>
       </div>

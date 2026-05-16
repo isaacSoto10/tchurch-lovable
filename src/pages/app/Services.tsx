@@ -88,17 +88,17 @@ interface Member {
 }
 
 const SERVICE_TYPES = [
-  { label: "Sunday Service", value: "Sunday Service" },
-  { label: "Wednesday Bible Study", value: "Wednesday Bible Study" },
-  { label: "Special Event", value: "Special Event" },
-  { label: "Rehearsal", value: "Rehearsal" },
+  { label: "Servicio dominical", value: "Sunday Service" },
+  { label: "Estudio bíblico", value: "Wednesday Bible Study" },
+  { label: "Evento especial", value: "Special Event" },
+  { label: "Ensayo", value: "Rehearsal" },
 ];
 
 const ITEM_TYPES = [
-  { label: "Song", value: "song", icon: Music },
-  { label: "Header", value: "header", icon: FileText },
-  { label: "Item", value: "item", icon: FileText },
-  { label: "Announcement", value: "announcement", icon: Bell },
+  { label: "Canción", value: "song", icon: Music },
+  { label: "Encabezado", value: "header", icon: FileText },
+  { label: "Elemento", value: "item", icon: FileText },
+  { label: "Anuncio", value: "announcement", icon: Bell },
 ];
 
 const POSITIONS = [
@@ -120,24 +120,24 @@ const POSITIONS = [
 ];
 
 const TEMPLATE_ITEMS = [
-  { title: "Welcome", type: "header" },
-  { title: "Call to Worship", type: "header" },
-  { title: "Praise & Worship", type: "header" },
-  { title: "Offering", type: "header" },
-  { title: "Prayer", type: "header" },
-  { title: "Sermon Title", type: "header" },
-  { title: "Altar Call", type: "header" },
-  { title: "Benediction", type: "header" },
-  { title: "Communion", type: "header" },
-  { title: "Scripture Reading", type: "item" },
-  { title: "Testimony", type: "item" },
-  { title: "Special Music", type: "item" },
-  { title: "Children's Moment", type: "item" },
-  { title: "Congregational Reading", type: "item" },
-  { title: "Fellowship", type: "item" },
-  { title: "General Announcement", type: "announcement" },
-  { title: "Upcoming Events", type: "announcement" },
-  { title: "Birthday Celebrations", type: "announcement" },
+  { title: "Bienvenida", type: "header" },
+  { title: "Llamado a la adoración", type: "header" },
+  { title: "Alabanza y adoración", type: "header" },
+  { title: "Ofrenda", type: "header" },
+  { title: "Oración", type: "header" },
+  { title: "Mensaje", type: "header" },
+  { title: "Llamado al altar", type: "header" },
+  { title: "Bendición final", type: "header" },
+  { title: "Santa cena", type: "header" },
+  { title: "Lectura bíblica", type: "item" },
+  { title: "Testimonio", type: "item" },
+  { title: "Música especial", type: "item" },
+  { title: "Momento de niños", type: "item" },
+  { title: "Lectura congregacional", type: "item" },
+  { title: "Convivio", type: "item" },
+  { title: "Anuncio general", type: "announcement" },
+  { title: "Próximos eventos", type: "announcement" },
+  { title: "Cumpleaños", type: "announcement" },
 ];
 
 export default function Services() {
@@ -193,7 +193,7 @@ export default function Services() {
     setLoading(true);
     fetchApi("/services")
       .then((data) => setServices(Array.isArray(data) ? data : []))
-      .catch((e) => console.error("Failed to load services:", e))
+      .catch((e) => console.error("No se pudieron cargar los servicios:", e))
       .finally(() => setLoading(false));
   }, [fetchApi]);
 
@@ -214,7 +214,7 @@ export default function Services() {
         setServiceAssignments((prev) => ({ ...prev, [serviceId]: Array.isArray(assignments) ? assignments as ServiceAssignment[] : [] }));
       }
     } catch (e) {
-      console.error("Failed to load service details:", e);
+      console.error("No se pudieron cargar los detalles del servicio:", e);
     } finally {
       setItemsLoading((prev) => ({ ...prev, [serviceId]: false }));
     }
@@ -279,18 +279,18 @@ export default function Services() {
           method: "PUT",
           body: JSON.stringify(payload),
         });
-        toast({ title: "Service updated successfully" });
+        toast({ title: "Servicio actualizado" });
       } else {
         await fetchApi("/services", {
           method: "POST",
           body: JSON.stringify(payload),
         });
-        toast({ title: "Service created successfully" });
+        toast({ title: "Servicio creado" });
       }
       setDialogOpen(false);
       loadServices();
     } catch (e) {
-      toast({ title: "Failed to save service", variant: "destructive" });
+      toast({ title: "No se pudo guardar el servicio", variant: "destructive" });
     } finally {
       setSubmitting(false);
     }
@@ -301,11 +301,11 @@ export default function Services() {
 
     try {
       await fetchApi(`/services/${deleteId}`, { method: "DELETE" });
-      toast({ title: "Service deleted successfully" });
+      toast({ title: "Servicio eliminado" });
       setDeleteId(null);
       loadServices();
     } catch (e) {
-      toast({ title: "Failed to delete service", variant: "destructive" });
+      toast({ title: "No se pudo eliminar el servicio", variant: "destructive" });
     }
   };
 
@@ -330,7 +330,7 @@ export default function Services() {
       const data = await fetchApi(`/songs?q=${encodeURIComponent(query)}&limit=20`);
       setSongs(Array.isArray(data) ? data.slice(0, 10) : []);
     } catch (e) {
-      console.error("Failed to search songs:", e);
+      console.error("No se pudieron buscar canciones:", e);
     }
   };
 
@@ -351,7 +351,7 @@ export default function Services() {
     }
 
     if (!title.trim()) {
-      toast({ title: "Please select or enter a title", variant: "destructive" });
+      toast({ title: "Selecciona o escribe un título", variant: "destructive" });
       return;
     }
 
@@ -371,7 +371,7 @@ export default function Services() {
           details: {},
         }),
       });
-      toast({ title: "Item added" });
+      toast({ title: "Elemento agregado" });
       setAddItemDialogOpen(false);
 
       const serviceRes = await fetchApi(`/services/${selectedServiceId}`);
@@ -380,7 +380,7 @@ export default function Services() {
         setServiceItems((prev) => ({ ...prev, [selectedServiceId]: Array.isArray(items) ? items as ServiceItem[] : [] }));
       }
     } catch (e) {
-      toast({ title: "Failed to add item", variant: "destructive" });
+      toast({ title: "No se pudo agregar el elemento", variant: "destructive" });
     }
   };
 
@@ -391,9 +391,9 @@ export default function Services() {
         ...prev,
         [serviceId]: (prev[serviceId] || []).filter((i) => i.id !== itemId),
       }));
-      toast({ title: "Item deleted" });
+      toast({ title: "Elemento eliminado" });
     } catch (e) {
-      toast({ title: "Failed to delete item", variant: "destructive" });
+      toast({ title: "No se pudo eliminar el elemento", variant: "destructive" });
     }
   };
 
@@ -426,7 +426,7 @@ export default function Services() {
         body: JSON.stringify({ items: updates }),
       });
     } catch (e) {
-      toast({ title: "Failed to reorder items", variant: "destructive" });
+      toast({ title: "No se pudo reordenar", variant: "destructive" });
       setServiceItems((prev) => ({ ...prev, [targetServiceId]: previousItems }));
     }
   };
@@ -530,13 +530,13 @@ export default function Services() {
       const data = await fetchApi(`/members?search=${encodeURIComponent(query)}`);
       setMembers(Array.isArray(data) ? data.slice(0, 10) : []);
     } catch (e) {
-      console.error("Failed to search members:", e);
+      console.error("No se pudieron buscar miembros:", e);
     }
   };
 
   const handleAssignMember = async () => {
     if (!selectedServiceId || !selectedMember) {
-      toast({ title: "Please select a member", variant: "destructive" });
+      toast({ title: "Selecciona un miembro", variant: "destructive" });
       return;
     }
 
@@ -549,7 +549,7 @@ export default function Services() {
           position: selectedPosition,
         }),
       });
-      toast({ title: "Member assigned" });
+      toast({ title: "Miembro asignado" });
       setAssignDialogOpen(false);
 
       const serviceRes = await fetchApi(`/services/${selectedServiceId}`);
@@ -560,9 +560,9 @@ export default function Services() {
     } catch (e: unknown) {
       const error = e as { blocked?: boolean; message?: string };
       if (error?.blocked) {
-        toast({ title: "Member has a blockout on this date", variant: "destructive" });
+        toast({ title: "El miembro no está disponible en esa fecha", variant: "destructive" });
       } else {
-        toast({ title: error?.message || "Failed to assign member", variant: "destructive" });
+        toast({ title: error?.message || "No se pudo asignar el miembro", variant: "destructive" });
       }
     }
   };
@@ -580,7 +580,7 @@ export default function Services() {
         ),
       }));
     } catch (e) {
-      toast({ title: e instanceof Error ? e.message : "Failed to update assignment", variant: "destructive" });
+      toast({ title: e instanceof Error ? e.message : "No se pudo actualizar la asignación", variant: "destructive" });
     }
   };
 
@@ -591,9 +591,9 @@ export default function Services() {
         ...prev,
         [serviceId]: (prev[serviceId] || []).filter((a) => a.id !== assignmentId),
       }));
-      toast({ title: "Assignment removed" });
+      toast({ title: "Asignación eliminada" });
     } catch (e) {
-      toast({ title: e instanceof Error ? e.message : "Failed to remove assignment", variant: "destructive" });
+      toast({ title: e instanceof Error ? e.message : "No se pudo eliminar la asignación", variant: "destructive" });
     }
   };
 
@@ -604,32 +604,38 @@ export default function Services() {
   };
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">Services</h1>
-        {isAdmin && <Button size="sm" onClick={openNewDialog}>
-          <Plus className="w-4 h-4 mr-1" /> New Service
+    <div className="mobile-page space-y-5">
+      <div className="app-card-soft p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="mobile-section-title">Planificación</p>
+            <h1 className="mt-1 text-3xl font-black tracking-tight text-zinc-950">Servicios</h1>
+            <p className="mt-1 text-sm text-muted-foreground">Organiza el flujo, canciones y equipo de cada reunión.</p>
+          </div>
+          {isAdmin && <Button size="sm" onClick={openNewDialog} className="h-11 shrink-0 rounded-2xl px-4 shadow-sm">
+          <Plus className="w-4 h-4 mr-1" /> Nuevo
         </Button>}
+        </div>
       </div>
 
-      <div className="flex gap-3 mb-4">
-        <div className="flex-1">
+      <div className="grid grid-cols-[minmax(0,1fr)_150px] gap-2 sm:grid-cols-[minmax(0,1fr)_180px]">
+        <div className="min-w-0">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
-              placeholder="Search services..."
-              className="pl-9"
+              placeholder="Buscar servicios..."
+              className="h-12 rounded-2xl border-zinc-200 bg-white pl-9 shadow-sm"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
         </div>
         <Select value={filterType} onValueChange={setFilterType}>
-          <SelectTrigger className="w-40">
-            <SelectValue placeholder="Type" />
+          <SelectTrigger className="h-12 rounded-2xl border-zinc-200 bg-white shadow-sm">
+            <SelectValue placeholder="Tipo" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Types</SelectItem>
+            <SelectItem value="all">Todos los tipos</SelectItem>
             {SERVICE_TYPES.map((t) => (
               <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
             ))}
@@ -642,13 +648,13 @@ export default function Services() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {editingService ? "Edit Service" : "New Service"}
+              {editingService ? "Editar servicio" : "Nuevo servicio"}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div>
               <Input
-                placeholder="Service title"
+                placeholder="Título del servicio"
                 value={formData.title}
                 onChange={(e) =>
                   setFormData({ ...formData, title: e.target.value })
@@ -672,7 +678,7 @@ export default function Services() {
                 }
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Select type" />
+                  <SelectValue placeholder="Selecciona el tipo" />
                 </SelectTrigger>
                 <SelectContent>
                   {SERVICE_TYPES.map((t) => (
@@ -685,7 +691,7 @@ export default function Services() {
             </div>
             <div>
               <Textarea
-                placeholder="Notes (optional)"
+                placeholder="Notas (opcional)"
                 value={formData.notes}
                 onChange={(e) =>
                   setFormData({ ...formData, notes: e.target.value })
@@ -695,13 +701,13 @@ export default function Services() {
             </div>
             <div className="flex gap-2">
               <Button onClick={handleSubmit} disabled={submitting}>
-                {submitting ? "Saving..." : editingService ? "Update" : "Create"}
+                {submitting ? "Guardando..." : editingService ? "Actualizar" : "Crear"}
               </Button>
               <Button
                 variant="outline"
                 onClick={() => setDialogOpen(false)}
               >
-                Cancel
+                Cancelar
               </Button>
             </div>
           </div>
@@ -711,18 +717,17 @@ export default function Services() {
       <AlertDialog open={!!deleteId} onOpenChange={() => setDeleteId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Service</AlertDialogTitle>
+            <AlertDialogTitle>Eliminar servicio</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete this service? This action cannot
-              be undone.
+              ¿Seguro que quieres eliminar este servicio? Esta acción no se puede deshacer.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel onClick={() => setDeleteId(null)}>
-              Cancel
+              Cancelar
             </AlertDialogCancel>
             <AlertDialogAction onClick={handleDelete}>
-              Delete
+              Eliminar
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -731,7 +736,7 @@ export default function Services() {
       <Dialog open={addItemDialogOpen} onOpenChange={setAddItemDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Add Service Item</DialogTitle>
+            <DialogTitle>Agregar elemento al servicio</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div className="flex gap-2">
@@ -740,14 +745,14 @@ export default function Services() {
                 size="sm"
                 onClick={() => setNewItemType("template")}
               >
-                Template
+                Plantilla
               </Button>
               <Button
                 variant={newItemType === "song" ? "default" : "outline"}
                 size="sm"
                 onClick={() => setNewItemType("song")}
               >
-                Song
+                Canción
               </Button>
             </div>
 
@@ -758,7 +763,7 @@ export default function Services() {
                   onValueChange={(v) => setItemType(v as ServiceItem["type"])}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Item type" />
+                    <SelectValue placeholder="Tipo de elemento" />
                   </SelectTrigger>
                   <SelectContent>
                     {ITEM_TYPES.map((t) => (
@@ -787,7 +792,7 @@ export default function Services() {
                 </div>
                 {itemType !== "song" && !TEMPLATE_ITEMS.find((t) => t.title === itemTitle) && (
                   <Input
-                    placeholder="Or enter custom title"
+                    placeholder="O escribe un título personalizado"
                     value={itemTitle}
                     onChange={(e) => setItemTitle(e.target.value)}
                   />
@@ -798,7 +803,7 @@ export default function Services() {
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                   <Input
-                    placeholder="Search songs..."
+                    placeholder="Buscar canciones..."
                     className="pl-9"
                     value={songSearch}
                     onChange={(e) => {
@@ -821,8 +826,8 @@ export default function Services() {
                     >
                       <Music className="w-4 h-4 mr-2" />
                       <span>{song.title}</span>
-                      {song.author && <span className="ml-2 text-xs text-muted-foreground">by {song.author}</span>}
-                      {song.key && <span className="ml-2 text-xs text-muted-foreground">Key: {song.key}</span>}
+                      {song.author && <span className="ml-2 text-xs text-muted-foreground">por {song.author}</span>}
+                      {song.key && <span className="ml-2 text-xs text-muted-foreground">Tono: {song.key}</span>}
                     </Button>
                   ))}
                 </div>
@@ -831,10 +836,10 @@ export default function Services() {
 
             <div className="flex gap-2 justify-end">
               <Button variant="outline" onClick={() => setAddItemDialogOpen(false)}>
-                Cancel
+                Cancelar
               </Button>
               <Button onClick={handleAddItem} disabled={!itemTitle.trim()}>
-                Add Item
+                Agregar elemento
               </Button>
             </div>
           </div>
@@ -844,13 +849,13 @@ export default function Services() {
       <Dialog open={assignDialogOpen} onOpenChange={setAssignDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Assign Team Member</DialogTitle>
+            <DialogTitle>Asignar miembro del equipo</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
-                placeholder="Search members..."
+                placeholder="Buscar miembros..."
                 className="pl-9"
                 value={memberSearch}
                 onChange={(e) => {
@@ -876,7 +881,7 @@ export default function Services() {
             </div>
             <Select value={selectedPosition} onValueChange={setSelectedPosition}>
               <SelectTrigger>
-                <SelectValue placeholder="Select position" />
+                <SelectValue placeholder="Selecciona una posición" />
               </SelectTrigger>
               <SelectContent>
                 {POSITIONS.map((p) => (
@@ -886,10 +891,10 @@ export default function Services() {
             </Select>
             <div className="flex gap-2 justify-end">
               <Button variant="outline" onClick={() => setAssignDialogOpen(false)}>
-                Cancel
+                Cancelar
               </Button>
               <Button onClick={handleAssignMember} disabled={!selectedMember}>
-                Assign
+                Asignar
               </Button>
             </div>
           </div>
@@ -903,13 +908,16 @@ export default function Services() {
           </div>
         )}
         {!loading && filteredServices.length === 0 && (
-          <p className="text-sm text-muted-foreground">No services found.</p>
+          <div className="app-card p-8 text-center">
+            <Music className="mx-auto mb-3 h-9 w-9 text-zinc-300" />
+            <p className="text-sm text-muted-foreground">No se encontraron servicios.</p>
+          </div>
         )}
         {!loading &&
           filteredServices.map((svc) => (
             <Card
               key={svc.id}
-              className="hover:shadow-md transition-shadow cursor-pointer"
+              className="app-card cursor-pointer border-zinc-200/80 transition-all hover:-translate-y-0.5 hover:shadow-md"
               onClick={() => {
                 if (suppressNextCardClickRef.current) return;
                 toggleExpand(svc.id);
@@ -924,12 +932,12 @@ export default function Services() {
               }}
             >
               <CardContent className="p-4">
-                <div className="flex items-center gap-4">
-                  <div className="w-1 h-10 rounded bg-primary" />
+                <div className="flex items-center gap-3">
+                  <div className="h-12 w-1.5 rounded-full bg-primary shadow-sm shadow-primary/30" />
                   <div className="flex-1">
                     <button
                       type="button"
-                      className="text-left font-medium underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 rounded-sm"
+                      className="text-left text-lg font-bold leading-tight text-zinc-950 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 rounded-sm"
                       onClick={(event) => {
                         event.stopPropagation();
                         navigate(`/app/services/${svc.id}`);
@@ -937,16 +945,16 @@ export default function Services() {
                     >
                       {svc.title}
                     </button>
-                    <p className="text-sm text-muted-foreground">
+                    <p className="mt-1 text-sm text-muted-foreground">
                       {svc.date
-                        ? new Date(svc.date).toLocaleDateString("en-US", {
+                        ? new Date(svc.date).toLocaleDateString("es-US", {
                             weekday: "short",
                             month: "short",
                             day: "numeric",
                           })
                         : ""}
                       {svc.date
-                        ? ` · ${new Date(svc.date).toLocaleTimeString("en-US", {
+                        ? ` · ${new Date(svc.date).toLocaleTimeString("es-US", {
                             hour: "numeric",
                             minute: "2-digit",
                           })}`
@@ -957,8 +965,9 @@ export default function Services() {
                     <Button
                       variant="ghost"
                       size="sm"
+                      className="h-10 w-10 rounded-xl text-lg font-bold"
                       onClick={() => toggleExpand(svc.id)}
-                      aria-label={expandedService === svc.id ? "Collapse service details" : "Expand service details"}
+                      aria-label={expandedService === svc.id ? "Contraer detalles del servicio" : "Expandir detalles del servicio"}
                     >
                       {expandedService === svc.id ? "−" : "+"}
                     </Button>
@@ -967,6 +976,7 @@ export default function Services() {
                         <Button
                           variant="ghost"
                           size="sm"
+                          className="h-10 w-10 rounded-xl"
                           onClick={() => openEditDialog(svc)}
                         >
                           <Pencil className="w-4 h-4" />
@@ -974,6 +984,7 @@ export default function Services() {
                         <Button
                           variant="ghost"
                           size="sm"
+                          className="h-10 w-10 rounded-xl"
                           onClick={() => setDeleteId(svc.id)}
                         >
                           <Trash2 className="w-4 h-4 text-destructive" />
@@ -984,16 +995,16 @@ export default function Services() {
                 </div>
 
                 {expandedService === svc.id && (
-                  <div className="mt-4 pt-4 border-t space-y-4" onClick={stopInteractiveTap}>
+                  <div className="mt-4 space-y-5 border-t border-zinc-100 pt-4" onClick={stopInteractiveTap}>
                     {svc.notes && (
                       <p className="text-sm text-muted-foreground">{svc.notes}</p>
                     )}
 
                     <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <h4 className="text-sm font-medium">Service Flow</h4>
-                        {isAdmin && <Button size="sm" variant="outline" onClick={() => openAddItemDialog(svc.id)}>
-                          <Plus className="w-3 h-3 mr-1" /> Add Item
+                      <div className="mb-3 flex items-center justify-between">
+                        <h4 className="text-sm font-bold text-zinc-950">Flujo del servicio</h4>
+                        {isAdmin && <Button size="sm" variant="outline" className="h-10 rounded-xl" onClick={() => openAddItemDialog(svc.id)}>
+                          <Plus className="w-3 h-3 mr-1" /> Agregar
                         </Button>}
                       </div>
                       {itemsLoading[svc.id] ? (
@@ -1001,7 +1012,7 @@ export default function Services() {
                           <div className="animate-spin w-4 h-4 border-2 border-primary border-t-transparent rounded-full" />
                         </div>
                       ) : (
-                        <div className="space-y-1">
+                        <div className="space-y-2">
                           {(serviceItems[svc.id] || []).map((item, idx) => {
                             const isSong = isSongItemType(item.type) && item.song;
                             const youtubeUrl = isSong ? getSongYoutubeUrl(item.song) : null;
@@ -1013,7 +1024,7 @@ export default function Services() {
                             return (
                               <div
                                 key={item.id}
-                                className={`overflow-hidden rounded bg-muted/50 transition-all ${
+                                className={`overflow-hidden rounded-2xl border border-zinc-100 bg-zinc-50/80 transition-all ${
                                   draggingItemId === item.id ? "opacity-50" : ""
                                 } ${dragOverItemId === item.id && draggingItemId !== item.id ? "ring-2 ring-primary ring-offset-2" : ""}`}
                               >
@@ -1025,7 +1036,7 @@ export default function Services() {
                                   onDrop={(e) => handleDrop(e, svc.id, item.id)}
                                   onDragEnd={handleDragEnd}
                                   draggable
-                                  className="flex items-center gap-2 p-2"
+                                  className="flex items-center gap-2 p-3"
                                   onClick={() => {
                                     if (isSong) toggleSongItem(item.id);
                                   }}
@@ -1045,7 +1056,7 @@ export default function Services() {
                                     onPointerMove={handlePointerMove}
                                     onPointerUp={handlePointerUp}
                                     onPointerCancel={handlePointerUp}
-                                    aria-label="Drag to reorder"
+                                    aria-label="Arrastrar para reordenar"
                                   />
                                   <span className="text-xs text-muted-foreground w-4">{idx + 1}</span>
                                   {getItemIcon(item.type)}
@@ -1056,7 +1067,7 @@ export default function Services() {
                                     )}
                                   </div>
                                   {displayKey && (
-                                    <Badge variant="secondary" className="shrink-0 text-xs">Key {displayKey}</Badge>
+                                    <Badge variant="secondary" className="shrink-0 rounded-full text-xs">Tono {displayKey}</Badge>
                                   )}
                                   {item.duration && (
                                     <span className="text-xs text-muted-foreground flex items-center">
@@ -1068,8 +1079,8 @@ export default function Services() {
                                     <Button
                                       variant="ghost"
                                       size="icon"
-                                      className="w-7 h-7"
-                                      aria-label={expandedSongItems[item.id] ? "Collapse song details" : "Expand song details"}
+                                      className="h-9 w-9 rounded-xl"
+                                      aria-label={expandedSongItems[item.id] ? "Contraer detalles de la canción" : "Expandir detalles de la canción"}
                                       onClick={(event) => {
                                         event.stopPropagation();
                                         toggleSongItem(item.id);
@@ -1082,7 +1093,7 @@ export default function Services() {
                                     <Button
                                       variant="ghost"
                                       size="icon"
-                                      className="w-6 h-6"
+                                      className="h-9 w-9 rounded-xl"
                                       onClick={(event) => {
                                         event.stopPropagation();
                                         handleDeleteItem(svc.id, item.id);
@@ -1094,19 +1105,19 @@ export default function Services() {
                                 </div>
 
                                 {isSong && expandedSongItems[item.id] && (
-                                  <div className="space-y-3 border-t bg-white/80 p-3" onClick={stopInteractiveTap} onPointerDown={stopInteractiveTap} onTouchStart={stopInteractiveTap}>
+                                  <div className="space-y-3 border-t border-zinc-100 bg-white p-3" onClick={stopInteractiveTap} onPointerDown={stopInteractiveTap} onTouchStart={stopInteractiveTap}>
                                     <div className="flex flex-wrap gap-2">
                                       {displayKey && (
-                                        <Badge variant="secondary">Key {displayKey}</Badge>
+                                        <Badge variant="secondary" className="rounded-full">Tono {displayKey}</Badge>
                                       )}
                                       {(arrangement?.bpm || item.song?.bpm) && (
-                                        <Badge variant="secondary">{arrangement?.bpm || item.song?.bpm} BPM</Badge>
+                                        <Badge variant="secondary" className="rounded-full">{arrangement?.bpm || item.song?.bpm} BPM</Badge>
                                       )}
                                       {(arrangement?.meter || item.song?.meter) && (
-                                        <Badge variant="secondary">{arrangement?.meter || item.song?.meter}</Badge>
+                                        <Badge variant="secondary" className="rounded-full">{arrangement?.meter || item.song?.meter}</Badge>
                                       )}
                                       {item.song?.arrangements?.length ? (
-                                        <Badge variant="outline">{item.song.arrangements.length} arrangement{item.song.arrangements.length === 1 ? "" : "s"}</Badge>
+                                        <Badge variant="outline" className="rounded-full">{item.song.arrangements.length} arreglo{item.song.arrangements.length === 1 ? "" : "s"}</Badge>
                                       ) : null}
                                     </div>
 
@@ -1114,7 +1125,7 @@ export default function Services() {
 
                                     <div className="flex flex-wrap gap-2">
                                       {youtubeUrl && (
-                                        <Button asChild variant="outline" size="sm">
+                                        <Button asChild variant="outline" size="sm" className="rounded-xl">
                                           <a href={youtubeUrl} target="_blank" rel="noreferrer">
                                             <PlayCircle className="w-3 h-3" />
                                             YouTube
@@ -1124,13 +1135,14 @@ export default function Services() {
                                       <Button
                                         variant="ghost"
                                         size="sm"
+                                        className="rounded-xl"
                                         onClick={(event) => {
                                           event.stopPropagation();
                                           navigate(`/app/songs/${item.song?.id}`);
                                         }}
                                       >
                                         <ExternalLink className="w-3 h-3" />
-                                        Full chart
+                                        Ver acordes
                                       </Button>
                                     </div>
 
@@ -1140,7 +1152,7 @@ export default function Services() {
                                       title={item.song?.title || item.title}
                                       artist={item.song?.author}
                                       maxLines={24}
-                                      emptyText="No ChordPro chart saved for this song yet."
+                                      emptyText="Esta canción todavía no tiene acordes guardados."
                                     />
                                   </div>
                                 )}
@@ -1148,22 +1160,22 @@ export default function Services() {
                             );
                           })}
                           {(serviceItems[svc.id] || []).length === 0 && (
-                            <p className="text-sm text-muted-foreground text-center py-2">No items yet</p>
+                            <p className="text-sm text-muted-foreground text-center py-2">Todavía no hay elementos</p>
                           )}
                         </div>
                       )}
                     </div>
 
                     <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <h4 className="text-sm font-medium">Team</h4>
-                        {isAdmin && <Button size="sm" variant="outline" onClick={() => openAssignDialog(svc.id)}>
-                          <Plus className="w-3 h-3 mr-1" /> Assign
+                      <div className="mb-3 flex items-center justify-between">
+                        <h4 className="text-sm font-bold text-zinc-950">Equipo</h4>
+                        {isAdmin && <Button size="sm" variant="outline" className="h-10 rounded-xl" onClick={() => openAssignDialog(svc.id)}>
+                          <Plus className="w-3 h-3 mr-1" /> Asignar
                         </Button>}
                       </div>
-                      <div className="space-y-1">
+                      <div className="space-y-2">
                         {(serviceAssignments[svc.id] || []).map((assignment) => (
-                          <div key={assignment.id} className="flex items-center gap-2 p-2 bg-muted/50 rounded">
+                          <div key={assignment.id} className="flex items-center gap-2 rounded-2xl border border-zinc-100 bg-zinc-50/80 p-3">
                             <button
                               onClick={() => handleToggleAssignment(svc.id, assignment)}
                               className={`w-5 h-5 rounded border flex items-center justify-center ${
@@ -1189,7 +1201,7 @@ export default function Services() {
                           </div>
                         ))}
                         {(serviceAssignments[svc.id] || []).length === 0 && (
-                          <p className="text-sm text-muted-foreground text-center py-2">No team members assigned</p>
+                          <p className="text-sm text-muted-foreground text-center py-2">No hay miembros asignados</p>
                         )}
                       </div>
                     </div>

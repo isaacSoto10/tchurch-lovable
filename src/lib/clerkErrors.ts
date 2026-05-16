@@ -10,19 +10,19 @@ export function getClerkErrorMessage(error: unknown, fallback: string) {
   const message = clerkError?.longMessage || clerkError?.message;
 
   if (code === "form_identifier_not_found") {
-    return "We couldn't find an account with that email. Please sign up first.";
+    return "No encontramos una cuenta con ese correo. Crea una cuenta primero.";
   }
 
   if (code === "form_identifier_exists") {
-    return "An account already exists with that email. Please sign in instead.";
+    return "Ya existe una cuenta con ese correo. Inicia sesión.";
   }
 
   if (code === "form_code_incorrect") {
-    return "That code is not correct. Please check the email and try again.";
+    return "Ese código no es correcto. Revisa tu correo e intenta de nuevo.";
   }
 
   if (code === "verification_expired") {
-    return "That code expired. Please request a new code and try again.";
+    return "Ese código expiró. Solicita uno nuevo e intenta de nuevo.";
   }
 
   return message || fallback;

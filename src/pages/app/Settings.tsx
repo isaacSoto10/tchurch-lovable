@@ -295,25 +295,26 @@ export default function Settings() {
   }
 
   return (
-    <div className="p-6 max-w-2xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold">Settings</h1>
-        <p className="text-sm text-muted-foreground">Manage your profile and preferences</p>
+    <div className="mobile-page mx-auto max-w-2xl space-y-5">
+      <div className="app-card-soft p-4">
+        <p className="mobile-section-title">Preferencias</p>
+        <h1 className="mt-1 text-3xl font-black tracking-tight text-zinc-950">Configuración</h1>
+        <p className="mt-1 text-sm text-muted-foreground">Administra tu perfil, notificaciones y acceso de la iglesia.</p>
       </div>
 
       <Tabs defaultValue="profile" className="w-full">
-        <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1">
-          <TabsTrigger value="profile">Profile</TabsTrigger>
-          <TabsTrigger value="notifications">Notifications</TabsTrigger>
-          <TabsTrigger value="whatsapp">
+        <TabsList className="flex h-auto w-full justify-start gap-1 overflow-x-auto rounded-2xl bg-muted p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <TabsTrigger value="profile" className="shrink-0 rounded-xl">Perfil</TabsTrigger>
+          <TabsTrigger value="notifications" className="shrink-0 rounded-xl">Notificaciones</TabsTrigger>
+          <TabsTrigger value="whatsapp" className="shrink-0 rounded-xl">
             <MessageCircle className="w-4 h-4 mr-1.5" />
             WhatsApp
           </TabsTrigger>
           {isAdmin && (
             <>
-              <TabsTrigger value="church">Church</TabsTrigger>
-              <TabsTrigger value="members">
-                Members
+              <TabsTrigger value="church" className="shrink-0 rounded-xl">Iglesia</TabsTrigger>
+              <TabsTrigger value="members" className="shrink-0 rounded-xl">
+                Miembros
                 {pendingMembers.length > 0 && (
                   <Badge variant="destructive" className="ml-1.5 h-5 w-5 p-0 text-xs justify-center items-center">
                     {pendingMembers.length}
@@ -325,13 +326,13 @@ export default function Settings() {
         </TabsList>
 
         <TabsContent value="profile" className="mt-6">
-          <Card>
+          <Card className="app-card">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <User className="w-5 h-5" />
-                Profile
+                Perfil
               </CardTitle>
-              <CardDescription>Your personal information</CardDescription>
+              <CardDescription>Tu información personal</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="flex items-center gap-4">
@@ -356,20 +357,20 @@ export default function Settings() {
             </CardContent>
           </Card>
 
-          <Card className="mt-6">
+          <Card className="app-card mt-5">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Church className="w-5 h-5" />
-                Church
+                Iglesia
               </CardTitle>
-              <CardDescription>Your church membership</CardDescription>
+              <CardDescription>Tu membresía de iglesia</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex-1">
                   <p className="font-medium">{selectedChurch?.name}</p>
                   <p className="text-xs text-muted-foreground capitalize">
-                    Role: {selectedChurch?.role?.toLowerCase()}
+                    Rol: {selectedChurch?.role?.toLowerCase()}
                   </p>
                 </div>
               </div>
@@ -377,7 +378,7 @@ export default function Settings() {
                 <>
                   <Separator />
                   <div>
-                    <p className="text-sm text-muted-foreground mb-2">Switch to another church:</p>
+                    <p className="text-sm text-muted-foreground mb-2">Cambiar a otra iglesia:</p>
                     <div className="flex flex-wrap gap-2">
                       {churches
                         .filter((c) => c.id !== selectedChurch?.id)
@@ -398,7 +399,7 @@ export default function Settings() {
             </CardContent>
           </Card>
 
-          <Card className="mt-6">
+          <Card className="app-card mt-5">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <SettingsIcon className="w-5 h-5" />
@@ -407,15 +408,15 @@ export default function Settings() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="flex items-center justify-between">
-                <p className="font-medium text-sm">Version</p>
+                <p className="font-medium text-sm">Versión</p>
                 <p className="text-sm text-muted-foreground">1.0.0</p>
               </div>
               <Separator />
               <div className="flex items-center justify-between">
-                <p className="font-medium text-sm">Sign out</p>
+                <p className="font-medium text-sm">Cerrar sesión</p>
                 <Button variant="outline" size="sm" className="text-red-500 hover:text-red-600">
                   <LogOut className="w-4 h-4 mr-1" />
-                  Sign Out
+                  Salir
                 </Button>
               </div>
             </CardContent>
@@ -423,19 +424,19 @@ export default function Settings() {
         </TabsContent>
 
         <TabsContent value="notifications" className="mt-6">
-          <Card>
+          <Card className="app-card">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Bell className="w-5 h-5" />
-                Notifications
+                Notificaciones
               </CardTitle>
-              <CardDescription>Choose how you want to be notified</CardDescription>
+              <CardDescription>Elige cómo quieres recibir avisos</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex-1 pr-4">
-                  <p className="font-medium text-sm">Service Assignments</p>
-                  <p className="text-xs text-muted-foreground">Email when assigned to a service</p>
+                  <p className="font-medium text-sm">Asignaciones de servicio</p>
+                  <p className="text-xs text-muted-foreground">Email cuando te asignen a un servicio</p>
                 </div>
                 <Switch
                   checked={prefs.emailAssignments}
@@ -446,8 +447,8 @@ export default function Settings() {
               <Separator />
               <div className="flex items-center justify-between">
                 <div className="flex-1 pr-4">
-                  <p className="font-medium text-sm">Announcements</p>
-                  <p className="text-xs text-muted-foreground">Email for new announcements</p>
+                  <p className="font-medium text-sm">Anuncios</p>
+                  <p className="text-xs text-muted-foreground">Email por nuevos anuncios</p>
                 </div>
                 <Switch
                   checked={prefs.emailAnnouncements}
@@ -458,8 +459,8 @@ export default function Settings() {
               <Separator />
               <div className="flex items-center justify-between">
                 <div className="flex-1 pr-4">
-                  <p className="font-medium text-sm">Weekly Digest</p>
-                  <p className="text-xs text-muted-foreground">Summary of week's activities</p>
+                  <p className="font-medium text-sm">Resumen semanal</p>
+                  <p className="text-xs text-muted-foreground">Resumen de las actividades de la semana</p>
                 </div>
                 <Switch
                   checked={prefs.weeklyDigest}
@@ -472,14 +473,14 @@ export default function Settings() {
         </TabsContent>
 
         <TabsContent value="whatsapp" className="mt-6">
-          <Card className="border-emerald-100 bg-gradient-to-br from-white to-emerald-50/50">
+          <Card className="app-card border-emerald-100 bg-gradient-to-br from-white to-emerald-50/50">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <MessageCircle className="w-5 h-5 text-emerald-600" />
                 WhatsApp
               </CardTitle>
               <CardDescription>
-                Receive announcements, events, assignments, and ministry resources where your church already communicates.
+                Recibe anuncios, eventos, asignaciones y recursos donde tu iglesia ya se comunica.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -496,7 +497,7 @@ export default function Settings() {
                   )}
 
                   <div>
-                    <label className="text-sm font-medium block mb-1">WhatsApp number</label>
+                    <label className="text-sm font-medium block mb-1">Número de WhatsApp</label>
                     <input
                       value={whatsappSettings.user.whatsappPhone}
                       onChange={(event) => updateWhatsAppUser("whatsappPhone", event.target.value)}
@@ -506,7 +507,7 @@ export default function Settings() {
                   </div>
 
                   <div>
-                    <label className="text-sm font-medium block mb-1">Message language</label>
+                    <label className="text-sm font-medium block mb-1">Idioma de mensajes</label>
                     <div className="grid grid-cols-2 gap-2">
                       <Button
                         type="button"
@@ -528,8 +529,8 @@ export default function Settings() {
                   <Separator />
                   <div className="flex items-center justify-between">
                     <div className="flex-1 pr-4">
-                      <p className="font-medium text-sm">I consent to WhatsApp messages</p>
-                      <p className="text-xs text-muted-foreground">Required before Tchurch sends WhatsApp notifications.</p>
+                      <p className="font-medium text-sm">Acepto recibir mensajes por WhatsApp</p>
+                      <p className="text-xs text-muted-foreground">Requerido antes de enviar notificaciones.</p>
                     </div>
                     <Switch
                       checked={whatsappSettings.user.whatsappOptIn}
@@ -539,8 +540,8 @@ export default function Settings() {
                   <Separator />
                   <div className="flex items-center justify-between">
                     <div className="flex-1 pr-4">
-                      <p className="font-medium text-sm">Send notifications by WhatsApp</p>
-                      <p className="text-xs text-muted-foreground">Assignments, events, announcements, and ministry resources.</p>
+                      <p className="font-medium text-sm">Enviar notificaciones por WhatsApp</p>
+                      <p className="text-xs text-muted-foreground">Asignaciones, eventos, anuncios y recursos.</p>
                     </div>
                     <Switch
                       checked={whatsappSettings.user.whatsappNotifications}
@@ -550,14 +551,14 @@ export default function Settings() {
 
                   <div className="rounded-lg border border-emerald-100 bg-emerald-50/60 p-3 space-y-3">
                     <div>
-                      <p className="font-medium text-sm">What should arrive on WhatsApp?</p>
-                      <p className="text-xs text-muted-foreground">You can keep the channel useful instead of noisy.</p>
+                      <p className="font-medium text-sm">¿Qué debe llegar por WhatsApp?</p>
+                      <p className="text-xs text-muted-foreground">Mantén el canal útil y sin ruido.</p>
                     </div>
                     {[
-                      ["whatsappAssignments", "Service assignments"],
-                      ["whatsappAnnouncements", "Announcements"],
-                      ["whatsappEvents", "Events and reminders"],
-                      ["whatsappResources", "Ministry resources"],
+                      ["whatsappAssignments", "Asignaciones de servicio"],
+                      ["whatsappAnnouncements", "Anuncios"],
+                      ["whatsappEvents", "Eventos y recordatorios"],
+                      ["whatsappResources", "Recursos de ministerio"],
                     ].map(([key, label]) => (
                       <div key={key} className="flex items-center justify-between rounded-md bg-white px-3 py-2">
                         <p className="text-sm">{label}</p>
@@ -574,7 +575,7 @@ export default function Settings() {
                     <>
                       <Separator />
                       <div>
-                        <label className="text-sm font-medium block mb-1">Church WhatsApp group link</label>
+                        <label className="text-sm font-medium block mb-1">Link del grupo de WhatsApp</label>
                         <input
                           value={whatsappSettings.church.whatsappGroupUrl}
                           onChange={(event) => updateWhatsAppChurch("whatsappGroupUrl", event.target.value)}
@@ -584,8 +585,8 @@ export default function Settings() {
                       </div>
                       <div className="flex items-center justify-between">
                         <div className="flex-1 pr-4">
-                          <p className="font-medium text-sm">Show WhatsApp group tools</p>
-                          <p className="text-xs text-muted-foreground">Expose group links and quick share actions to members.</p>
+                          <p className="font-medium text-sm">Mostrar herramientas del grupo</p>
+                          <p className="text-xs text-muted-foreground">Muestra links y acciones rápidas para miembros.</p>
                         </div>
                         <Switch
                           checked={whatsappSettings.church.whatsappEnabled}
@@ -605,11 +606,11 @@ export default function Settings() {
                   <div className="flex gap-2">
                     <Button onClick={handleSaveWhatsApp} disabled={savingWhatsApp} className="flex-1">
                       {savingWhatsApp && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                      Save
+                      Guardar
                     </Button>
                     <Button onClick={handleTestWhatsApp} disabled={testingWhatsApp} variant="outline" className="flex-1">
                       {testingWhatsApp && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                      Test
+                      Probar
                     </Button>
                   </div>
                 </>
@@ -621,17 +622,17 @@ export default function Settings() {
         {isAdmin && (
           <>
             <TabsContent value="church" className="mt-6">
-              <Card>
+              <Card className="app-card">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <Church className="w-5 h-5" />
-                    Church Information
+                    Información de la iglesia
                   </CardTitle>
-                  <CardDescription>Update your church details</CardDescription>
+                  <CardDescription>Actualiza los datos de tu iglesia</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div>
-                    <label className="text-sm font-medium block mb-1">Church Name</label>
+                    <label className="text-sm font-medium block mb-1">Nombre de la iglesia</label>
                     <input
                       type="text"
                       value={churchForm.name}
@@ -640,7 +641,7 @@ export default function Settings() {
                     />
                   </div>
                   <div>
-                    <label className="text-sm font-medium block mb-1">Brand Color</label>
+                    <label className="text-sm font-medium block mb-1">Color de marca</label>
                     <div className="flex gap-2 items-center">
                       <input
                         type="color"
@@ -659,21 +660,21 @@ export default function Settings() {
                   </div>
                   <Button onClick={handleSaveChurch} disabled={savingChurch} className="mt-2">
                     {savingChurch && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                    Save Changes
+                    Guardar cambios
                   </Button>
                 </CardContent>
               </Card>
             </TabsContent>
 
             <TabsContent value="members" className="mt-6">
-              <Card>
+              <Card className="app-card">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <Shield className="w-5 h-5" />
-                    Pending Member Requests
+                    Solicitudes pendientes
                   </CardTitle>
                   <CardDescription>
-                    Review and approve or deny membership requests
+                    Revisa y aprueba o rechaza solicitudes de membresía
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -683,7 +684,7 @@ export default function Settings() {
                     </div>
                   ) : pendingMembers.length === 0 ? (
                     <p className="text-sm text-muted-foreground text-center py-8">
-                      No pending requests
+                      No hay solicitudes pendientes
                     </p>
                   ) : (
                     <div className="space-y-4">
@@ -715,7 +716,7 @@ export default function Settings() {
                               disabled={processingId === member.id}
                             >
                               <Check className="w-4 h-4 mr-1" />
-                              Approve
+                              Aprobar
                             </Button>
                             <Button
                               size="sm"
@@ -725,7 +726,7 @@ export default function Settings() {
                               disabled={processingId === member.id}
                             >
                               <X className="w-4 h-4 mr-1" />
-                              Deny
+                              Rechazar
                             </Button>
                           </div>
                         </div>

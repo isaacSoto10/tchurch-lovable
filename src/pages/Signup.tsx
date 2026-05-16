@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { ArrowLeft, Loader2, MailPlus, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -19,7 +19,7 @@ function NativeSignupRedirect() {
         to="/"
       >
         <ArrowLeft className="h-4 w-4" />
-        Home
+        Inicio
       </Link>
       <Card className="w-full max-w-md border-slate-200 shadow-xl shadow-indigo-100/50">
         <CardHeader className="space-y-3 text-center">
@@ -27,15 +27,15 @@ function NativeSignupRedirect() {
             <MailPlus className="h-6 w-6" />
           </div>
           <div className="space-y-1">
-            <CardTitle>Account access is managed by your church</CardTitle>
+            <CardTitle>El acceso a la cuenta lo administra tu iglesia</CardTitle>
             <CardDescription>
-              Tchurch mobile is for existing church accounts. Ask your church administrator to invite you.
+              Tchurch móvil es para cuentas existentes de iglesias. Pide a tu administrador que te invite.
             </CardDescription>
           </div>
         </CardHeader>
         <CardContent className="space-y-3">
           <Button className="h-11 w-full" asChild>
-            <Link to="/login">I already have an account</Link>
+            <Link to="/login">Ya tengo una cuenta</Link>
           </Button>
         </CardContent>
       </Card>
@@ -71,11 +71,11 @@ function SignupInner() {
     e.preventDefault();
     if (!email.trim()) return;
     if (!isNativeMobileAuth && password.length < 8) {
-      setError("Please enter a password with at least 8 characters.");
+      setError("Ingresa una contraseña de al menos 8 caracteres.");
       return;
     }
     if (!isNativeMobileAuth && password !== confirmPassword) {
-      setError("Passwords do not match.");
+      setError("Las contraseñas no coinciden.");
       return;
     }
 
@@ -94,7 +94,7 @@ function SignupInner() {
       const signUp = clerk.client?.signUp;
 
       if (!signUp) {
-        setError("We couldn't connect to sign-up. Please close and reopen the app, then try again.");
+        setError("No pudimos conectar el registro. Cierra y vuelve a abrir la app, e intenta de nuevo.");
         return;
       }
 
@@ -102,7 +102,7 @@ function SignupInner() {
       await signUp.prepareVerification({ strategy: "email_code" });
       setStep("code");
     } catch (err) {
-      setError(isNativeMobileAuth && err instanceof Error ? err.message : getClerkErrorMessage(err, "Couldn't start sign up. Please try again."));
+      setError(isNativeMobileAuth && err instanceof Error ? err.message : getClerkErrorMessage(err, "No pudimos iniciar el registro. Intenta de nuevo."));
     } finally {
       setLoading(false);
     }
@@ -126,7 +126,7 @@ function SignupInner() {
       const signUp = clerk.client?.signUp;
 
       if (!signUp) {
-        setError("We couldn't connect to sign-up. Please close and reopen the app, then try again.");
+        setError("No pudimos conectar el registro. Cierra y vuelve a abrir la app, e intenta de nuevo.");
         return;
       }
 
@@ -141,9 +141,9 @@ function SignupInner() {
         return;
       }
 
-      setError("Your sign up is not complete yet. Please try again.");
+      setError("Tu registro todavía no está completo. Intenta de nuevo.");
     } catch (err) {
-      setError(isNativeMobileAuth && err instanceof Error ? err.message : getClerkErrorMessage(err, "That code didn't work. Please try again."));
+      setError(isNativeMobileAuth && err instanceof Error ? err.message : getClerkErrorMessage(err, "Ese código no funcionó. Intenta de nuevo."));
     } finally {
       setLoading(false);
     }
@@ -163,13 +163,13 @@ function SignupInner() {
       const signUp = clerk.client?.signUp;
 
       if (!signUp) {
-        setError("We couldn't connect to sign-up. Please close and reopen the app, then try again.");
+        setError("No pudimos conectar el registro. Cierra y vuelve a abrir la app, e intenta de nuevo.");
         return;
       }
 
       await signUp.prepareVerification({ strategy: "email_code" });
     } catch (err) {
-      setError(isNativeMobileAuth && err instanceof Error ? err.message : getClerkErrorMessage(err, "Couldn't resend the code. Please try again."));
+      setError(isNativeMobileAuth && err instanceof Error ? err.message : getClerkErrorMessage(err, "No pudimos reenviar el código. Intenta de nuevo."));
     } finally {
       setLoading(false);
     }
@@ -182,7 +182,7 @@ function SignupInner() {
         to="/"
       >
         <ArrowLeft className="h-4 w-4" />
-        Home
+        Inicio
       </Link>
       <Card className="w-full max-w-md border-slate-200 shadow-xl shadow-indigo-100/50">
         <CardHeader className="space-y-3 text-center">
@@ -190,11 +190,11 @@ function SignupInner() {
             {step === "email" ? <MailPlus className="h-6 w-6" /> : <ShieldCheck className="h-6 w-6" />}
           </div>
           <div className="space-y-1">
-            <CardTitle>Create your tchurch account</CardTitle>
+            <CardTitle>Crea tu cuenta de Tchurch</CardTitle>
             <CardDescription>
               {step === "email"
-                ? "Create your account, then verify your email with a one-time code."
-                : `Enter the code we sent to ${email}.`}
+                ? "Crea tu cuenta y verifica tu correo con un código."
+                : `Ingresa el código que enviamos a ${email}.`}
             </CardDescription>
           </div>
         </CardHeader>
@@ -203,7 +203,7 @@ function SignupInner() {
             <form className="space-y-4" noValidate onSubmit={handleSignupSubmit}>
               <div className="space-y-2">
                 <label className="text-sm font-medium text-slate-700" htmlFor="email">
-                  Email address
+                  Correo electrónico
                 </label>
                 <Input
                   id="email"
@@ -222,7 +222,7 @@ function SignupInner() {
                 <>
                   <div className="space-y-2">
                     <label className="text-sm font-medium text-slate-700" htmlFor="password">
-                      Password
+                      Contraseña
                     </label>
                     <Input
                       id="password"
@@ -230,13 +230,13 @@ function SignupInner() {
                       autoComplete="new-password"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      placeholder="At least 8 characters"
+                      placeholder="Al menos 8 caracteres"
                       disabled={loading}
                     />
                   </div>
                   <div className="space-y-2">
                     <label className="text-sm font-medium text-slate-700" htmlFor="confirmPassword">
-                      Confirm password
+                      Confirmar contraseña
                     </label>
                     <Input
                       id="confirmPassword"
@@ -244,7 +244,7 @@ function SignupInner() {
                       autoComplete="new-password"
                       value={confirmPassword}
                       onChange={(e) => setConfirmPassword(e.target.value)}
-                      placeholder="Re-enter your password"
+                      placeholder="Vuelve a escribir tu contraseña"
                       disabled={loading}
                     />
                   </div>
@@ -263,10 +263,10 @@ function SignupInner() {
                 {loading ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Sending code...
+                    Enviando código...
                   </>
                 ) : (
-                  "Continue"
+                  "Continuar"
                 )}
               </Button>
             </form>
@@ -274,7 +274,7 @@ function SignupInner() {
             <form className="space-y-4" noValidate onSubmit={handleVerifySubmit}>
               <div className="space-y-2">
                 <label className="text-sm font-medium text-slate-700" htmlFor="code">
-                  Verification code
+                  Código de verificación
                 </label>
                 <Input
                   id="code"
@@ -295,10 +295,10 @@ function SignupInner() {
                 {loading ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Verifying...
+                    Verificando...
                   </>
                 ) : (
-                  "Verify Email"
+                  "Verificar correo"
                 )}
               </Button>
               <Button
@@ -308,7 +308,7 @@ function SignupInner() {
                 disabled={loading}
                 onClick={handleResendCode}
               >
-                Resend code
+                Reenviar código
               </Button>
               <Button
                 className="w-full"
@@ -321,15 +321,15 @@ function SignupInner() {
                   setError("");
                 }}
               >
-                Use a different email
+                Usar otro correo
               </Button>
             </form>
           )}
 
           <p className="text-center text-sm text-muted-foreground">
-            Already have an account?{" "}
+            ¿Ya tienes cuenta?{" "}
             <Link className="font-medium text-primary underline-offset-4 hover:underline" to="/login">
-              Sign in
+              Iniciar sesión
             </Link>
           </p>
         </CardContent>

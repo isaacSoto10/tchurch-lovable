@@ -42,7 +42,7 @@ interface Ministry {
 }
 
 function formatDate(dateStr: string) {
-  return new Date(dateStr).toLocaleDateString("en-US", {
+  return new Date(dateStr).toLocaleDateString("es-US", {
     weekday: "short",
     month: "short",
     day: "numeric",
@@ -50,7 +50,7 @@ function formatDate(dateStr: string) {
 }
 
 function formatTime(dateStr: string) {
-  return new Date(dateStr).toLocaleTimeString("en-US", {
+  return new Date(dateStr).toLocaleTimeString("es-US", {
     hour: "numeric",
     minute: "2-digit",
   });
@@ -71,9 +71,16 @@ async function safeDashboardFetch<T>(
   try {
     return await request();
   } catch (error) {
-    console.warn(`[Dashboard] Failed to load ${label}:`, error);
+    console.warn(`[Panel] No se pudo cargar ${label}:`, error);
     return fallback;
   }
+}
+
+function statusLabel(status: string) {
+  if (status === "confirmed") return "confirmado";
+  if (status === "completed") return "completado";
+  if (status === "draft") return "";
+  return status;
 }
 
 export default function Dashboard() {
@@ -102,7 +109,7 @@ export default function Dashboard() {
           safeDashboardFetch("ministries", () => fetchApi("/my-ministries"), []),
         ]);
 
-        if (statsData && typeof statsData === "object" && !statsData.error) {
+        if (statsData && typeof statsData === "object" && !("error" in statsData)) {
           setStats(statsData as Stats);
         }
 
@@ -143,7 +150,7 @@ export default function Dashboard() {
         setAnnouncements(Array.isArray(announcementsData) ? announcementsData.slice(0, 10) : []);
         setMinistries(Array.isArray(ministriesData) ? ministriesData : Array.isArray((ministriesData as any)?.ministries) ? (ministriesData as any).ministries : []);
       } catch (e) {
-        console.error("Failed to load dashboard:", e);
+        console.error("No se pudo cargar el panel:", e);
       } finally {
         setLoading(false);
       }
@@ -164,17 +171,17 @@ export default function Dashboard() {
               <Users className="h-7 w-7 text-primary" />
             </div>
             <div className="space-y-2">
-              <p className="text-xl font-semibold">No church selected</p>
+              <p className="text-xl font-semibold">No hay iglesia seleccionada</p>
               <p className="text-sm text-muted-foreground">
-                Join an existing church or create your own workspace to start using the app.
+                Únete a una iglesia existente o crea tu propio espacio para comenzar a usar la app.
               </p>
             </div>
             <div className="flex w-full flex-col gap-3 sm:flex-row">
               <Button className="flex-1" onClick={() => navigate("/join-church")}>
-                Join Church
+                Unirme a una iglesia
               </Button>
               <Button className="flex-1" variant="outline" onClick={() => navigate("/create-church")}>
-                Create Church
+                Crear iglesia
               </Button>
             </div>
           </CardContent>
@@ -185,9 +192,9 @@ export default function Dashboard() {
 
   const getGreeting = () => {
     const h = new Date().getHours();
-    if (h < 12) return "Good morning";
-    if (h < 18) return "Good afternoon";
-    return "Good evening";
+    if (h < 12) return "Buenos días";
+    if (h < 18) return "Buenas tardes";
+    return "Buenas noches";
   };
 
   const getEndOfSunday = () => {
@@ -206,13 +213,13 @@ export default function Dashboard() {
 
   const statItems = stats
     ? [
-        { label: "Ministries", value: stats.ministries, href: "/app/ministries", icon: Users },
-        { label: "Events", value: stats.events, href: "/app/events", icon: CalendarDays },
-        { label: "Songs", value: stats.songs, href: "/app/songs", icon: Music },
-        { label: "Services", value: stats.services, href: "/app/services", icon: ListChecks },
-        { label: "Teams", value: stats.teams, href: "/app/teams", icon: UsersRound },
-        { label: "Members", value: stats.members, href: "/app/users", icon: Users },
-        { label: "Announcements", value: stats.announcements, href: "/app/announcements", icon: Megaphone },
+        { label: "Ministerios", value: stats.ministries, href: "/app/ministries", icon: Users },
+        { label: "Eventos", value: stats.events, href: "/app/events", icon: CalendarDays },
+        { label: "Canciones", value: stats.songs, href: "/app/songs", icon: Music },
+        { label: "Servicios", value: stats.services, href: "/app/services", icon: ListChecks },
+        { label: "Equipos", value: stats.teams, href: "/app/teams", icon: UsersRound },
+        { label: "Miembros", value: stats.members, href: "/app/users", icon: Users },
+        { label: "Anuncios", value: stats.announcements, href: "/app/announcements", icon: Megaphone },
       ]
     : [];
 
@@ -228,42 +235,43 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="w-full min-w-0 space-y-8 overflow-x-clip">
-      <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+    <div className="mobile-page space-y-6">
+      <div className="rounded-[1.75rem] border border-zinc-200/80 bg-gradient-to-br from-white via-white to-primary/5 p-4 shadow-sm shadow-zinc-200/60 sm:p-5">
         <div>
-          <h1 className="text-2xl font-bold">{getGreeting()}</h1>
-          <p className="text-sm text-muted-foreground">{selectedChurch.name}</p>
+          <p className="mobile-section-title mb-2">Panel</p>
+          <h1 className="text-[1.85rem] font-black leading-none tracking-tight text-zinc-950 sm:text-3xl">{getGreeting()}</h1>
+          <p className="mt-2 text-sm font-medium text-muted-foreground">{selectedChurch.name}</p>
         </div>
-        <Button className="w-full sm:w-auto" size="sm" variant="outline" onClick={() => navigate("/app/calendar")}>
-          <Calendar className="w-4 h-4 mr-1" /> Calendar
-        </Button>
+
+        <div className="mt-5 grid grid-cols-1 gap-2 sm:grid-cols-3">
+          <Button className="h-11 rounded-2xl font-bold sm:w-auto" onClick={() => navigate("/app/services")}>
+            <Plus className="h-4 w-4" /> Nuevo servicio
+          </Button>
+          <Button className="h-11 rounded-2xl font-bold sm:w-auto" variant="outline" onClick={() => navigate("/app/events")}>
+            <Plus className="h-4 w-4" /> Nuevo evento
+          </Button>
+          <Button className="h-11 rounded-2xl font-bold sm:w-auto" variant="outline" onClick={() => navigate("/app/calendar")}>
+            <Calendar className="h-4 w-4" /> Calendario
+          </Button>
+        </div>
       </div>
 
-      <div className="flex flex-col gap-2 sm:flex-row">
-        <Button className="w-full sm:w-auto" size="sm" onClick={() => navigate("/app/services")}>
-          <Plus className="w-3 h-3 mr-1" /> New Service
-        </Button>
-        <Button className="w-full sm:w-auto" size="sm" variant="outline" onClick={() => navigate("/app/events")}>
-          <Plus className="w-3 h-3 mr-1" /> New Event
-        </Button>
-      </div>
-
-      {/* My Ministries */}
+      {/* Mis ministerios */}
       {ministries.length > 0 && (
-        <div className="mb-6">
-          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-            My Ministries
+        <div>
+          <h2 className="mobile-section-title mb-3">
+            Mis ministerios
           </h2>
           <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
             {ministries.map((m) => (
               <Card
                 key={m.id}
-                className="min-w-0 cursor-pointer hover:shadow-md transition-all"
+                className="app-card min-w-0 cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-md"
                 onClick={() => navigate("/app/ministries")}
               >
-                <CardContent className="p-4 flex items-center gap-3">
+                <CardContent className="flex items-center gap-3 p-4">
                   <span
-                    className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-sm shrink-0"
+                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-sm font-bold text-white shadow-sm"
                     style={{ backgroundColor: m.color || "#6366f1" }}
                   >
                     {m.name.charAt(0).toUpperCase()}
@@ -271,7 +279,7 @@ export default function Dashboard() {
                   <div className="min-w-0">
                     <p className="font-medium text-sm truncate">{m.name}</p>
                     {m.memberCount != null && (
-                      <p className="text-xs text-muted-foreground">{m.memberCount} members</p>
+                      <p className="text-xs text-muted-foreground">{m.memberCount} miembros</p>
                     )}
                   </div>
                 </CardContent>
@@ -286,38 +294,38 @@ export default function Dashboard() {
           <div className="animate-spin w-6 h-6 border-2 border-primary border-t-transparent rounded-full" />
         </div>
       ) : timeline.length === 0 ? (
-        <Card>
+        <Card className="app-card">
           <CardContent className="p-8 text-center">
             <CalendarDays className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
-            <p className="text-sm text-muted-foreground">No upcoming services or events</p>
+            <p className="text-sm text-muted-foreground">No hay servicios o eventos próximos</p>
           </CardContent>
         </Card>
       ) : (
         <div className="space-y-6">
           {thisWeekItems.length > 0 && (
             <div>
-              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-                This Week
+              <h2 className="mobile-section-title mb-3">
+                Esta semana
               </h2>
-              <div className="space-y-2">
+              <div className="space-y-3">
                 {thisWeekItems.map((item) => (
                   <Card
                     key={`${item._type}-${item.id}`}
-                    className="min-w-0 cursor-pointer hover:shadow-md transition-shadow"
+                    className="app-card min-w-0 cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-md"
                     onClick={() => navigate(item._type === "service" ? `/app/services/${item.id}` : "/app/events")}
                   >
-                    <CardContent className="p-3 flex items-center gap-3">
-                      <div className={`w-1 h-10 rounded ${item._type === "service" ? "bg-primary" : "bg-amber-400"}`} />
+                    <CardContent className="flex items-center gap-3 p-3.5">
+                      <div className={`h-12 w-1.5 rounded-full ${item._type === "service" ? "bg-primary" : "bg-amber-400"}`} />
                       <div className="flex-1 min-w-0">
-                        <p className="font-medium truncate">{item.title}</p>
-                        <p className="text-xs text-muted-foreground">
+                        <p className="truncate text-base font-bold leading-tight">{item.title}</p>
+                        <p className="mt-1 text-[0.8rem] text-muted-foreground">
                           {formatDate(item.date)} {formatTime(item.date) !== "12:00 AM" && `· ${formatTime(item.date)}`}
                           {item.location && ` · ${item.location}`}
                         </p>
                       </div>
-                      {item._type === "service" && item.status && (
-                        <span className={`text-xs px-2 py-1 rounded ${getStatusColor(item.status)}`}>
-                          {item.status}
+                      {item._type === "service" && item.status && statusLabel(item.status) && (
+                        <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${getStatusColor(item.status)}`}>
+                          {statusLabel(item.status)}
                         </span>
                       )}
                       {item._type === "event" && item.type && (
@@ -335,28 +343,28 @@ export default function Dashboard() {
 
           {comingUpItems.length > 0 && (
             <div>
-              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-                Coming Up
+              <h2 className="mobile-section-title mb-3">
+                Próximamente
               </h2>
-              <div className="space-y-2">
+              <div className="space-y-3">
                 {comingUpItems.map((item) => (
                   <Card
                     key={`${item._type}-${item.id}`}
-                    className="min-w-0 cursor-pointer hover:shadow-md transition-shadow"
+                    className="app-card min-w-0 cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-md"
                     onClick={() => navigate(item._type === "service" ? `/app/services/${item.id}` : "/app/events")}
                   >
-                    <CardContent className="p-3 flex items-center gap-3">
-                      <div className={`w-1 h-10 rounded ${item._type === "service" ? "bg-primary" : "bg-amber-400"}`} />
+                    <CardContent className="flex items-center gap-3 p-3.5">
+                      <div className={`h-12 w-1.5 rounded-full ${item._type === "service" ? "bg-primary" : "bg-amber-400"}`} />
                       <div className="flex-1 min-w-0">
-                        <p className="font-medium truncate">{item.title}</p>
-                        <p className="text-xs text-muted-foreground">
+                        <p className="truncate text-base font-bold leading-tight">{item.title}</p>
+                        <p className="mt-1 text-[0.8rem] text-muted-foreground">
                           {formatDate(item.date)} {formatTime(item.date) !== "12:00 AM" && `· ${formatTime(item.date)}`}
                           {item.location && ` · ${item.location}`}
                         </p>
                       </div>
-                      {item._type === "service" && item.status && (
-                        <span className={`text-xs px-2 py-1 rounded ${getStatusColor(item.status)}`}>
-                          {item.status}
+                      {item._type === "service" && item.status && statusLabel(item.status) && (
+                        <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${getStatusColor(item.status)}`}>
+                          {statusLabel(item.status)}
                         </span>
                       )}
                       {item._type === "event" && item.type && (
@@ -375,31 +383,31 @@ export default function Dashboard() {
       )}
 
       {announcements.length > 0 && (
-        <div className="mt-8">
+        <div>
           <div className="flex min-w-0 items-center justify-between gap-3 mb-4">
-            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-              Recent Announcements
+            <h2 className="mobile-section-title">
+              Anuncios recientes
             </h2>
-            <Button className="shrink-0" size="sm" variant="ghost" onClick={() => navigate("/app/announcements")}>
-              View All <ArrowRight className="w-3 h-3 ml-1" />
+            <Button className="h-9 shrink-0 rounded-full px-3 font-bold" size="sm" variant="ghost" onClick={() => navigate("/app/announcements")}>
+              Ver todos <ArrowRight className="w-3 h-3 ml-1" />
             </Button>
           </div>
           <div className="space-y-3">
             {announcements.slice(0, 10).map((ann) => (
-              <Card key={ann.id} className="min-w-0 overflow-hidden">
+              <Card key={ann.id} className="app-card min-w-0 overflow-hidden">
                 <div className="flex min-w-0">
                   {ann.imageUrl && (
-                    <div className="w-24 h-24 shrink-0">
+                    <div className="h-24 w-24 shrink-0 overflow-hidden rounded-l-2xl bg-zinc-100">
                       <img src={ann.imageUrl} alt={ann.title} className="w-full h-full object-cover" />
                     </div>
                   )}
                   <CardContent className="min-w-0 flex-1 p-3">
-                    <p className="truncate font-medium">{ann.title}</p>
+                    <p className="truncate font-bold">{ann.title}</p>
                     <p className="text-sm text-muted-foreground line-clamp-2 mt-1">
                       {ann.content}
                     </p>
                     <p className="text-xs text-muted-foreground mt-2">
-                      {ann.createdAt ? new Date(ann.createdAt).toLocaleDateString("en-US", {
+                      {ann.createdAt ? new Date(ann.createdAt).toLocaleDateString("es-US", {
                         month: "short",
                         day: "numeric",
                       }) : ""}
@@ -413,15 +421,15 @@ export default function Dashboard() {
       )}
 
       {statItems.length > 0 && (
-        <div className="mt-8">
-          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-            Overview
+        <div>
+          <h2 className="mobile-section-title mb-3">
+            Resumen
           </h2>
           <div className="grid min-w-0 grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
             {statItems.map((stat) => (
               <Card
                 key={stat.label}
-                className="min-w-0 cursor-pointer hover:shadow-md transition-shadow"
+                className="app-card min-w-0 cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-md"
                 onClick={() => navigate(stat.href)}
               >
                 <CardContent className="p-3 text-center">

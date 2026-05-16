@@ -55,7 +55,7 @@ function LoginInner() {
       const signIn = clerk.client?.signIn;
 
       if (!signIn) {
-        setError("We couldn't connect to sign-in. Please close and reopen the app, then try again.");
+        setError("No pudimos conectar el inicio de sesión. Cierra y vuelve a abrir la app, e intenta de nuevo.");
         return;
       }
 
@@ -65,7 +65,7 @@ function LoginInner() {
       );
 
       if (!emailCodeFactor?.emailAddressId) {
-        setError("Clerk didn't return an email address for code verification.");
+        setError("Clerk no devolvió un correo para verificar el código.");
         return;
       }
 
@@ -80,7 +80,7 @@ function LoginInner() {
       });
       setStep("code");
     } catch (err) {
-      setError(isNativeMobileAuth && err instanceof Error ? err.message : getClerkErrorMessage(err, "Couldn't send a sign-in code. Please try again."));
+      setError(isNativeMobileAuth && err instanceof Error ? err.message : getClerkErrorMessage(err, "No pudimos enviar el código. Intenta de nuevo."));
     } finally {
       setLoading(false);
     }
@@ -91,7 +91,7 @@ function LoginInner() {
     if (!code.trim()) return;
 
     if (!emailAddressId) {
-      setError("Please request a new verification code.");
+      setError("Solicita un nuevo código de verificación.");
       return;
     }
 
@@ -109,7 +109,7 @@ function LoginInner() {
       const signIn = clerk.client?.signIn;
 
       if (!signIn) {
-        setError("We couldn't connect to sign-in. Please close and reopen the app, then try again.");
+        setError("No pudimos conectar el inicio de sesión. Cierra y vuelve a abrir la app, e intenta de nuevo.");
         return;
       }
 
@@ -124,9 +124,9 @@ function LoginInner() {
         return;
       }
 
-      setError("Your sign-in is not complete yet. Please try again.");
+      setError("Tu inicio de sesión todavía no está completo. Intenta de nuevo.");
     } catch (err) {
-      setError(isNativeMobileAuth && err instanceof Error ? err.message : getClerkErrorMessage(err, "That code didn't work. Please try again."));
+      setError(isNativeMobileAuth && err instanceof Error ? err.message : getClerkErrorMessage(err, "Ese código no funcionó. Intenta de nuevo."));
     } finally {
       setLoading(false);
     }
@@ -134,7 +134,7 @@ function LoginInner() {
 
   async function handleResendCode() {
     if (!emailAddressId) {
-      setError("Please request a new verification code.");
+      setError("Solicita un nuevo código de verificación.");
       return;
     }
 
@@ -151,7 +151,7 @@ function LoginInner() {
       const signIn = clerk.client?.signIn;
 
       if (!signIn) {
-        setError("We couldn't connect to sign-in. Please close and reopen the app, then try again.");
+        setError("No pudimos conectar el inicio de sesión. Cierra y vuelve a abrir la app, e intenta de nuevo.");
         return;
       }
 
@@ -160,7 +160,7 @@ function LoginInner() {
         emailAddressId,
       });
     } catch (err) {
-      setError(isNativeMobileAuth && err instanceof Error ? err.message : getClerkErrorMessage(err, "Couldn't resend the code. Please try again."));
+      setError(isNativeMobileAuth && err instanceof Error ? err.message : getClerkErrorMessage(err, "No pudimos reenviar el código. Intenta de nuevo."));
     } finally {
       setLoading(false);
     }
@@ -173,7 +173,7 @@ function LoginInner() {
         to="/"
       >
         <ArrowLeft className="h-4 w-4" />
-        Home
+        Inicio
       </Link>
       <Card className="w-full max-w-md border-slate-200 shadow-xl shadow-indigo-100/50">
         <CardHeader className="space-y-3 text-center">
@@ -181,11 +181,11 @@ function LoginInner() {
             {step === "email" ? <Mail className="h-6 w-6" /> : <ShieldCheck className="h-6 w-6" />}
           </div>
           <div className="space-y-1">
-            <CardTitle>Sign in to tchurch</CardTitle>
+            <CardTitle>Inicia sesión en Tchurch</CardTitle>
             <CardDescription>
               {step === "email"
-                ? "We'll email you a one-time sign-in code."
-                : `Enter the code we sent to ${email}.`}
+                ? "Te enviaremos un código de acceso por correo."
+                : `Ingresa el código que enviamos a ${email}.`}
             </CardDescription>
           </div>
         </CardHeader>
@@ -194,7 +194,7 @@ function LoginInner() {
             <form className="space-y-4" noValidate onSubmit={handleEmailSubmit}>
               <div className="space-y-2">
                 <label className="text-sm font-medium text-slate-700" htmlFor="email">
-                  Email address
+                  Correo electrónico
                 </label>
                 <Input
                   id="email"
@@ -218,10 +218,10 @@ function LoginInner() {
                 {loading ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Sending code...
+                    Enviando código...
                   </>
                 ) : (
-                  "Continue"
+                  "Continuar"
                 )}
               </Button>
             </form>
@@ -229,7 +229,7 @@ function LoginInner() {
             <form className="space-y-4" noValidate onSubmit={handleCodeSubmit}>
               <div className="space-y-2">
                 <label className="text-sm font-medium text-slate-700" htmlFor="code">
-                  Verification code
+                  Código de verificación
                 </label>
                 <Input
                   id="code"
@@ -250,10 +250,10 @@ function LoginInner() {
                 {loading ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Signing in...
+                    Iniciando sesión...
                   </>
                 ) : (
-                  "Sign In"
+                  "Iniciar sesión"
                 )}
               </Button>
               <Button
@@ -263,7 +263,7 @@ function LoginInner() {
                 disabled={loading}
                 onClick={handleResendCode}
               >
-                Resend code
+                Reenviar código
               </Button>
               <Button
                 className="w-full"
@@ -277,20 +277,20 @@ function LoginInner() {
                   setError("");
                 }}
               >
-                Use a different email
+                Usar otro correo
               </Button>
             </form>
           )}
 
           {isNativeMobileAuth ? (
             <p className="text-center text-sm text-muted-foreground">
-              Need access? Contact your church administrator to be invited.
+              ¿Necesitas acceso? Contacta al administrador de tu iglesia para recibir una invitación.
             </p>
           ) : (
             <p className="text-center text-sm text-muted-foreground">
-              Don&apos;t have an account?{" "}
+              ¿No tienes cuenta?{" "}
               <Link className="font-medium text-primary underline-offset-4 hover:underline" to="/signup">
-                Sign up
+                Crear cuenta
               </Link>
             </p>
           )}

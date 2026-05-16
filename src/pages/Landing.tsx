@@ -27,7 +27,7 @@ export default function Landing() {
           <span className="text-4xl font-bold tracking-tight text-foreground">church</span>
         </div>
         <p className="text-muted-foreground text-base max-w-xs mx-auto">
-          Church management made simple. Plan worship, manage ministries and grow your community.
+          Gestión de iglesia hecha simple. Planifica la alabanza, administra ministerios y fortalece tu comunidad.
         </p>
       </motion.div>
 
@@ -40,21 +40,21 @@ export default function Landing() {
       >
         {isNativePlatform ? (
           <Button size="lg" className="w-full text-base" asChild>
-            <Link to="/login">Sign In</Link>
+            <Link to="/login">Iniciar sesión</Link>
           </Button>
         ) : (
           <Button size="lg" className="w-full text-base" asChild>
-            <Link to="/signup">Create Account</Link>
+            <Link to="/signup">Crear cuenta</Link>
           </Button>
         )}
         {!isNativePlatform && (
           <Button size="lg" variant="outline" className="w-full text-base" asChild>
-            <Link to="/login">Sign In</Link>
+            <Link to="/login">Iniciar sesión</Link>
           </Button>
         )}
         {isNativePlatform && (
           <p className="text-center text-sm text-muted-foreground">
-            Tchurch mobile access is for existing church accounts. If you need access, contact your church administrator.
+            El acceso móvil de Tchurch es para cuentas existentes de iglesias. Si necesitas acceso, contacta al administrador de tu iglesia.
           </p>
         )}
       </motion.div>
@@ -66,7 +66,7 @@ export default function Landing() {
         transition={{ delay: 0.5 }}
         className="mt-12 text-xs text-muted-foreground"
       >
-        © {new Date().getFullYear()} Tchurch. All rights reserved.
+        © {new Date().getFullYear()} Tchurch. Todos los derechos reservados.
       </motion.p>
     </div>
   );

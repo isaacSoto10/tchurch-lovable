@@ -36,7 +36,7 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
       const data = await fetchApi<Resource[]>(`/ministries/${ministryId}/resources`);
       setResources(Array.isArray(data) ? data : []);
     } catch (error) {
-      console.error("Failed to load resources:", error);
+      console.error("No se pudieron cargar los recursos:", error);
       setResources([]);
     } finally {
       setLoading(false);
@@ -60,12 +60,12 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
           body: formData,
         });
       }
-      toast({ title: "Resource uploaded", description: "Members were notified by email." });
+      toast({ title: "Recurso subido", description: "Los miembros fueron notificados por correo." });
       if (inputRef.current) inputRef.current.value = "";
       await loadResources();
     } catch (error) {
-      console.error("Failed to upload resource:", error);
-      toast({ title: "Failed to upload resource", variant: "destructive" });
+      console.error("No se pudo subir el recurso:", error);
+      toast({ title: "No se pudo subir el recurso", variant: "destructive" });
     } finally {
       setUploading(false);
     }
@@ -76,10 +76,10 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
     try {
       await fetchApi(`/ministries/${ministryId}/resources/${id}`, { method: "DELETE" });
       setResources((prev) => prev.filter((resource) => resource.id !== id));
-      toast({ title: "Resource deleted" });
+      toast({ title: "Recurso eliminado" });
     } catch (error) {
-      console.error("Failed to delete resource:", error);
-      toast({ title: "Failed to delete resource", variant: "destructive" });
+      console.error("No se pudo eliminar el recurso:", error);
+      toast({ title: "No se pudo eliminar el recurso", variant: "destructive" });
     } finally {
       setDeletingId(null);
     }
@@ -101,10 +101,10 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
             <input ref={inputRef} type="file" multiple className="hidden" onChange={(event) => handleFiles(event.target.files)} />
             <Button onClick={() => inputRef.current?.click()} disabled={uploading} className="rounded-full">
               {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-              {uploading ? "Uploading..." : "Upload resource"}
+              {uploading ? "Subiendo..." : "Subir recurso"}
             </Button>
             <p className="mt-2 text-xs text-muted-foreground">
-              Add PDFs, images, audio, documents, or planning files for this ministry.
+              Agrega PDFs, imágenes, audio, documentos o archivos de planificación para este ministerio.
             </p>
           </CardContent>
         </Card>
@@ -114,7 +114,7 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
         <Card>
           <CardContent className="p-8 text-center">
             <FileText className="mx-auto mb-2 h-8 w-8 text-muted-foreground/50" />
-            <p className="text-sm text-muted-foreground">No resources uploaded yet.</p>
+            <p className="text-sm text-muted-foreground">Todavía no hay recursos subidos.</p>
           </CardContent>
         </Card>
       ) : (
@@ -133,12 +133,12 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
                   <Button variant="ghost" size="icon" asChild>
-                    <a href={resource.url} target="_blank" rel="noreferrer" aria-label="Open resource">
+                    <a href={resource.url} target="_blank" rel="noreferrer" aria-label="Abrir recurso">
                       <ExternalLink className="h-4 w-4" />
                     </a>
                   </Button>
                   <Button variant="ghost" size="icon" asChild>
-                    <a href={resource.url} download={resource.original_name} aria-label="Download resource">
+                    <a href={resource.url} download={resource.original_name} aria-label="Descargar recurso">
                       <Download className="h-4 w-4" />
                     </a>
                   </Button>

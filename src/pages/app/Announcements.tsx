@@ -56,15 +56,21 @@ function statusVariant(status: AnnouncementStatus) {
   return "bg-amber-50 text-amber-700 border-amber-100";
 }
 
+function statusLabel(status: AnnouncementStatus) {
+  if (status === "PUBLISHED") return "Publicado";
+  if (status === "REJECTED") return "Rechazado";
+  return "Pendiente";
+}
+
 function formatDate(value?: string | null) {
   if (!value) return "";
-  return new Date(value).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  return new Date(value).toLocaleDateString("es-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
 function creatorName(announcement: Announcement) {
   return [announcement.creatorFirstName, announcement.creatorLastName].filter(Boolean).join(" ") ||
     announcement.creatorEmail ||
-    "A church member";
+    "Un miembro";
 }
 
 function whatsappShareLink(title: string, content: string, imageUrl?: string | null) {
@@ -83,7 +89,7 @@ export default function Announcements() {
   const [submitting, setSubmitting] = useState(false);
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
-  const [locale, setLocale] = useState<Locale>("en");
+  const [locale, setLocale] = useState<Locale>("es");
   const [audience, setAudience] = useState<"general" | "ministry">("general");
   const [ministryId, setMinistryId] = useState("");
   const [title, setTitle] = useState("");
@@ -127,7 +133,7 @@ export default function Announcements() {
     } catch (error) {
       console.error("Failed to load announcements:", error);
       toast({
-        title: error instanceof Error ? error.message : "Failed to load announcements",
+        title: error instanceof Error ? error.message : "No se pudieron cargar los anuncios",
         variant: "destructive",
       });
     } finally {
@@ -148,11 +154,11 @@ export default function Announcements() {
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     if (!title.trim() || !content.trim()) {
-      toast({ title: "Title and content are required", variant: "destructive" });
+      toast({ title: "El título y el contenido son obligatorios", variant: "destructive" });
       return;
     }
     if (audience === "ministry" && !ministryId) {
-      toast({ title: "Choose a ministry first", variant: "destructive" });
+      toast({ title: "Elige un ministerio primero", variant: "destructive" });
       return;
     }
 
@@ -172,16 +178,16 @@ export default function Announcements() {
       setContent("");
       setImageUrl(null);
       toast({
-        title: data.status === "PENDING" ? "Submitted for approval" : "Announcement posted",
+        title: data.status === "PENDING" ? "Enviado para aprobación" : "Anuncio publicado",
         description: data.status === "PENDING"
-          ? "An admin will approve it before it appears in the app."
-          : "Members were emailed automatically.",
+          ? "Un administrador lo aprobará antes de que aparezca en el app."
+          : "Los miembros fueron notificados automáticamente.",
       });
       await loadPage();
     } catch (error) {
       console.error("Failed to submit announcement:", error);
       toast({
-        title: error instanceof Error ? error.message : "Failed to submit announcement",
+        title: error instanceof Error ? error.message : "No se pudo enviar el anuncio",
         variant: "destructive",
       });
     } finally {
@@ -196,12 +202,12 @@ export default function Announcements() {
         method: "PATCH",
         body: JSON.stringify({ action }),
       });
-      toast({ title: action === "approve" ? "Announcement approved" : "Announcement rejected" });
+      toast({ title: action === "approve" ? "Anuncio aprobado" : "Anuncio rechazado" });
       await loadPage();
     } catch (error) {
       console.error("Failed to review announcement:", error);
       toast({
-        title: error instanceof Error ? error.message : "Failed to review announcement",
+        title: error instanceof Error ? error.message : "No se pudo revisar el anuncio",
         variant: "destructive",
       });
     } finally {
@@ -213,13 +219,13 @@ export default function Announcements() {
     if (!deleteId) return;
     try {
       await fetchApi(`/announcements/${deleteId}`, { method: "DELETE" });
-      toast({ title: "Announcement deleted" });
+      toast({ title: "Anuncio eliminado" });
       setDeleteId(null);
       await loadPage();
     } catch (error) {
       console.error("Failed to delete announcement:", error);
       toast({
-        title: error instanceof Error ? error.message : "Failed to delete announcement",
+        title: error instanceof Error ? error.message : "No se pudo eliminar el anuncio",
         variant: "destructive",
       });
     }
@@ -234,13 +240,13 @@ export default function Announcements() {
   }
 
   return (
-    <div className="space-y-6">
-      <Card className="overflow-hidden border-primary/10 bg-gradient-to-br from-white via-slate-50 to-emerald-50">
+    <div className="mobile-page space-y-6">
+      <Card className="app-card-soft overflow-hidden border-primary/10 bg-gradient-to-br from-white via-slate-50 to-emerald-50">
         <CardHeader className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <Badge variant="secondary" className="w-fit gap-1">
               <Megaphone className="h-3.5 w-3.5" />
-              Announcements
+              Anuncios
             </Badge>
             <div className="grid grid-cols-2 rounded-full bg-white p-1 shadow-sm">
               {(["en", "es"] as const).map((value) => (
@@ -258,11 +264,11 @@ export default function Announcements() {
             </div>
           </div>
           <CardTitle className="text-2xl leading-tight">
-            Share updates with the right people.
+            Comparte noticias con las personas correctas.
           </CardTitle>
           <p className="text-sm leading-6 text-muted-foreground">
-            Admin posts publish immediately. Church-wide posts from non-admins go to admin approval.
-            Ministry leaders can post directly to their ministry.
+            Los administradores publican de inmediato. Los anuncios generales de otros usuarios pasan por aprobación.
+            Los líderes pueden publicar directamente a su ministerio.
           </p>
         </CardHeader>
         <CardContent>
@@ -275,7 +281,7 @@ export default function Announcements() {
                   audience === "general" ? "bg-white text-primary shadow-sm" : "text-muted-foreground"
                 }`}
               >
-                Church-wide
+                Toda la iglesia
               </button>
               <button
                 type="button"
@@ -285,22 +291,22 @@ export default function Announcements() {
                   audience === "ministry" ? "bg-white text-primary shadow-sm" : "text-muted-foreground"
                 }`}
               >
-                Ministry
+                Ministerio
               </button>
             </div>
 
             {audience === "general" && (
               <p className="rounded-2xl bg-white/80 px-4 py-3 text-xs leading-5 text-muted-foreground">
                 {isAdmin
-                  ? "This will publish immediately and email the church."
-                  : "This will wait for admin approval before members see it."}
+                  ? "Esto se publicará de inmediato y notificará a la iglesia."
+                  : "Esto esperará aprobación antes de que los miembros lo vean."}
               </p>
             )}
 
             {audience === "ministry" && (
               <Select value={ministryId} onValueChange={setMinistryId}>
                 <SelectTrigger className="rounded-2xl bg-white">
-                  <SelectValue placeholder="Choose ministry" />
+                  <SelectValue placeholder="Elige ministerio" />
                 </SelectTrigger>
                 <SelectContent>
                   {leaderMinistries.map((ministry) => (
@@ -312,7 +318,7 @@ export default function Announcements() {
 
             <Input
               required
-              placeholder="Title"
+              placeholder="Título"
               value={title}
               onChange={(event) => setTitle(event.target.value)}
               className="rounded-2xl bg-white"
@@ -320,7 +326,7 @@ export default function Announcements() {
             <Textarea
               required
               rows={5}
-              placeholder="Write the announcement..."
+              placeholder="Escribe el anuncio..."
               value={content}
               onChange={(event) => setContent(event.target.value)}
               className="resize-none rounded-2xl bg-white"
@@ -342,7 +348,7 @@ export default function Announcements() {
               className="w-full rounded-2xl"
             >
               {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-              {submitting ? "Sending..." : audience === "general" && !isAdmin ? "Submit for approval" : "Post announcement"}
+              {submitting ? "Enviando..." : audience === "general" && !isAdmin ? "Enviar para aprobación" : "Publicar anuncio"}
             </Button>
           </form>
         </CardContent>
@@ -351,7 +357,7 @@ export default function Announcements() {
       {isAdmin && pending.length > 0 && (
         <section className="space-y-3">
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-bold uppercase tracking-wider text-amber-700">Needs admin review</h2>
+            <h2 className="text-sm font-bold uppercase tracking-wider text-amber-700">Necesita revisión</h2>
             <Badge variant="secondary">{pending.length}</Badge>
           </div>
           {pending.map((announcement) => (
@@ -363,11 +369,11 @@ export default function Announcements() {
                 <div className="flex gap-2">
                   <Button size="sm" onClick={() => handleReview(announcement.id, "approve")} disabled={processingId === announcement.id}>
                     <Check className="h-4 w-4" />
-                    Approve
+                    Aprobar
                   </Button>
                   <Button size="sm" variant="outline" onClick={() => handleReview(announcement.id, "reject")} disabled={processingId === announcement.id}>
                     <X className="h-4 w-4" />
-                    Reject
+                    Rechazar
                   </Button>
                 </div>
               }
@@ -378,13 +384,13 @@ export default function Announcements() {
 
       <section className="space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-bold uppercase tracking-wider text-muted-foreground">Published</h2>
+          <h2 className="text-sm font-bold uppercase tracking-wider text-muted-foreground">Publicados</h2>
           <Badge variant="outline">{posted.length}</Badge>
         </div>
         {posted.length === 0 ? (
-          <Card>
+          <Card className="app-card">
             <CardContent className="p-8 text-center text-sm text-muted-foreground">
-              No published announcements yet.
+              Todavía no hay anuncios publicados.
             </CardContent>
           </Card>
         ) : (
@@ -400,7 +406,7 @@ export default function Announcements() {
 
       {!isAdmin && rejected.length > 0 && (
         <section className="space-y-3">
-          <h2 className="text-sm font-bold uppercase tracking-wider text-muted-foreground">Not approved</h2>
+          <h2 className="text-sm font-bold uppercase tracking-wider text-muted-foreground">No aprobados</h2>
           {rejected.map((announcement) => (
             <AnnouncementCard key={announcement.id} announcement={announcement} />
           ))}
@@ -410,12 +416,12 @@ export default function Announcements() {
       <AlertDialog open={!!deleteId} onOpenChange={(open) => !open && setDeleteId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete announcement</AlertDialogTitle>
-            <AlertDialogDescription>This cannot be undone.</AlertDialogDescription>
+            <AlertDialogTitle>Eliminar anuncio</AlertDialogTitle>
+            <AlertDialogDescription>Esta acción no se puede deshacer.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete}>Delete</AlertDialogAction>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDelete}>Eliminar</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -433,7 +439,7 @@ function AnnouncementCard({
   onDelete?: () => void;
 }) {
   return (
-    <Card className="overflow-hidden">
+    <Card className="app-card overflow-hidden">
       {announcement.imageUrl ? (
         <img src={announcement.imageUrl} alt="" className="h-44 w-full object-cover" />
       ) : (
@@ -444,11 +450,11 @@ function AnnouncementCard({
           <div className="min-w-0 space-y-2">
             <div className="flex flex-wrap gap-2">
               <Badge variant="outline" className={statusVariant(announcement.status)}>
-                {announcement.status.toLowerCase()}
+                {statusLabel(announcement.status)}
               </Badge>
               {announcement.ministryName && <Badge variant="secondary">{announcement.ministryName}</Badge>}
             </div>
-            <h3 className="font-semibold leading-tight">{announcement.title}</h3>
+            <h3 className="font-bold leading-tight text-zinc-950">{announcement.title}</h3>
           </div>
           {onDelete && (
             <Button variant="ghost" size="icon" onClick={onDelete}>
@@ -459,7 +465,7 @@ function AnnouncementCard({
         <p className="whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{announcement.content}</p>
         <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3">
           <p className="text-xs text-muted-foreground">
-            {announcement.status === "PUBLISHED" ? "Posted" : "Created"} {formatDate(announcement.publishedAt || announcement.createdAt)} by {creatorName(announcement)}
+            {announcement.status === "PUBLISHED" ? "Publicado" : "Creado"} {formatDate(announcement.publishedAt || announcement.createdAt)} por {creatorName(announcement)}
           </p>
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" size="sm" asChild>

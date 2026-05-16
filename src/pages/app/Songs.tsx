@@ -63,7 +63,7 @@ export default function Songs() {
     setLoading(true);
     fetchApi(`/songs?${params.toString()}`)
       .then((data) => setSongs(Array.isArray(data) ? data : []))
-      .catch((e) => console.error("Failed to load songs:", e))
+      .catch((e) => console.error("No se pudieron cargar las canciones:", e))
       .finally(() => setLoading(false));
   }, [fetchApi, search]);
 
@@ -92,7 +92,7 @@ export default function Songs() {
 
   const handleSubmit = async () => {
     if (!formData.title.trim()) {
-      toast({ title: "Title is required", variant: "destructive" });
+      toast({ title: "El título es obligatorio", variant: "destructive" });
       return;
     }
 
@@ -110,18 +110,18 @@ export default function Songs() {
           method: "PUT",
           body: JSON.stringify(payload),
         });
-        toast({ title: "Song updated successfully" });
+        toast({ title: "Canción actualizada" });
       } else {
         await fetchApi("/songs", {
           method: "POST",
           body: JSON.stringify(payload),
         });
-        toast({ title: "Song created successfully" });
+        toast({ title: "Canción creada" });
       }
       setDialogOpen(false);
       loadSongs();
     } catch (e) {
-      toast({ title: editingSong ? "Failed to update song" : "Failed to create song", variant: "destructive" });
+      toast({ title: editingSong ? "No se pudo actualizar la canción" : "No se pudo crear la canción", variant: "destructive" });
     }
   };
 
@@ -129,11 +129,11 @@ export default function Songs() {
     if (!deleteId) return;
     try {
       await fetchApi(`/songs/${deleteId}`, { method: "DELETE" });
-      toast({ title: "Song deleted successfully" });
+      toast({ title: "Canción eliminada" });
       setDeleteId(null);
       loadSongs();
     } catch (e) {
-      toast({ title: "Failed to delete song", variant: "destructive" });
+      toast({ title: "No se pudo eliminar la canción", variant: "destructive" });
     }
   };
 
@@ -183,53 +183,59 @@ export default function Songs() {
   }
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">Songs</h1>
-        {isAdmin && <Button size="sm" onClick={openNewDialog}><Plus className="w-4 h-4 mr-1" /> New Song</Button>}
+    <div className="mobile-page space-y-5">
+      <div className="app-card-soft p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="mobile-section-title">Biblioteca</p>
+            <h1 className="mt-1 text-3xl font-black tracking-tight text-zinc-950">Canciones</h1>
+            <p className="mt-1 text-sm text-muted-foreground">Encuentra acordes, letras, tonalidades y videos para el equipo.</p>
+          </div>
+          {isAdmin && <Button size="sm" onClick={openNewDialog} className="h-11 shrink-0 rounded-2xl px-4"><Plus className="w-4 h-4 mr-1" /> Nueva</Button>}
+        </div>
       </div>
-      <div className="mb-6 grid gap-3 md:grid-cols-[minmax(0,1fr)_180px_160px_180px]">
+      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_180px_160px_180px]">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
-            placeholder="Search by title, artist, key..."
-            className="pl-9"
+            placeholder="Buscar por título, artista o tonalidad..."
+            className="h-12 rounded-2xl border-zinc-200 bg-white pl-9 shadow-sm"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
         <Select value={artistFilter} onValueChange={setArtistFilter}>
-          <SelectTrigger>
-            <SelectValue placeholder="Artist" />
+          <SelectTrigger className="h-12 rounded-2xl border-zinc-200 bg-white shadow-sm">
+            <SelectValue placeholder="Artista" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All artists</SelectItem>
+            <SelectItem value="all">Todos los artistas</SelectItem>
             {artists.map((artist) => (
               <SelectItem key={artist} value={artist}>{artist}</SelectItem>
             ))}
           </SelectContent>
         </Select>
         <Select value={keyFilter} onValueChange={setKeyFilter}>
-          <SelectTrigger>
-            <SelectValue placeholder="Key" />
+          <SelectTrigger className="h-12 rounded-2xl border-zinc-200 bg-white shadow-sm">
+            <SelectValue placeholder="Tonalidad" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All keys</SelectItem>
+            <SelectItem value="all">Todas las tonalidades</SelectItem>
             {keys.map((key) => (
               <SelectItem key={key} value={key}>{key}</SelectItem>
             ))}
           </SelectContent>
         </Select>
         <Select value={sortBy} onValueChange={setSortBy}>
-          <SelectTrigger>
-            <SelectValue placeholder="Sort" />
+          <SelectTrigger className="h-12 rounded-2xl border-zinc-200 bg-white shadow-sm">
+            <SelectValue placeholder="Ordenar" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="lastUsed">Last used</SelectItem>
-            <SelectItem value="recent">Most recent</SelectItem>
-            <SelectItem value="title">Title</SelectItem>
-            <SelectItem value="artist">Artist</SelectItem>
-            <SelectItem value="key">Key</SelectItem>
+            <SelectItem value="lastUsed">Últimas usadas</SelectItem>
+            <SelectItem value="recent">Más recientes</SelectItem>
+            <SelectItem value="title">Título</SelectItem>
+            <SelectItem value="artist">Artista</SelectItem>
+            <SelectItem value="key">Tonalidad</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -237,31 +243,31 @@ export default function Songs() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{editingSong ? "Edit Song" : "New Song"}</DialogTitle>
+            <DialogTitle>{editingSong ? "Editar canción" : "Nueva canción"}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-2">
-              <label className="text-sm font-medium">Title *</label>
+              <label className="text-sm font-medium">Título *</label>
               <Input
-                placeholder="Song title"
+                placeholder="Título de la canción"
                 value={formData.title}
                 onChange={(e) => setFormData({ ...formData, title: e.target.value })}
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">Author</label>
+              <label className="text-sm font-medium">Autor</label>
               <Input
-                placeholder="Author name"
+                placeholder="Nombre del autor"
                 value={formData.author}
                 onChange={(e) => setFormData({ ...formData, author: e.target.value })}
               />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <label className="text-sm font-medium">Key</label>
+                <label className="text-sm font-medium">Tonalidad</label>
                 <Select value={formData.key} onValueChange={(v) => setFormData({ ...formData, key: v })}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Select key" />
+                    <SelectValue placeholder="Seleccionar tonalidad" />
                   </SelectTrigger>
                   <SelectContent>
                     {MUSICAL_KEYS.map((k) => (
@@ -274,23 +280,23 @@ export default function Songs() {
                 <label className="text-sm font-medium">Tempo (BPM)</label>
                 <Input
                   type="number"
-                  placeholder="e.g. 120"
+                  placeholder="ej. 120"
                   value={formData.bpm}
                   onChange={(e) => setFormData({ ...formData, bpm: e.target.value })}
                 />
               </div>
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">Notes</label>
+              <label className="text-sm font-medium">Notas</label>
               <Textarea
-                placeholder="Add notes or lyrics..."
+                placeholder="Agrega notas o letras..."
                 value={formData.notes}
                 onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
               />
             </div>
             <div className="flex justify-end gap-2 pt-2">
-              <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
-              <Button onClick={handleSubmit}>{editingSong ? "Update" : "Create"}</Button>
+              <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
+              <Button onClick={handleSubmit}>{editingSong ? "Actualizar" : "Crear"}</Button>
             </div>
           </div>
         </DialogContent>
@@ -299,40 +305,40 @@ export default function Songs() {
       <AlertDialog open={!!deleteId} onOpenChange={(open) => !open && setDeleteId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Song</AlertDialogTitle>
-            <AlertDialogDescription>Are you sure you want to delete this song? This action cannot be undone.</AlertDialogDescription>
+            <AlertDialogTitle>Eliminar canción</AlertDialogTitle>
+            <AlertDialogDescription>¿Seguro que quieres eliminar esta canción? Esta acción no se puede deshacer.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete</AlertDialogAction>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Eliminar</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
 
       <div className="grid gap-3">
         {filtered.map((s) => (
-          <Card key={s.id} className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => navigate(`/app/songs/${s.id}`)}>
-            <CardContent className="p-4 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg bg-accent flex items-center justify-center text-sm font-bold text-primary">
-                  {s.key || "—"}
+          <Card key={s.id} className="app-card cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-md" onClick={() => navigate(`/app/songs/${s.id}`)}>
+            <CardContent className="flex items-center justify-between gap-3 p-4">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-sm font-bold text-primary">
+                  {getEffectiveKey(s) || "—"}
                 </div>
-                <div>
-                  <div className="font-medium">{getTitle(s)}</div>
+                <div className="min-w-0">
+                  <div className="truncate font-bold text-zinc-950">{getTitle(s)}</div>
                   {s.author && <div className="text-sm text-muted-foreground">{s.author}</div>}
                   {s.lastUsedAt && (
-                    <div className="text-xs text-muted-foreground">Last used {new Date(s.lastUsedAt).toLocaleDateString()}</div>
+                    <div className="text-xs text-muted-foreground">Última vez {new Date(s.lastUsedAt).toLocaleDateString("es-US")}</div>
                   )}
                 </div>
               </div>
-              <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                {s.bpm && <span className="text-sm text-muted-foreground mr-2">{s.bpm} BPM</span>}
+              <div className="flex shrink-0 items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                {s.bpm && <span className="mr-1 rounded-full bg-zinc-100 px-2 py-1 text-xs font-semibold text-muted-foreground">{s.bpm} BPM</span>}
                 {isAdmin && (
                   <>
-                    <Button variant="ghost" size="icon" onClick={() => openEditDialog(s)}>
+                    <Button variant="ghost" size="icon" className="h-9 w-9 rounded-xl" onClick={() => openEditDialog(s)}>
                       <Pencil className="w-4 h-4" />
                     </Button>
-                    <Button variant="ghost" size="icon" onClick={() => setDeleteId(s.id)}>
+                    <Button variant="ghost" size="icon" className="h-9 w-9 rounded-xl" onClick={() => setDeleteId(s.id)}>
                       <Trash2 className="w-4 h-4 text-destructive" />
                     </Button>
                   </>
@@ -342,7 +348,7 @@ export default function Songs() {
           </Card>
         ))}
         {filtered.length === 0 && (
-          <p className="text-sm text-muted-foreground py-4">No songs found.</p>
+          <div className="app-card p-8 text-center text-sm text-muted-foreground">No se encontraron canciones.</div>
         )}
       </div>
     </div>

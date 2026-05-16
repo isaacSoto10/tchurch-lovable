@@ -86,7 +86,7 @@ type UserOption = {
 type Tab = "flow" | "team";
 
 function formatDate(d: string) {
-  return new Date(d).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+  return new Date(d).toLocaleDateString("es-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
 }
 
 function getInitials(firstName?: string | null, lastName?: string | null, email?: string): string {
@@ -95,12 +95,12 @@ function getInitials(firstName?: string | null, lastName?: string | null, email?
 }
 
 const ITEM_TYPES = [
-  { label: "Song", value: "song" },
-  { label: "Prayer", value: "prayer" },
-  { label: "Scripture", value: "scripture" },
-  { label: "Announcement", value: "announcement" },
+  { label: "Canción", value: "song" },
+  { label: "Oración", value: "prayer" },
+  { label: "Escritura", value: "scripture" },
+  { label: "Anuncio", value: "announcement" },
   { label: "Video", value: "video" },
-  { label: "Other", value: "other" },
+  { label: "Otro", value: "other" },
 ];
 
 function formatItemType(type: string) {
@@ -269,7 +269,7 @@ export default function ServiceDetail() {
     } catch (e) {
       console.error(e);
       setService(service);
-      toast({ title: e instanceof Error ? e.message : "Failed to reorder service", variant: "destructive" });
+      toast({ title: e instanceof Error ? e.message : "No se pudo reordenar el servicio", variant: "destructive" });
     }
   }
 
@@ -352,7 +352,7 @@ export default function ServiceDetail() {
     } catch (e) {
       console.error(e);
       toast({
-        title: e instanceof Error ? e.message : "Failed to assign member",
+        title: e instanceof Error ? e.message : "No se pudo asignar el miembro",
         variant: "destructive",
       });
     }
@@ -399,7 +399,7 @@ export default function ServiceDetail() {
     } catch (e) {
       console.error(e);
       toast({
-        title: e instanceof Error ? e.message : "Failed to respond to assignment",
+        title: e instanceof Error ? e.message : "No se pudo responder la asignación",
         variant: "destructive",
       });
     } finally {
@@ -448,26 +448,26 @@ export default function ServiceDetail() {
   if (!service) {
     return (
       <div className="p-4 text-center">
-        <p className="text-muted-foreground">Service not found</p>
-        <Button variant="ghost" onClick={() => navigate("/app/services")} className="mt-2">Back</Button>
+        <p className="text-muted-foreground">Servicio no encontrado</p>
+        <Button variant="ghost" onClick={() => navigate("/app/services")} className="mt-2">Volver</Button>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-zinc-50">
+    <div className="mobile-page space-y-4">
       {/* Header */}
-      <div className="bg-white border-b border-zinc-200 sticky top-0 z-10">
-        <div className="flex items-center gap-3 px-4 py-3">
-          <button onClick={() => navigate("/app/services")} className="p-2 -ml-2 rounded-lg hover:bg-zinc-100">
+      <div className="app-card-soft overflow-hidden">
+        <div className="flex items-center gap-3 px-4 py-4">
+          <button onClick={() => navigate("/app/services")} className="-ml-1 flex h-10 w-10 items-center justify-center rounded-2xl bg-white shadow-sm hover:bg-zinc-50">
             <ArrowLeft className="w-5 h-5 text-zinc-600" />
           </button>
           <div className="flex-1 min-w-0">
-            <h1 className="font-semibold text-zinc-900 truncate">{service.title}</h1>
-            <p className="text-xs text-zinc-500">{formatDate(service.date)}</p>
+            <h1 className="truncate text-xl font-black tracking-tight text-zinc-950">{service.title}</h1>
+            <p className="mt-0.5 truncate text-sm text-zinc-500">{formatDate(service.date)}</p>
           </div>
           {isAdmin && (
-            <Button variant="ghost" size="sm" className="text-red-500" onClick={handleDeleteService}>
+            <Button variant="ghost" size="sm" className="h-10 w-10 rounded-2xl text-red-500" onClick={handleDeleteService}>
               <Trash2 className="w-4 h-4" />
             </Button>
           )}
@@ -475,22 +475,22 @@ export default function ServiceDetail() {
 
         <div className="px-4 pb-3">
           <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as Tab)}>
-            <TabsList className="w-full grid grid-cols-2 h-9 bg-zinc-100/60 p-1 rounded-lg">
+            <TabsList className="grid h-11 w-full grid-cols-2 rounded-2xl bg-zinc-100/70 p-1">
               <TabsTrigger value="flow" className="text-xs flex items-center gap-1">
-                <Music className="w-3 h-3" /> Service Flow
+                <Music className="w-3 h-3" /> Flujo
               </TabsTrigger>
               <TabsTrigger value="team" className="text-xs flex items-center gap-1">
-                <Users className="w-3 h-3" /> Team
+                <Users className="w-3 h-3" /> Equipo
               </TabsTrigger>
             </TabsList>
           </Tabs>
         </div>
       </div>
 
-      <div className="p-4 space-y-4">
+      <div className="space-y-4">
 
         {/* SERVICE INFO */}
-        <Card>
+        <Card className="app-card">
           <CardContent className="p-4 space-y-2">
             <div className="flex items-center gap-2 text-xs text-zinc-500">
               <span className="font-medium">{service.type}</span>
@@ -504,20 +504,20 @@ export default function ServiceDetail() {
           <div className="space-y-3">
             {isPlanner && (
               <div className="flex justify-end">
-                <Button size="sm" onClick={() => setShowAddItem(true)}>
-                  <Plus className="w-4 h-4 mr-1" /> Add Item
+                <Button size="sm" className="h-10 rounded-2xl" onClick={() => setShowAddItem(true)}>
+                  <Plus className="w-4 h-4 mr-1" /> Agregar
                 </Button>
               </div>
             )}
 
             {service.items.length === 0 ? (
-              <Card>
+              <Card className="app-card">
                 <CardContent className="p-8 text-center">
                   <Music className="w-8 h-8 mx-auto text-zinc-300 mb-2" />
-                  <p className="text-sm text-muted-foreground">No items in this service yet.</p>
+                  <p className="text-sm text-muted-foreground">Todavía no hay elementos en este servicio.</p>
                   {isPlanner && (
                     <Button size="sm" variant="outline" onClick={() => setShowAddItem(true)} className="mt-3">
-                      Add First Item
+                      Agregar primero
                     </Button>
                   )}
                 </CardContent>
@@ -528,7 +528,7 @@ export default function ServiceDetail() {
                   <Card
                     key={item.id}
                     data-service-item-id={item.id}
-                    className={`${draggingItemId === item.id ? "opacity-50" : ""} ${
+                    className={`app-card overflow-hidden transition-all ${draggingItemId === item.id ? "opacity-50" : ""} ${
                       dragOverItemId === item.id && draggingItemId !== item.id ? "ring-2 ring-primary ring-offset-2" : ""
                     }`}
                     draggable
@@ -573,26 +573,26 @@ export default function ServiceDetail() {
                           {isSongItemType(item.type) ? <Music className="w-4 h-4 text-primary" /> : <Clock className="w-4 h-4 text-primary" />}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="font-medium text-sm">{item.song?.title || item.title}</p>
+                          <p className="font-bold text-sm text-zinc-950">{item.song?.title || item.title}</p>
                           <p className="text-xs text-zinc-500">
                             {formatItemType(item.type)}{item.duration ? ` · ${item.duration} min` : ""}
                             {item.song?.author ? ` · ${item.song.author}` : ""}
                           </p>
                         </div>
                         {getDisplayKey(item) && (
-                          <Badge variant="secondary" className="shrink-0 text-xs">Key {getDisplayKey(item)}</Badge>
+                          <Badge variant="secondary" className="shrink-0 rounded-full text-xs">Tono {getDisplayKey(item)}</Badge>
                         )}
                         {item.song && (
                           <div className="flex shrink-0 items-center gap-1">
-                            <Button variant="outline" size="sm" onClick={(event) => { event.stopPropagation(); navigate(`/app/songs/${item.song?.id}`); }}>
+                            <Button variant="outline" size="sm" className="h-9 rounded-xl" onClick={(event) => { event.stopPropagation(); navigate(`/app/songs/${item.song?.id}`); }}>
                               <FileText className="w-3 h-3" />
-                              Song
+                              Canción
                             </Button>
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-8 w-8"
-                              aria-label={expandedSongItems[item.id] ? "Collapse song details" : "Expand song details"}
+                              className="h-9 w-9 rounded-xl"
+                              aria-label={expandedSongItems[item.id] ? "Contraer detalles de canción" : "Expandir detalles de canción"}
                               onClick={(event) => { event.stopPropagation(); toggleSongItem(item.id); }}
                             >
                               {expandedSongItems[item.id] ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
@@ -610,21 +610,21 @@ export default function ServiceDetail() {
                       </div>
 
                       {isSongItemType(item.type) && item.song && expandedSongItems[item.id] && (
-                        <div className="border-t border-zinc-100 bg-gradient-to-br from-white to-zinc-50/80 p-3 space-y-3" onClick={stopInteractiveTap} onPointerDown={stopInteractiveTap} onTouchStart={stopInteractiveTap}>
+                          <div className="space-y-3 border-t border-zinc-100 bg-gradient-to-br from-white to-zinc-50/80 p-3" onClick={stopInteractiveTap} onPointerDown={stopInteractiveTap} onTouchStart={stopInteractiveTap}>
                           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                             <div className="min-w-0 space-y-2">
                               <div className="flex flex-wrap gap-2">
                                 {getDisplayKey(item) && (
-                                  <Badge variant="secondary">Key {getDisplayKey(item)}</Badge>
+                                  <Badge variant="secondary" className="rounded-full">Tono {getDisplayKey(item)}</Badge>
                                 )}
                                 {(getPrimaryArrangement(item.song)?.bpm || item.song.bpm) && (
-                                  <Badge variant="secondary">{getPrimaryArrangement(item.song)?.bpm || item.song.bpm} BPM</Badge>
+                                  <Badge variant="secondary" className="rounded-full">{getPrimaryArrangement(item.song)?.bpm || item.song.bpm} BPM</Badge>
                                 )}
                                 {(getPrimaryArrangement(item.song)?.meter || item.song.meter) && (
-                                  <Badge variant="secondary">{getPrimaryArrangement(item.song)?.meter || item.song.meter}</Badge>
+                                  <Badge variant="secondary" className="rounded-full">{getPrimaryArrangement(item.song)?.meter || item.song.meter}</Badge>
                                 )}
                                 {item.song.arrangements?.length ? (
-                                  <Badge variant="outline">{item.song.arrangements.length} arrangement{item.song.arrangements.length === 1 ? "" : "s"}</Badge>
+                                  <Badge variant="outline" className="rounded-full">{item.song.arrangements.length} arreglo{item.song.arrangements.length === 1 ? "" : "s"}</Badge>
                                 ) : null}
                               </div>
                               {getSongPlainNotes(item.song) && (
@@ -633,16 +633,16 @@ export default function ServiceDetail() {
                             </div>
                             <div className="flex shrink-0 flex-wrap gap-2">
                               {getSongYoutubeUrl(item.song) && (
-                                <Button asChild variant="outline" size="sm">
+                                <Button asChild variant="outline" size="sm" className="rounded-xl">
                                   <a href={getSongYoutubeUrl(item.song) || "#"} target="_blank" rel="noreferrer">
                                     <PlayCircle className="w-3 h-3" />
                                     YouTube
                                   </a>
                                 </Button>
                               )}
-                              <Button variant="ghost" size="sm" onClick={(event) => { event.stopPropagation(); navigate(`/app/songs/${item.song?.id}`); }}>
+                              <Button variant="ghost" size="sm" className="rounded-xl" onClick={(event) => { event.stopPropagation(); navigate(`/app/songs/${item.song?.id}`); }}>
                                 <ExternalLink className="w-3 h-3" />
-                                Full chart
+                                Ver acordes
                               </Button>
                             </div>
                           </div>
@@ -653,7 +653,7 @@ export default function ServiceDetail() {
                             title={item.song.title}
                             artist={item.song.author}
                             maxLines={36}
-                            emptyText="No ChordPro chart saved for this song yet."
+                            emptyText="Esta canción todavía no tiene acordes guardados."
                           />
                         </div>
                       )}
@@ -670,24 +670,24 @@ export default function ServiceDetail() {
           <div className="space-y-3">
             {isPlanner && (
               <div className="flex justify-end">
-                <Button size="sm" onClick={() => setShowAssign(true)}>
-                  <Plus className="w-4 h-4 mr-1" /> Assign Member
+                <Button size="sm" className="h-10 rounded-2xl" onClick={() => setShowAssign(true)}>
+                  <Plus className="w-4 h-4 mr-1" /> Asignar
                 </Button>
               </div>
             )}
 
             {service.assignments.length === 0 ? (
-              <Card>
+              <Card className="app-card">
                 <CardContent className="p-8 text-center">
                   <Users className="w-8 h-8 mx-auto text-zinc-300 mb-2" />
-                  <p className="text-sm text-muted-foreground">No team members assigned yet.</p>
+                  <p className="text-sm text-muted-foreground">Todavía no hay miembros asignados.</p>
                 </CardContent>
               </Card>
             ) : (
               <div className="space-y-2">
                 {service.assignments.map((a) => (
-                  <Card key={a.id}>
-                    <CardContent className="p-3 flex items-center gap-3">
+                  <Card key={a.id} className="app-card">
+                    <CardContent className="flex items-center gap-3 p-3">
                       <Avatar className="h-9 w-9 shrink-0">
                         <AvatarFallback className="bg-primary/10 text-primary text-xs font-semibold">
                           {getInitials(a.user?.firstName, a.user?.lastName, a.user?.email)}
@@ -701,11 +701,11 @@ export default function ServiceDetail() {
                       </div>
                       <div className="flex items-center gap-2">
                         {(a.responseStatus === "accepted" || (!a.responseStatus && a.confirmed)) ? (
-                          <Badge variant="default" className="text-xs bg-emerald-100 text-emerald-700">Confirmed</Badge>
+                          <Badge variant="default" className="text-xs bg-emerald-100 text-emerald-700">Confirmado</Badge>
                         ) : a.responseStatus === "declined" ? (
-                          <Badge variant="secondary" className="text-xs bg-red-50 text-red-700">Declined</Badge>
+                          <Badge variant="secondary" className="text-xs bg-red-50 text-red-700">Declinado</Badge>
                         ) : (
-                          <Badge variant="secondary" className="text-xs">Pending</Badge>
+                          <Badge variant="secondary" className="text-xs">Pendiente</Badge>
                         )}
                         {a.userId === currentUserId && (
                           <div className="flex gap-1">
@@ -717,7 +717,7 @@ export default function ServiceDetail() {
                               onClick={() => handleAssignmentResponse(a.id, "decline")}
                             >
                               <X className="w-3 h-3" />
-                              Deny
+                              Rechazar
                             </Button>
                             <Button
                               size="sm"
@@ -726,7 +726,7 @@ export default function ServiceDetail() {
                               onClick={() => handleAssignmentResponse(a.id, "accept")}
                             >
                               <Check className="w-3 h-3" />
-                              Accept
+                              Aceptar
                             </Button>
                           </div>
                         )}
@@ -752,11 +752,11 @@ export default function ServiceDetail() {
       <Dialog open={showAddItem} onOpenChange={(open) => { setShowAddItem(open); if (!open) resetItemForm(); }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Add Service Item</DialogTitle>
+            <DialogTitle>Agregar elemento</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleAddItem} className="space-y-4">
             <div className="space-y-2">
-              <Label>Type</Label>
+              <Label>Tipo</Label>
               <Select value={itemType} onValueChange={setItemType}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -766,11 +766,11 @@ export default function ServiceDetail() {
             </div>
             {isSongItemType(itemType) ? (
               <div className="space-y-2">
-                <Label>Song</Label>
+                <Label>Canción</Label>
                 <Input
                   value={songSearch}
                   onChange={(e) => { setSongSearch(e.target.value); setSelectedSong(null); }}
-                  placeholder="Search songs..."
+                  placeholder="Buscar canciones..."
                 />
                 {songResults.length > 0 && !selectedSong && (
                   <div className="border rounded-lg overflow-hidden">
@@ -784,7 +784,7 @@ export default function ServiceDetail() {
                         <p className="font-medium">{s.title}</p>
                         {s.author && <p className="text-xs text-zinc-500">{s.author}</p>}
                         <p className="text-xs text-zinc-400">
-                          {[s.key, s.bpm ? `${s.bpm} BPM` : null].filter(Boolean).join(" · ") || "Song library"}
+                          {[s.key, s.bpm ? `${s.bpm} BPM` : null].filter(Boolean).join(" · ") || "Biblioteca de canciones"}
                         </p>
                       </button>
                     ))}
@@ -793,17 +793,17 @@ export default function ServiceDetail() {
               </div>
             ) : (
               <div className="space-y-2">
-                <Label>Title</Label>
-                <Input value={itemTitle} onChange={(e) => setItemTitle(e.target.value)} placeholder="Item title" required />
+                <Label>Título</Label>
+                <Input value={itemTitle} onChange={(e) => setItemTitle(e.target.value)} placeholder="Título del elemento" required />
               </div>
             )}
             <div className="space-y-2">
-              <Label>Duration (minutes)</Label>
+              <Label>Duración (minutos)</Label>
               <Input type="number" value={itemDuration} onChange={(e) => setItemDuration(e.target.value)} placeholder="5" />
             </div>
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setShowAddItem(false)}>Cancel</Button>
-              <Button type="submit" disabled={submitting || (isSongItemType(itemType) ? !selectedSong : !itemTitle.trim())}>{submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Add Item"}</Button>
+              <Button type="button" variant="outline" onClick={() => setShowAddItem(false)}>Cancelar</Button>
+              <Button type="submit" disabled={submitting || (isSongItemType(itemType) ? !selectedSong : !itemTitle.trim())}>{submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Agregar"}</Button>
             </DialogFooter>
           </form>
         </DialogContent>
@@ -813,18 +813,18 @@ export default function ServiceDetail() {
       <Dialog open={showAssign} onOpenChange={setShowAssign}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Assign Team Member</DialogTitle>
+            <DialogTitle>Asignar miembro</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleAssignMember} className="space-y-4">
             <div className="space-y-2">
-              <Label>Team member</Label>
+              <Label>Miembro</Label>
               <select
                 value={assignUserId}
                 onChange={(e) => setAssignUserId(e.target.value)}
                 className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                 required
               >
-                <option value="">Choose a member</option>
+                <option value="">Elige un miembro</option>
                 {availableUsers.map((user) => (
                   <option key={user.id} value={user.id}>
                     {[user.firstName, user.lastName].filter(Boolean).join(" ") || user.email}
@@ -834,12 +834,12 @@ export default function ServiceDetail() {
               </select>
             </div>
             <div className="space-y-2">
-              <Label>Position</Label>
-              <Input value={assignPosition} onChange={(e) => setAssignPosition(e.target.value)} placeholder="e.g. Vocals, Guitar, Worship Leader" />
+              <Label>Posición</Label>
+              <Input value={assignPosition} onChange={(e) => setAssignPosition(e.target.value)} placeholder="Ej. Voz, guitarra, director de alabanza" />
             </div>
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setShowAssign(false)}>Cancel</Button>
-              <Button type="submit" disabled={submitting}>{submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Assign"}</Button>
+              <Button type="button" variant="outline" onClick={() => setShowAssign(false)}>Cancelar</Button>
+              <Button type="submit" disabled={submitting}>{submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Asignar"}</Button>
             </DialogFooter>
           </form>
         </DialogContent>

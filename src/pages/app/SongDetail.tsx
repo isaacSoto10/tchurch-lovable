@@ -255,62 +255,62 @@ export default function SongDetail() {
   if (!song) {
     return (
       <div className="p-4 text-center">
-        <p className="text-muted-foreground">Song not found</p>
-        <Button variant="ghost" onClick={() => navigate("/app/songs")} className="mt-2">Back to Songs</Button>
+        <p className="text-muted-foreground">Canción no encontrada</p>
+        <Button variant="ghost" onClick={() => navigate("/app/songs")} className="mt-2">Volver a canciones</Button>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-zinc-50">
+    <div className="mobile-page space-y-4">
       {/* Header */}
-      <div className="bg-white border-b border-zinc-200 sticky top-0 z-10">
-        <div className="flex items-center gap-3 px-4 py-3">
-          <button onClick={() => navigate("/app/songs")} className="p-2 -ml-2 rounded-lg hover:bg-zinc-100">
+      <div className="app-card-soft overflow-hidden">
+        <div className="flex items-center gap-3 px-4 py-4">
+          <button onClick={() => navigate("/app/songs")} className="-ml-1 flex h-10 w-10 items-center justify-center rounded-2xl bg-white shadow-sm hover:bg-zinc-50">
             <ArrowLeft className="w-5 h-5 text-zinc-600" />
           </button>
           <div className="flex-1 min-w-0">
-            <h1 className="font-semibold text-zinc-900 truncate">{song.title}</h1>
-            {song.author && <p className="text-xs text-zinc-500 truncate">by {song.author}</p>}
+            <h1 className="truncate text-xl font-black tracking-tight text-zinc-950">{song.title}</h1>
+            {song.author && <p className="mt-0.5 truncate text-sm text-zinc-500">por {song.author}</p>}
           </div>
           {getSongYoutubeUrl(song) && (
-            <Button asChild variant="outline" size="sm">
+            <Button asChild variant="outline" size="sm" className="h-10 w-10 rounded-2xl p-0">
               <a href={getSongYoutubeUrl(song) || "#"} target="_blank" rel="noreferrer">
                 <PlayCircle className="w-4 h-4" />
               </a>
             </Button>
           )}
-          <Button variant="ghost" size="sm" className="text-red-500" onClick={() => setShowDeleteSong(true)}>
+          <Button variant="ghost" size="sm" className="h-10 w-10 rounded-2xl text-red-500" onClick={() => setShowDeleteSong(true)}>
             <Trash2 className="w-4 h-4" />
           </Button>
         </div>
 
         <div className="px-4 pb-3">
           <Tabs value={activeSection} onValueChange={(v) => setActiveSection(v as Section)}>
-            <TabsList className="w-full grid grid-cols-4 h-9 bg-zinc-100/60 p-1 rounded-lg">
+            <TabsList className="grid h-11 w-full grid-cols-4 rounded-2xl bg-zinc-100/70 p-1">
               <TabsTrigger value="info" className="text-xs">Info</TabsTrigger>
-              <TabsTrigger value="arrangements" className="text-xs">Arrangements</TabsTrigger>
-              <TabsTrigger value="lyrics" className="text-xs">Lyrics</TabsTrigger>
-              <TabsTrigger value="preview" className="text-xs">Preview</TabsTrigger>
+              <TabsTrigger value="arrangements" className="text-xs">Arreglos</TabsTrigger>
+              <TabsTrigger value="lyrics" className="text-xs">Letras</TabsTrigger>
+              <TabsTrigger value="preview" className="text-xs">Vista</TabsTrigger>
             </TabsList>
           </Tabs>
         </div>
       </div>
 
-      <div className="p-4 space-y-4">
+      <div className="space-y-4">
 
         {/* INFO TAB */}
         {activeSection === "info" && (
           <div className="space-y-4">
-            <Card>
+            <Card className="app-card">
               <CardContent className="p-4 space-y-4">
                 <div className="space-y-2">
-                  <Label>Title</Label>
+                  <Label>Título</Label>
                   <Input value={infoForm.title} onChange={(e) => setInfoForm({ ...infoForm, title: e.target.value })} onBlur={() => saveField("title", infoForm.title)} />
                 </div>
                 <div className="space-y-2">
-                  <Label>Author</Label>
-                  <Input value={infoForm.author} onChange={(e) => setInfoForm({ ...infoForm, author: e.target.value })} onBlur={() => saveField("author", infoForm.author)} placeholder="e.g. Traditional, John Doe" />
+                  <Label>Autor</Label>
+                  <Input value={infoForm.author} onChange={(e) => setInfoForm({ ...infoForm, author: e.target.value })} onBlur={() => saveField("author", infoForm.author)} placeholder="Ej. Tradicional, Bethel Music" />
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-2">
@@ -318,20 +318,20 @@ export default function SongDetail() {
                     <Input value={infoForm.ccliNumber} onChange={(e) => setInfoForm({ ...infoForm, ccliNumber: e.target.value })} onBlur={() => saveField("ccliNumber", infoForm.ccliNumber)} />
                   </div>
                   <div className="space-y-2">
-                    <Label>Copyright</Label>
+                  <Label>Copyright</Label>
                     <Input value={infoForm.copyright} onChange={(e) => setInfoForm({ ...infoForm, copyright: e.target.value })} onBlur={() => saveField("copyright", infoForm.copyright)} />
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <Label>Tags</Label>
-                  <Input value={infoForm.tags} onChange={(e) => setInfoForm({ ...infoForm, tags: e.target.value })} onBlur={() => saveField("tags", infoForm.tags)} placeholder="worship, praise, chorus" />
+                  <Label>Etiquetas</Label>
+                  <Input value={infoForm.tags} onChange={(e) => setInfoForm({ ...infoForm, tags: e.target.value })} onBlur={() => saveField("tags", infoForm.tags)} placeholder="adoración, alabanza, coro" />
                 </div>
                 <div className="space-y-2">
-                  <Label>Scripture Reference</Label>
-                  <Input value={infoForm.scriptureRef} onChange={(e) => setInfoForm({ ...infoForm, scriptureRef: e.target.value })} onBlur={() => saveField("scriptureRef", infoForm.scriptureRef)} placeholder="e.g. Psalm 23" />
+                  <Label>Referencia bíblica</Label>
+                  <Input value={infoForm.scriptureRef} onChange={(e) => setInfoForm({ ...infoForm, scriptureRef: e.target.value })} onBlur={() => saveField("scriptureRef", infoForm.scriptureRef)} placeholder="Ej. Salmo 23" />
                 </div>
                 <div className="space-y-2">
-                  <Label>YouTube link</Label>
+                  <Label>Link de YouTube</Label>
                   <Input
                     type="url"
                     value={infoForm.youtubeUrl}
@@ -341,9 +341,9 @@ export default function SongDetail() {
                 </div>
                 <div className="grid grid-cols-3 gap-3">
                   <div className="space-y-2">
-                    <Label>Key</Label>
+                    <Label>Tono</Label>
                     <Select value={infoForm.key} onValueChange={(v) => { setInfoForm({ ...infoForm, key: v }); saveField("key", v); }}>
-                      <SelectTrigger><SelectValue placeholder="Select key" /></SelectTrigger>
+                      <SelectTrigger><SelectValue placeholder="Tono" /></SelectTrigger>
                       <SelectContent>
                         {MUSICAL_KEYS.map((k) => <SelectItem key={k} value={k}>{k}</SelectItem>)}
                       </SelectContent>
@@ -354,9 +354,9 @@ export default function SongDetail() {
                     <Input type="number" value={infoForm.bpm} onChange={(e) => setInfoForm({ ...infoForm, bpm: e.target.value })} onBlur={() => saveField("bpm", infoForm.bpm)} placeholder="120" />
                   </div>
                   <div className="space-y-2">
-                    <Label>Meter</Label>
+                    <Label>Compás</Label>
                     <Select value={infoForm.meter} onValueChange={(v) => { setInfoForm({ ...infoForm, meter: v }); saveField("meter", v); }}>
-                      <SelectTrigger><SelectValue placeholder="Meter" /></SelectTrigger>
+                      <SelectTrigger><SelectValue placeholder="Compás" /></SelectTrigger>
                       <SelectContent>
                         {COMMON_METERS.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
                       </SelectContent>
@@ -364,16 +364,16 @@ export default function SongDetail() {
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <Label>Team notes</Label>
+                  <Label>Notas para el equipo</Label>
                   <Textarea
                     value={infoForm.notes}
                     onChange={(e) => setInfoForm({ ...infoForm, notes: e.target.value })}
-                    placeholder="Arrangement notes, capo, intro cues, rehearsal details..."
+                    placeholder="Notas de arreglo, capo, intro, detalles de ensayo..."
                   />
                 </div>
                 <div className="flex justify-end">
                   <Button size="sm" onClick={handleSaveInfo} disabled={saving}>
-                    {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Save details"}
+                    {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Guardar detalles"}
                   </Button>
                 </div>
               </CardContent>
@@ -386,15 +386,15 @@ export default function SongDetail() {
           <div className="space-y-4">
             <div className="flex justify-end">
               <Button size="sm" onClick={() => setShowAddArrangement(true)}>
-                <Plus className="w-4 h-4 mr-1" /> Add Arrangement
+                <Plus className="w-4 h-4 mr-1" /> Agregar arreglo
               </Button>
             </div>
 
             {arrangements.length === 0 ? (
-              <Card>
+              <Card className="app-card">
                 <CardContent className="p-8 text-center">
                   <Music2 className="w-8 h-8 mx-auto text-zinc-300 mb-2" />
-                  <p className="text-sm text-muted-foreground">No arrangements yet. Add one to get started.</p>
+                  <p className="text-sm text-muted-foreground">Todavía no hay arreglos. Agrega uno para comenzar.</p>
                 </CardContent>
               </Card>
             ) : (
@@ -402,7 +402,7 @@ export default function SongDetail() {
                 {arrangements.map((arr) => (
                   <Card
                     key={arr.id}
-                    className={`cursor-pointer transition-all ${activeArrangement?.id === arr.id ? "border-primary ring-1 ring-primary" : ""}`}
+                    className={`app-card cursor-pointer transition-all ${activeArrangement?.id === arr.id ? "border-primary ring-1 ring-primary" : ""}`}
                     onClick={() => setActiveArrangement(arr)}
                   >
                     <CardContent className="p-4 flex items-center gap-3">
@@ -410,7 +410,7 @@ export default function SongDetail() {
                       <div className="flex-1 min-w-0">
                         <p className="font-medium text-sm">{arr.name}</p>
                         <p className="text-xs text-zinc-500">
-                          {[arr.key, arr.bpm ? `${arr.bpm} BPM` : null, arr.meter].filter(Boolean).join(" · ") || "No details"}
+                          {[arr.key, arr.bpm ? `${arr.bpm} BPM` : null, arr.meter].filter(Boolean).join(" · ") || "Sin detalles"}
                         </p>
                       </div>
                       <button
@@ -433,24 +433,24 @@ export default function SongDetail() {
             {activeArrangement ? (
               <>
                 <div className="flex items-center justify-between">
-                  <p className="text-sm font-medium text-zinc-600">{activeArrangement.name} — Lyrics</p>
+                  <p className="text-sm font-medium text-zinc-600">{activeArrangement.name} — Letras</p>
                   <Button size="sm" variant="outline" onClick={handleSaveLyrics} disabled={saving}>
-                    {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Save"}
+                    {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Guardar"}
                   </Button>
                 </div>
                 <Textarea
                   value={activeArrangement.lyrics || ""}
                   onChange={(e) => setActiveArrangement({ ...activeArrangement, lyrics: e.target.value })}
                   className="min-h-96 font-mono text-sm"
-                  placeholder={`[Verse 1]\nLyrics here...\n\n[Chorus]\nLyrics here...`}
+                  placeholder={`[Verso 1]\nLetra aquí...\n\n[Coro]\nLetra aquí...`}
                 />
-                <p className="text-xs text-zinc-400">Use blank lines to separate slides. Section headers in [brackets].</p>
+                <p className="text-xs text-zinc-400">Usa líneas en blanco para separar slides. Encabezados en [corchetes].</p>
               </>
             ) : (
-              <Card>
+              <Card className="app-card">
                 <CardContent className="p-8 text-center">
                   <Music2 className="w-8 h-8 mx-auto text-zinc-300 mb-2" />
-                  <p className="text-sm text-muted-foreground">Select an arrangement to edit lyrics, or create one first.</p>
+                  <p className="text-sm text-muted-foreground">Selecciona un arreglo para editar letras, o crea uno primero.</p>
                 </CardContent>
               </Card>
             )}
@@ -462,7 +462,7 @@ export default function SongDetail() {
           <div className="space-y-3">
             {previewLyrics ? (
               <>
-                <p className="text-sm font-medium text-zinc-600">{activeArrangement?.name || "Song master"} — Chord chart</p>
+                <p className="text-sm font-medium text-zinc-600">{activeArrangement?.name || "Canción principal"} — Hoja de acordes</p>
                 <ChordProPreview
                   value={previewLyrics}
                   maxLines={120}
@@ -478,10 +478,10 @@ export default function SongDetail() {
                 </div>
               </>
             ) : (
-              <Card>
+              <Card className="app-card">
                 <CardContent className="p-8 text-center">
                   <Play className="w-8 h-8 mx-auto text-zinc-300 mb-2" />
-                  <p className="text-sm text-muted-foreground">Add lyrics to an arrangement to preview slides.</p>
+                  <p className="text-sm text-muted-foreground">Agrega letras a un arreglo para previsualizar slides.</p>
                 </CardContent>
               </Card>
             )}
@@ -493,18 +493,18 @@ export default function SongDetail() {
       <Dialog open={showAddArrangement} onOpenChange={setShowAddArrangement}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>New Arrangement</DialogTitle>
+            <DialogTitle>Nuevo arreglo</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleAddArrangement} className="space-y-4">
             <div className="space-y-2">
-              <Label>Name</Label>
-              <Input value={arrForm.name} onChange={(e) => setArrForm({ ...arrForm, name: e.target.value })} placeholder="e.g. Original Key, Acoustic" required />
+              <Label>Nombre</Label>
+              <Input value={arrForm.name} onChange={(e) => setArrForm({ ...arrForm, name: e.target.value })} placeholder="Ej. Tono original, acústico" required />
             </div>
             <div className="grid grid-cols-3 gap-3">
               <div className="space-y-2">
-                <Label>Key</Label>
+                <Label>Tono</Label>
                 <Select value={arrForm.key} onValueChange={(v) => setArrForm({ ...arrForm, key: v })}>
-                  <SelectTrigger><SelectValue placeholder="Key" /></SelectTrigger>
+                  <SelectTrigger><SelectValue placeholder="Tono" /></SelectTrigger>
                   <SelectContent>
                     {MUSICAL_KEYS.map((k) => <SelectItem key={k} value={k}>{k}</SelectItem>)}
                   </SelectContent>
@@ -515,9 +515,9 @@ export default function SongDetail() {
                 <Input type="number" value={arrForm.bpm} onChange={(e) => setArrForm({ ...arrForm, bpm: e.target.value })} placeholder="120" />
               </div>
               <div className="space-y-2">
-                <Label>Meter</Label>
+                <Label>Compás</Label>
                 <Select value={arrForm.meter} onValueChange={(v) => setArrForm({ ...arrForm, meter: v })}>
-                  <SelectTrigger><SelectValue placeholder="Meter" /></SelectTrigger>
+                  <SelectTrigger><SelectValue placeholder="Compás" /></SelectTrigger>
                   <SelectContent>
                     {COMMON_METERS.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
                   </SelectContent>
@@ -525,12 +525,12 @@ export default function SongDetail() {
               </div>
             </div>
             <div className="space-y-2">
-              <Label>Lyrics (optional)</Label>
-              <Textarea value={arrForm.lyrics} onChange={(e) => setArrForm({ ...arrForm, lyrics: e.target.value })} className="min-h-32 font-mono text-sm" placeholder="[Verse 1]&#10;Lyrics here..." />
+              <Label>Letras (opcional)</Label>
+              <Textarea value={arrForm.lyrics} onChange={(e) => setArrForm({ ...arrForm, lyrics: e.target.value })} className="min-h-32 font-mono text-sm" placeholder="[Verso 1]&#10;Letra aquí..." />
             </div>
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setShowAddArrangement(false)}>Cancel</Button>
-              <Button type="submit" disabled={saving}>{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Create"}</Button>
+              <Button type="button" variant="outline" onClick={() => setShowAddArrangement(false)}>Cancelar</Button>
+              <Button type="submit" disabled={saving}>{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Crear"}</Button>
             </DialogFooter>
           </form>
         </DialogContent>
@@ -540,12 +540,12 @@ export default function SongDetail() {
       <Dialog open={showDeleteSong} onOpenChange={setShowDeleteSong}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete Song</DialogTitle>
+            <DialogTitle>Eliminar canción</DialogTitle>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground">Are you sure you want to delete "{song.title}"? This cannot be undone.</p>
+          <p className="text-sm text-muted-foreground">¿Seguro que quieres eliminar "{song.title}"? Esta acción no se puede deshacer.</p>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowDeleteSong(false)}>Cancel</Button>
-            <Button variant="destructive" onClick={handleDeleteSong}>Delete</Button>
+            <Button variant="outline" onClick={() => setShowDeleteSong(false)}>Cancelar</Button>
+            <Button variant="destructive" onClick={handleDeleteSong}>Eliminar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

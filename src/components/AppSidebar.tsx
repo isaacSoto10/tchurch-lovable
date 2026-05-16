@@ -81,7 +81,7 @@ function MinistriesSection({ fetchApi, selectedChurchId, collapsed }: { fetchApi
   return (
     <div className="px-3 py-2 border-t">
       <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-1">
-        My Ministries
+        Mis ministerios
       </p>
       <div className="space-y-0.5">
         {ministries.map((m) => (
@@ -111,21 +111,21 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
-  { title: "Dashboard", url: "/app", icon: LayoutDashboard },
-  { title: "Songs", url: "/app/songs", icon: Music },
-  { title: "Services", url: "/app/services", icon: ListChecks },
-  { title: "Announcements", url: "/app/announcements", icon: Megaphone },
-  { title: "My Assignments", url: "/app/my-assignments", icon: ClipboardList },
-  { title: "Ministries", url: "/app/ministries", icon: Users },
-  { title: "Events", url: "/app/events", icon: CalendarDays },
-  { title: "Teams", url: "/app/teams", icon: UsersRound },
-  { title: "Calendar", url: "/app/calendar", icon: Calendar },
-  { title: "Members", url: "/app/users", icon: UserCircle },
-  { title: "Blockouts", url: "/app/blockouts", icon: CalendarX },
-  { title: "Settings", url: "/app/settings", icon: Settings },
-  { title: "Messages", url: "/app/messages", icon: MessageCircle },
-  { title: "Prayer", url: "/app/prayer", icon: Heart },
-  { title: "Training", url: "/app/training", icon: BookOpen },
+  { title: "Panel", url: "/app", icon: LayoutDashboard },
+  { title: "Canciones", url: "/app/songs", icon: Music },
+  { title: "Servicios", url: "/app/services", icon: ListChecks },
+  { title: "Anuncios", url: "/app/announcements", icon: Megaphone },
+  { title: "Mis asignaciones", url: "/app/my-assignments", icon: ClipboardList },
+  { title: "Ministerios", url: "/app/ministries", icon: Users },
+  { title: "Eventos", url: "/app/events", icon: CalendarDays },
+  { title: "Equipos", url: "/app/teams", icon: UsersRound },
+  { title: "Calendario", url: "/app/calendar", icon: Calendar },
+  { title: "Miembros", url: "/app/users", icon: UserCircle },
+  { title: "Fechas bloqueadas", url: "/app/blockouts", icon: CalendarX },
+  { title: "Ajustes", url: "/app/settings", icon: Settings },
+  { title: "Mensajes", url: "/app/messages", icon: MessageCircle },
+  { title: "Oración", url: "/app/prayer", icon: Heart },
+  { title: "Capacitación", url: "/app/training", icon: BookOpen },
 ];
 
 export function AppSidebar() {
@@ -193,7 +193,7 @@ export function AppSidebar() {
                       {!collapsed && (
                         <span className="flex items-center gap-2">
                           {item.title}
-                          {item.title === "Members" && pendingCount > 0 && (
+                          {item.title === "Miembros" && pendingCount > 0 && (
                             <Badge
                               variant="destructive"
                               className="h-5 w-5 p-0 text-xs justify-center items-center"
@@ -201,7 +201,7 @@ export function AppSidebar() {
                               {pendingCount}
                             </Badge>
                           )}
-                          {item.title === "Settings" && isAdmin && (
+                          {item.title === "Ajustes" && isAdmin && (
                             <Badge
                               variant="secondary"
                               className="h-5 px-1.5 text-xs justify-center items-center"
@@ -211,7 +211,7 @@ export function AppSidebar() {
                           )}
                         </span>
                       )}
-                      {collapsed && item.title === "Members" && pendingCount > 0 && (
+                      {collapsed && item.title === "Miembros" && pendingCount > 0 && (
                         <Badge
                           variant="destructive"
                           className="absolute -top-1 -right-1 h-4 w-4 p-0 text-[10px] justify-center items-center"
@@ -227,7 +227,7 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      {/* My Ministries */}
+      {/* Mis ministerios */}
       {!collapsed && (
         <MinistriesSection fetchApi={fetchApi} selectedChurchId={selectedChurch?.id} collapsed={false} />
       )}
@@ -239,12 +239,12 @@ export function AppSidebar() {
           {isAdmin && (
             <div className="px-2 py-1.5 mb-2 rounded-md bg-primary/10 text-primary text-xs font-medium">
               <Shield className="w-3 h-3 inline mr-1" />
-              Admin Access
+              Acceso de administrador
             </div>
           )}
           {isPlanner && !isAdmin && (
             <div className="px-2 py-1.5 mb-2 rounded-md bg-amber-500/10 text-amber-700 text-xs font-medium">
-              Planner Access
+              Acceso de planificación
             </div>
           )}
         </div>
@@ -260,7 +260,7 @@ export function AppSidebar() {
           className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground w-full px-2 py-1.5 rounded-md hover:bg-muted/50 transition-colors"
         >
           <LogOut className="w-4 h-4" />
-          {!collapsed && <span>Sign Out</span>}
+          {!collapsed && <span>Cerrar sesión</span>}
         </button>
       </div>
     </Sidebar>
