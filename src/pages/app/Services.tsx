@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Pencil, Trash2, Search, ChevronUp, ChevronDown, Music, FileText, Bell, X, Check, Clock, Users, ExternalLink, PlayCircle, GripVertical } from "lucide-react";
+import { Plus, Pencil, Trash2, Search, ChevronUp, ChevronDown, Music, FileText, Bell, X, Check, Clock, Users, ExternalLink, PlayCircle, GripVertical, FileDown } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
 import { useChurch } from "@/providers/ChurchProvider";
@@ -19,6 +19,8 @@ import {
   isSongItemType,
   type SongLike,
 } from "@/lib/songDisplay";
+import { normalizeKey, transposeChordPro } from "@/lib/musicUtils";
+import { getYoutubeEmbedUrl } from "@/lib/youtube";
 import {
   Dialog,
   DialogContent,
@@ -76,6 +78,16 @@ interface ServiceAssignment {
     firstName?: string;
     lastName?: string;
     email?: string;
+  };
+}
+
+interface MyAssignment {
+  id: string;
+  serviceId: string;
+  responseStatus?: "pending" | "accepted" | "declined" | null;
+  service?: {
+    id: string;
+    date?: string;
   };
 }
 
@@ -147,6 +159,7 @@ export default function Services() {
   const { fetchApi } = useApi();
   const { toast } = useToast();
   const [services, setServices] = useState<Service[]>([]);
+  const [myAssignments, setMyAssignments] = useState<MyAssignment[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [filterType, setFilterType] = useState<string>("all");
@@ -191,8 +204,14 @@ export default function Services() {
 
   const loadServices = useCallback(() => {
     setLoading(true);
-    fetchApi("/services")
-      .then((data) => setServices(Array.isArray(data) ? data : []))
+    Promise.all([
+      fetchApi("/services"),
+      fetchApi<MyAssignment[]>("/service-assignments/mine").catch(() => []),
+    ])
+      .then(([data, assignments]) => {
+        setServices(Array.isArray(data) ? data : []);
+        setMyAssignments(Array.isArray(assignments) ? assignments : []);
+      })
       .catch((e) => console.error("No se pudieron cargar los servicios:", e))
       .finally(() => setLoading(false));
   }, [fetchApi]);
@@ -237,7 +256,92 @@ export default function Services() {
     event.stopPropagation();
   };
 
+  const getItemOriginalKey = (item: ServiceItem) => item.song ? getSongDisplayKey(item.song) : null;
+
+  const getItemSavedKey = (item: ServiceItem) => {
+    const details = item.details || {};
+    const key =
+      typeof details.serviceKey === "string" ? details.serviceKey :
+      typeof details.selectedKey === "string" ? details.selectedKey :
+      typeof details.key === "string" ? details.key :
+      null;
+
+    return normalizeKey(key);
+  };
+
+  const getItemDisplayKey = (item: ServiceItem) => getItemSavedKey(item) || getItemOriginalKey(item);
+
+  const getItemDisplayChordPro = (item: ServiceItem) => {
+    if (!item.song) return null;
+    const chordPro = getSongChordPro(item.song);
+    if (!chordPro) return null;
+
+    const originalKey = getItemOriginalKey(item);
+    const displayKey = getItemDisplayKey(item);
+    if (!originalKey || !displayKey || originalKey === displayKey) return chordPro;
+
+    return transposeChordPro(chordPro, originalKey, displayKey);
+  };
+
+  async function handleSaveItemKey(serviceId: string, item: ServiceItem, key: string) {
+    const nextDetails = { ...(item.details || {}), serviceKey: key };
+    setServiceItems((prev) => ({
+      ...prev,
+      [serviceId]: (prev[serviceId] || []).map((serviceItem) =>
+        serviceItem.id === item.id ? { ...serviceItem, details: nextDetails } : serviceItem
+      ),
+    }));
+
+    try {
+      await fetchApi(`/service-items/${item.id}`, {
+        method: "PUT",
+        body: JSON.stringify({ details: nextDetails }),
+      });
+    } catch (error) {
+      console.error("No se pudo guardar el tono:", error);
+      toast({ title: "No se pudo guardar el tono", variant: "destructive" });
+    }
+  }
+
+  async function handleGenerateServicePdf(service: Service) {
+    const items = (serviceItems[service.id] || [])
+      .filter((item) => isSongItemType(item.type) && item.song && getItemDisplayChordPro(item))
+      .map((item) => ({
+        title: item.song?.title || item.title,
+        artist: item.song?.author || null,
+        key: getItemDisplayKey(item),
+        chordPro: getItemDisplayChordPro(item) || "",
+      }));
+
+    if (items.length === 0) {
+      toast({ title: "Este servicio no tiene canciones con acordes todavía.", variant: "destructive" });
+      return;
+    }
+
+    try {
+      const { generateServiceChordChartsPdf } = await import("@/lib/chordChartPdf");
+      await generateServiceChordChartsPdf({
+        serviceTitle: service.title,
+        serviceDate: service.date,
+        items,
+      });
+    } catch (error) {
+      console.error("No se pudo crear el PDF del servicio:", error);
+      toast({ title: "No se pudo crear el PDF del servicio", variant: "destructive" });
+    }
+  }
+
+  const isPlanner = selectedChurch?.role === "ADMIN" || selectedChurch?.role === "PLANNER";
+  const visibleServiceIds = new Set(
+    myAssignments
+      .filter((assignment) => assignment.responseStatus !== "declined")
+      .map((assignment) => assignment.serviceId || assignment.service?.id)
+      .filter(Boolean)
+  );
+
   const filteredServices = services.filter((s) => {
+    if (!isPlanner && visibleServiceIds.size > 0 && !visibleServiceIds.has(s.id)) return false;
+    if (!isPlanner && visibleServiceIds.size === 0) return false;
     const matchesSearch = s.title.toLowerCase().includes(search.toLowerCase());
     const matchesType = filterType === "all" || s.type === filterType;
     return matchesSearch && matchesType;
@@ -1003,9 +1107,19 @@ export default function Services() {
                     <div>
                       <div className="mb-3 flex items-center justify-between">
                         <h4 className="text-sm font-bold text-zinc-950">Flujo del servicio</h4>
-                        {isAdmin && <Button size="sm" variant="outline" className="h-10 rounded-xl" onClick={() => openAddItemDialog(svc.id)}>
-                          <Plus className="w-3 h-3 mr-1" /> Agregar
-                        </Button>}
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-10 rounded-xl"
+                            onClick={() => handleGenerateServicePdf(svc)}
+                          >
+                            <FileDown className="w-3 h-3 mr-1" /> PDF
+                          </Button>
+                          {isAdmin && <Button size="sm" variant="outline" className="h-10 rounded-xl" onClick={() => openAddItemDialog(svc.id)}>
+                            <Plus className="w-3 h-3 mr-1" /> Agregar
+                          </Button>}
+                        </div>
                       </div>
                       {itemsLoading[svc.id] ? (
                         <div className="flex items-center justify-center py-4">
@@ -1016,9 +1130,10 @@ export default function Services() {
                           {(serviceItems[svc.id] || []).map((item, idx) => {
                             const isSong = isSongItemType(item.type) && item.song;
                             const youtubeUrl = isSong ? getSongYoutubeUrl(item.song) : null;
+                            const youtubeEmbedUrl = getYoutubeEmbedUrl(youtubeUrl);
                             const plainNotes = isSong ? getSongPlainNotes(item.song) : null;
                             const arrangement = isSong ? getPrimaryArrangement(item.song) : null;
-                            const displayKey = isSong ? getSongDisplayKey(item.song) : null;
+                            const displayKey = isSong ? getItemDisplayKey(item) : null;
                             const chordPro = isSong ? getSongChordPro(item.song) : null;
 
                             return (
@@ -1031,11 +1146,6 @@ export default function Services() {
                                 <div
                                   data-service-item-id={item.id}
                                   data-service-id={svc.id}
-                                  onDragStart={(e) => handleDragStart(e, svc.id, item.id)}
-                                  onDragOver={(e) => handleDragOver(e, item.id)}
-                                  onDrop={(e) => handleDrop(e, svc.id, item.id)}
-                                  onDragEnd={handleDragEnd}
-                                  draggable
                                   className="flex items-center gap-2 p-3"
                                   onClick={() => {
                                     if (isSong) toggleSongItem(item.id);
@@ -1146,9 +1256,23 @@ export default function Services() {
                                       </Button>
                                     </div>
 
+                                    {youtubeEmbedUrl && (
+                                      <div className="overflow-hidden rounded-2xl border border-red-100 bg-black shadow-sm">
+                                        <iframe
+                                          title={`YouTube - ${item.song?.title || item.title}`}
+                                          src={youtubeEmbedUrl}
+                                          className="aspect-video w-full"
+                                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                          allowFullScreen
+                                        />
+                                      </div>
+                                    )}
+
                                     <ChordProPreview
                                       value={chordPro}
-                                      originalKey={displayKey}
+                                      originalKey={getItemOriginalKey(item)}
+                                      selectedKey={displayKey}
+                                      onSelectedKeyChange={(key) => handleSaveItemKey(svc.id, item, key)}
                                       title={item.song?.title || item.title}
                                       artist={item.song?.author}
                                       maxLines={24}

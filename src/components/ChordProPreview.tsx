@@ -10,6 +10,8 @@ type ChordProPreviewProps = {
   maxLines?: number;
   emptyText?: string;
   originalKey?: string | null;
+  selectedKey?: string | null;
+  onSelectedKeyChange?: (key: string) => void | Promise<void>;
   title?: string | null;
   artist?: string | null;
 };
@@ -19,25 +21,33 @@ export function ChordProPreview({
   maxLines = 48,
   emptyText = "Todavía no hay letras ChordPro guardadas.",
   originalKey,
+  selectedKey: controlledSelectedKey,
+  onSelectedKeyChange,
   title = "Hoja de acordes",
   artist,
 }: ChordProPreviewProps) {
   const { toast } = useToast();
   const normalizedOriginalKey = normalizeKey(originalKey);
-  const [transposeKey, setTransposeKey] = useState(normalizedOriginalKey);
+  const normalizedControlledKey = normalizeKey(controlledSelectedKey);
+  const [transposeKey, setTransposeKey] = useState(normalizedControlledKey || normalizedOriginalKey);
   const [creatingPdf, setCreatingPdf] = useState(false);
-  const selectedKey = normalizeKey(transposeKey) || normalizedOriginalKey;
+  const selectedKey = normalizedControlledKey || normalizeKey(transposeKey) || normalizedOriginalKey;
   const displayValue = useMemo(() => {
     if (!value || !normalizedOriginalKey || !selectedKey || selectedKey === normalizedOriginalKey) return value;
     return transposeChordPro(value, normalizedOriginalKey, selectedKey);
   }, [normalizedOriginalKey, selectedKey, value]);
 
   useEffect(() => {
-    setTransposeKey(normalizedOriginalKey);
-  }, [normalizedOriginalKey]);
+    setTransposeKey(normalizedControlledKey || normalizedOriginalKey);
+  }, [normalizedControlledKey, normalizedOriginalKey]);
 
   function stopCardToggle(event: SyntheticEvent) {
     event.stopPropagation();
+  }
+
+  function updateKey(nextKey: string) {
+    setTransposeKey(nextKey);
+    void onSelectedKeyChange?.(nextKey);
   }
 
   function changeKey(direction: -1 | 1) {
@@ -49,7 +59,9 @@ export function ChordProPreview({
       const safeIndex = currentIndex >= 0 ? currentIndex : fallbackIndex;
       if (safeIndex < 0) return current;
       const nextIndex = (safeIndex + direction + ALL_KEYS.length) % ALL_KEYS.length;
-      return ALL_KEYS[nextIndex];
+      const nextKey = ALL_KEYS[nextIndex];
+      void onSelectedKeyChange?.(nextKey);
+      return nextKey;
     });
   }
 
@@ -108,7 +120,7 @@ export function ChordProPreview({
               </button>
               <select
                 value={selectedKey || normalizedOriginalKey}
-                onChange={(event) => setTransposeKey(event.target.value)}
+                onChange={(event) => updateKey(event.target.value)}
                 onClick={stopCardToggle}
                 onPointerDown={stopCardToggle}
                 onTouchStart={stopCardToggle}

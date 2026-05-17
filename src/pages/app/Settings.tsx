@@ -64,6 +64,8 @@ type WhatsAppSettings = {
   };
 };
 
+const LANGUAGE_KEY = "tchurch_language";
+
 export default function Settings() {
   const { selectedChurch, churches, switchChurch } = useChurch();
   const { fetchApi } = useApi();
@@ -76,6 +78,10 @@ export default function Settings() {
     emailAssignments: true,
     emailAnnouncements: true,
     weeklyDigest: false,
+  });
+  const [language, setLanguage] = useState<"es" | "en">(() => {
+    const saved = localStorage.getItem(LANGUAGE_KEY);
+    return saved === "en" ? "en" : "es";
   });
 
   const [savingChurch, setSavingChurch] = useState(false);
@@ -121,6 +127,11 @@ export default function Settings() {
   useEffect(() => {
     loadWhatsAppSettings();
   }, [loadWhatsAppSettings]);
+
+  useEffect(() => {
+    document.documentElement.lang = language;
+    localStorage.setItem(LANGUAGE_KEY, language);
+  }, [language]);
 
   useEffect(() => {
     if (selectedChurch?.id) {
@@ -407,6 +418,29 @@ export default function Settings() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <p className="font-medium text-sm">Idioma de la app</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    type="button"
+                    variant={language === "es" ? "default" : "outline"}
+                    onClick={() => setLanguage("es")}
+                  >
+                    Español
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={language === "en" ? "default" : "outline"}
+                    onClick={() => setLanguage("en")}
+                  >
+                    English
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Español es el idioma predeterminado. Seguiremos traduciendo cualquier pantalla que falte.
+                </p>
+              </div>
+              <Separator />
               <div className="flex items-center justify-between">
                 <p className="font-medium text-sm">Versión</p>
                 <p className="text-sm text-muted-foreground">1.0.0</p>

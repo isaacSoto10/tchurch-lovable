@@ -14,7 +14,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, ArrowLeft, Plus, Trash2, GripVertical, Check, X, Clock, Users, Music, ExternalLink, PlayCircle, FileText, ChevronDown, ChevronUp } from "lucide-react";
+import { Loader2, ArrowLeft, Plus, Trash2, GripVertical, Check, X, Clock, Users, Music, ExternalLink, PlayCircle, FileText, ChevronDown, ChevronUp, FileDown } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useChurch } from "@/providers/ChurchProvider";
 import { useToast } from "@/components/ui/use-toast";
@@ -29,6 +29,8 @@ import {
   type SongArrangement,
   type SongLike,
 } from "@/lib/songDisplay";
+import { normalizeKey, transposeChordPro } from "@/lib/musicUtils";
+import { getYoutubeEmbedUrl } from "@/lib/youtube";
 
 type ServiceItem = {
   id: string;
@@ -36,6 +38,7 @@ type ServiceItem = {
   type: string;
   position: number;
   duration: number | null;
+  details?: Record<string, unknown> | null;
   song: SongLike | null;
 };
 
@@ -120,6 +123,7 @@ export default function ServiceDetail() {
   const [showAssign, setShowAssign] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
   const [respondingId, setRespondingId] = useState<string | null>(null);
   const [expandedSongItems, setExpandedSongItems] = useState<Record<string, boolean>>({});
   const [draggingItemId, setDraggingItemId] = useState<string | null>(null);
@@ -161,9 +165,15 @@ export default function ServiceDetail() {
   }, [id, navigate]);
 
   useEffect(() => {
-    apiFetch<{ id: string }>("/users/me")
-      .then((user) => setCurrentUserId(user.id))
-      .catch(() => setCurrentUserId(null));
+    apiFetch<{ id: string; email?: string | null }>("/users/me")
+      .then((user) => {
+        setCurrentUserId(user.id);
+        setCurrentUserEmail(user.email?.trim().toLowerCase() || null);
+      })
+      .catch(() => {
+        setCurrentUserId(null);
+        setCurrentUserEmail(null);
+      });
   }, []);
 
   useEffect(() => {
@@ -432,9 +442,86 @@ export default function ServiceDetail() {
     event.stopPropagation();
   }
 
-  function getDisplayKey(item: ServiceItem) {
+  function getItemSavedKey(item: ServiceItem) {
+    const details = item.details || {};
+    const key =
+      typeof details.serviceKey === "string" ? details.serviceKey :
+      typeof details.selectedKey === "string" ? details.selectedKey :
+      typeof details.key === "string" ? details.key :
+      null;
+
+    return normalizeKey(key);
+  }
+
+  function getOriginalKey(item: ServiceItem) {
     if (!item.song) return null;
     return getSongDisplayKey(item.song);
+  }
+
+  function getDisplayKey(item: ServiceItem) {
+    if (!item.song) return null;
+    return getItemSavedKey(item) || getOriginalKey(item);
+  }
+
+  function getDisplayChordPro(item: ServiceItem) {
+    const chordPro = getSongChordPro(item.song);
+    const originalKey = normalizeKey(getOriginalKey(item));
+    const selectedKey = normalizeKey(getDisplayKey(item));
+
+    if (!chordPro || !originalKey || !selectedKey || originalKey === selectedKey) {
+      return chordPro;
+    }
+
+    return transposeChordPro(chordPro, originalKey, selectedKey);
+  }
+
+  async function handleSaveItemKey(item: ServiceItem, key: string) {
+    const nextDetails = { ...(item.details || {}), serviceKey: key };
+    setService((prev) => prev ? {
+      ...prev,
+      items: prev.items.map((serviceItem) =>
+        serviceItem.id === item.id ? { ...serviceItem, details: nextDetails } : serviceItem
+      ),
+    } : prev);
+
+    try {
+      await apiFetch(`/service-items/${item.id}`, {
+        method: "PUT",
+        body: JSON.stringify({ details: nextDetails }),
+      });
+    } catch (error) {
+      console.error("No se pudo guardar el tono del servicio:", error);
+      toast({ title: "No se pudo guardar el tono", variant: "destructive" });
+    }
+  }
+
+  async function handleGenerateServicePdf() {
+    if (!service) return;
+    const songItems = service.items
+      .filter((item) => isSongItemType(item.type) && item.song && getDisplayChordPro(item))
+      .map((item) => ({
+        title: item.song?.title || item.title,
+        artist: item.song?.author,
+        key: getDisplayKey(item),
+        chordPro: getDisplayChordPro(item) || "",
+      }));
+
+    if (songItems.length === 0) {
+      toast({ title: "Este servicio no tiene canciones con acordes.", variant: "destructive" });
+      return;
+    }
+
+    try {
+      const { generateServiceChordChartsPdf } = await import("@/lib/chordChartPdf");
+      await generateServiceChordChartsPdf({
+        serviceTitle: service.title,
+        serviceDate: service.date,
+        items: songItems,
+      });
+    } catch (error) {
+      console.error("No se pudo crear el PDF del servicio:", error);
+      toast({ title: "No se pudo crear el PDF del servicio", variant: "destructive" });
+    }
   }
 
   if (loading) {
@@ -466,6 +553,10 @@ export default function ServiceDetail() {
             <h1 className="truncate text-xl font-black tracking-tight text-zinc-950">{service.title}</h1>
             <p className="mt-0.5 truncate text-sm text-zinc-500">{formatDate(service.date)}</p>
           </div>
+          <Button variant="outline" size="sm" className="h-10 rounded-2xl px-3" onClick={handleGenerateServicePdf}>
+            <FileDown className="w-4 h-4" />
+            PDF
+          </Button>
           {isAdmin && (
             <Button variant="ghost" size="sm" className="h-10 w-10 rounded-2xl text-red-500" onClick={handleDeleteService}>
               <Trash2 className="w-4 h-4" />
@@ -531,11 +622,6 @@ export default function ServiceDetail() {
                     className={`app-card overflow-hidden transition-all ${draggingItemId === item.id ? "opacity-50" : ""} ${
                       dragOverItemId === item.id && draggingItemId !== item.id ? "ring-2 ring-primary ring-offset-2" : ""
                     }`}
-                    draggable
-                    onDragStart={(event) => handleDragStart(event, item.id)}
-                    onDragOver={(event) => handleDragOver(event, item.id)}
-                    onDrop={(event) => handleDrop(event, item.id)}
-                    onDragEnd={handleDragEnd}
                     onClick={() => {
                       if (suppressNextCardClickRef.current) return;
                       if (isSongItemType(item.type) && item.song) toggleSongItem(item.id);
@@ -647,9 +733,23 @@ export default function ServiceDetail() {
                             </div>
                           </div>
 
+                          {getYoutubeEmbedUrl(getSongYoutubeUrl(item.song)) && (
+                            <div className="overflow-hidden rounded-2xl border border-red-100 bg-black shadow-sm">
+                              <iframe
+                                title={`YouTube - ${item.song.title}`}
+                                src={getYoutubeEmbedUrl(getSongYoutubeUrl(item.song)) || undefined}
+                                className="aspect-video w-full"
+                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                allowFullScreen
+                              />
+                            </div>
+                          )}
+
                           <ChordProPreview
                             value={getSongChordPro(item.song)}
-                            originalKey={getDisplayKey(item)}
+                            originalKey={getOriginalKey(item)}
+                            selectedKey={getDisplayKey(item)}
+                            onSelectedKeyChange={(key) => handleSaveItemKey(item, key)}
                             title={item.song.title}
                             artist={item.song.author}
                             maxLines={36}
@@ -685,7 +785,11 @@ export default function ServiceDetail() {
               </Card>
             ) : (
               <div className="space-y-2">
-                {service.assignments.map((a) => (
+                {service.assignments.map((a) => {
+                  const assignmentEmail = a.user?.email?.trim().toLowerCase() || null;
+                  const isCurrentUserAssigned = a.userId === currentUserId || Boolean(currentUserEmail && assignmentEmail === currentUserEmail);
+
+                  return (
                   <Card key={a.id} className="app-card">
                     <CardContent className="flex items-center gap-3 p-3">
                       <Avatar className="h-9 w-9 shrink-0">
@@ -707,7 +811,7 @@ export default function ServiceDetail() {
                         ) : (
                           <Badge variant="secondary" className="text-xs">Pendiente</Badge>
                         )}
-                        {a.userId === currentUserId && (
+                        {isCurrentUserAssigned && (
                           <div className="flex gap-1">
                             <Button
                               size="sm"
@@ -741,7 +845,8 @@ export default function ServiceDetail() {
                       </div>
                     </CardContent>
                   </Card>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

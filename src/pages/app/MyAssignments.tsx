@@ -48,7 +48,7 @@ export default function MyAssignments() {
         body: JSON.stringify({ action }),
       });
       toast({
-        title: action === "accept" ? "Assignment accepted" : "Assignment declined",
+        title: action === "accept" ? "Asignación aceptada" : "Asignación declinada",
       });
       setAssignments((prev) =>
         prev.map((assignment) =>
@@ -64,7 +64,7 @@ export default function MyAssignments() {
       );
     } catch (e) {
       toast({
-        title: e instanceof Error ? e.message : "Failed to respond to assignment",
+        title: e instanceof Error ? e.message : "No se pudo responder la asignación",
         variant: "destructive",
       });
     } finally {
@@ -87,14 +87,14 @@ export default function MyAssignments() {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold">My Assignments</h1>
-        <p className="text-sm text-muted-foreground">Manage your service assignments</p>
+        <h1 className="text-2xl font-bold">Mis asignaciones</h1>
+        <p className="text-sm text-muted-foreground">Acepta o declina tus servicios asignados</p>
       </div>
 
       {pendingAssignments.length > 0 && (
         <div className="mb-8">
           <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-4">
-            Pending Response
+            Pendientes de respuesta
           </h2>
           <div className="space-y-3">
             {pendingAssignments.map((assignment) => (
@@ -128,7 +128,7 @@ export default function MyAssignments() {
                         onClick={() => handleRespond(assignment.id, "decline")}
                       >
                         <X className="w-4 h-4 mr-1" />
-                        Decline
+                        Declinar
                       </Button>
                       <Button
                         size="sm"
@@ -136,7 +136,7 @@ export default function MyAssignments() {
                         onClick={() => handleRespond(assignment.id, "accept")}
                       >
                         <Check className="w-4 h-4 mr-1" />
-                        Accept
+                        Aceptar
                       </Button>
                     </div>
                   </div>
@@ -149,10 +149,10 @@ export default function MyAssignments() {
 
       <div>
         <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-4">
-          Upcoming Confirmed
+          Próximas confirmadas
         </h2>
         {confirmedAssignments.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No confirmed assignments.</p>
+          <p className="text-sm text-muted-foreground">No hay asignaciones confirmadas.</p>
         ) : (
           <div className="space-y-3">
             {confirmedAssignments.map((assignment) => (
@@ -186,7 +186,7 @@ export default function MyAssignments() {
       {declinedAssignments.length > 0 && (
         <div className="mt-8">
           <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-4">
-            Declined
+            Declinadas
           </h2>
           <div className="space-y-3">
             {declinedAssignments.map((assignment) => (

@@ -205,7 +205,8 @@ export function chordProToDisplayLines(value: string | null | undefined, maxLine
   for (const rawLine of value.replace(/\r\n/g, "\n").split("\n")) {
     if (lines.length >= maxLines) break;
 
-    const trimmed = rawLine.trim();
+    const contentLine = rawLine.trimEnd();
+    const trimmed = contentLine.trim();
     if (!trimmed) {
       lines.push({ kind: "blank" });
       continue;
@@ -238,7 +239,7 @@ export function chordProToDisplayLines(value: string | null | undefined, maxLine
       }
     }
 
-    const { chords, lyrics } = splitChordProContentLine(trimmed);
+    const { chords, lyrics } = splitChordProContentLine(contentLine);
     lines.push({ kind: "line", chords, lyrics });
   }
 

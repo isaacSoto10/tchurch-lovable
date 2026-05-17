@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { CalendarDays, Music, Users, Megaphone, ListChecks, UsersRound, Calendar, ArrowRight, Plus } from "lucide-react";
+import { CalendarDays, Music, Users, Megaphone, ListChecks, UsersRound, Calendar, ArrowRight, Plus, Check, X, Loader2, Bell } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useChurch } from "@/providers/ChurchProvider";
 import { useNavigate } from "react-router-dom";
@@ -39,6 +39,38 @@ interface Ministry {
   name: string;
   color: string;
   memberCount?: number;
+}
+
+type MinistriesResponse = {
+  ministries?: Ministry[];
+};
+
+interface Assignment {
+  id: string;
+  serviceId: string;
+  position: string;
+  confirmed: boolean;
+  responseStatus?: "pending" | "accepted" | "declined" | null;
+  respondedAt?: string | null;
+  service?: {
+    id: string;
+    title: string;
+    date: string;
+    type?: string;
+    status?: string;
+  };
+}
+
+interface AppNotification {
+  id: string;
+  type: string;
+  title: string;
+  body?: string | null;
+  read?: boolean;
+  createdAt?: string;
+  data?: {
+    route?: string;
+  } | null;
 }
 
 function formatDate(dateStr: string) {
@@ -91,33 +123,57 @@ export default function Dashboard() {
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [ministries, setMinistries] = useState<Ministry[]>([]);
+  const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [loading, setLoading] = useState(true);
+  const [respondingId, setRespondingId] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
+      if (churchLoading) {
+        setLoading(true);
+        return;
+      }
+
       if (!selectedChurch) {
         setLoading(false);
         return;
       }
 
+      setLoading(true);
       try {
-        const [statsData, servicesData, eventsData, announcementsData, ministriesData] = await Promise.all([
+        const [statsData, servicesData, eventsData, announcementsData, ministriesData, assignmentsData, notificationsData] = await Promise.all([
           safeDashboardFetch("stats", () => fetchApi("/dashboard/stats"), null),
           safeDashboardFetch("services", () => fetchApi("/services"), []),
           safeDashboardFetch("events", () => fetchApi("/events"), []),
           safeDashboardFetch("announcements", () => fetchApi("/announcements"), []),
           safeDashboardFetch("ministries", () => fetchApi("/my-ministries"), []),
+          safeDashboardFetch("asignaciones", () => fetchApi("/service-assignments/mine"), []),
+          safeDashboardFetch("notificaciones", () => fetchApi("/notifications"), []),
         ]);
 
         if (statsData && typeof statsData === "object" && !("error" in statsData)) {
           setStats(statsData as Stats);
         }
 
+        const assignmentList = Array.isArray(assignmentsData) ? assignmentsData as Assignment[] : [];
+        setAssignments(assignmentList);
+        const isPlanner = selectedChurch.role === "ADMIN" || selectedChurch.role === "PLANNER";
+        const assignedServiceIds = new Set(
+          assignmentList
+            .filter((assignment) => assignment.responseStatus !== "declined")
+            .map((assignment) => assignment.serviceId || assignment.service?.id)
+            .filter(Boolean)
+        );
+
         const now = Date.now();
         const svcItems: TimelineItem[] = (Array.isArray(servicesData) ? servicesData : [])
           .filter((s: Record<string, unknown>) => {
             const time = getItemTime(s.date);
-            return time != null && time >= now;
+            if (time == null || time < now) return false;
+            if (!isPlanner && assignedServiceIds.size === 0) return false;
+            if (!isPlanner && !assignedServiceIds.has(s.id as string)) return false;
+            return true;
           })
           .map((s: Record<string, unknown>) => ({
             id: s.id as string,
@@ -148,7 +204,9 @@ export default function Dashboard() {
         setTimeline(merged.slice(0, 10));
 
         setAnnouncements(Array.isArray(announcementsData) ? announcementsData.slice(0, 10) : []);
-        setMinistries(Array.isArray(ministriesData) ? ministriesData : Array.isArray((ministriesData as any)?.ministries) ? (ministriesData as any).ministries : []);
+        const ministryPayload = ministriesData as MinistriesResponse;
+        setMinistries(Array.isArray(ministriesData) ? ministriesData : Array.isArray(ministryPayload?.ministries) ? ministryPayload.ministries : []);
+        setNotifications(Array.isArray(notificationsData) ? notificationsData.slice(0, 5) : []);
       } catch (e) {
         console.error("No se pudo cargar el panel:", e);
       } finally {
@@ -156,10 +214,36 @@ export default function Dashboard() {
       }
     }
     load();
-  }, [fetchApi, selectedChurch]);
+  }, [churchLoading, fetchApi, selectedChurch]);
+
+  async function handleRespond(assignmentId: string, action: "accept" | "decline") {
+    setRespondingId(assignmentId);
+    try {
+      await fetchApi(`/service-assignments/${assignmentId}/respond`, {
+        method: "PUT",
+        body: JSON.stringify({ action }),
+      });
+      setAssignments((prev) =>
+        prev.map((assignment) =>
+          assignment.id === assignmentId
+            ? {
+                ...assignment,
+                confirmed: action === "accept",
+                responseStatus: action === "accept" ? "accepted" : "declined",
+                respondedAt: new Date().toISOString(),
+              } as Assignment
+            : assignment
+        )
+      );
+    } catch (error) {
+      console.error("No se pudo responder la asignación:", error);
+    } finally {
+      setRespondingId(null);
+    }
+  }
 
   if (churchLoading) {
-    return <div className="flex items-center justify-center py-20"><div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full" /></div>;
+    return <div className="flex items-center justify-center py-20"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>;
   }
 
   if (!selectedChurch) {
@@ -210,6 +294,11 @@ export default function Dashboard() {
   const endOfSunday = getEndOfSunday();
   const thisWeekItems = timeline.filter((item) => new Date(item.date) <= endOfSunday);
   const comingUpItems = timeline.filter((item) => new Date(item.date) > endOfSunday);
+  const pendingAssignments = assignments
+    .filter((assignment) => (assignment.responseStatus || (assignment.confirmed ? "accepted" : "pending")) === "pending")
+    .filter((assignment) => assignment.service?.date && new Date(assignment.service.date).getTime() >= Date.now())
+    .slice(0, 5);
+  const unreadNotifications = notifications.filter((notification) => !notification.read).slice(0, 3);
 
   const statItems = stats
     ? [
@@ -257,6 +346,80 @@ export default function Dashboard() {
       </div>
 
       {/* Mis ministerios */}
+      {pendingAssignments.length > 0 && (
+        <div>
+          <h2 className="mobile-section-title mb-3">Mis asignaciones pendientes</h2>
+          <div className="space-y-3">
+            {pendingAssignments.map((assignment) => (
+              <Card key={assignment.id} className="app-card border-amber-100 bg-gradient-to-br from-white to-amber-50/60">
+                <CardContent className="flex items-center gap-3 p-3.5">
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-amber-100 text-amber-700">
+                    <CalendarDays className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0 flex-1" onClick={() => navigate(`/app/services/${assignment.serviceId}`)}>
+                    <p className="truncate text-base font-bold leading-tight">{assignment.service?.title || "Servicio"}</p>
+                    <p className="mt-1 text-[0.8rem] text-muted-foreground">
+                      {assignment.position}
+                      {assignment.service?.date ? ` · ${formatDate(assignment.service.date)}` : ""}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 gap-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-9 rounded-xl px-2 text-red-600"
+                      disabled={respondingId === assignment.id}
+                      onClick={() => handleRespond(assignment.id, "decline")}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="h-9 rounded-xl px-2"
+                      disabled={respondingId === assignment.id}
+                      onClick={() => handleRespond(assignment.id, "accept")}
+                    >
+                      <Check className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {unreadNotifications.length > 0 && (
+        <div>
+          <h2 className="mobile-section-title mb-3">Notificaciones</h2>
+          <div className="space-y-3">
+            {unreadNotifications.map((notification) => (
+              <Card
+                key={notification.id}
+                className="app-card cursor-pointer border-primary/10 bg-gradient-to-br from-white to-primary/5"
+                onClick={() => {
+                  if (notification.data?.route) {
+                    navigate(notification.data.route.replace(/^\/app/, "/app"));
+                  }
+                }}
+              >
+                <CardContent className="flex items-start gap-3 p-3.5">
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                    <Bell className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-base font-bold leading-tight">{notification.title}</p>
+                    {notification.body && (
+                      <p className="mt-1 line-clamp-2 text-[0.82rem] text-muted-foreground">{notification.body}</p>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
+
       {ministries.length > 0 && (
         <div>
           <h2 className="mobile-section-title mb-3">

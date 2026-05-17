@@ -4,6 +4,7 @@ import { AppSidebar } from "../components/AppSidebar";
 import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 import { useChurch } from "@/providers/ChurchProvider";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { usePushNotifications } from "@/hooks/usePushNotifications";
 
 function AppLayoutInner() {
   const { selectedChurch } = useChurch();
@@ -11,6 +12,8 @@ function AppLayoutInner() {
   const { openMobile, setOpenMobile } = useSidebar();
   const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);
+
+  usePushNotifications();
 
   function handleTouchStart(event: React.TouchEvent<HTMLDivElement>) {
     if (!isMobile || openMobile) return;
