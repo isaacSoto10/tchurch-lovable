@@ -8,6 +8,8 @@
 		"androidScheme": "https"
 	},
 	"packageClassList": [
-		"PushNotificationsPlugin"
+		"FilesystemPlugin",
+		"PushNotificationsPlugin",
+		"SharePlugin"
 	]
 }

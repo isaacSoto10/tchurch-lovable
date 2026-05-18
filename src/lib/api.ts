@@ -68,10 +68,20 @@ export async function apiFetch<T = unknown>(
   }
 
   const url = `${API_BASE}${path}`;
-  const res = await fetch(url, {
-    ...options,
-    headers,
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      ...options,
+      headers,
+    });
+  } catch (error) {
+    console.error("API request failed before receiving a response", { path, url, error });
+    throw new ApiError(
+      "No se pudo conectar con Tchurch. Revisa tu conexión e intenta otra vez.",
+      0,
+      { error: error instanceof Error ? error.message : String(error), path }
+    );
+  }
 
   if (!res.ok) {
     const text = await res.text();

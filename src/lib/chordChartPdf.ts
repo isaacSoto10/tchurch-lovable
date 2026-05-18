@@ -1,4 +1,5 @@
 import { chordProToDisplayLines } from "@/lib/songDisplay";
+import { Capacitor } from "@capacitor/core";
 
 type GenerateChordChartPdfParams = {
   title: string;
@@ -22,6 +23,41 @@ function sanitizeFileName(value: string) {
     .replace(/[^a-z0-9]+/gi, "-")
     .replace(/^-+|-+$/g, "")
     .toLowerCase() || "chord-chart";
+}
+
+async function deliverPdf(
+  doc: {
+    save: (filename: string) => void;
+    output: (type: "blob" | "datauristring") => Blob | string;
+  },
+  filename: string,
+  title: string,
+) {
+  if (!Capacitor.isNativePlatform()) {
+    doc.save(filename);
+    return;
+  }
+
+  const dataUri = String(doc.output("datauristring"));
+  const base64 = dataUri.includes(",") ? dataUri.split(",")[1] : dataUri;
+  const [{ Filesystem, Directory }, { Share }] = await Promise.all([
+    import("@capacitor/filesystem"),
+    import("@capacitor/share"),
+  ]);
+
+  const saved = await Filesystem.writeFile({
+    path: filename,
+    data: base64,
+    directory: Directory.Cache,
+    recursive: true,
+  });
+
+  await Share.share({
+    title,
+    text: title,
+    url: saved.uri,
+    dialogTitle: "Compartir PDF",
+  });
 }
 
 export async function generateChordChartPdf({
@@ -136,7 +172,8 @@ export async function generateChordChartPdf({
     doc.text(`${page}/${pageCount}`, pageWidth - margin - 18, pageHeight - 24);
   }
 
-  doc.save(`${sanitizeFileName(title)}${key ? `-${sanitizeFileName(key)}` : ""}.pdf`);
+  const filename = `${sanitizeFileName(title)}${key ? `-${sanitizeFileName(key)}` : ""}.pdf`;
+  await deliverPdf(doc, filename, title || "Hoja de acordes");
 }
 
 export async function generateServiceChordChartsPdf({
@@ -285,5 +322,6 @@ export async function generateServiceChordChartsPdf({
     doc.text(`${page}/${pageCount}`, pageWidth - margin - 18, pageHeight - 24);
   }
 
-  doc.save(`${sanitizeFileName(serviceTitle || "servicio")}-acordes.pdf`);
+  const filename = `${sanitizeFileName(serviceTitle || "servicio")}-acordes.pdf`;
+  await deliverPdf(doc, filename, `Acordes - ${serviceTitle || "Servicio"}`);
 }
