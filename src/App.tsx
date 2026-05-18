@@ -19,6 +19,7 @@ const SongDetail = lazy(() => import("./pages/app/SongDetail"));
 const Services = lazy(() => import("./pages/app/Services"));
 const ServiceDetail = lazy(() => import("./pages/app/ServiceDetail"));
 const Announcements = lazy(() => import("./pages/app/Announcements"));
+const Giving = lazy(() => import("./pages/app/Giving"));
 const Ministries = lazy(() => import("./pages/app/Ministries"));
 const MinistryDetail = lazy(() => import("./pages/app/MinistryDetail"));
 const Events = lazy(() => import("./pages/app/Events"));
@@ -78,6 +79,7 @@ const App = () => {
                   <Route path="services" element={<Services />} />
                   <Route path="services/:id" element={<ServiceDetail />} />
                   <Route path="announcements" element={<Announcements />} />
+                  <Route path="giving" element={<Giving />} />
                   <Route path="ministries" element={<Ministries />} />
                   <Route path="ministries/:id" element={<MinistryDetail />} />
                   <Route path="events" element={<Events />} />
