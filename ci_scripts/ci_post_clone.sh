@@ -2,8 +2,8 @@
 
 # Xcode Cloud post-clone script.
 # Runs after the repo is cloned, before Swift Package Manager resolves packages.
-# The iOS archive uses committed Capacitor web assets and a vendored Swift package
-# for push notifications so Xcode Cloud does not need Node/npm during archive.
+# The iOS archive uses committed Capacitor web assets and vendored Swift packages
+# so Xcode Cloud does not need Node/npm during archive.
 
 set -eux
 
@@ -19,5 +19,9 @@ cd "$REPO_ROOT"
 test -f ios/App/App/config.xml
 test -f ios/App/App/capacitor.config.json
 test -d ios/App/App/public
+test -f ios/App/CapacitorFilesystem/Package.swift
+test -d ios/App/CapacitorFilesystem/ios/Sources/FilesystemPlugin
 test -f ios/App/CapacitorPushNotifications/Package.swift
 test -d ios/App/CapacitorPushNotifications/ios/Sources/PushNotificationsPlugin
+test -f ios/App/CapacitorShare/Package.swift
+test -d ios/App/CapacitorShare/ios/Sources/SharePlugin

@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # Xcode Cloud looks for ci_scripts next to the selected .xcodeproj/.xcworkspace.
-# This validates committed Capacitor assets and the vendored native Swift package.
+# This validates committed Capacitor assets and the vendored native Swift packages.
 
 set -eux
 
@@ -17,5 +17,9 @@ cd "$REPO_ROOT"
 test -f ios/App/App/config.xml
 test -f ios/App/App/capacitor.config.json
 test -d ios/App/App/public
+test -f ios/App/CapacitorFilesystem/Package.swift
+test -d ios/App/CapacitorFilesystem/ios/Sources/FilesystemPlugin
 test -f ios/App/CapacitorPushNotifications/Package.swift
 test -d ios/App/CapacitorPushNotifications/ios/Sources/PushNotificationsPlugin
+test -f ios/App/CapacitorShare/Package.swift
+test -d ios/App/CapacitorShare/ios/Sources/SharePlugin
