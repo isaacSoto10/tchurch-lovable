@@ -11,6 +11,12 @@ import { isNativeMobileAuth, requestMobileAuthCode, verifyMobileAuthCode } from 
 
 type Step = "email" | "code";
 
+const WEB_SIGNUP_URL = "https://www.tchurchapp.com/sign-up";
+
+function openWebSignup() {
+  window.open(WEB_SIGNUP_URL, "_blank", "noopener,noreferrer");
+}
+
 function NativeSignupRedirect() {
   return (
     <div className="relative flex min-h-svh items-center justify-center bg-gradient-to-br from-indigo-50 via-white to-violet-50 p-4">
@@ -29,12 +35,15 @@ function NativeSignupRedirect() {
           <div className="space-y-1">
             <CardTitle>El acceso a la cuenta lo administra tu iglesia</CardTitle>
             <CardDescription>
-              Tchurch móvil es para cuentas existentes de iglesias. Pide a tu administrador que te invite.
+              Crea tu cuenta desde el navegador o pide a tu administrador que te invite a tu iglesia.
             </CardDescription>
           </div>
         </CardHeader>
         <CardContent className="space-y-3">
-          <Button className="h-11 w-full" asChild>
+          <Button className="h-11 w-full" type="button" onClick={openWebSignup}>
+            Crear cuenta en tchurchapp.com
+          </Button>
+          <Button className="h-11 w-full" variant="outline" asChild>
             <Link to="/login">Ya tengo una cuenta</Link>
           </Button>
         </CardContent>

@@ -20,6 +20,18 @@ export type MobileAuthSession = {
 
 export const isNativeMobileAuth = Capacitor.isNativePlatform();
 
+export class MobileAuthApiError extends Error {
+  status: number;
+  code?: string;
+
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.name = "MobileAuthApiError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
 function isExpired(session: MobileAuthSession) {
   return new Date(session.expiresAt).getTime() <= Date.now();
 }
@@ -44,7 +56,12 @@ async function postJson<T>(path: string, body: Record<string, unknown>): Promise
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(String(data?.error || `Request failed with ${response.status}`));
+    const error = data as { error?: unknown; code?: unknown };
+    throw new MobileAuthApiError(
+      String(error?.error || `Request failed with ${response.status}`),
+      response.status,
+      typeof error?.code === "string" ? error.code : undefined
+    );
   }
 
   return data as T;

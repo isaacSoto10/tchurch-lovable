@@ -7,7 +7,12 @@ import { Input } from "@/components/ui/input";
 import { useAppAuth } from "@/hooks/useAppAuth";
 import { ensureHeadlessClerkLoaded } from "@/lib/clerkClient";
 import { getClerkErrorMessage } from "@/lib/clerkErrors";
-import { isNativeMobileAuth, requestMobileAuthCode, verifyMobileAuthCode } from "@/lib/mobileAuth";
+import {
+  isNativeMobileAuth,
+  MobileAuthApiError,
+  requestMobileAuthCode,
+  verifyMobileAuthCode,
+} from "@/lib/mobileAuth";
 
 type Step = "email" | "code";
 type SupportedFirstFactor = {
@@ -15,6 +20,20 @@ type SupportedFirstFactor = {
   emailAddressId?: string;
   safeIdentifier?: string;
 };
+
+const WEB_SIGNUP_URL = "https://www.tchurchapp.com/sign-up";
+
+function openWebSignup() {
+  window.open(WEB_SIGNUP_URL, "_blank", "noopener,noreferrer");
+}
+
+function getNativeMobileAuthError(err: unknown) {
+  if (err instanceof MobileAuthApiError) {
+    return err.message;
+  }
+
+  return err instanceof Error ? err.message : "No pudimos enviar el código. Intenta de nuevo.";
+}
 
 function LoginInner() {
   const { isLoaded: authLoaded, isSignedIn } = useAppAuth();
@@ -80,7 +99,7 @@ function LoginInner() {
       });
       setStep("code");
     } catch (err) {
-      setError(isNativeMobileAuth && err instanceof Error ? err.message : getClerkErrorMessage(err, "No pudimos enviar el código. Intenta de nuevo."));
+      setError(isNativeMobileAuth ? getNativeMobileAuthError(err) : getClerkErrorMessage(err, "No pudimos enviar el código. Intenta de nuevo."));
     } finally {
       setLoading(false);
     }
@@ -126,7 +145,7 @@ function LoginInner() {
 
       setError("Tu inicio de sesión todavía no está completo. Intenta de nuevo.");
     } catch (err) {
-      setError(isNativeMobileAuth && err instanceof Error ? err.message : getClerkErrorMessage(err, "Ese código no funcionó. Intenta de nuevo."));
+      setError(isNativeMobileAuth ? getNativeMobileAuthError(err) : getClerkErrorMessage(err, "Ese código no funcionó. Intenta de nuevo."));
     } finally {
       setLoading(false);
     }
@@ -160,7 +179,7 @@ function LoginInner() {
         emailAddressId,
       });
     } catch (err) {
-      setError(isNativeMobileAuth && err instanceof Error ? err.message : getClerkErrorMessage(err, "No pudimos reenviar el código. Intenta de nuevo."));
+      setError(isNativeMobileAuth ? getNativeMobileAuthError(err) : getClerkErrorMessage(err, "No pudimos reenviar el código. Intenta de nuevo."));
     } finally {
       setLoading(false);
     }
@@ -224,6 +243,11 @@ function LoginInner() {
                   "Continuar"
                 )}
               </Button>
+              {isNativeMobileAuth ? (
+                <Button className="h-11 w-full" variant="outline" type="button" onClick={openWebSignup} disabled={loading}>
+                  Crear cuenta en el navegador
+                </Button>
+              ) : null}
             </form>
           ) : (
             <form className="space-y-4" noValidate onSubmit={handleCodeSubmit}>
@@ -284,7 +308,7 @@ function LoginInner() {
 
           {isNativeMobileAuth ? (
             <p className="text-center text-sm text-muted-foreground">
-              ¿Necesitas acceso? Contacta al administrador de tu iglesia para recibir una invitación.
+              Si todavía no tienes cuenta, créala en tchurchapp.com o pide una invitación a tu iglesia.
             </p>
           ) : (
             <p className="text-center text-sm text-muted-foreground">
