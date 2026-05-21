@@ -34,7 +34,6 @@ const Training = lazy(() => import("./pages/app/Training"));
 const Calendar = lazy(() => import("./pages/app/Calendar"));
 const Users = lazy(() => import("./pages/app/Users"));
 const Blockouts = lazy(() => import("./pages/app/Blockouts"));
-const NextLevel = lazy(() => import("./pages/app/NextLevel"));
 const Onboarding = lazy(() => import("./pages/app/Onboarding"));
 const JoinChurch = lazy(() => import("./pages/app/JoinChurch"));
 const CreateChurchForm = lazy(() => import("./pages/app/CreateChurchForm"));
@@ -95,19 +94,6 @@ const App = () => {
                   <Route path="calendar" element={<Calendar />} />
                   <Route path="users" element={<Users />} />
                   <Route path="blockouts" element={<Blockouts />} />
-                  <Route path="next-level" element={<NextLevel section="checkin" />} />
-                  <Route path="next-level/check-in" element={<NextLevel section="checkin" />} />
-                  <Route path="next-level/visitantes" element={<NextLevel section="visitors" />} />
-                  <Route path="next-level/follow-up" element={<NextLevel section="followup" />} />
-                  <Route path="next-level/heatmap" element={<NextLevel section="heatmap" />} />
-                  <Route path="next-level/lms" element={<NextLevel section="lms" />} />
-                  <Route path="next-level/tareas" element={<NextLevel section="tasks" />} />
-                  <Route path="next-level/instalaciones" element={<NextLevel section="facilities" />} />
-                  <Route path="next-level/integraciones" element={<NextLevel section="integrations" />} />
-                  <Route path="next-level/marketplace" element={<NextLevel section="marketplace" />} />
-                  <Route path="next-level/geofencing" element={<NextLevel section="geofencing" />} />
-                  <Route path="next-level/pastoral-ai" element={<NextLevel section="pastoral" />} />
-                  <Route path="next-level/insights" element={<NextLevel section="insights" />} />
                 </Route>
                 <Route path="/onboarding" element={<RequireAuth><Onboarding /></RequireAuth>} />
                 <Route path="/join-church" element={<JoinChurch />} />
