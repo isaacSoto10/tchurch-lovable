@@ -79,8 +79,8 @@ function MinistriesSection({ fetchApi, selectedChurchId, collapsed }: { fetchApi
   }
 
   return (
-    <div className="border-t border-sidebar-border px-3 py-2">
-      <p className="mb-2 px-1 text-xs font-semibold text-muted-foreground">
+    <div className="px-3 py-2 border-t">
+      <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-1">
         Mis ministerios
       </p>
       <div className="space-y-0.5">
@@ -88,11 +88,11 @@ function MinistriesSection({ fetchApi, selectedChurchId, collapsed }: { fetchApi
           <NavLink
             key={m.id}
             to={`/app/ministries/${m.id}`}
-            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-foreground transition-colors hover:bg-sidebar-accent"
+            className="flex items-center gap-2 px-2 py-1.5 rounded-md text-sm text-foreground hover:bg-muted/50 transition-colors"
           >
             <span
-              className="h-2.5 w-2.5 shrink-0 rounded-sm"
-              style={{ backgroundColor: m.color || "hsl(var(--sidebar-primary))" }}
+              className="w-2.5 h-2.5 rounded-full shrink-0"
+              style={{ backgroundColor: m.color || "#6366f1" }}
             />
             <span className="truncate">{m.name}</span>
           </NavLink>
@@ -171,11 +171,11 @@ export function AppSidebar() {
 
   return (
     <Sidebar collapsible="icon">
-      <div className="flex items-center gap-2 border-b border-sidebar-border px-4" style={{ paddingTop: "max(1rem, env(safe-area-inset-top, 1rem))", paddingBottom: "1rem" }}>
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-sidebar-primary text-sm font-bold text-sidebar-primary-foreground">
+      <div className="flex items-center gap-2 px-4 border-b" style={{ paddingTop: "max(1rem, env(safe-area-inset-top, 1rem))", paddingBottom: "1rem" }}>
+        <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-primary-foreground font-bold text-sm shrink-0">
           T
         </div>
-        {!collapsed && <span className="text-base font-semibold">Tchurch</span>}
+        {!collapsed && <span className="font-bold text-base tracking-tight">Tchurch</span>}
       </div>
       <SidebarContent>
         <SidebarGroup>
@@ -187,8 +187,8 @@ export function AppSidebar() {
                     <NavLink
                       to={item.url}
                       end={item.url === "/app"}
-                      className="hover:bg-sidebar-accent"
-                      activeClassName="border border-sidebar-border bg-sidebar-accent text-sidebar-accent-foreground font-semibold shadow-sm"
+                      className="hover:bg-muted/50"
+                      activeClassName="bg-primary text-primary-foreground font-medium hover:bg-primary/90"
                     >
                       <item.icon className="mr-2 h-4 w-4" />
                       {!collapsed && (
@@ -203,7 +203,10 @@ export function AppSidebar() {
                             </Badge>
                           )}
                           {item.title === "Ajustes" && isAdmin && (
-                            <Badge variant="secondary" className="h-5 items-center justify-center px-1.5 text-xs">
+                            <Badge
+                              variant="secondary"
+                              className="h-5 px-1.5 text-xs justify-center items-center"
+                            >
                               <Shield className="w-3 h-3" />
                             </Badge>
                           )}
@@ -233,21 +236,21 @@ export function AppSidebar() {
         <MinistriesSection fetchApi={fetchApi} selectedChurchId={selectedChurch?.id} collapsed={true} />
       )}
       {!collapsed && (
-        <div className="border-t border-sidebar-border px-3 py-2">
+        <div className="px-3 py-2 border-t">
           {isAdmin && (
-            <div className="mb-2 rounded-md border border-sidebar-border bg-sidebar-accent px-2 py-1.5 text-xs font-medium text-sidebar-accent-foreground">
+            <div className="px-2 py-1.5 mb-2 rounded-md bg-primary/10 text-primary text-xs font-medium">
               <Shield className="w-3 h-3 inline mr-1" />
               Acceso de administrador
             </div>
           )}
           {isPlanner && !isAdmin && (
-            <div className="mb-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-700">
+            <div className="px-2 py-1.5 mb-2 rounded-md bg-amber-500/10 text-amber-700 text-xs font-medium">
               Acceso de planificación
             </div>
           )}
         </div>
       )}
-      <div className="mt-auto border-t border-sidebar-border p-3" style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom, 0.75rem))" }}>
+      <div className="mt-auto border-t p-3" style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom, 0.75rem))" }}>
         {!collapsed && user && (
           <p className="text-xs text-muted-foreground truncate mb-2 px-1">
             {user.primaryEmailAddress?.emailAddress}
@@ -255,7 +258,7 @@ export function AppSidebar() {
         )}
         <button
           onClick={() => signOut("/")}
-          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground"
+          className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground w-full px-2 py-1.5 rounded-md hover:bg-muted/50 transition-colors"
         >
           <LogOut className="w-4 h-4" />
           {!collapsed && <span>Cerrar sesión</span>}

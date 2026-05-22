@@ -189,7 +189,7 @@ export default function MinistryDetail() {
       setJoinRequests((prev) => prev.filter((r) => r.id !== requestId));
     } catch (e) {
       console.error(e);
-      toast({ title: e instanceof Error ? e.message : "No se pudo aprobar la solicitud", variant: "destructive" });
+      toast({ title: e instanceof Error ? e.message : "Failed to approve request", variant: "destructive" });
     }
   }
 
@@ -203,7 +203,7 @@ export default function MinistryDetail() {
       setJoinRequests((prev) => prev.filter((r) => r.id !== requestId));
     } catch (e) {
       console.error(e);
-      toast({ title: e instanceof Error ? e.message : "No se pudo rechazar la solicitud", variant: "destructive" });
+      toast({ title: e instanceof Error ? e.message : "Failed to deny request", variant: "destructive" });
     }
   }
 
@@ -272,9 +272,9 @@ export default function MinistryDetail() {
   if (!ministry) {
     return (
       <div className="p-4 text-center">
-        <p className="text-muted-foreground">Ministerio no encontrado</p>
+        <p className="text-muted-foreground">Ministry not found</p>
         <Button variant="ghost" onClick={() => navigate("/app/ministries")} className="mt-2">
-          Volver a ministerios
+          Back to Ministries
         </Button>
       </div>
     );
@@ -284,40 +284,39 @@ export default function MinistryDetail() {
   const colorDot = ministry.color || "#a39e98";
 
   return (
-    <div className="app-page space-y-4">
+    <div className="min-h-screen bg-zinc-50">
       {/* Header */}
-      <div className="app-page-header overflow-hidden">
-        <div className="flex items-center gap-3 px-4 py-4">
-          <button onClick={() => navigate("/app/ministries")} className="-ml-1 flex h-10 w-10 items-center justify-center rounded-md border border-border bg-card shadow-sm hover:bg-secondary">
-            <ArrowLeft className="w-5 h-5 text-muted-foreground" />
+      <div className="bg-white border-b border-zinc-200 sticky top-0 z-10">
+        <div className="flex items-center gap-3 px-4 py-3">
+          <button onClick={() => navigate("/app/ministries")} className="p-2 -ml-2 rounded-lg hover:bg-zinc-100">
+            <ArrowLeft className="w-5 h-5 text-zinc-600" />
           </button>
           <div className="flex items-center gap-2 flex-1 min-w-0">
-            <div className="w-8 h-10 rounded-md flex items-center justify-center shrink-0 border border-border" style={{ backgroundColor: colorBg }}>
-              <div className="w-2 h-6 rounded-sm" style={{ backgroundColor: colorDot }} />
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: colorBg }}>
+              <div className="w-3 h-3 rounded-full" style={{ backgroundColor: colorDot }} />
             </div>
             <div className="min-w-0">
-              <p className="app-page-kicker">Ministerio</p>
-              <h1 className="truncate text-xl font-semibold text-foreground">{ministry.name}</h1>
+              <h1 className="font-semibold text-zinc-900 truncate">{ministry.name}</h1>
               {ministry.description && (
-                <p className="text-xs text-muted-foreground truncate">{ministry.description}</p>
+                <p className="text-xs text-zinc-500 truncate">{ministry.description}</p>
               )}
             </div>
           </div>
           {canManage && (
-            <Button variant="ghost" size="sm" className="rounded-md" onClick={() => setShowEditMinistry(true)}>
-              Editar
+            <Button variant="ghost" size="sm" onClick={() => setShowEditMinistry(true)}>
+              Edit
             </Button>
           )}
         </div>
 
         {/* Tabs */}
-        <div className="px-4 pb-3">
+        <div className="px-4">
           <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as Tab)} className="w-full">
-            <TabsList className="flex h-auto w-full justify-start gap-1 overflow-x-auto rounded-md bg-muted p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-              <TabsTrigger value="members" className="shrink-0 rounded-sm text-xs">Miembros</TabsTrigger>
+            <TabsList className="w-full grid grid-cols-4 h-10 bg-zinc-100/60 p-1 rounded-lg">
+              <TabsTrigger value="members" className="text-xs">Members</TabsTrigger>
               {canManage && (
-                <TabsTrigger value="join-requests" className="relative shrink-0 rounded-sm text-xs">
-                  Solicitudes
+                <TabsTrigger value="join-requests" className="text-xs relative">
+                  Requests
                   {joinRequests.length > 0 && (
                     <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[10px] rounded-full flex items-center justify-center">
                       {joinRequests.length}
@@ -325,14 +324,15 @@ export default function MinistryDetail() {
                   )}
                 </TabsTrigger>
               )}
-              <TabsTrigger value="announcements" className="shrink-0 rounded-sm text-xs">Anuncios</TabsTrigger>
-              <TabsTrigger value="resources" className="shrink-0 rounded-sm text-xs">Recursos</TabsTrigger>
+              <TabsTrigger value="announcements" className="text-xs">Announcements</TabsTrigger>
+              <TabsTrigger value="resources" className="text-xs">Resources</TabsTrigger>
             </TabsList>
           </Tabs>
         </div>
+        <div className="h-px bg-zinc-200" />
       </div>
 
-      <div className="space-y-4">
+      <div className="p-4 space-y-4">
 
         {/* MEMBERS TAB */}
         {activeTab === "members" && (
@@ -340,23 +340,23 @@ export default function MinistryDetail() {
             {canManage && (
               <div className="flex justify-end gap-2">
                 {ministry.whatsappGroupUrl && (
-                  <Button size="sm" variant="outline" className="rounded-md" asChild>
+                  <Button size="sm" variant="outline" asChild>
                     <a href={ministry.whatsappGroupUrl} target="_blank" rel="noreferrer">
                       <MessageCircle className="w-4 h-4 mr-1" /> WhatsApp
                     </a>
                   </Button>
                 )}
-                <Button size="sm" className="rounded-md" onClick={() => setShowAddMember(true)}>
-                  <Plus className="w-4 h-4 mr-1" /> Agregar
+                <Button size="sm" onClick={() => setShowAddMember(true)}>
+                  <Plus className="w-4 h-4 mr-1" /> Add Member
                 </Button>
               </div>
             )}
             {!canManage && ministry.whatsappGroupUrl && (
-              <Card className="app-list-card border-emerald-100 bg-emerald-50/60">
+              <Card className="border-emerald-100 bg-emerald-50">
                 <CardContent className="p-4">
-                  <Button asChild className="w-full rounded-md bg-emerald-600 hover:bg-emerald-700">
+                  <Button asChild className="w-full bg-emerald-600 hover:bg-emerald-700">
                     <a href={ministry.whatsappGroupUrl} target="_blank" rel="noreferrer">
-                      <MessageCircle className="w-4 h-4 mr-2" /> Abrir grupo de WhatsApp
+                      <MessageCircle className="w-4 h-4 mr-2" /> Open ministry WhatsApp group
                     </a>
                   </Button>
                 </CardContent>
@@ -364,49 +364,49 @@ export default function MinistryDetail() {
             )}
 
             {!isMember && !isPending && (
-              <Card className="app-list-card border-primary/30 bg-primary/5">
+              <Card className="border-primary/30 bg-primary/5">
                 <CardContent className="p-4 text-center space-y-3">
-                  <p className="text-sm text-muted-foreground">Todavía no eres miembro de este ministerio.</p>
-                  <Button size="sm" className="rounded-md" onClick={handleJoinRequest} disabled={submitting}>
-                    {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Solicitar acceso"}
+                  <p className="text-sm text-zinc-600">You're not a member of this ministry yet.</p>
+                  <Button size="sm" onClick={handleJoinRequest} disabled={submitting}>
+                    {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Request to Join"}
                   </Button>
                 </CardContent>
               </Card>
             )}
 
             {isPending && (
-              <Card className="app-list-card border-amber-200 bg-amber-50">
+              <Card className="border-amber-200 bg-amber-50">
                 <CardContent className="p-4 flex items-center gap-3">
                   <Clock className="w-5 h-5 text-amber-600 shrink-0" />
                   <div>
-                    <p className="font-medium text-amber-800 text-sm">Solicitud pendiente</p>
-                    <p className="text-xs text-amber-600">Esperando aprobación de un líder.</p>
+                    <p className="font-medium text-amber-800 text-sm">Request Pending</p>
+                    <p className="text-xs text-amber-600">Waiting for approval from a leader.</p>
                   </div>
                 </CardContent>
               </Card>
             )}
 
             {isMember && (
-              <Card className="app-list-card">
+              <Card>
                 <CardContent className="p-3">
-                  <Badge variant="secondary" className="rounded-md text-xs">
-                    {myRole === "LEADER" ? "Líder" : "Miembro"}
+                  <Badge variant="secondary" className="text-xs">
+                    {myRole === "LEADER" ? "★ Leader" : "Member"}
                   </Badge>
                 </CardContent>
               </Card>
             )}
 
             {(ministry.members || []).length === 0 ? (
-              <Card className="app-empty-state">
+              <Card>
                 <CardContent className="p-8 text-center">
-                  <Users className="w-8 h-8 mx-auto text-muted-foreground/50 mb-2" />
-                  <p className="text-sm text-muted-foreground">Todavía no hay miembros.</p>
+                  <Users className="w-8 h-8 mx-auto text-zinc-300 mb-2" />
+                  <p className="text-sm text-muted-foreground">No members yet</p>
                 </CardContent>
               </Card>
             ) : (
               <div className="space-y-2">
                 {(ministry.members || []).map((member) => (
-                  <Card key={member.id} className="app-list-card">
+                  <Card key={member.id}>
                     <CardContent className="p-3 flex items-center gap-3">
                       <Avatar className="h-10 w-10 shrink-0">
                         <AvatarFallback className="bg-primary/10 text-primary text-sm font-semibold">
@@ -417,19 +417,19 @@ export default function MinistryDetail() {
                         <p className="font-medium text-sm truncate">
                           {member.user?.firstName} {member.user?.lastName}
                         </p>
-                        <p className="text-xs text-muted-foreground truncate">{member.user?.email}</p>
+                        <p className="text-xs text-zinc-500 truncate">{member.user?.email}</p>
                       </div>
                       <div className="flex items-center gap-2">
                         <Badge
                           variant={member.role === "ADMIN" || member.role === "LEADER" ? "default" : "secondary"}
-                          className="rounded-md text-xs"
+                          className="text-xs"
                         >
                           {member.role}
                         </Badge>
                         {canManage && member.role !== "ADMIN" && (
                           <button
                             onClick={() => handleRemoveMember(member.userId)}
-                            className="p-1.5 rounded-md hover:bg-red-50 text-muted-foreground hover:text-red-500 transition-colors"
+                            className="p-1.5 rounded-lg hover:bg-red-50 text-zinc-400 hover:text-red-500 transition-colors"
                           >
                             <UserMinus className="w-4 h-4" />
                           </button>
@@ -446,22 +446,22 @@ export default function MinistryDetail() {
         {/* JOIN REQUESTS TAB */}
         {activeTab === "join-requests" && canManage && (
           <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">Aprueba o rechaza solicitudes para unirse a este ministerio.</p>
+            <p className="text-sm text-muted-foreground">Approve or deny requests to join this ministry.</p>
 
             {requestsLoading ? (
               <div className="flex justify-center py-8">
                 <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
               </div>
             ) : joinRequests.length === 0 ? (
-              <Card className="app-empty-state">
+              <Card>
                 <CardContent className="p-8 text-center">
-                  <Check className="w-8 h-8 mx-auto text-muted-foreground/50 mb-2" />
-                  <p className="text-sm text-muted-foreground">No hay solicitudes pendientes.</p>
+                  <Check className="w-8 h-8 mx-auto text-zinc-300 mb-2" />
+                  <p className="text-sm text-muted-foreground">No pending requests</p>
                 </CardContent>
               </Card>
             ) : (
               joinRequests.map((req) => (
-                <Card key={req.id} className="app-list-card">
+                <Card key={req.id}>
                   <CardContent className="p-4">
                     <div className="flex items-center gap-3 mb-3">
                       <Avatar className="h-10 w-10">
@@ -473,24 +473,24 @@ export default function MinistryDetail() {
                         <p className="font-medium text-sm truncate">
                           {req.user?.firstName} {req.user?.lastName}
                         </p>
-                        <p className="text-xs text-muted-foreground truncate">{req.user?.email}</p>
+                        <p className="text-xs text-zinc-500 truncate">{req.user?.email}</p>
                       </div>
                     </div>
                     <div className="flex gap-2">
                       <Button
                         size="sm"
-                        className="flex-1 rounded-md bg-emerald-600 hover:bg-emerald-700"
+                        className="flex-1 bg-emerald-600 hover:bg-emerald-700"
                         onClick={() => handleApprove(req.id)}
                       >
-                        <Check className="w-4 h-4 mr-1" /> Aprobar
+                        <Check className="w-4 h-4 mr-1" /> Approve
                       </Button>
                       <Button
                         size="sm"
                         variant="outline"
-                        className="flex-1 rounded-md text-red-500 hover:text-red-600 hover:bg-red-50"
+                        className="flex-1 text-red-500 hover:text-red-600 hover:bg-red-50"
                         onClick={() => handleDeny(req.id)}
                       >
-                        <X className="w-4 h-4 mr-1" /> Rechazar
+                        <X className="w-4 h-4 mr-1" /> Deny
                       </Button>
                     </div>
                   </CardContent>
@@ -504,23 +504,23 @@ export default function MinistryDetail() {
         {activeTab === "announcements" && (
           <div className="space-y-3">
             {announcements.length === 0 ? (
-              <Card className="app-empty-state">
+              <Card>
                 <CardContent className="p-8 text-center">
-                  <p className="text-sm text-muted-foreground">Todavía no hay anuncios.</p>
+                  <p className="text-sm text-muted-foreground">No announcements yet</p>
                 </CardContent>
               </Card>
             ) : (
               announcements.map((ann) => (
-                <Card key={ann.id} className="app-list-card">
+                <Card key={ann.id}>
                   <CardContent className="p-4">
                     {ann.imageUrl && (
-                      <img src={ann.imageUrl} alt={ann.title} className="w-full h-40 object-cover rounded-md mb-3" />
+                      <img src={ann.imageUrl} alt={ann.title} className="w-full h-40 object-cover rounded-lg mb-3" />
                     )}
-                    <h3 className="font-semibold text-foreground">{ann.title}</h3>
+                    <h3 className="font-semibold text-zinc-900">{ann.title}</h3>
                     {ann.content && (
-                      <p className="text-sm text-muted-foreground mt-1 line-clamp-3">{ann.content}</p>
+                      <p className="text-sm text-zinc-500 mt-1 line-clamp-3">{ann.content}</p>
                     )}
-                    <p className="text-xs text-muted-foreground mt-2">
+                    <p className="text-xs text-zinc-400 mt-2">
                       {new Date(ann.createdAt).toLocaleDateString()}
                     </p>
                   </CardContent>
@@ -540,7 +540,7 @@ export default function MinistryDetail() {
       <Dialog open={showAddMember} onOpenChange={setShowAddMember}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Agregar miembro</DialogTitle>
+            <DialogTitle>Add Member</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleAddMember} className="space-y-4">
             <div className="space-y-2">
@@ -554,23 +554,23 @@ export default function MinistryDetail() {
               />
             </div>
             <div className="space-y-2">
-              <Label>Rol</Label>
+              <Label>Role</Label>
               <Select value={addRole} onValueChange={setAddRole}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="MEMBER">Miembro</SelectItem>
-                  <SelectItem value="LEADER">Líder</SelectItem>
+                  <SelectItem value="MEMBER">Member</SelectItem>
+                  <SelectItem value="LEADER">Leader</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setShowAddMember(false)}>
-                Cancelar
+                Cancel
               </Button>
               <Button type="submit" disabled={submitting}>
-                {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Agregar"}
+                {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Add Member"}
               </Button>
             </DialogFooter>
           </form>
@@ -581,11 +581,11 @@ export default function MinistryDetail() {
       <Dialog open={showEditMinistry} onOpenChange={setShowEditMinistry}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Editar ministerio</DialogTitle>
+            <DialogTitle>Edit Ministry</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleUpdateMinistry} className="space-y-4">
             <div className="space-y-2">
-              <Label>Nombre</Label>
+              <Label>Name</Label>
               <Input
                 value={editForm.name}
                 onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
@@ -593,7 +593,7 @@ export default function MinistryDetail() {
               />
             </div>
             <div className="space-y-2">
-              <Label>Descripción</Label>
+              <Label>Description</Label>
               <Input
                 value={editForm.description}
                 onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
@@ -610,14 +610,14 @@ export default function MinistryDetail() {
                 />
                 {editForm.color && (
                   <div
-                    className="w-10 h-10 rounded-md border border-border shrink-0"
+                    className="w-10 h-10 rounded-lg border border-zinc-200 shrink-0"
                     style={{ backgroundColor: editForm.color }}
                   />
                 )}
               </div>
             </div>
             <div className="space-y-2">
-              <Label>Link del grupo de WhatsApp</Label>
+              <Label>WhatsApp Group Link</Label>
               <Input
                 value={editForm.whatsappGroupUrl}
                 onChange={(e) => setEditForm({ ...editForm, whatsappGroupUrl: e.target.value })}
@@ -626,10 +626,10 @@ export default function MinistryDetail() {
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setShowEditMinistry(false)}>
-                Cancelar
+                Cancel
               </Button>
               <Button type="submit" disabled={submitting}>
-                {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Guardar cambios"}
+                {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Save Changes"}
               </Button>
             </DialogFooter>
           </form>

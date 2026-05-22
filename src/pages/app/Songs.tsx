@@ -184,14 +184,14 @@ export default function Songs() {
 
   return (
     <div className="mobile-page space-y-5">
-      <div className="app-page-header p-4 sm:p-5">
-        <div className="app-page-header-grid">
+      <div className="app-card-soft p-4">
+        <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="app-page-kicker">Biblioteca</p>
-            <h1 className="app-page-title">Canciones</h1>
-            <p className="app-page-copy">Encuentra acordes, letras, tonalidades y videos para el equipo.</p>
+            <p className="mobile-section-title">Biblioteca</p>
+            <h1 className="mt-1 text-3xl font-black tracking-tight text-zinc-950">Canciones</h1>
+            <p className="mt-1 text-sm text-muted-foreground">Encuentra acordes, letras, tonalidades y videos para el equipo.</p>
           </div>
-          {isAdmin && <Button size="sm" onClick={openNewDialog} className="h-10 shrink-0 rounded-md px-4"><Plus className="w-4 h-4 mr-1" /> Nueva</Button>}
+          {isAdmin && <Button size="sm" onClick={openNewDialog} className="h-11 shrink-0 rounded-2xl px-4"><Plus className="w-4 h-4 mr-1" /> Nueva</Button>}
         </div>
       </div>
       <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_180px_160px_180px]">
@@ -199,13 +199,13 @@ export default function Songs() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
             placeholder="Buscar por título, artista o tonalidad..."
-            className="app-control pl-9"
+            className="h-12 rounded-2xl border-zinc-200 bg-white pl-9 shadow-sm"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
         <Select value={artistFilter} onValueChange={setArtistFilter}>
-          <SelectTrigger className="app-control">
+          <SelectTrigger className="h-12 rounded-2xl border-zinc-200 bg-white shadow-sm">
             <SelectValue placeholder="Artista" />
           </SelectTrigger>
           <SelectContent>
@@ -216,7 +216,7 @@ export default function Songs() {
           </SelectContent>
         </Select>
         <Select value={keyFilter} onValueChange={setKeyFilter}>
-          <SelectTrigger className="app-control">
+          <SelectTrigger className="h-12 rounded-2xl border-zinc-200 bg-white shadow-sm">
             <SelectValue placeholder="Tonalidad" />
           </SelectTrigger>
           <SelectContent>
@@ -227,7 +227,7 @@ export default function Songs() {
           </SelectContent>
         </Select>
         <Select value={sortBy} onValueChange={setSortBy}>
-          <SelectTrigger className="app-control">
+          <SelectTrigger className="h-12 rounded-2xl border-zinc-200 bg-white shadow-sm">
             <SelectValue placeholder="Ordenar" />
           </SelectTrigger>
           <SelectContent>
@@ -317,14 +317,14 @@ export default function Songs() {
 
       <div className="grid gap-3">
         {filtered.map((s) => (
-          <Card key={s.id} className="app-list-card cursor-pointer" onClick={() => navigate(`/app/songs/${s.id}`)}>
+          <Card key={s.id} className="app-card cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-md" onClick={() => navigate(`/app/songs/${s.id}`)}>
             <CardContent className="flex items-center justify-between gap-3 p-4">
               <div className="flex min-w-0 items-center gap-3">
-                <div className="app-icon-tile text-sm font-bold">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-sm font-bold text-primary">
                   {getEffectiveKey(s) || "—"}
                 </div>
                 <div className="min-w-0">
-                  <div className="truncate font-semibold text-foreground">{getTitle(s)}</div>
+                  <div className="truncate font-bold text-zinc-950">{getTitle(s)}</div>
                   {s.author && <div className="text-sm text-muted-foreground">{s.author}</div>}
                   {s.lastUsedAt && (
                     <div className="text-xs text-muted-foreground">Última vez {new Date(s.lastUsedAt).toLocaleDateString("es-US")}</div>
@@ -332,13 +332,13 @@ export default function Songs() {
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                {s.bpm && <span className="app-count-pill mr-1">{s.bpm} BPM</span>}
+                {s.bpm && <span className="mr-1 rounded-full bg-zinc-100 px-2 py-1 text-xs font-semibold text-muted-foreground">{s.bpm} BPM</span>}
                 {isAdmin && (
                   <>
-                    <Button variant="ghost" size="icon" className="h-9 w-9 rounded-md" onClick={() => openEditDialog(s)}>
+                    <Button variant="ghost" size="icon" className="h-9 w-9 rounded-xl" onClick={() => openEditDialog(s)}>
                       <Pencil className="w-4 h-4" />
                     </Button>
-                    <Button variant="ghost" size="icon" className="h-9 w-9 rounded-md" onClick={() => setDeleteId(s.id)}>
+                    <Button variant="ghost" size="icon" className="h-9 w-9 rounded-xl" onClick={() => setDeleteId(s.id)}>
                       <Trash2 className="w-4 h-4 text-destructive" />
                     </Button>
                   </>
@@ -348,7 +348,7 @@ export default function Songs() {
           </Card>
         ))}
         {filtered.length === 0 && (
-          <div className="app-empty-state text-sm">No se encontraron canciones.</div>
+          <div className="app-card p-8 text-center text-sm text-muted-foreground">No se encontraron canciones.</div>
         )}
       </div>
     </div>

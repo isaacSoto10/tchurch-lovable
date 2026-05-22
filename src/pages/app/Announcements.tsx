@@ -241,20 +241,20 @@ export default function Announcements() {
 
   return (
     <div className="mobile-page space-y-6">
-      <Card className="app-page-header overflow-hidden">
+      <Card className="app-card-soft overflow-hidden border-primary/10 bg-gradient-to-br from-white via-slate-50 to-emerald-50">
         <CardHeader className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <Badge variant="secondary" className="w-fit gap-1 rounded-md">
+            <Badge variant="secondary" className="w-fit gap-1">
               <Megaphone className="h-3.5 w-3.5" />
               Anuncios
             </Badge>
-            <div className="grid grid-cols-2 rounded-md border border-border bg-secondary/50 p-1">
+            <div className="grid grid-cols-2 rounded-full bg-white p-1 shadow-sm">
               {(["en", "es"] as const).map((value) => (
                 <button
                   key={value}
                   type="button"
                   onClick={() => setLocale(value)}
-                  className={`rounded-sm px-3 py-1.5 text-xs font-bold transition-colors ${
+                  className={`rounded-full px-3 py-1.5 text-xs font-bold transition-colors ${
                     locale === value ? "bg-primary text-primary-foreground" : "text-muted-foreground"
                   }`}
                 >
@@ -263,21 +263,21 @@ export default function Announcements() {
               ))}
             </div>
           </div>
-          <CardTitle className="app-page-title">
+          <CardTitle className="text-2xl leading-tight">
             Comparte noticias con las personas correctas.
           </CardTitle>
-          <p className="app-page-copy">
+          <p className="text-sm leading-6 text-muted-foreground">
             Los administradores publican de inmediato. Los anuncios generales de otros usuarios pasan por aprobación.
             Los líderes pueden publicar directamente a su ministerio.
           </p>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="grid grid-cols-2 gap-2 rounded-md bg-muted p-1">
+            <div className="grid grid-cols-2 gap-2 rounded-2xl bg-muted p-1">
               <button
                 type="button"
                 onClick={() => setAudience("general")}
-                className={`rounded-sm px-3 py-2 text-sm font-bold ${
+                className={`rounded-xl px-3 py-2 text-sm font-bold ${
                   audience === "general" ? "bg-white text-primary shadow-sm" : "text-muted-foreground"
                 }`}
               >
@@ -287,7 +287,7 @@ export default function Announcements() {
                 type="button"
                 onClick={() => setAudience("ministry")}
                 disabled={leaderMinistries.length === 0}
-                className={`rounded-sm px-3 py-2 text-sm font-bold disabled:opacity-40 ${
+                className={`rounded-xl px-3 py-2 text-sm font-bold disabled:opacity-40 ${
                   audience === "ministry" ? "bg-white text-primary shadow-sm" : "text-muted-foreground"
                 }`}
               >
@@ -296,7 +296,7 @@ export default function Announcements() {
             </div>
 
             {audience === "general" && (
-              <p className="rounded-md border border-border bg-card px-4 py-3 text-xs leading-5 text-muted-foreground">
+              <p className="rounded-2xl bg-white/80 px-4 py-3 text-xs leading-5 text-muted-foreground">
                 {isAdmin
                   ? "Esto se publicará de inmediato y notificará a la iglesia."
                   : "Esto esperará aprobación antes de que los miembros lo vean."}
@@ -305,7 +305,7 @@ export default function Announcements() {
 
             {audience === "ministry" && (
               <Select value={ministryId} onValueChange={setMinistryId}>
-                <SelectTrigger className="app-control">
+                <SelectTrigger className="rounded-2xl bg-white">
                   <SelectValue placeholder="Elige ministerio" />
                 </SelectTrigger>
                 <SelectContent>
@@ -321,7 +321,7 @@ export default function Announcements() {
               placeholder="Título"
               value={title}
               onChange={(event) => setTitle(event.target.value)}
-              className="app-control"
+              className="rounded-2xl bg-white"
             />
             <Textarea
               required
@@ -329,7 +329,7 @@ export default function Announcements() {
               placeholder="Escribe el anuncio..."
               value={content}
               onChange={(event) => setContent(event.target.value)}
-              className="resize-none rounded-md bg-card"
+              className="resize-none rounded-2xl bg-white"
             />
 
             <AnnouncementAiImageField
@@ -345,7 +345,7 @@ export default function Announcements() {
             <Button
               type="submit"
               disabled={submitting || (audience === "ministry" && !ministryId)}
-              className="w-full rounded-md"
+              className="w-full rounded-2xl"
             >
               {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
               {submitting ? "Enviando..." : audience === "general" && !isAdmin ? "Enviar para aprobación" : "Publicar anuncio"}
@@ -356,8 +356,8 @@ export default function Announcements() {
 
       {isAdmin && pending.length > 0 && (
         <section className="space-y-3">
-          <div className="app-section-heading">
-            <h2 className="app-section-title text-amber-700">Necesita revisión</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-bold uppercase tracking-wider text-amber-700">Necesita revisión</h2>
             <Badge variant="secondary">{pending.length}</Badge>
           </div>
           {pending.map((announcement) => (
@@ -383,8 +383,8 @@ export default function Announcements() {
       )}
 
       <section className="space-y-3">
-        <div className="app-section-heading">
-          <h2 className="app-section-title">Publicados</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-bold uppercase tracking-wider text-muted-foreground">Publicados</h2>
           <Badge variant="outline">{posted.length}</Badge>
         </div>
         {posted.length === 0 ? (
@@ -406,7 +406,7 @@ export default function Announcements() {
 
       {!isAdmin && rejected.length > 0 && (
         <section className="space-y-3">
-          <h2 className="app-section-title">No aprobados</h2>
+          <h2 className="text-sm font-bold uppercase tracking-wider text-muted-foreground">No aprobados</h2>
           {rejected.map((announcement) => (
             <AnnouncementCard key={announcement.id} announcement={announcement} />
           ))}
@@ -439,11 +439,11 @@ function AnnouncementCard({
   onDelete?: () => void;
 }) {
   return (
-    <Card className="app-list-card overflow-hidden">
+    <Card className="app-card overflow-hidden">
       {announcement.imageUrl ? (
         <img src={announcement.imageUrl} alt="" className="h-44 w-full object-cover" />
       ) : (
-        <div className="h-1.5 bg-primary" />
+        <div className="h-1.5 bg-gradient-to-r from-primary to-emerald-300" />
       )}
       <CardContent className="p-4 space-y-3">
         <div className="flex items-start justify-between gap-3">
@@ -454,7 +454,7 @@ function AnnouncementCard({
               </Badge>
               {announcement.ministryName && <Badge variant="secondary">{announcement.ministryName}</Badge>}
             </div>
-            <h3 className="font-semibold leading-tight text-foreground">{announcement.title}</h3>
+            <h3 className="font-bold leading-tight text-zinc-950">{announcement.title}</h3>
           </div>
           {onDelete && (
             <Button variant="ghost" size="icon" onClick={onDelete}>

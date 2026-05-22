@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -32,15 +32,11 @@ interface Member {
   };
 }
 
-type MembersResponse = Member[] | {
-  members?: Member[];
-};
-
 const ROLE_OPTIONS = [
-  { value: "MEMBER", label: "Miembro" },
-  { value: "PLANNER", label: "Planificador" },
-  { value: "MUSICIAN", label: "Músico" },
-  { value: "TECH", label: "Técnica" },
+  { value: "MEMBER", label: "Member" },
+  { value: "PLANNER", label: "Planner" },
+  { value: "MUSICIAN", label: "Musician" },
+  { value: "TECH", label: "Tech" },
   { value: "ADMIN", label: "Admin" },
 ];
 
@@ -66,11 +62,15 @@ export default function Users() {
 
   const isAdmin = selectedChurch?.role === "ADMIN";
 
-  const loadMembers = useCallback(async () => {
+  useEffect(() => {
+    loadMembers();
+  }, [fetchApi, selectedChurch]);
+
+  async function loadMembers() {
     if (!selectedChurch) return;
     setLoading(true);
     try {
-      const data = await fetchApi<MembersResponse>(`/churches/${selectedChurch.id}/members`);
+      const data = await fetchApi<any>(`/churches/${selectedChurch.id}/members`);
       const memberList = Array.isArray(data) ? data : (data.members || []);
       setMembers(memberList);
     } catch (e) {
@@ -85,11 +85,7 @@ export default function Users() {
     } finally {
       setLoading(false);
     }
-  }, [fetchApi, selectedChurch]);
-
-  useEffect(() => {
-    loadMembers();
-  }, [loadMembers]);
+  }
 
   async function handleAddMember(e: React.FormEvent) {
     e.preventDefault();
@@ -100,14 +96,14 @@ export default function Users() {
         method: "POST",
         body: JSON.stringify({ email: addEmail.trim(), role: addRole }),
       });
-      toast({ title: "Miembro agregado" });
+      toast({ title: "Member added successfully" });
       setShowAddMember(false);
       setAddEmail("");
       setAddRole("MEMBER");
       loadMembers();
     } catch (e) {
       console.error(e);
-      toast({ title: "No se pudo agregar el miembro", variant: "destructive" });
+      toast({ title: "Failed to add member", variant: "destructive" });
     } finally {
       setSubmitting(false);
     }
@@ -121,11 +117,11 @@ export default function Users() {
         method: "PUT",
         body: JSON.stringify({ role: newRole }),
       });
-      toast({ title: "Rol actualizado" });
+      toast({ title: "Role updated" });
       setMembers((prev) => prev.map((m) => m.userId === userId || m.id === userId ? { ...m, role: newRole } : m));
     } catch (e) {
       console.error(e);
-      toast({ title: "No se pudo actualizar el rol", variant: "destructive" });
+      toast({ title: "Failed to update role", variant: "destructive" });
     } finally {
       setUpdatingRole(null);
     }
@@ -138,11 +134,11 @@ export default function Users() {
         method: "POST",
         body: JSON.stringify({}),
       });
-      toast({ title: "Miembro aprobado" });
+      toast({ title: "Member approved" });
       loadMembers();
     } catch (e) {
       console.error(e);
-      toast({ title: "No se pudo aprobar el miembro", variant: "destructive" });
+      toast({ title: "Failed to approve member", variant: "destructive" });
     }
   }
 
@@ -150,11 +146,11 @@ export default function Users() {
     if (!selectedChurch) return;
     try {
       await fetchApi(`/churches/${selectedChurch.id}/members/${userId}`, { method: "DELETE" });
-      toast({ title: "Miembro eliminado" });
+      toast({ title: "Member removed" });
       setMembers((prev) => prev.filter((m) => m.userId !== userId && m.id !== userId));
     } catch (e) {
       console.error(e);
-      toast({ title: "No se pudo eliminar el miembro", variant: "destructive" });
+      toast({ title: "Failed to remove member", variant: "destructive" });
     }
   }
 
@@ -184,63 +180,54 @@ export default function Users() {
       TECH: "bg-orange-100 text-orange-800",
       MEMBER: "bg-zinc-100 text-zinc-700",
     };
-    const label = ROLE_OPTIONS.find((option) => option.value === role)?.label || role;
     return (
-      <Badge className={`${colors[role] || colors.MEMBER} rounded-md text-xs`}>
-        {label}
+      <Badge className={`${colors[role] || colors.MEMBER} text-xs`}>
+        {role}
       </Badge>
     );
   };
 
   return (
-    <div className="app-page space-y-5">
-      <div className="app-page-header p-4 sm:p-5">
-        <div className="app-page-header-grid">
-          <div className="min-w-0">
-            <p className="app-page-kicker">Comunidad</p>
-            <h1 className="app-page-title">Miembros</h1>
-            <p className="app-page-copy">Revisa roles, solicitudes pendientes y datos de contacto de la iglesia.</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-            {pendingCount > 0 && isAdmin && (
-              <Badge variant="destructive" className="text-xs">{pendingCount} pendientes</Badge>
-            )}
-            {isAdmin && (
-              <Button size="sm" onClick={() => setShowAddMember(true)} className="h-10 rounded-md">
-                <Plus className="w-4 h-4 mr-1" /> Agregar
-              </Button>
-            )}
-          </div>
+    <div>
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center gap-2">
+          <h1 className="text-2xl font-bold">Members</h1>
+          {pendingCount > 0 && isAdmin && (
+            <Badge variant="destructive" className="text-xs">{pendingCount} pending</Badge>
+          )}
         </div>
-      </div>
-
-      {/* Filter tabs */}
-      <div className="flex flex-wrap gap-2">
-        <Button
-          size="sm"
-          className="h-9 rounded-md"
-          variant={filter === "all" ? "default" : "outline"}
-          onClick={() => setFilter("all")}
-        >
-          Todos ({members.length})
-        </Button>
         {isAdmin && (
-          <Button
-            size="sm"
-            className="h-9 rounded-md"
-            variant={filter === "pending" ? "default" : "outline"}
-            onClick={() => setFilter("pending")}
-          >
-            <Clock className="w-3 h-3 mr-1" /> Pendientes ({pendingCount})
+          <Button size="sm" onClick={() => setShowAddMember(true)}>
+            <Plus className="w-4 h-4 mr-1" /> Add Member
           </Button>
         )}
       </div>
 
-      <div className="relative">
+      {/* Filter tabs */}
+      <div className="flex gap-2 mb-4">
+        <Button
+          size="sm"
+          variant={filter === "all" ? "default" : "outline"}
+          onClick={() => setFilter("all")}
+        >
+          All ({members.length})
+        </Button>
+        {isAdmin && (
+          <Button
+            size="sm"
+            variant={filter === "pending" ? "default" : "outline"}
+            onClick={() => setFilter("pending")}
+          >
+            <Clock className="w-3 h-3 mr-1" /> Pending ({pendingCount})
+          </Button>
+        )}
+      </div>
+
+      <div className="relative mb-4">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
         <Input
-          placeholder="Buscar miembros..."
-          className="app-control pl-9"
+          placeholder="Search members..."
+          className="pl-9"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
@@ -253,17 +240,17 @@ export default function Users() {
           </div>
         )}
         {!loading && filteredMembers.length === 0 && (
-          <Card className="app-list-card border-dashed">
+          <Card>
             <CardContent className="p-8 text-center">
               <User className="w-8 h-8 mx-auto text-zinc-300 mb-2" />
               <p className="text-sm text-muted-foreground">
-                {filter === "pending" ? "No hay solicitudes pendientes" : "No se encontraron miembros."}
+                {filter === "pending" ? "No pending members" : "No members found."}
               </p>
             </CardContent>
           </Card>
         )}
         {!loading && filteredMembers.map((member) => (
-          <Card key={member.id || member.userId} className="app-list-card">
+          <Card key={member.id || member.userId}>
             <CardContent className="p-4 flex items-center gap-3">
               <Avatar className="h-10 w-10 shrink-0">
                 <AvatarFallback className="bg-primary/10 text-primary text-sm font-semibold">
@@ -285,7 +272,7 @@ export default function Users() {
                   isAdmin ? (
                     <div className="flex items-center gap-1">
                       <Badge variant="outline" className="text-xs text-amber-600 border-amber-200">
-                        Pendiente
+                        Pending
                       </Badge>
                       <Button
                         size="sm"
@@ -306,7 +293,7 @@ export default function Users() {
                     </div>
                   ) : (
                     <Badge variant="outline" className="text-xs text-amber-600 border-amber-200">
-                      Pendiente
+                      Pending
                     </Badge>
                   )
                 ) : (
@@ -342,7 +329,7 @@ export default function Users() {
       <Dialog open={showAddMember} onOpenChange={setShowAddMember}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Agregar miembro</DialogTitle>
+            <DialogTitle>Add Church Member</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleAddMember} className="space-y-4">
             <div className="space-y-2">
@@ -356,7 +343,7 @@ export default function Users() {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">Rol</label>
+              <label className="text-sm font-medium">Role</label>
               <Select value={addRole} onValueChange={setAddRole}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -367,9 +354,9 @@ export default function Users() {
               </Select>
             </div>
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setShowAddMember(false)}>Cancelar</Button>
+              <Button type="button" variant="outline" onClick={() => setShowAddMember(false)}>Cancel</Button>
               <Button type="submit" disabled={submitting}>
-                {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Agregar"}
+                {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Add Member"}
               </Button>
             </DialogFooter>
           </form>

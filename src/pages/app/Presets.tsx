@@ -10,18 +10,18 @@ import { apiFetch } from "@/lib/api";
 import { useAppAuth } from "@/hooks/useAppAuth";
 
 const MINISTRIES = [
-  { name: "Alabanza", color: "#b45309" },
-  { name: "Jóvenes", color: "#be185d" },
-  { name: "Niños", color: "#2563eb" },
-  { name: "Mujeres", color: "#7c3aed" },
-  { name: "Hombres", color: "#0f766e" },
-  { name: "Ujieres", color: "#c2410c" },
-  { name: "Media y tecnología", color: "#5c3f9b" },
-  { name: "Hospitalidad", color: "#047857" },
-  { name: "Oración", color: "#0369a1" },
-  { name: "Alcance", color: "#b91c1c" },
-  { name: "Estudio bíblico", color: "#4d7c0f" },
-  { name: "Adultos mayores", color: "#6d28d9" },
+  { name: "Worship Team", color: "#f59e0b", emoji: "🎵" },
+  { name: "Youth", color: "#ec4899", emoji: "🧑‍🤝‍🧑" },
+  { name: "Children's Ministry", color: "#3b82f6", emoji: "👧" },
+  { name: "Women's Ministry", color: "#8b5cf6", emoji: "👩" },
+  { name: "Men's Fellowship", color: "#14b8a6", emoji: "👨" },
+  { name: "Ushers & Greeters", color: "#f97316", emoji: "🚪" },
+  { name: "Media & Tech", color: "#6366f1", emoji: "📺" },
+  { name: "Hospitality", color: "#10b981", emoji: "🤝" },
+  { name: "Prayer Team", color: "#06b6d4", emoji: "🙏" },
+  { name: "Outreach", color: "#ef4444", emoji: "🌍" },
+  { name: "Bible Study", color: "#84cc16", emoji: "📖" },
+  { name: "Senior Saints", color: "#a855f7", emoji: "👴" },
 ];
 
 function slugify(name: string): string {
@@ -63,7 +63,7 @@ export default function Presets() {
 
   async function handleCreateChurch() {
     if (!churchName) {
-      toast({ description: "El nombre de la iglesia es requerido", variant: "destructive" });
+      toast({ description: "Church name is required", variant: "destructive" });
       return;
     }
 
@@ -95,8 +95,8 @@ export default function Presets() {
         navigate("/app", { replace: true });
         window.location.reload();
       }
-    } catch (err) {
-      toast({ description: err instanceof Error ? err.message : "No se pudo crear la iglesia", variant: "destructive" });
+    } catch (err: any) {
+      toast({ description: err.message || "Failed to create church", variant: "destructive" });
     } finally {
       setLoading(false);
     }
@@ -108,73 +108,71 @@ export default function Presets() {
   }
 
   return (
-    <div className="app-page flex min-h-screen flex-col bg-background">
+    <div className="min-h-screen bg-zinc-50 flex flex-col">
       {/* Header */}
-      <div className="border-b border-border bg-card px-4 py-4">
-        <div className="mx-auto flex max-w-2xl items-center gap-3">
+      <div className="bg-white border-b border-zinc-200 px-4 py-4">
+        <div className="max-w-sm mx-auto flex items-center gap-3">
           <button
             onClick={() => navigate("/create-church")}
-            className="-ml-2 rounded-md p-2 hover:bg-secondary"
+            className="p-2 -ml-2 rounded-lg hover:bg-zinc-100"
           >
-            <ArrowLeft className="w-5 h-5 text-muted-foreground" />
+            <ArrowLeft className="w-5 h-5 text-zinc-600" />
           </button>
-          <span className="font-semibold text-foreground">Configurar ministerios</span>
+          <span className="font-semibold text-zinc-900">Pick Your Ministries</span>
         </div>
       </div>
 
-      <div className="flex flex-1 flex-col items-center justify-center p-4">
-        <div className="w-full max-w-2xl space-y-5">
+      <div className="flex-1 flex flex-col items-center justify-center p-4">
+        <div className="w-full max-w-sm space-y-6">
           {/* Subtitle */}
-          <div className="app-page-header p-4 text-center sm:p-5">
-            <p className="app-page-kicker justify-center">Plantilla inicial</p>
-            <h1 className="app-page-title">Elige tus ministerios</h1>
-            <p className="app-page-copy mx-auto">
-              Selecciona las áreas activas de tu iglesia y agrega correos de líderes si quieres invitarlos desde el inicio.
+          <div className="text-center space-y-1">
+            <p className="text-sm text-zinc-500">
+              Select the ministries at your church. Add a leader's email to invite them.
             </p>
           </div>
 
           {/* Ministry Grid */}
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <div className="grid grid-cols-2 gap-3">
             {MINISTRIES.map((ministry) => {
               const isSelected = selected.has(ministry.name);
               return (
                 <Card
                   key={ministry.name}
-                  className={`app-list-card cursor-pointer transition-all ${
+                  className={`cursor-pointer transition-all ${
                     isSelected ? "ring-2 ring-primary" : ""
                   }`}
                   onClick={() => toggleMinistry(ministry.name)}
                 >
                   <CardContent className="p-4 flex flex-col items-center gap-2">
-                    {/* Ministry mark */}
+                    {/* Colored circle with emoji */}
                     <div
-                      className="flex h-10 w-10 items-center justify-center rounded-md text-xs font-semibold text-white"
+                      className="w-10 h-10 rounded-full flex items-center justify-center text-xl"
                       style={{ backgroundColor: ministry.color + "20" }}
                     >
-                      <span className="text-foreground">{ministry.name.slice(0, 2).toUpperCase()}</span>
+                      {ministry.emoji}
                     </div>
                     {/* Ministry name */}
-                    <span className="text-center text-xs font-medium text-foreground">
+                    <span className="text-xs font-medium text-zinc-700 text-center">
                       {ministry.name}
                     </span>
                     {/* Checkbox indicator */}
                     <div
-                      className={`flex h-5 w-5 items-center justify-center rounded-md border transition-colors ${
+                      className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${
                         isSelected ? "border-primary bg-primary" : "border-zinc-300"
                       }`}
                     >
                       {isSelected && <Check className="w-3 h-3 text-white" />}
                     </div>
-                    {/* Leader email input */}
+                    {/* Leader email input (shown when selected) */}
                     {isSelected && (
                       <div className="w-full mt-2">
                         <Input
                           type="email"
-                          placeholder="Correo del líder (opcional)"
+                          placeholder="Leader email (optional)"
                           value={leaderEmails[ministry.name] || ""}
                           onChange={(e) => handleLeaderEmail(ministry.name, e.target.value)}
                           onClick={(e) => e.stopPropagation()}
-                          className="h-8 rounded-md text-xs"
+                          className="text-xs h-8"
                         />
                       </div>
                     )}
@@ -188,19 +186,19 @@ export default function Presets() {
           <div className="text-center">
             <button
               onClick={handleSkip}
-              className="text-sm text-muted-foreground underline hover:text-foreground"
+              className="text-sm text-zinc-500 hover:text-zinc-700 underline"
             >
-              Omitir por ahora
+              Skip for now
             </button>
           </div>
 
-          {/* Create church button */}
+          {/* Create Church button */}
           <Button
             onClick={handleCreateChurch}
             disabled={loading}
-            className="w-full rounded-md"
+            className="w-full"
           >
-            {loading ? "Creando..." : "Crear iglesia"}
+            {loading ? "Creating..." : "Create Church"}
           </Button>
         </div>
       </div>

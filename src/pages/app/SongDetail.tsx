@@ -1,11 +1,13 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Separator } from "@/components/ui/separator";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
@@ -14,6 +16,7 @@ import {
 } from "@/components/ui/select";
 import { Loader2, ArrowLeft, Plus, Trash2, Music2, Play, PlayCircle } from "lucide-react";
 import { apiFetch } from "@/lib/api";
+import { useChurch } from "@/providers/ChurchProvider";
 import { ChordProPreview } from "@/components/ChordProPreview";
 import { buildSongNotes, getSongYoutubeUrl, parseSongNotes } from "@/lib/songDisplay";
 import { inferChordProKey } from "@/lib/musicUtils";
@@ -48,7 +51,7 @@ type Arrangement = {
   key: string | null;
   bpm: number | null;
   meter: string | null;
-  sequence: unknown[];
+  sequence: any[];
   lyrics: string | null;
   notes: string | null;
   createdAt: string;
@@ -78,6 +81,7 @@ function PresentationSlide({ text }: { text: string }) {
 export default function SongDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { selectedChurch } = useChurch();
 
   const [song, setSong] = useState<Song | null>(null);
   const [arrangements, setArrangements] = useState<Arrangement[]>([]);
@@ -133,7 +137,7 @@ export default function SongDetail() {
       }
     }
     load();
-  }, [id, navigate]);
+  }, [id]);
 
   async function saveField(field: string, value: string) {
     if (!id || !song) return;
@@ -258,37 +262,36 @@ export default function SongDetail() {
   }
 
   return (
-    <div className="app-page space-y-4">
+    <div className="mobile-page space-y-4">
       {/* Header */}
-      <div className="app-page-header overflow-hidden">
+      <div className="app-card-soft overflow-hidden">
         <div className="flex items-center gap-3 px-4 py-4">
-          <button onClick={() => navigate("/app/songs")} className="-ml-1 flex h-10 w-10 items-center justify-center rounded-md border border-border bg-card shadow-sm hover:bg-secondary">
-            <ArrowLeft className="w-5 h-5 text-muted-foreground" />
+          <button onClick={() => navigate("/app/songs")} className="-ml-1 flex h-10 w-10 items-center justify-center rounded-2xl bg-white shadow-sm hover:bg-zinc-50">
+            <ArrowLeft className="w-5 h-5 text-zinc-600" />
           </button>
           <div className="flex-1 min-w-0">
-            <p className="app-page-kicker">Canción</p>
-            <h1 className="truncate text-xl font-semibold text-foreground">{song.title}</h1>
-            {song.author && <p className="mt-0.5 truncate text-sm text-muted-foreground">por {song.author}</p>}
+            <h1 className="truncate text-xl font-black tracking-tight text-zinc-950">{song.title}</h1>
+            {song.author && <p className="mt-0.5 truncate text-sm text-zinc-500">por {song.author}</p>}
           </div>
           {getSongYoutubeUrl(song) && (
-            <Button asChild variant="outline" size="sm" className="h-10 w-10 rounded-md p-0">
+            <Button asChild variant="outline" size="sm" className="h-10 w-10 rounded-2xl p-0">
               <a href={getSongYoutubeUrl(song) || "#"} target="_blank" rel="noreferrer">
                 <PlayCircle className="w-4 h-4" />
               </a>
             </Button>
           )}
-          <Button variant="ghost" size="sm" className="h-10 w-10 rounded-md text-red-500" onClick={() => setShowDeleteSong(true)}>
+          <Button variant="ghost" size="sm" className="h-10 w-10 rounded-2xl text-red-500" onClick={() => setShowDeleteSong(true)}>
             <Trash2 className="w-4 h-4" />
           </Button>
         </div>
 
         <div className="px-4 pb-3">
           <Tabs value={activeSection} onValueChange={(v) => setActiveSection(v as Section)}>
-            <TabsList className="flex h-auto w-full justify-start gap-1 overflow-x-auto rounded-md bg-muted p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-              <TabsTrigger value="info" className="shrink-0 rounded-sm text-xs">Info</TabsTrigger>
-              <TabsTrigger value="arrangements" className="shrink-0 rounded-sm text-xs">Arreglos</TabsTrigger>
-              <TabsTrigger value="lyrics" className="shrink-0 rounded-sm text-xs">Letras</TabsTrigger>
-              <TabsTrigger value="preview" className="shrink-0 rounded-sm text-xs">Vista</TabsTrigger>
+            <TabsList className="grid h-11 w-full grid-cols-4 rounded-2xl bg-zinc-100/70 p-1">
+              <TabsTrigger value="info" className="text-xs">Info</TabsTrigger>
+              <TabsTrigger value="arrangements" className="text-xs">Arreglos</TabsTrigger>
+              <TabsTrigger value="lyrics" className="text-xs">Letras</TabsTrigger>
+              <TabsTrigger value="preview" className="text-xs">Vista</TabsTrigger>
             </TabsList>
           </Tabs>
         </div>
@@ -299,7 +302,7 @@ export default function SongDetail() {
         {/* INFO TAB */}
         {activeSection === "info" && (
           <div className="space-y-4">
-            <Card className="app-list-card">
+            <Card className="app-card">
               <CardContent className="p-4 space-y-4">
                 <div className="space-y-2">
                   <Label>Título</Label>
@@ -382,15 +385,15 @@ export default function SongDetail() {
         {activeSection === "arrangements" && (
           <div className="space-y-4">
             <div className="flex justify-end">
-              <Button size="sm" className="rounded-md" onClick={() => setShowAddArrangement(true)}>
+              <Button size="sm" onClick={() => setShowAddArrangement(true)}>
                 <Plus className="w-4 h-4 mr-1" /> Agregar arreglo
               </Button>
             </div>
 
             {arrangements.length === 0 ? (
-              <Card className="app-empty-state">
+              <Card className="app-card">
                 <CardContent className="p-8 text-center">
-                  <Music2 className="w-8 h-8 mx-auto text-muted-foreground/50 mb-2" />
+                  <Music2 className="w-8 h-8 mx-auto text-zinc-300 mb-2" />
                   <p className="text-sm text-muted-foreground">Todavía no hay arreglos. Agrega uno para comenzar.</p>
                 </CardContent>
               </Card>
@@ -399,22 +402,20 @@ export default function SongDetail() {
                 {arrangements.map((arr) => (
                   <Card
                     key={arr.id}
-                    className={`app-list-card cursor-pointer transition-all ${activeArrangement?.id === arr.id ? "border-primary ring-1 ring-primary" : ""}`}
+                    className={`app-card cursor-pointer transition-all ${activeArrangement?.id === arr.id ? "border-primary ring-1 ring-primary" : ""}`}
                     onClick={() => setActiveArrangement(arr)}
                   >
                     <CardContent className="p-4 flex items-center gap-3">
-                      <div className="app-icon-tile">
-                        <Music2 className="w-5 h-5 text-primary shrink-0" />
-                      </div>
+                      <Music2 className="w-5 h-5 text-primary shrink-0" />
                       <div className="flex-1 min-w-0">
                         <p className="font-medium text-sm">{arr.name}</p>
-                        <p className="text-xs text-muted-foreground">
+                        <p className="text-xs text-zinc-500">
                           {[arr.key, arr.bpm ? `${arr.bpm} BPM` : null, arr.meter].filter(Boolean).join(" · ") || "Sin detalles"}
                         </p>
                       </div>
                       <button
                         onClick={(e) => { e.stopPropagation(); handleDeleteArrangement(arr.id); }}
-                        className="p-1.5 rounded-md hover:bg-red-50 text-muted-foreground hover:text-red-500 transition-colors"
+                        className="p-1.5 rounded-lg hover:bg-red-50 text-zinc-400 hover:text-red-500 transition-colors"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -432,8 +433,8 @@ export default function SongDetail() {
             {activeArrangement ? (
               <>
                 <div className="flex items-center justify-between">
-                  <p className="text-sm font-medium text-muted-foreground">{activeArrangement.name} — Letras</p>
-                  <Button size="sm" variant="outline" className="rounded-md" onClick={handleSaveLyrics} disabled={saving}>
+                  <p className="text-sm font-medium text-zinc-600">{activeArrangement.name} — Letras</p>
+                  <Button size="sm" variant="outline" onClick={handleSaveLyrics} disabled={saving}>
                     {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Guardar"}
                   </Button>
                 </div>
@@ -443,12 +444,12 @@ export default function SongDetail() {
                   className="min-h-96 font-mono text-sm"
                   placeholder={`[Verso 1]\nLetra aquí...\n\n[Coro]\nLetra aquí...`}
                 />
-                <p className="text-xs text-muted-foreground">Usa líneas en blanco para separar slides. Encabezados en [corchetes].</p>
+                <p className="text-xs text-zinc-400">Usa líneas en blanco para separar slides. Encabezados en [corchetes].</p>
               </>
             ) : (
-              <Card className="app-empty-state">
+              <Card className="app-card">
                 <CardContent className="p-8 text-center">
-                  <Music2 className="w-8 h-8 mx-auto text-muted-foreground/50 mb-2" />
+                  <Music2 className="w-8 h-8 mx-auto text-zinc-300 mb-2" />
                   <p className="text-sm text-muted-foreground">Selecciona un arreglo para editar letras, o crea uno primero.</p>
                 </CardContent>
               </Card>
@@ -461,7 +462,7 @@ export default function SongDetail() {
           <div className="space-y-3">
             {previewLyrics ? (
               <>
-                <p className="text-sm font-medium text-muted-foreground">{activeArrangement?.name || "Canción principal"} — Hoja de acordes</p>
+                <p className="text-sm font-medium text-zinc-600">{activeArrangement?.name || "Canción principal"} — Hoja de acordes</p>
                 <ChordProPreview
                   value={previewLyrics}
                   maxLines={120}
@@ -469,7 +470,7 @@ export default function SongDetail() {
                   title={song.title}
                   artist={song.author}
                 />
-                <p className="text-xs text-muted-foreground">{splitSlides(previewLyrics).length} slides</p>
+                <p className="text-xs text-zinc-400">{splitSlides(previewLyrics).length} slides</p>
                 <div className="space-y-3">
                   {splitSlides(previewLyrics).map((slide, i) => (
                     <PresentationSlide key={i} text={slide} />
@@ -477,9 +478,9 @@ export default function SongDetail() {
                 </div>
               </>
             ) : (
-              <Card className="app-empty-state">
+              <Card className="app-card">
                 <CardContent className="p-8 text-center">
-                  <Play className="w-8 h-8 mx-auto text-muted-foreground/50 mb-2" />
+                  <Play className="w-8 h-8 mx-auto text-zinc-300 mb-2" />
                   <p className="text-sm text-muted-foreground">Agrega letras a un arreglo para previsualizar slides.</p>
                 </CardContent>
               </Card>

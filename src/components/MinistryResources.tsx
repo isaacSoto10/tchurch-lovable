@@ -96,10 +96,10 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
   return (
     <div className="space-y-3">
       {canManage && (
-        <Card className="app-empty-state">
+        <Card className="border-dashed">
           <CardContent className="p-5 text-center">
             <input ref={inputRef} type="file" multiple className="hidden" onChange={(event) => handleFiles(event.target.files)} />
-            <Button onClick={() => inputRef.current?.click()} disabled={uploading} className="rounded-md">
+            <Button onClick={() => inputRef.current?.click()} disabled={uploading} className="rounded-full">
               {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
               {uploading ? "Subiendo..." : "Subir recurso"}
             </Button>
@@ -111,7 +111,7 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
       )}
 
       {resources.length === 0 ? (
-        <Card className="app-empty-state">
+        <Card>
           <CardContent className="p-8 text-center">
             <FileText className="mx-auto mb-2 h-8 w-8 text-muted-foreground/50" />
             <p className="text-sm text-muted-foreground">Todavía no hay recursos subidos.</p>
@@ -120,9 +120,9 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
       ) : (
         <div className="space-y-2">
           {resources.map((resource) => (
-            <Card key={resource.id} className="app-list-card">
+            <Card key={resource.id}>
               <CardContent className="flex items-center gap-3 p-3">
-                <div className="app-icon-tile h-11 w-11">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
                   <FileText className="h-5 w-5" />
                 </div>
                 <div className="min-w-0 flex-1">

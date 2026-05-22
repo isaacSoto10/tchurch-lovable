@@ -73,7 +73,7 @@ export default function TeamDetail() {
       }
     }
     load();
-  }, [id, navigate]);
+  }, [id]);
 
   async function handleAddMember(e: React.FormEvent) {
     e.preventDefault();
@@ -149,8 +149,8 @@ export default function TeamDetail() {
   if (!team) {
     return (
       <div className="p-4 text-center">
-        <p className="text-muted-foreground">Equipo no encontrado</p>
-        <Button variant="ghost" onClick={() => navigate("/app/teams")} className="mt-2">Volver</Button>
+        <p className="text-muted-foreground">Team not found</p>
+        <Button variant="ghost" onClick={() => navigate("/app/teams")} className="mt-2">Back</Button>
       </div>
     );
   }
@@ -158,24 +158,21 @@ export default function TeamDetail() {
   const colorDot = team.color || "#3b82f6";
 
   return (
-    <div className="app-page space-y-4">
+    <div className="min-h-screen bg-zinc-50">
       {/* Header */}
-      <div className="app-page-header">
-        <div className="flex items-center gap-3 px-4 py-4">
-          <button onClick={() => navigate("/app/teams")} className="-ml-1 flex h-10 w-10 items-center justify-center rounded-md border border-border bg-card shadow-sm hover:bg-secondary">
-            <ArrowLeft className="w-5 h-5 text-muted-foreground" />
+      <div className="bg-white border-b border-zinc-200 sticky top-0 z-10">
+        <div className="flex items-center gap-3 px-4 py-3">
+          <button onClick={() => navigate("/app/teams")} className="p-2 -ml-2 rounded-lg hover:bg-zinc-100">
+            <ArrowLeft className="w-5 h-5 text-zinc-600" />
           </button>
           <div className="flex items-center gap-2 flex-1 min-w-0">
-            <div className="h-8 w-2 rounded-sm shrink-0" style={{ backgroundColor: colorDot }} />
-            <div className="min-w-0">
-              <p className="app-page-kicker">Equipo</p>
-              <h1 className="truncate text-xl font-semibold text-foreground">{team.name}</h1>
-            </div>
+            <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: colorDot }} />
+            <h1 className="font-semibold text-zinc-900 truncate">{team.name}</h1>
           </div>
           {isAdmin && (
             <div className="flex gap-1">
-              <Button variant="ghost" size="sm" className="rounded-md" onClick={() => setShowEditTeam(true)}>Editar</Button>
-              <Button variant="ghost" size="sm" className="rounded-md text-red-500" onClick={handleDeleteTeam}>
+              <Button variant="ghost" size="sm" onClick={() => setShowEditTeam(true)}>Edit</Button>
+              <Button variant="ghost" size="sm" className="text-red-500" onClick={handleDeleteTeam}>
                 <Trash2 className="w-4 h-4" />
               </Button>
             </div>
@@ -183,40 +180,40 @@ export default function TeamDetail() {
         </div>
       </div>
 
-      <div className="space-y-4">
+      <div className="p-4 space-y-4">
 
         {/* Team Info */}
         {team.description && (
-          <Card className="app-list-card">
+          <Card>
             <CardContent className="p-4">
-              <p className="text-sm text-muted-foreground">{team.description}</p>
+              <p className="text-sm text-zinc-600">{team.description}</p>
             </CardContent>
           </Card>
         )}
 
         {/* Members */}
-        <div className="app-section-heading">
-          <h2 className="app-section-title">
-            Miembros ({team.members?.length || 0})
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-zinc-700 uppercase tracking-wider">
+            Members ({team.members?.length || 0})
           </h2>
           {isAdmin && (
-            <Button size="sm" className="rounded-md" onClick={() => setShowAddMember(true)}>
-              <Plus className="w-4 h-4 mr-1" /> Agregar
+            <Button size="sm" onClick={() => setShowAddMember(true)}>
+              <Plus className="w-4 h-4 mr-1" /> Add Member
             </Button>
           )}
         </div>
 
         {(team.members || []).length === 0 ? (
-          <Card className="app-empty-state">
+          <Card>
             <CardContent className="p-8 text-center">
-              <Users className="w-8 h-8 mx-auto text-muted-foreground/50 mb-2" />
-              <p className="text-sm text-muted-foreground">Todavía no hay miembros.</p>
+              <Users className="w-8 h-8 mx-auto text-zinc-300 mb-2" />
+              <p className="text-sm text-muted-foreground">No members yet</p>
             </CardContent>
           </Card>
         ) : (
           <div className="space-y-2">
             {(team.members || []).map((member) => (
-              <Card key={member.id} className="app-list-card">
+              <Card key={member.id}>
                 <CardContent className="p-3 flex items-center gap-3">
                   <Avatar className="h-10 w-10 shrink-0">
                     <AvatarFallback className="bg-primary/10 text-primary text-sm font-semibold">
@@ -227,16 +224,16 @@ export default function TeamDetail() {
                     <p className="font-medium text-sm truncate">
                       {member.user?.firstName} {member.user?.lastName}
                     </p>
-                    <p className="text-xs text-muted-foreground truncate">{member.user?.email}</p>
+                    <p className="text-xs text-zinc-500 truncate">{member.user?.email}</p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Badge variant={member.role === "LEADER" ? "default" : "secondary"} className="rounded-md text-xs">
+                    <Badge variant={member.role === "LEADER" ? "default" : "secondary"} className="text-xs">
                       {member.role}
                     </Badge>
                     {isAdmin && (
                       <button
                         onClick={() => handleRemoveMember(member.userId)}
-                        className="p-1.5 rounded-md hover:bg-red-50 text-muted-foreground hover:text-red-500 transition-colors"
+                        className="p-1.5 rounded-lg hover:bg-red-50 text-zinc-400 hover:text-red-500 transition-colors"
                       >
                         <UserMinus className="w-4 h-4" />
                       </button>
@@ -253,7 +250,7 @@ export default function TeamDetail() {
       <Dialog open={showAddMember} onOpenChange={setShowAddMember}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Agregar miembro</DialogTitle>
+            <DialogTitle>Add Team Member</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleAddMember} className="space-y-4">
             <div className="space-y-2">
@@ -261,18 +258,18 @@ export default function TeamDetail() {
               <Input type="email" value={addEmail} onChange={(e) => setAddEmail(e.target.value)} placeholder="member@example.com" required />
             </div>
             <div className="space-y-2">
-              <Label>Rol</Label>
+              <Label>Role</Label>
               <Select value={addRole} onValueChange={setAddRole}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="MEMBER">Miembro</SelectItem>
-                  <SelectItem value="LEADER">Líder</SelectItem>
+                  <SelectItem value="MEMBER">Member</SelectItem>
+                  <SelectItem value="LEADER">Leader</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setShowAddMember(false)}>Cancelar</Button>
-              <Button type="submit" disabled={submitting}>{submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Agregar"}</Button>
+              <Button type="button" variant="outline" onClick={() => setShowAddMember(false)}>Cancel</Button>
+              <Button type="submit" disabled={submitting}>{submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Add"}</Button>
             </DialogFooter>
           </form>
         </DialogContent>
@@ -282,15 +279,15 @@ export default function TeamDetail() {
       <Dialog open={showEditTeam} onOpenChange={setShowEditTeam}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Editar equipo</DialogTitle>
+            <DialogTitle>Edit Team</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleUpdateTeam} className="space-y-4">
             <div className="space-y-2">
-              <Label>Nombre</Label>
+              <Label>Name</Label>
               <Input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} required />
             </div>
             <div className="space-y-2">
-              <Label>Descripción</Label>
+              <Label>Description</Label>
               <Input value={editForm.description} onChange={(e) => setEditForm({ ...editForm, description: e.target.value })} />
             </div>
             <div className="space-y-2">
@@ -298,13 +295,13 @@ export default function TeamDetail() {
               <div className="flex gap-2">
                 <Input value={editForm.color} onChange={(e) => setEditForm({ ...editForm, color: e.target.value })} placeholder="#3b82f6" className="font-mono" />
                 {editForm.color && (
-                  <div className="w-10 h-10 rounded-md border border-border shrink-0" style={{ backgroundColor: editForm.color }} />
+                  <div className="w-10 h-10 rounded-lg border border-zinc-200 shrink-0" style={{ backgroundColor: editForm.color }} />
                 )}
               </div>
             </div>
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setShowEditTeam(false)}>Cancelar</Button>
-              <Button type="submit" disabled={submitting}>{submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Guardar"}</Button>
+              <Button type="button" variant="outline" onClick={() => setShowEditTeam(false)}>Cancel</Button>
+              <Button type="submit" disabled={submitting}>{submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Save"}</Button>
             </DialogFooter>
           </form>
         </DialogContent>

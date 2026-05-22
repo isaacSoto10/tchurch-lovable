@@ -3,7 +3,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowLeft, Hash, MessageCircle, Plus, Send, Trash2 } from "lucide-react";
+import { MessageCircle, Send, Hash, Plus, Trash2 } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
 import {
@@ -99,9 +99,9 @@ export default function Messages() {
       setNewChannelOpen(false);
       setNewChannelName("");
       setNewChannelDesc("");
-      toast({ title: "Canal creado" });
+      toast({ title: "Channel created" });
     } catch (e) {
-      toast({ title: "No se pudo crear el canal", variant: "destructive" });
+      toast({ title: "Failed to create channel", variant: "destructive" });
     } finally {
       setCreating(false);
     }
@@ -114,7 +114,7 @@ export default function Messages() {
       setMessages((prev) => prev.filter((message) => message.id !== messageId));
     } catch (e) {
       toast({
-        title: e instanceof Error ? e.message : "No se pudo eliminar el mensaje",
+        title: e instanceof Error ? e.message : "Failed to delete message",
         variant: "destructive",
       });
     }
@@ -125,79 +125,68 @@ export default function Messages() {
   }
 
   return (
-    <div className="app-page space-y-5">
-      <div className="app-page-header p-4 sm:p-5">
-        <div className="app-page-header-grid">
-          <div className="min-w-0">
-            <p className="app-page-kicker">Conversaciones</p>
-            <h1 className="app-page-title">Mensajes</h1>
-            <p className="app-page-copy">Canales internos para coordinar equipos, servicios y seguimiento pastoral.</p>
-          </div>
+    <div>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-bold">Messages</h1>
         <Dialog open={newChannelOpen} onOpenChange={setNewChannelOpen}>
           <DialogTrigger asChild>
-            <Button size="sm" className="rounded-md">
-              <Plus className="w-4 h-4 mr-1" /> Nuevo canal
+            <Button size="sm">
+              <Plus className="w-4 h-4 mr-1" /> New Channel
             </Button>
           </DialogTrigger>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Crear canal</DialogTitle>
+              <DialogTitle>Create New Channel</DialogTitle>
             </DialogHeader>
             <div className="space-y-4 py-4">
               <div>
-                <label className="text-sm font-medium">Nombre del canal</label>
+                <label className="text-sm font-medium">Channel Name</label>
                 <Input
                   value={newChannelName}
                   onChange={(e) => setNewChannelName(e.target.value)}
-                  placeholder="Ej. alabanza"
-                  className="app-control mt-1"
+                  placeholder="e.g., worship-team"
+                  className="mt-1"
                 />
               </div>
               <div>
-                <label className="text-sm font-medium">Descripción (opcional)</label>
+                <label className="text-sm font-medium">Description (optional)</label>
                 <Textarea
                   value={newChannelDesc}
                   onChange={(e) => setNewChannelDesc(e.target.value)}
-                  placeholder="¿Para qué se usará este canal?"
-                  className="mt-1 rounded-md"
+                  placeholder="What is this channel about?"
+                  className="mt-1"
                 />
               </div>
               <div className="flex justify-end gap-2">
                 <Button variant="outline" onClick={() => setNewChannelOpen(false)}>
-                  Cancelar
+                  Cancel
                 </Button>
                 <Button onClick={handleCreateChannel} disabled={!newChannelName.trim() || creating}>
-                  {creating ? "Creando..." : "Crear canal"}
+                  {creating ? "Creating..." : "Create Channel"}
                 </Button>
               </div>
             </div>
           </DialogContent>
         </Dialog>
-        </div>
       </div>
 
       {!selectedChannel ? (
         <div className="grid gap-3">
           {channels.length === 0 && (
-            <div className="app-empty-state">
-              <MessageCircle className="mx-auto mb-2 h-8 w-8 text-muted-foreground/50" />
-              <p className="text-sm text-muted-foreground">Todavía no hay canales. Crea uno para empezar.</p>
-            </div>
+            <p className="text-sm text-muted-foreground">No channels yet. Create one to start messaging!</p>
           )}
           {channels.map((channel) => (
             <Card
               key={channel.id}
-              className="app-list-card cursor-pointer"
+              className="hover:shadow-md transition-shadow cursor-pointer"
               onClick={() => setSelectedChannel(channel)}
             >
               <CardContent className="p-4 flex items-center gap-4">
-                <div className="app-icon-tile">
-                  <Hash className="w-5 h-5" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium">{channel.name}</p>
+                <Hash className="w-5 h-5 text-muted-foreground" />
+                <div className="flex-1">
+                  <p className="font-medium">{channel.name}</p>
                   {channel.description && (
-                    <p className="truncate text-sm text-muted-foreground">{channel.description}</p>
+                    <p className="text-sm text-muted-foreground">{channel.description}</p>
                   )}
                 </div>
               </CardContent>
@@ -205,15 +194,12 @@ export default function Messages() {
           ))}
         </div>
       ) : (
-        <div className="app-list-card flex min-h-[520px] flex-col p-4 sm:h-[calc(100vh-260px)]">
-          <div className="mb-4 flex items-center gap-2">
-            <Button variant="ghost" size="sm" className="rounded-md" onClick={() => setSelectedChannel(null)}>
-              <ArrowLeft className="h-4 w-4" />
-              Volver
+        <div className="flex flex-col h-[calc(100vh-220px)]">
+          <div className="flex items-center gap-2 mb-4">
+            <Button variant="ghost" size="sm" onClick={() => setSelectedChannel(null)}>
+              ← Back
             </Button>
-            <div className="app-icon-tile h-8 w-8">
-              <Hash className="w-4 h-4" />
-            </div>
+            <Hash className="w-4 h-4 text-muted-foreground" />
             <span className="font-medium">{selectedChannel.name}</span>
           </div>
 
@@ -224,20 +210,18 @@ export default function Messages() {
               </div>
             )}
             {!loadingMessages && messages.length === 0 && (
-              <div className="app-empty-state">
-                <p className="text-sm text-muted-foreground">Todavía no hay mensajes. Inicia la conversación.</p>
-              </div>
+              <p className="text-sm text-muted-foreground text-center py-8">No messages yet. Start the conversation!</p>
             )}
             {!loadingMessages && messages.map((msg) => (
               <div key={msg.id} className="flex gap-3">
-                <div className="app-icon-tile h-8 w-8">
-                  <MessageCircle className="w-4 h-4" />
+                <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                  <MessageCircle className="w-4 h-4 text-primary" />
                 </div>
                 <div className="flex-1">
                   <div className="flex items-start gap-2">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-baseline gap-2">
-                        <span className="font-medium text-sm">{msg.authorName || "Miembro"}</span>
+                        <span className="font-medium text-sm">{msg.authorName || "User"}</span>
                         <span className="text-xs text-muted-foreground">{formatMessageTime(msg.createdAt)}</span>
                       </div>
                       <p className="text-sm mt-0.5 whitespace-pre-wrap">{msg.content}</p>
@@ -248,7 +232,7 @@ export default function Messages() {
                         size="icon"
                         className="h-7 w-7 text-muted-foreground hover:bg-red-50 hover:text-red-500"
                         onClick={() => handleDeleteMessage(msg.id)}
-                        aria-label="Eliminar mensaje"
+                        aria-label="Delete message"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
@@ -261,13 +245,12 @@ export default function Messages() {
 
           <div className="flex gap-2">
             <Input
-              placeholder="Escribe un mensaje..."
+              placeholder="Type a message..."
               value={newMessage}
               onChange={(e) => setNewMessage(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
-              className="app-control"
             />
-            <Button size="icon" className="rounded-md" onClick={handleSendMessage}>
+            <Button size="icon" onClick={handleSendMessage}>
               <Send className="w-4 h-4" />
             </Button>
           </div>

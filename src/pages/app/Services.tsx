@@ -709,14 +709,14 @@ export default function Services() {
 
   return (
     <div className="mobile-page space-y-5">
-      <div className="app-page-header p-4 sm:p-5">
-        <div className="app-page-header-grid">
+      <div className="app-card-soft p-4">
+        <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="app-page-kicker">Planificación</p>
-            <h1 className="app-page-title">Servicios</h1>
-            <p className="app-page-copy">Organiza el flujo, canciones y equipo de cada reunión.</p>
+            <p className="mobile-section-title">Planificación</p>
+            <h1 className="mt-1 text-3xl font-black tracking-tight text-zinc-950">Servicios</h1>
+            <p className="mt-1 text-sm text-muted-foreground">Organiza el flujo, canciones y equipo de cada reunión.</p>
           </div>
-          {isAdmin && <Button size="sm" onClick={openNewDialog} className="h-10 shrink-0 rounded-md px-4">
+          {isAdmin && <Button size="sm" onClick={openNewDialog} className="h-11 shrink-0 rounded-2xl px-4 shadow-sm">
           <Plus className="w-4 h-4 mr-1" /> Nuevo
         </Button>}
         </div>
@@ -728,14 +728,14 @@ export default function Services() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
               placeholder="Buscar servicios..."
-              className="app-control pl-9"
+              className="h-12 rounded-2xl border-zinc-200 bg-white pl-9 shadow-sm"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
         </div>
         <Select value={filterType} onValueChange={setFilterType}>
-          <SelectTrigger className="app-control">
+          <SelectTrigger className="h-12 rounded-2xl border-zinc-200 bg-white shadow-sm">
             <SelectValue placeholder="Tipo" />
           </SelectTrigger>
           <SelectContent>
@@ -1012,7 +1012,7 @@ export default function Services() {
           </div>
         )}
         {!loading && filteredServices.length === 0 && (
-          <div className="app-empty-state">
+          <div className="app-card p-8 text-center">
             <Music className="mx-auto mb-3 h-9 w-9 text-zinc-300" />
             <p className="text-sm text-muted-foreground">No se encontraron servicios.</p>
           </div>
@@ -1021,7 +1021,7 @@ export default function Services() {
           filteredServices.map((svc) => (
             <Card
               key={svc.id}
-              className="app-list-card cursor-pointer"
+              className="app-card cursor-pointer border-zinc-200/80 transition-all hover:-translate-y-0.5 hover:shadow-md"
               onClick={() => {
                 if (suppressNextCardClickRef.current) return;
                 toggleExpand(svc.id);
@@ -1037,11 +1037,11 @@ export default function Services() {
             >
               <CardContent className="p-4">
                 <div className="flex items-center gap-3">
-                  <div className="h-10 w-2 shrink-0 rounded-sm bg-primary" />
-                  <div className="min-w-0 flex-1">
+                  <div className="h-12 w-1.5 rounded-full bg-primary shadow-sm shadow-primary/30" />
+                  <div className="flex-1">
                     <button
                       type="button"
-                      className="rounded-sm text-left text-lg font-semibold leading-tight text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+                      className="text-left text-lg font-bold leading-tight text-zinc-950 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 rounded-sm"
                       onClick={(event) => {
                         event.stopPropagation();
                         navigate(`/app/services/${svc.id}`);
@@ -1069,7 +1069,7 @@ export default function Services() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-10 w-10 rounded-md text-lg font-bold"
+                      className="h-10 w-10 rounded-xl text-lg font-bold"
                       onClick={() => toggleExpand(svc.id)}
                       aria-label={expandedService === svc.id ? "Contraer detalles del servicio" : "Expandir detalles del servicio"}
                     >
@@ -1080,7 +1080,7 @@ export default function Services() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="h-10 w-10 rounded-md"
+                          className="h-10 w-10 rounded-xl"
                           onClick={() => openEditDialog(svc)}
                         >
                           <Pencil className="w-4 h-4" />
@@ -1088,7 +1088,7 @@ export default function Services() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="h-10 w-10 rounded-md"
+                          className="h-10 w-10 rounded-xl"
                           onClick={() => setDeleteId(svc.id)}
                         >
                           <Trash2 className="w-4 h-4 text-destructive" />
@@ -1099,24 +1099,24 @@ export default function Services() {
                 </div>
 
                 {expandedService === svc.id && (
-                  <div className="mt-4 space-y-5 border-t border-border pt-4" onClick={stopInteractiveTap}>
+                  <div className="mt-4 space-y-5 border-t border-zinc-100 pt-4" onClick={stopInteractiveTap}>
                     {svc.notes && (
                       <p className="text-sm text-muted-foreground">{svc.notes}</p>
                     )}
 
                     <div>
                       <div className="mb-3 flex items-center justify-between">
-                        <h4 className="app-section-title">Flujo del servicio</h4>
+                        <h4 className="text-sm font-bold text-zinc-950">Flujo del servicio</h4>
                         <div className="flex gap-2">
                           <Button
                             size="sm"
                             variant="outline"
-                            className="h-10 rounded-md"
+                            className="h-10 rounded-xl"
                             onClick={() => handleGenerateServicePdf(svc)}
                           >
                             <FileDown className="w-3 h-3 mr-1" /> PDF
                           </Button>
-                          {isAdmin && <Button size="sm" variant="outline" className="h-10 rounded-md" onClick={() => openAddItemDialog(svc.id)}>
+                          {isAdmin && <Button size="sm" variant="outline" className="h-10 rounded-xl" onClick={() => openAddItemDialog(svc.id)}>
                             <Plus className="w-3 h-3 mr-1" /> Agregar
                           </Button>}
                         </div>
@@ -1139,7 +1139,7 @@ export default function Services() {
                             return (
                               <div
                                 key={item.id}
-                                className={`overflow-hidden rounded-md border border-border bg-secondary/45 transition-all ${
+                                className={`overflow-hidden rounded-2xl border border-zinc-100 bg-zinc-50/80 transition-all ${
                                   draggingItemId === item.id ? "opacity-50" : ""
                                 } ${dragOverItemId === item.id && draggingItemId !== item.id ? "ring-2 ring-primary ring-offset-2" : ""}`}
                               >
@@ -1177,7 +1177,7 @@ export default function Services() {
                                     )}
                                   </div>
                                   {displayKey && (
-                                    <Badge variant="secondary" className="shrink-0 rounded-md text-xs">Tono {displayKey}</Badge>
+                                    <Badge variant="secondary" className="shrink-0 rounded-full text-xs">Tono {displayKey}</Badge>
                                   )}
                                   {item.duration && (
                                     <span className="text-xs text-muted-foreground flex items-center">
@@ -1189,7 +1189,7 @@ export default function Services() {
                                     <Button
                                       variant="ghost"
                                       size="icon"
-                                      className="h-9 w-9 rounded-md"
+                                      className="h-9 w-9 rounded-xl"
                                       aria-label={expandedSongItems[item.id] ? "Contraer detalles de la canción" : "Expandir detalles de la canción"}
                                       onClick={(event) => {
                                         event.stopPropagation();
@@ -1203,7 +1203,7 @@ export default function Services() {
                                     <Button
                                       variant="ghost"
                                       size="icon"
-                                      className="h-9 w-9 rounded-md"
+                                      className="h-9 w-9 rounded-xl"
                                       onClick={(event) => {
                                         event.stopPropagation();
                                         handleDeleteItem(svc.id, item.id);
@@ -1215,19 +1215,19 @@ export default function Services() {
                                 </div>
 
                                 {isSong && expandedSongItems[item.id] && (
-                                  <div className="space-y-3 border-t border-border bg-card p-3" onClick={stopInteractiveTap} onPointerDown={stopInteractiveTap} onTouchStart={stopInteractiveTap}>
+                                  <div className="space-y-3 border-t border-zinc-100 bg-white p-3" onClick={stopInteractiveTap} onPointerDown={stopInteractiveTap} onTouchStart={stopInteractiveTap}>
                                     <div className="flex flex-wrap gap-2">
                                       {displayKey && (
-                                        <Badge variant="secondary" className="rounded-md">Tono {displayKey}</Badge>
+                                        <Badge variant="secondary" className="rounded-full">Tono {displayKey}</Badge>
                                       )}
                                       {(arrangement?.bpm || item.song?.bpm) && (
-                                        <Badge variant="secondary" className="rounded-md">{arrangement?.bpm || item.song?.bpm} BPM</Badge>
+                                        <Badge variant="secondary" className="rounded-full">{arrangement?.bpm || item.song?.bpm} BPM</Badge>
                                       )}
                                       {(arrangement?.meter || item.song?.meter) && (
-                                        <Badge variant="secondary" className="rounded-md">{arrangement?.meter || item.song?.meter}</Badge>
+                                        <Badge variant="secondary" className="rounded-full">{arrangement?.meter || item.song?.meter}</Badge>
                                       )}
                                       {item.song?.arrangements?.length ? (
-                                        <Badge variant="outline" className="rounded-md">{item.song.arrangements.length} arreglo{item.song.arrangements.length === 1 ? "" : "s"}</Badge>
+                                        <Badge variant="outline" className="rounded-full">{item.song.arrangements.length} arreglo{item.song.arrangements.length === 1 ? "" : "s"}</Badge>
                                       ) : null}
                                     </div>
 
@@ -1235,7 +1235,7 @@ export default function Services() {
 
                                     <div className="flex flex-wrap gap-2">
                                       {youtubeUrl && (
-                                        <Button asChild variant="outline" size="sm" className="rounded-md">
+                                        <Button asChild variant="outline" size="sm" className="rounded-xl">
                                           <a href={youtubeUrl} target="_blank" rel="noreferrer">
                                             <PlayCircle className="w-3 h-3" />
                                             YouTube
@@ -1245,7 +1245,7 @@ export default function Services() {
                                       <Button
                                         variant="ghost"
                                         size="sm"
-                                        className="rounded-md"
+                                        className="rounded-xl"
                                         onClick={(event) => {
                                           event.stopPropagation();
                                           navigate(`/app/songs/${item.song?.id}`);
@@ -1257,7 +1257,7 @@ export default function Services() {
                                     </div>
 
                                     {youtubeEmbedUrl && (
-                                      <div className="overflow-hidden rounded-md border border-border bg-black shadow-sm">
+                                      <div className="overflow-hidden rounded-2xl border border-red-100 bg-black shadow-sm">
                                         <iframe
                                           title={`YouTube - ${item.song?.title || item.title}`}
                                           src={youtubeEmbedUrl}
@@ -1292,14 +1292,14 @@ export default function Services() {
 
                     <div>
                       <div className="mb-3 flex items-center justify-between">
-                        <h4 className="app-section-title">Equipo</h4>
-                        {isAdmin && <Button size="sm" variant="outline" className="h-10 rounded-md" onClick={() => openAssignDialog(svc.id)}>
+                        <h4 className="text-sm font-bold text-zinc-950">Equipo</h4>
+                        {isAdmin && <Button size="sm" variant="outline" className="h-10 rounded-xl" onClick={() => openAssignDialog(svc.id)}>
                           <Plus className="w-3 h-3 mr-1" /> Asignar
                         </Button>}
                       </div>
                       <div className="space-y-2">
                         {(serviceAssignments[svc.id] || []).map((assignment) => (
-                          <div key={assignment.id} className="flex items-center gap-2 rounded-md border border-border bg-secondary/45 p-3">
+                          <div key={assignment.id} className="flex items-center gap-2 rounded-2xl border border-zinc-100 bg-zinc-50/80 p-3">
                             <button
                               onClick={() => handleToggleAssignment(svc.id, assignment)}
                               className={`w-5 h-5 rounded border flex items-center justify-center ${

@@ -40,7 +40,7 @@ function AppLayoutInner() {
 
   return (
     <div
-      className="flex min-h-svh w-full flex-1 overflow-x-clip bg-background"
+      className="flex min-h-svh w-full flex-1 overflow-x-clip bg-zinc-50"
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
@@ -48,13 +48,13 @@ function AppLayoutInner() {
       <SidebarInset className="min-w-0 w-full max-w-full overflow-x-clip overflow-y-auto">
         {isMobile ? (
           <header
-            className="sticky top-0 z-20 border-b border-border bg-card/95 shadow-sm backdrop-blur"
+            className="sticky top-0 z-20 border-b border-zinc-200/80 bg-white/95 shadow-sm shadow-zinc-200/30 backdrop-blur"
             style={{ paddingTop: "max(env(safe-area-inset-top), 0.65rem)" }}
           >
             <div className="flex items-center gap-3 px-4 pb-2.5">
-              <SidebarTrigger className="h-10 w-10 rounded-md border border-border bg-card shadow-sm" />
+              <SidebarTrigger className="h-10 w-10 rounded-2xl border border-zinc-200 bg-white shadow-sm" />
               <div className="min-w-0">
-                <p className="text-[0.95rem] font-semibold leading-tight">Tchurch</p>
+                <p className="text-[0.95rem] font-bold leading-tight tracking-tight">Tchurch</p>
                 <p className="truncate text-[0.8rem] leading-tight text-muted-foreground">
                   {selectedChurch?.name || "Configura tu iglesia"}
                 </p>
