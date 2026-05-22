@@ -1,7 +1,26 @@
-import { useEffect, useState } from "react";
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
+import { CSSProperties, ReactNode, useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { CalendarDays, Music, Users, Megaphone, ListChecks, UsersRound, Calendar, ArrowRight, Plus, Check, X, Loader2, Bell } from "lucide-react";
+import {
+  ArrowRight,
+  Bell,
+  Building2,
+  Calendar,
+  CalendarDays,
+  Check,
+  Clock3,
+  Inbox,
+  ListChecks,
+  Megaphone,
+  Music,
+  Plus,
+  ShieldCheck,
+  Users,
+  UsersRound,
+  X,
+  Loader2,
+} from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useChurch } from "@/providers/ChurchProvider";
 import { useNavigate } from "react-router-dom";
@@ -81,6 +100,13 @@ function formatDate(dateStr: string) {
   });
 }
 
+function formatShortDate(dateStr: string) {
+  return new Date(dateStr).toLocaleDateString("es-US", {
+    month: "short",
+    day: "numeric",
+  });
+}
+
 function formatTime(dateStr: string) {
   return new Date(dateStr).toLocaleTimeString("es-US", {
     hour: "numeric",
@@ -113,6 +139,50 @@ function statusLabel(status: string) {
   if (status === "completed") return "completado";
   if (status === "draft") return "";
   return status;
+}
+
+function getGreeting() {
+  const h = new Date().getHours();
+  if (h < 12) return "Buenos días";
+  if (h < 18) return "Buenas tardes";
+  return "Buenas noches";
+}
+
+function getEndOfSunday() {
+  const now = new Date();
+  const day = now.getDay();
+  const daysUntilSunday = day === 0 ? 0 : 7 - day;
+  const sunday = new Date(now);
+  sunday.setDate(now.getDate() + daysUntilSunday);
+  sunday.setHours(23, 59, 59, 999);
+  return sunday;
+}
+
+function getRoleLabel(role?: string) {
+  if (role === "ADMIN") return "Administrador";
+  if (role === "PLANNER") return "Planificación";
+  if (role === "LEADER") return "Liderazgo";
+  return "Miembro";
+}
+
+function getInitials(name: string) {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part.charAt(0).toUpperCase())
+    .join("") || "T";
+}
+
+function getBrandAccent(value: string | null | undefined) {
+  const color = value?.trim();
+  if (!color) return "hsl(var(--primary))";
+  if (/^(#(?:[0-9a-f]{3,8})|rgb\(|hsl\(|oklch\()/i.test(color)) return color;
+  return "hsl(var(--primary))";
+}
+
+function getTimelineRoute(item: TimelineItem) {
+  return item._type === "service" ? `/app/services/${item.id}` : "/app/events";
 }
 
 export default function Dashboard() {
@@ -243,28 +313,32 @@ export default function Dashboard() {
   }
 
   if (churchLoading) {
-    return <div className="flex items-center justify-center py-20"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>;
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
   }
 
   if (!selectedChurch) {
     return (
       <div className="flex flex-1 items-center justify-center py-10">
-        <Card className="w-full max-w-md border-dashed">
-          <CardContent className="flex flex-col items-center gap-4 p-8 text-center">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10">
-              <Users className="h-7 w-7 text-primary" />
+        <Card className="dashboard-panel w-full max-w-md border-dashed">
+          <CardContent className="flex flex-col items-start gap-5 p-6">
+            <div className="flex h-12 w-12 items-center justify-center rounded-md bg-primary/10">
+              <Users className="h-6 w-6 text-primary" />
             </div>
             <div className="space-y-2">
               <p className="text-xl font-semibold">No hay iglesia seleccionada</p>
-              <p className="text-sm text-muted-foreground">
+              <p className="text-sm leading-6 text-muted-foreground">
                 Únete a una iglesia existente o crea tu propio espacio para comenzar a usar la app.
               </p>
             </div>
-            <div className="flex w-full flex-col gap-3 sm:flex-row">
-              <Button className="flex-1" onClick={() => navigate("/join-church")}>
+            <div className="grid w-full gap-2 sm:grid-cols-2">
+              <Button onClick={() => navigate("/join-church")}>
                 Unirme a una iglesia
               </Button>
-              <Button className="flex-1" variant="outline" onClick={() => navigate("/create-church")}>
+              <Button variant="outline" onClick={() => navigate("/create-church")}>
                 Crear iglesia
               </Button>
             </div>
@@ -274,23 +348,6 @@ export default function Dashboard() {
     );
   }
 
-  const getGreeting = () => {
-    const h = new Date().getHours();
-    if (h < 12) return "Buenos días";
-    if (h < 18) return "Buenas tardes";
-    return "Buenas noches";
-  };
-
-  const getEndOfSunday = () => {
-    const now = new Date();
-    const day = now.getDay();
-    const daysUntilSunday = day === 0 ? 0 : 7 - day;
-    const sunday = new Date(now);
-    sunday.setDate(now.getDate() + daysUntilSunday);
-    sunday.setHours(23, 59, 59, 999);
-    return sunday;
-  };
-
   const endOfSunday = getEndOfSunday();
   const thisWeekItems = timeline.filter((item) => new Date(item.date) <= endOfSunday);
   const comingUpItems = timeline.filter((item) => new Date(item.date) > endOfSunday);
@@ -299,6 +356,7 @@ export default function Dashboard() {
     .filter((assignment) => assignment.service?.date && new Date(assignment.service.date).getTime() >= Date.now())
     .slice(0, 5);
   const unreadNotifications = notifications.filter((notification) => !notification.read).slice(0, 3);
+  const nextItem = timeline[0] || null;
 
   const statItems = stats
     ? [
@@ -315,296 +373,374 @@ export default function Dashboard() {
   const getStatusColor = (status: string) => {
     switch (status) {
       case "confirmed":
-        return "bg-emerald-100 text-emerald-700";
+        return "border-emerald-200 bg-emerald-50 text-emerald-700";
       case "completed":
-        return "bg-zinc-100 text-muted-foreground";
+        return "border-border bg-secondary text-muted-foreground";
       default:
-        return "bg-amber-100 text-amber-700";
+        return "border-amber-200 bg-amber-50 text-amber-700";
     }
   };
 
-  return (
-    <div className="mobile-page space-y-6">
-      <div className="rounded-[1.75rem] border border-zinc-200/80 bg-gradient-to-br from-white via-white to-primary/5 p-4 shadow-sm shadow-zinc-200/60 sm:p-5">
-        <div>
-          <p className="mobile-section-title mb-2">Panel</p>
-          <h1 className="text-[1.85rem] font-black leading-none tracking-tight text-zinc-950 sm:text-3xl">{getGreeting()}</h1>
-          <p className="mt-2 text-sm font-medium text-muted-foreground">{selectedChurch.name}</p>
-        </div>
+  const dashboardStyle = {
+    "--dashboard-accent": getBrandAccent(selectedChurch.brandColor),
+  } as CSSProperties;
 
-        <div className="mt-5 grid grid-cols-1 gap-2 sm:grid-cols-3">
-          <Button className="h-11 rounded-2xl font-bold sm:w-auto" onClick={() => navigate("/app/services")}>
-            <Plus className="h-4 w-4" /> Nuevo servicio
-          </Button>
-          <Button className="h-11 rounded-2xl font-bold sm:w-auto" variant="outline" onClick={() => navigate("/app/events")}>
-            <Plus className="h-4 w-4" /> Nuevo evento
-          </Button>
-          <Button className="h-11 rounded-2xl font-bold sm:w-auto" variant="outline" onClick={() => navigate("/app/calendar")}>
-            <Calendar className="h-4 w-4" /> Calendario
-          </Button>
-        </div>
+  const renderSectionHeading = (title: string, action?: ReactNode) => (
+    <div className="mb-3 flex min-w-0 items-center justify-between gap-3">
+      <div className="dashboard-section-heading min-w-0">
+        <span className="dashboard-section-mark" aria-hidden="true" />
+        <h2 className="truncate text-sm font-semibold text-foreground">{title}</h2>
       </div>
+      {action}
+    </div>
+  );
 
-      {/* Mis ministerios */}
-      {pendingAssignments.length > 0 && (
-        <div>
-          <h2 className="mobile-section-title mb-3">Mis asignaciones pendientes</h2>
-          <div className="space-y-3">
-            {pendingAssignments.map((assignment) => (
-              <Card key={assignment.id} className="app-card border-amber-100 bg-gradient-to-br from-white to-amber-50/60">
-                <CardContent className="flex items-center gap-3 p-3.5">
-                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-amber-100 text-amber-700">
-                    <CalendarDays className="h-5 w-5" />
-                  </div>
-                  <div className="min-w-0 flex-1" onClick={() => navigate(`/app/services/${assignment.serviceId}`)}>
-                    <p className="truncate text-base font-bold leading-tight">{assignment.service?.title || "Servicio"}</p>
-                    <p className="mt-1 text-[0.8rem] text-muted-foreground">
-                      {assignment.position}
-                      {assignment.service?.date ? ` · ${formatDate(assignment.service.date)}` : ""}
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 gap-1">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-9 rounded-xl px-2 text-red-600"
-                      disabled={respondingId === assignment.id}
-                      onClick={() => handleRespond(assignment.id, "decline")}
-                    >
-                      <X className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      size="sm"
-                      className="h-9 rounded-xl px-2"
-                      disabled={respondingId === assignment.id}
-                      onClick={() => handleRespond(assignment.id, "accept")}
-                    >
-                      <Check className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </div>
-      )}
+  const renderTimelineGroup = (title: string, items: TimelineItem[]) => {
+    if (items.length === 0) return null;
 
-      {unreadNotifications.length > 0 && (
-        <div>
-          <h2 className="mobile-section-title mb-3">Notificaciones</h2>
-          <div className="space-y-3">
-            {unreadNotifications.map((notification) => (
-              <Card
-                key={notification.id}
-                className="app-card cursor-pointer border-primary/10 bg-gradient-to-br from-white to-primary/5"
-                onClick={() => {
-                  if (notification.data?.route) {
-                    navigate(notification.data.route.replace(/^\/app/, "/app"));
-                  }
-                }}
-              >
-                <CardContent className="flex items-start gap-3 p-3.5">
-                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-                    <Bell className="h-5 w-5" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-base font-bold leading-tight">{notification.title}</p>
-                    {notification.body && (
-                      <p className="mt-1 line-clamp-2 text-[0.82rem] text-muted-foreground">{notification.body}</p>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+    return (
+      <section className="dashboard-panel p-4 sm:p-5">
+        {renderSectionHeading(title)}
+        <div className="divide-y divide-border">
+          {items.map((item) => (
+            <button
+              key={`${item._type}-${item.id}`}
+              className="dashboard-row group flex w-full min-w-0 items-center gap-3 py-3 text-left"
+              onClick={() => navigate(getTimelineRoute(item))}
+            >
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-secondary text-muted-foreground">
+                {item._type === "service" ? <ListChecks className="h-4 w-4" /> : <CalendarDays className="h-4 w-4" />}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-semibold text-foreground">{item.title}</span>
+                <span className="mt-1 block truncate text-xs text-muted-foreground">
+                  {formatDate(item.date)} {formatTime(item.date) !== "12:00 AM" && `- ${formatTime(item.date)}`}
+                  {item.location && ` - ${item.location}`}
+                </span>
+              </span>
+              {item._type === "service" && item.status && statusLabel(item.status) && (
+                <span className={`hidden rounded-full border px-2 py-1 text-xs font-medium sm:inline-flex ${getStatusColor(item.status)}`}>
+                  {statusLabel(item.status)}
+                </span>
+              )}
+              {item._type === "event" && item.type && (
+                <span className="hidden rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700 sm:inline-flex">
+                  {item.type}
+                </span>
+              )}
+              <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+            </button>
+          ))}
         </div>
-      )}
+      </section>
+    );
+  };
 
-      {ministries.length > 0 && (
-        <div>
-          <h2 className="mobile-section-title mb-3">
-            Mis ministerios
-          </h2>
-          <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
-            {ministries.map((m) => (
-              <Card
-                key={m.id}
-                className="app-card min-w-0 cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-md"
-                onClick={() => navigate("/app/ministries")}
-              >
-                <CardContent className="flex items-center gap-3 p-4">
-                  <span
-                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-sm font-bold text-white shadow-sm"
-                    style={{ backgroundColor: m.color || "#6366f1" }}
-                  >
-                    {m.name.charAt(0).toUpperCase()}
-                  </span>
-                  <div className="min-w-0">
-                    <p className="font-medium text-sm truncate">{m.name}</p>
-                    {m.memberCount != null && (
-                      <p className="text-xs text-muted-foreground">{m.memberCount} miembros</p>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {loading ? (
-        <div className="flex items-center justify-center py-8">
-          <div className="animate-spin w-6 h-6 border-2 border-primary border-t-transparent rounded-full" />
-        </div>
-      ) : timeline.length === 0 ? (
-        <Card className="app-card">
-          <CardContent className="p-8 text-center">
-            <CalendarDays className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
-            <p className="text-sm text-muted-foreground">No hay servicios o eventos próximos</p>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="space-y-6">
-          {thisWeekItems.length > 0 && (
-            <div>
-              <h2 className="mobile-section-title mb-3">
-                Esta semana
-              </h2>
-              <div className="space-y-3">
-                {thisWeekItems.map((item) => (
-                  <Card
-                    key={`${item._type}-${item.id}`}
-                    className="app-card min-w-0 cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-md"
-                    onClick={() => navigate(item._type === "service" ? `/app/services/${item.id}` : "/app/events")}
-                  >
-                    <CardContent className="flex items-center gap-3 p-3.5">
-                      <div className={`h-12 w-1.5 rounded-full ${item._type === "service" ? "bg-primary" : "bg-amber-400"}`} />
-                      <div className="flex-1 min-w-0">
-                        <p className="truncate text-base font-bold leading-tight">{item.title}</p>
-                        <p className="mt-1 text-[0.8rem] text-muted-foreground">
-                          {formatDate(item.date)} {formatTime(item.date) !== "12:00 AM" && `· ${formatTime(item.date)}`}
-                          {item.location && ` · ${item.location}`}
-                        </p>
-                      </div>
-                      {item._type === "service" && item.status && statusLabel(item.status) && (
-                        <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${getStatusColor(item.status)}`}>
-                          {statusLabel(item.status)}
-                        </span>
-                      )}
-                      {item._type === "event" && item.type && (
-                        <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-1 rounded">
-                          {item.type}
-                        </span>
-                      )}
-                      <ArrowRight className="w-4 h-4 text-muted-foreground" />
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
+  return (
+    <div className="mobile-page dashboard-shell" style={dashboardStyle}>
+      <section className="dashboard-hero p-4 sm:p-5">
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+          <div className="flex min-w-0 gap-3">
+            <div className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-md border border-border bg-card">
+              <span className="absolute -right-1 -top-1 h-3 w-3 rounded-sm bg-[var(--dashboard-accent)]" aria-hidden="true" />
+              {selectedChurch.logoUrl ? (
+                <img src={selectedChurch.logoUrl} alt="" className="h-9 w-9 rounded object-cover" />
+              ) : (
+                <span className="text-sm font-bold text-foreground">{getInitials(selectedChurch.name)}</span>
+              )}
             </div>
-          )}
-
-          {comingUpItems.length > 0 && (
-            <div>
-              <h2 className="mobile-section-title mb-3">
-                Próximamente
-              </h2>
-              <div className="space-y-3">
-                {comingUpItems.map((item) => (
-                  <Card
-                    key={`${item._type}-${item.id}`}
-                    className="app-card min-w-0 cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-md"
-                    onClick={() => navigate(item._type === "service" ? `/app/services/${item.id}` : "/app/events")}
-                  >
-                    <CardContent className="flex items-center gap-3 p-3.5">
-                      <div className={`h-12 w-1.5 rounded-full ${item._type === "service" ? "bg-primary" : "bg-amber-400"}`} />
-                      <div className="flex-1 min-w-0">
-                        <p className="truncate text-base font-bold leading-tight">{item.title}</p>
-                        <p className="mt-1 text-[0.8rem] text-muted-foreground">
-                          {formatDate(item.date)} {formatTime(item.date) !== "12:00 AM" && `· ${formatTime(item.date)}`}
-                          {item.location && ` · ${item.location}`}
-                        </p>
-                      </div>
-                      {item._type === "service" && item.status && statusLabel(item.status) && (
-                        <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${getStatusColor(item.status)}`}>
-                          {statusLabel(item.status)}
-                        </span>
-                      )}
-                      {item._type === "event" && item.type && (
-                        <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-1 rounded">
-                          {item.type}
-                        </span>
-                      )}
-                      <ArrowRight className="w-4 h-4 text-muted-foreground" />
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-muted-foreground">{formatDate(new Date().toISOString())}</p>
+              <h1 className="mt-1 text-2xl font-semibold leading-tight text-foreground sm:text-3xl">{getGreeting()}</h1>
+              <p className="mt-1 truncate text-sm text-muted-foreground">{selectedChurch.name}</p>
             </div>
-          )}
-        </div>
-      )}
+          </div>
 
-      {announcements.length > 0 && (
-        <div>
-          <div className="flex min-w-0 items-center justify-between gap-3 mb-4">
-            <h2 className="mobile-section-title">
-              Anuncios recientes
-            </h2>
-            <Button className="h-9 shrink-0 rounded-full px-3 font-bold" size="sm" variant="ghost" onClick={() => navigate("/app/announcements")}>
-              Ver todos <ArrowRight className="w-3 h-3 ml-1" />
+          <div className="grid w-full max-w-full gap-2 sm:grid-cols-3 lg:w-[min(440px,100%)]">
+            <Button className="h-10 rounded-md font-semibold" onClick={() => navigate("/app/services")}>
+              <Plus className="h-4 w-4" /> Servicio
+            </Button>
+            <Button className="h-10 rounded-md font-semibold" variant="outline" onClick={() => navigate("/app/events")}>
+              <Plus className="h-4 w-4" /> Evento
+            </Button>
+            <Button className="h-10 rounded-md font-semibold" variant="outline" onClick={() => navigate("/app/calendar")}>
+              <Calendar className="h-4 w-4" /> Calendario
             </Button>
           </div>
-          <div className="space-y-3">
-            {announcements.slice(0, 10).map((ann) => (
-              <Card key={ann.id} className="app-card min-w-0 overflow-hidden">
-                <div className="flex min-w-0">
-                  {ann.imageUrl && (
-                    <div className="h-24 w-24 shrink-0 overflow-hidden rounded-l-2xl bg-zinc-100">
-                      <img src={ann.imageUrl} alt={ann.title} className="w-full h-full object-cover" />
-                    </div>
-                  )}
-                  <CardContent className="min-w-0 flex-1 p-3">
-                    <p className="truncate font-bold">{ann.title}</p>
-                    <p className="text-sm text-muted-foreground line-clamp-2 mt-1">
-                      {ann.content}
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-2">
-                      {ann.createdAt ? new Date(ann.createdAt).toLocaleDateString("es-US", {
-                        month: "short",
-                        day: "numeric",
-                      }) : ""}
-                    </p>
-                  </CardContent>
-                </div>
-              </Card>
-            ))}
-          </div>
         </div>
-      )}
 
-      {statItems.length > 0 && (
-        <div>
-          <h2 className="mobile-section-title mb-3">
-            Resumen
-          </h2>
-          <div className="grid min-w-0 grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
-            {statItems.map((stat) => (
-              <Card
-                key={stat.label}
-                className="app-card min-w-0 cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-md"
-                onClick={() => navigate(stat.href)}
-              >
-                <CardContent className="p-3 text-center">
-                  <stat.icon className="w-4 h-4 mx-auto text-muted-foreground mb-1" />
-                  <p className="text-lg font-bold">{stat.value}</p>
-                  <p className="text-xs text-muted-foreground truncate">{stat.label}</p>
-                </CardContent>
-              </Card>
-            ))}
+        <div className="mt-5 grid gap-2 sm:grid-cols-3">
+          <div className="dashboard-mini">
+            <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+            <span>{getRoleLabel(selectedChurch.role)}</span>
+          </div>
+          <div className="dashboard-mini">
+            <Inbox className="h-4 w-4 text-muted-foreground" />
+            <span>{pendingAssignments.length} pendientes</span>
+          </div>
+          <div className="dashboard-mini">
+            <Clock3 className="h-4 w-4 text-muted-foreground" />
+            <span>{timeline.length} próximos</span>
           </div>
         </div>
-      )}
+      </section>
+
+      <section className="grid gap-3 xl:grid-cols-[minmax(0,1.35fr)_minmax(280px,0.65fr)]">
+        <div className="dashboard-panel p-4 sm:p-5">
+          {renderSectionHeading("Siguiente en agenda")}
+          {loading ? (
+            <div className="flex items-center gap-3 py-8 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Cargando agenda
+            </div>
+          ) : nextItem ? (
+            <button
+              className="dashboard-next group w-full text-left"
+              onClick={() => navigate(getTimelineRoute(nextItem))}
+            >
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md bg-secondary text-primary">
+                {nextItem._type === "service" ? <ListChecks className="h-5 w-5" /> : <CalendarDays className="h-5 w-5" />}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-xs font-medium text-muted-foreground">
+                  {nextItem._type === "service" ? "Servicio" : "Evento"}
+                </span>
+                <span className="mt-1 block truncate text-lg font-semibold text-foreground">{nextItem.title}</span>
+                <span className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                  <span>{formatDate(nextItem.date)}</span>
+                  {formatTime(nextItem.date) !== "12:00 AM" && <span>{formatTime(nextItem.date)}</span>}
+                  {nextItem.location && <span>{nextItem.location}</span>}
+                </span>
+              </span>
+              <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+            </button>
+          ) : (
+            <div className="flex items-start gap-3 py-5">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-secondary">
+                <CalendarDays className="h-5 w-5 text-muted-foreground" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold">Agenda tranquila</p>
+                <p className="mt-1 text-sm leading-6 text-muted-foreground">No hay servicios o eventos próximos.</p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+          <button className="dashboard-panel dashboard-action-tile text-left" onClick={() => navigate("/app/my-assignments")}>
+            <span className="dashboard-action-icon">
+              <ListChecks className="h-5 w-5" />
+            </span>
+            <span>
+              <span className="dashboard-metric block text-2xl font-semibold">{pendingAssignments.length}</span>
+              <span className="text-sm text-muted-foreground">Asignaciones por responder</span>
+            </span>
+          </button>
+          <button className="dashboard-panel dashboard-action-tile text-left" onClick={() => navigate("/app/messages")}>
+            <span className="dashboard-action-icon">
+              <Bell className="h-5 w-5" />
+            </span>
+            <span>
+              <span className="dashboard-metric block text-2xl font-semibold">{unreadNotifications.length}</span>
+              <span className="text-sm text-muted-foreground">Notificaciones nuevas</span>
+            </span>
+          </button>
+        </div>
+      </section>
+
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(280px,0.65fr)]">
+        <main className="min-w-0 space-y-4">
+          {pendingAssignments.length > 0 && (
+            <section className="dashboard-panel p-4 sm:p-5">
+              {renderSectionHeading("Asignaciones pendientes")}
+              <div className="divide-y divide-border">
+                {pendingAssignments.map((assignment) => (
+                  <div key={assignment.id} className="dashboard-row flex min-w-0 items-center gap-3 py-3">
+                    <button
+                      className="min-w-0 flex-1 text-left"
+                      onClick={() => navigate(`/app/services/${assignment.serviceId}`)}
+                    >
+                      <p className="truncate text-sm font-semibold">{assignment.service?.title || "Servicio"}</p>
+                      <p className="mt-1 truncate text-xs text-muted-foreground">
+                        {assignment.position}
+                        {assignment.service?.date ? ` - ${formatDate(assignment.service.date)}` : ""}
+                      </p>
+                    </button>
+                    <div className="flex shrink-0 gap-1.5">
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="h-9 w-9 rounded-md text-destructive"
+                        disabled={respondingId === assignment.id}
+                        aria-label="Declinar asignación"
+                        onClick={() => handleRespond(assignment.id, "decline")}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        className="h-9 w-9 rounded-md"
+                        disabled={respondingId === assignment.id}
+                        aria-label="Aceptar asignación"
+                        onClick={() => handleRespond(assignment.id, "accept")}
+                      >
+                        <Check className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {unreadNotifications.length > 0 && (
+            <section className="dashboard-panel p-4 sm:p-5">
+              {renderSectionHeading("Notificaciones")}
+              <div className="divide-y divide-border">
+                {unreadNotifications.map((notification) => (
+                  <button
+                    key={notification.id}
+                    className="dashboard-row flex w-full min-w-0 items-start gap-3 py-3 text-left"
+                    onClick={() => {
+                      if (notification.data?.route) {
+                        navigate(notification.data.route.replace(/^\/app/, "/app"));
+                      }
+                    }}
+                  >
+                    <span className="mt-0.5 h-2 w-2 shrink-0 rounded-sm bg-[var(--dashboard-accent)]" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-semibold">{notification.title}</span>
+                      {notification.body && (
+                        <span className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{notification.body}</span>
+                      )}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {loading ? (
+            <section className="dashboard-panel p-6">
+              <div className="flex items-center justify-center gap-3 py-8 text-sm text-muted-foreground">
+                <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                Cargando panel
+              </div>
+            </section>
+          ) : timeline.length === 0 ? (
+            <section className="dashboard-panel p-6">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-secondary">
+                  <CalendarDays className="h-5 w-5 text-muted-foreground" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold">No hay agenda próxima</p>
+                  <p className="mt-1 text-sm leading-6 text-muted-foreground">Crea un servicio o evento para llenar el panel.</p>
+                </div>
+              </div>
+            </section>
+          ) : (
+            <>
+              {renderTimelineGroup("Esta semana", thisWeekItems)}
+              {renderTimelineGroup("Próximamente", comingUpItems)}
+            </>
+          )}
+
+          {announcements.length > 0 && (
+            <section className="dashboard-panel p-4 sm:p-5">
+              {renderSectionHeading(
+                "Anuncios recientes",
+                <Button className="h-8 rounded-md px-2 text-xs font-semibold" size="sm" variant="ghost" onClick={() => navigate("/app/announcements")}>
+                  Ver todos <ArrowRight className="h-3 w-3" />
+                </Button>
+              )}
+              <div className="grid gap-3">
+                {announcements.slice(0, 4).map((ann) => (
+                  <article key={ann.id} className="dashboard-row grid min-w-0 gap-3 py-3 sm:grid-cols-[88px_minmax(0,1fr)]">
+                    {ann.imageUrl ? (
+                      <img src={ann.imageUrl} alt="" className="h-20 w-full rounded-md object-cover sm:w-[88px]" />
+                    ) : (
+                      <div className="hidden h-20 rounded-md bg-secondary sm:block" aria-hidden="true" />
+                    )}
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold">{ann.title}</p>
+                      {ann.content && (
+                        <p className="mt-1 line-clamp-2 text-sm leading-6 text-muted-foreground">{ann.content}</p>
+                      )}
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        {ann.createdAt ? formatShortDate(ann.createdAt) : ""}
+                      </p>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </section>
+          )}
+        </main>
+
+        <aside className="min-w-0 space-y-4">
+          {ministries.length > 0 && (
+            <section className="dashboard-panel p-4 sm:p-5">
+              {renderSectionHeading("Mis ministerios")}
+              <div className="grid gap-2">
+                {ministries.map((m) => (
+                  <button
+                    key={m.id}
+                    className="dashboard-row flex w-full min-w-0 items-center gap-3 p-2 text-left"
+                    onClick={() => navigate(`/app/ministries/${m.id}`)}
+                  >
+                    <span
+                      className="h-3 w-3 shrink-0 rounded-sm"
+                      style={{ backgroundColor: getBrandAccent(m.color) }}
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-semibold">{m.name}</span>
+                      {m.memberCount != null && (
+                        <span className="text-xs text-muted-foreground">{m.memberCount} miembros</span>
+                      )}
+                    </span>
+                    <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {statItems.length > 0 && (
+            <section className="dashboard-panel p-4 sm:p-5">
+              {renderSectionHeading("Resumen")}
+              <div className="grid grid-cols-2 gap-2">
+                {statItems.map((stat) => (
+                  <button
+                    key={stat.label}
+                    className="dashboard-stat text-left"
+                    onClick={() => navigate(stat.href)}
+                  >
+                    <stat.icon className="h-4 w-4 text-muted-foreground" />
+                    <span className="dashboard-metric mt-3 block text-xl font-semibold">{stat.value}</span>
+                    <span className="mt-1 block truncate text-xs text-muted-foreground">{stat.label}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+
+          <section className="dashboard-panel dashboard-panel-muted p-4 sm:p-5">
+            <div className="flex items-start gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-card">
+                <Building2 className="h-4 w-4 text-muted-foreground" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold">Pulso de la iglesia</p>
+                <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                  Agenda, asignaciones y comunicación en una sola vista operativa.
+                </p>
+              </div>
+            </div>
+          </section>
+        </aside>
+      </div>
     </div>
   );
 }

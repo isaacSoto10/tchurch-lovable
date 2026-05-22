@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -30,17 +30,17 @@ export default function Prayer() {
   const [newRequest, setNewRequest] = useState({ title: "", content: "" });
   const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
-    loadPrayerRequests();
-  }, [filter, fetchApi, selectedChurch]);
-
-  const loadPrayerRequests = () => {
+  const loadPrayerRequests = useCallback(() => {
     setLoading(true);
     fetchApi(`/prayer-requests?status=${filter}`)
       .then((data) => setPrayerRequests(Array.isArray(data) ? data : []))
       .catch((e) => console.error("Failed to load prayer requests:", e))
       .finally(() => setLoading(false));
-  };
+  }, [fetchApi, filter]);
+
+  useEffect(() => {
+    loadPrayerRequests();
+  }, [loadPrayerRequests, selectedChurch]);
 
   const handlePray = async (id: string) => {
     try {
@@ -54,10 +54,10 @@ export default function Prayer() {
   const handleMarkAnswered = async (id: string) => {
     try {
       await fetchApi(`/prayer-requests/${id}/answer`, { method: "PUT" });
-      toast({ title: "Marked as answered" });
+      toast({ title: "Marcada como contestada" });
       loadPrayerRequests();
     } catch (e) {
-      toast({ title: "Failed to mark as answered", variant: "destructive" });
+      toast({ title: "No se pudo marcar como contestada", variant: "destructive" });
     }
   };
 
@@ -74,48 +74,56 @@ export default function Prayer() {
       setShowForm(false);
       loadPrayerRequests();
     } catch (e) {
-      toast({ title: "Failed to submit prayer request", variant: "destructive" });
+      toast({ title: "No se pudo enviar la petición", variant: "destructive" });
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">Prayer Wall</h1>
-        <Button size="sm" onClick={() => setShowForm(!showForm)}>
-          <Plus className="w-4 h-4 mr-1" /> New Request
-        </Button>
+    <div className="app-page space-y-5">
+      <div className="app-page-header p-4 sm:p-5">
+        <div className="app-page-header-grid">
+          <div className="min-w-0">
+            <p className="app-page-kicker">Cuidado pastoral</p>
+            <h1 className="app-page-title">Oración</h1>
+            <p className="app-page-copy">Peticiones activas y respuestas para acompañar a la comunidad.</p>
+          </div>
+          <Button size="sm" className="rounded-md" onClick={() => setShowForm(!showForm)}>
+            <Plus className="w-4 h-4 mr-1" /> Nueva petición
+          </Button>
+        </div>
       </div>
 
       {showForm && (
-        <Card className="mb-6">
+        <Card className="app-list-card">
           <CardContent className="p-4 space-y-3">
             <Input
-              placeholder="Prayer request title"
+              placeholder="Título de la petición"
               value={newRequest.title}
               onChange={(e) => setNewRequest({ ...newRequest, title: e.target.value })}
+              className="app-control"
             />
             <Textarea
-              placeholder="Describe your prayer request..."
+              placeholder="Describe la petición..."
               value={newRequest.content}
               onChange={(e) => setNewRequest({ ...newRequest, content: e.target.value })}
+              className="rounded-md"
             />
             <div className="flex gap-2">
-              <Button onClick={handleSubmitRequest} disabled={submitting}>
-                {submitting ? "Submitting..." : "Submit"}
+              <Button className="rounded-md" onClick={handleSubmitRequest} disabled={submitting}>
+                {submitting ? "Enviando..." : "Enviar"}
               </Button>
-              <Button variant="outline" onClick={() => setShowForm(false)}>Cancel</Button>
+              <Button variant="outline" className="rounded-md" onClick={() => setShowForm(false)}>Cancelar</Button>
             </div>
           </CardContent>
         </Card>
       )}
 
-      <Tabs defaultValue="active" onValueChange={(v) => setFilter(v as "active" | "answered")} className="mb-6">
-        <TabsList>
-          <TabsTrigger value="active">Active</TabsTrigger>
-          <TabsTrigger value="answered">Answered</TabsTrigger>
+      <Tabs defaultValue="active" onValueChange={(v) => setFilter(v as "active" | "answered")}>
+        <TabsList className="rounded-md bg-muted p-1">
+          <TabsTrigger value="active" className="rounded-sm">Activas</TabsTrigger>
+          <TabsTrigger value="answered" className="rounded-sm">Contestadas</TabsTrigger>
         </TabsList>
       </Tabs>
 
@@ -126,12 +134,15 @@ export default function Prayer() {
           </div>
         )}
         {!loading && prayerRequests.length === 0 && (
-          <p className="text-sm text-muted-foreground text-center py-8">
-            No {filter} prayer requests.
-          </p>
+          <div className="app-empty-state">
+            <Heart className="mx-auto mb-2 h-8 w-8 text-muted-foreground/50" />
+            <p className="text-sm text-muted-foreground">
+              No hay peticiones {filter === "active" ? "activas" : "contestadas"}.
+            </p>
+          </div>
         )}
         {!loading && prayerRequests.map((pr) => (
-          <Card key={pr.id}>
+          <Card key={pr.id} className="app-list-card">
             <CardContent className="p-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1">
@@ -139,11 +150,11 @@ export default function Prayer() {
                   <p className="text-sm text-muted-foreground mt-1">{pr.content}</p>
                   <div className="flex items-center gap-2 mt-2">
                     <span className="text-xs text-muted-foreground">
-                      {pr.requesterName || "Anonymous"}
+                      {pr.requesterName || "Anónimo"}
                     </span>
                     <span className="text-xs text-muted-foreground">·</span>
                     <span className="text-xs text-muted-foreground">
-                      {new Date(pr.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                      {new Date(pr.createdAt).toLocaleDateString("es-US", { month: "short", day: "numeric" })}
                     </span>
                   </div>
                 </div>
@@ -154,7 +165,7 @@ export default function Prayer() {
                         variant="ghost"
                         size="sm"
                         onClick={() => handleMarkAnswered(pr.id)}
-                        className="shrink-0"
+                        className="shrink-0 rounded-md"
                       >
                         <Check className="w-4 h-4" />
                       </Button>
@@ -163,7 +174,7 @@ export default function Prayer() {
                       variant="outline"
                       size="sm"
                       onClick={() => handlePray(pr.id)}
-                      className="shrink-0"
+                      className="shrink-0 rounded-md"
                     >
                       <Heart className="w-4 h-4 mr-1" />
                       {pr.prayCount || 0}

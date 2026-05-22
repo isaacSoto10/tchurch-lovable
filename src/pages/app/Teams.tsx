@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -51,20 +51,20 @@ export default function Teams() {
   const [formData, setFormData] = useState({ name: "", description: "", color: "" });
   const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
-    loadTeams();
-  }, [fetchApi]);
-
-  const loadTeams = () => {
+  const loadTeams = useCallback(() => {
     setLoading(true);
     fetchApi("/teams")
       .then((data) => setTeams(Array.isArray(data) ? data : []))
       .catch((e) => {
         console.error("Failed to load teams:", e);
-        toast({ title: "Failed to load teams", variant: "destructive" });
+        toast({ title: "No se pudieron cargar los equipos", variant: "destructive" });
       })
       .finally(() => setLoading(false));
-  };
+  }, [fetchApi, toast]);
+
+  useEffect(() => {
+    loadTeams();
+  }, [loadTeams]);
 
   const openNewDialog = () => {
     setEditingTeam(null);
@@ -84,7 +84,7 @@ export default function Teams() {
 
   const handleSubmit = async () => {
     if (!formData.name.trim()) {
-      toast({ title: "Name is required", variant: "destructive" });
+      toast({ title: "El nombre es requerido", variant: "destructive" });
       return;
     }
 
@@ -101,19 +101,19 @@ export default function Teams() {
           method: "PUT",
           body: JSON.stringify(payload),
         });
-        toast({ title: "Team updated successfully" });
+        toast({ title: "Equipo actualizado" });
       } else {
         await fetchApi("/teams", {
           method: "POST",
           body: JSON.stringify(payload),
         });
-        toast({ title: "Team created successfully" });
+        toast({ title: "Equipo creado" });
       }
       setDialogOpen(false);
       loadTeams();
     } catch (e) {
       console.error("Failed to save team:", e);
-      toast({ title: "Failed to save team", variant: "destructive" });
+      toast({ title: "No se pudo guardar el equipo", variant: "destructive" });
     } finally {
       setSubmitting(false);
     }
@@ -124,61 +124,72 @@ export default function Teams() {
 
     try {
       await fetchApi(`/teams/${deleteId}`, { method: "DELETE" });
-      toast({ title: "Team deleted successfully" });
+      toast({ title: "Equipo eliminado" });
       setDeleteId(null);
       loadTeams();
     } catch (e) {
       console.error("Failed to delete team:", e);
-      toast({ title: "Failed to delete team", variant: "destructive" });
+      toast({ title: "No se pudo eliminar el equipo", variant: "destructive" });
     }
   };
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">Teams</h1>
-        {isAdmin && <Button size="sm" onClick={openNewDialog}>
-          <Plus className="w-4 h-4 mr-1" /> New Team
-        </Button>}
+    <div className="app-page space-y-5">
+      <div className="app-page-header p-4 sm:p-5">
+        <div className="app-page-header-grid">
+          <div className="min-w-0">
+            <p className="app-page-kicker">Equipos</p>
+            <h1 className="app-page-title">Equipos</h1>
+            <p className="app-page-copy">Agrupa voluntarios por responsabilidad y mantén visible quién sirve dónde.</p>
+          </div>
+          {isAdmin && (
+            <Button size="sm" onClick={openNewDialog} className="h-10 rounded-md">
+              <Plus className="w-4 h-4 mr-1" /> Nuevo equipo
+            </Button>
+          )}
+        </div>
       </div>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogTrigger asChild />
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{editingTeam ? "Edit Team" : "New Team"}</DialogTitle>
+            <DialogTitle>{editingTeam ? "Editar equipo" : "Nuevo equipo"}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-2">
-              <label className="text-sm font-medium">Name</label>
+              <label className="text-sm font-medium">Nombre</label>
               <Input
-                placeholder="Team name"
+                placeholder="Nombre del equipo"
                 value={formData.name}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                className="app-control"
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">Description</label>
+              <label className="text-sm font-medium">Descripción</label>
               <Textarea
-                placeholder="Team description"
+                placeholder="Descripción del equipo"
                 value={formData.description}
                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                className="rounded-md"
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">Color (optional)</label>
+              <label className="text-sm font-medium">Color (opcional)</label>
               <Input
-                placeholder="#3b82f6"
+                placeholder="#5c3f9b"
                 value={formData.color}
                 onChange={(e) => setFormData({ ...formData, color: e.target.value })}
+                className="app-control"
               />
             </div>
             <div className="flex gap-2 pt-2">
-              <Button onClick={handleSubmit} disabled={submitting}>
-                {submitting ? "Saving..." : editingTeam ? "Update" : "Create"}
+              <Button className="rounded-md" onClick={handleSubmit} disabled={submitting}>
+                {submitting ? "Guardando..." : editingTeam ? "Actualizar" : "Crear"}
               </Button>
-              <Button variant="outline" onClick={() => setDialogOpen(false)}>
-                Cancel
+              <Button variant="outline" className="rounded-md" onClick={() => setDialogOpen(false)}>
+                Cancelar
               </Button>
             </div>
           </div>
@@ -192,23 +203,23 @@ export default function Teams() {
           </div>
         )}
         {!loading && teams.length === 0 && (
-          <p className="text-sm text-muted-foreground text-center py-8">No teams yet.</p>
+          <div className="app-empty-state text-sm">Todavía no hay equipos.</div>
         )}
         {!loading && teams.map((t) => (
-          <Card key={t.id} className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => navigate(`/app/teams/${t.id}`)}>
-            <CardContent className="p-5 flex items-center gap-4">
+          <Card key={t.id} className="app-list-card cursor-pointer" onClick={() => navigate(`/app/teams/${t.id}`)}>
+            <CardContent className="flex items-center gap-4 p-4">
               <div
-                className="w-10 h-10 rounded-lg flex items-center justify-center"
+                className="app-icon-tile"
                 style={{ backgroundColor: t.color || "hsl(var(--accent))" }}
               >
                 <Users className="w-5 h-5 text-primary" />
               </div>
-              <div className="flex-1">
-                <h3 className="font-semibold">{t.name || t.title}</h3>
-                <p className="text-sm text-muted-foreground">{t.description || t.desc || ""}</p>
+              <div className="min-w-0 flex-1">
+                <h3 className="truncate font-semibold">{t.name || t.title}</h3>
+                <p className="truncate text-sm text-muted-foreground">{t.description || t.desc || ""}</p>
               </div>
               {t.memberCount != null && (
-                <span className="text-sm text-muted-foreground">{t.memberCount} members</span>
+                <span className="app-count-pill">{t.memberCount} miembros</span>
               )}
               <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
                 {isAdmin && (
@@ -224,15 +235,15 @@ export default function Teams() {
                       </AlertDialogTrigger>
                       <AlertDialogContent>
                         <AlertDialogHeader>
-                          <AlertDialogTitle>Delete Team</AlertDialogTitle>
+                          <AlertDialogTitle>Eliminar equipo</AlertDialogTitle>
                           <AlertDialogDescription>
-                            Are you sure you want to delete "{t.name || t.title}"? This action cannot be undone.
+                            ¿Seguro que quieres eliminar "{t.name || t.title}"? Esta acción no se puede deshacer.
                           </AlertDialogDescription>
                         </AlertDialogHeader>
                         <AlertDialogFooter>
-                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          <AlertDialogCancel>Cancelar</AlertDialogCancel>
                           <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                            Delete
+                            Eliminar
                           </AlertDialogAction>
                         </AlertDialogFooter>
                       </AlertDialogContent>

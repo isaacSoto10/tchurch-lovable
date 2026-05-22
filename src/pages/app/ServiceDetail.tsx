@@ -1,10 +1,9 @@
 import { useRef, useState, useEffect, type DragEvent, type PointerEvent, type SyntheticEvent } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
@@ -377,20 +376,6 @@ export default function ServiceDetail() {
     } catch (e) { console.error(e); }
   }
 
-  async function handleConfirmAssignment(assignmentId: string, confirmed: boolean) {
-    if (!id) return;
-    try {
-      await apiFetch(`/service-assignments/${assignmentId}`, {
-        method: "PUT",
-        body: JSON.stringify({ confirmed }),
-      });
-      setService((prev) => prev ? {
-        ...prev,
-        assignments: prev.assignments.map((a) => a.id === assignmentId ? { ...a, confirmed } : a),
-      } : prev);
-    } catch (e) { console.error(e); }
-  }
-
   async function handleAssignmentResponse(assignmentId: string, action: "accept" | "decline") {
     setRespondingId(assignmentId);
     try {
@@ -542,23 +527,24 @@ export default function ServiceDetail() {
   }
 
   return (
-    <div className="mobile-page space-y-4">
+    <div className="app-page space-y-4">
       {/* Header */}
-      <div className="app-card-soft overflow-hidden">
+      <div className="app-page-header overflow-hidden">
         <div className="flex items-center gap-3 px-4 py-4">
-          <button onClick={() => navigate("/app/services")} className="-ml-1 flex h-10 w-10 items-center justify-center rounded-2xl bg-white shadow-sm hover:bg-zinc-50">
-            <ArrowLeft className="w-5 h-5 text-zinc-600" />
+          <button onClick={() => navigate("/app/services")} className="-ml-1 flex h-10 w-10 items-center justify-center rounded-md border border-border bg-card shadow-sm hover:bg-secondary">
+            <ArrowLeft className="w-5 h-5 text-muted-foreground" />
           </button>
           <div className="flex-1 min-w-0">
-            <h1 className="truncate text-xl font-black tracking-tight text-zinc-950">{service.title}</h1>
-            <p className="mt-0.5 truncate text-sm text-zinc-500">{formatDate(service.date)}</p>
+            <p className="app-page-kicker">Servicio</p>
+            <h1 className="truncate text-xl font-semibold text-foreground">{service.title}</h1>
+            <p className="mt-0.5 truncate text-sm text-muted-foreground">{formatDate(service.date)}</p>
           </div>
-          <Button variant="outline" size="sm" className="h-10 rounded-2xl px-3" onClick={handleGenerateServicePdf}>
+          <Button variant="outline" size="sm" className="h-10 rounded-md px-3" onClick={handleGenerateServicePdf}>
             <FileDown className="w-4 h-4" />
             PDF
           </Button>
           {isAdmin && (
-            <Button variant="ghost" size="sm" className="h-10 w-10 rounded-2xl text-red-500" onClick={handleDeleteService}>
+            <Button variant="ghost" size="sm" className="h-10 w-10 rounded-md text-red-500" onClick={handleDeleteService}>
               <Trash2 className="w-4 h-4" />
             </Button>
           )}
@@ -566,11 +552,11 @@ export default function ServiceDetail() {
 
         <div className="px-4 pb-3">
           <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as Tab)}>
-            <TabsList className="grid h-11 w-full grid-cols-2 rounded-2xl bg-zinc-100/70 p-1">
-              <TabsTrigger value="flow" className="text-xs flex items-center gap-1">
+            <TabsList className="grid h-11 w-full grid-cols-2 rounded-md bg-muted p-1">
+              <TabsTrigger value="flow" className="flex items-center gap-1 rounded-sm text-xs">
                 <Music className="w-3 h-3" /> Flujo
               </TabsTrigger>
-              <TabsTrigger value="team" className="text-xs flex items-center gap-1">
+              <TabsTrigger value="team" className="flex items-center gap-1 rounded-sm text-xs">
                 <Users className="w-3 h-3" /> Equipo
               </TabsTrigger>
             </TabsList>
@@ -581,9 +567,9 @@ export default function ServiceDetail() {
       <div className="space-y-4">
 
         {/* SERVICE INFO */}
-        <Card className="app-card">
+        <Card className="app-list-card">
           <CardContent className="p-4 space-y-2">
-            <div className="flex items-center gap-2 text-xs text-zinc-500">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <span className="font-medium">{service.type}</span>
               {service.notes && <span>· {service.notes}</span>}
             </div>
@@ -595,19 +581,19 @@ export default function ServiceDetail() {
           <div className="space-y-3">
             {isPlanner && (
               <div className="flex justify-end">
-                <Button size="sm" className="h-10 rounded-2xl" onClick={() => setShowAddItem(true)}>
+                <Button size="sm" className="h-10 rounded-md" onClick={() => setShowAddItem(true)}>
                   <Plus className="w-4 h-4 mr-1" /> Agregar
                 </Button>
               </div>
             )}
 
             {service.items.length === 0 ? (
-              <Card className="app-card">
+              <Card className="app-empty-state">
                 <CardContent className="p-8 text-center">
-                  <Music className="w-8 h-8 mx-auto text-zinc-300 mb-2" />
+                  <Music className="w-8 h-8 mx-auto text-muted-foreground/50 mb-2" />
                   <p className="text-sm text-muted-foreground">Todavía no hay elementos en este servicio.</p>
                   {isPlanner && (
-                    <Button size="sm" variant="outline" onClick={() => setShowAddItem(true)} className="mt-3">
+                    <Button size="sm" variant="outline" onClick={() => setShowAddItem(true)} className="mt-3 rounded-md">
                       Agregar primero
                     </Button>
                   )}
@@ -619,7 +605,7 @@ export default function ServiceDetail() {
                   <Card
                     key={item.id}
                     data-service-item-id={item.id}
-                    className={`app-card overflow-hidden transition-all ${draggingItemId === item.id ? "opacity-50" : ""} ${
+                    className={`app-list-card overflow-hidden transition-all ${draggingItemId === item.id ? "opacity-50" : ""} ${
                       dragOverItemId === item.id && draggingItemId !== item.id ? "ring-2 ring-primary ring-offset-2" : ""
                     }`}
                     onClick={() => {
@@ -631,7 +617,7 @@ export default function ServiceDetail() {
                       <div className="flex items-center gap-3 p-3">
                         <div className="flex flex-col gap-1 shrink-0">
                           {idx > 0 && (
-                            <button onClick={(event) => { event.stopPropagation(); handleMoveUp(item); }} className="p-0.5 rounded hover:bg-zinc-100 text-zinc-400">
+                            <button onClick={(event) => { event.stopPropagation(); handleMoveUp(item); }} className="rounded p-0.5 text-muted-foreground hover:bg-secondary">
                               <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path d="M5 15l7-7 7 7" /></svg>
                             </button>
                           )}
@@ -650,34 +636,34 @@ export default function ServiceDetail() {
                             onPointerCancel={handlePointerUp}
                           />
                           {idx < service.items.length - 1 && (
-                            <button onClick={(event) => { event.stopPropagation(); handleMoveDown(item); }} className="p-0.5 rounded hover:bg-zinc-100 text-zinc-400">
+                            <button onClick={(event) => { event.stopPropagation(); handleMoveDown(item); }} className="rounded p-0.5 text-muted-foreground hover:bg-secondary">
                               <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7" /></svg>
                             </button>
                           )}
                         </div>
-                        <div className="w-8 h-8 bg-primary/10 rounded-lg flex items-center justify-center shrink-0">
+                        <div className="app-icon-tile h-9 w-9">
                           {isSongItemType(item.type) ? <Music className="w-4 h-4 text-primary" /> : <Clock className="w-4 h-4 text-primary" />}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="font-bold text-sm text-zinc-950">{item.song?.title || item.title}</p>
-                          <p className="text-xs text-zinc-500">
+                          <p className="font-semibold text-sm text-foreground">{item.song?.title || item.title}</p>
+                          <p className="text-xs text-muted-foreground">
                             {formatItemType(item.type)}{item.duration ? ` · ${item.duration} min` : ""}
                             {item.song?.author ? ` · ${item.song.author}` : ""}
                           </p>
                         </div>
                         {getDisplayKey(item) && (
-                          <Badge variant="secondary" className="shrink-0 rounded-full text-xs">Tono {getDisplayKey(item)}</Badge>
+                          <Badge variant="secondary" className="shrink-0 rounded-md text-xs">Tono {getDisplayKey(item)}</Badge>
                         )}
                         {item.song && (
                           <div className="flex shrink-0 items-center gap-1">
-                            <Button variant="outline" size="sm" className="h-9 rounded-xl" onClick={(event) => { event.stopPropagation(); navigate(`/app/songs/${item.song?.id}`); }}>
+                            <Button variant="outline" size="sm" className="h-9 rounded-md" onClick={(event) => { event.stopPropagation(); navigate(`/app/songs/${item.song?.id}`); }}>
                               <FileText className="w-3 h-3" />
                               Canción
                             </Button>
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-9 w-9 rounded-xl"
+                              className="h-9 w-9 rounded-md"
                               aria-label={expandedSongItems[item.id] ? "Contraer detalles de canción" : "Expandir detalles de canción"}
                               onClick={(event) => { event.stopPropagation(); toggleSongItem(item.id); }}
                             >
@@ -688,7 +674,7 @@ export default function ServiceDetail() {
                         {isPlanner && (
                           <button
                             onClick={(event) => { event.stopPropagation(); handleDeleteItem(item.id); }}
-                            className="p-1.5 rounded-lg hover:bg-red-50 text-zinc-400 hover:text-red-500 transition-colors"
+                            className="p-1.5 rounded-md hover:bg-red-50 text-muted-foreground hover:text-red-500 transition-colors"
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -696,37 +682,37 @@ export default function ServiceDetail() {
                       </div>
 
                       {isSongItemType(item.type) && item.song && expandedSongItems[item.id] && (
-                          <div className="space-y-3 border-t border-zinc-100 bg-gradient-to-br from-white to-zinc-50/80 p-3" onClick={stopInteractiveTap} onPointerDown={stopInteractiveTap} onTouchStart={stopInteractiveTap}>
+                          <div className="space-y-3 border-t border-border bg-secondary/35 p-3" onClick={stopInteractiveTap} onPointerDown={stopInteractiveTap} onTouchStart={stopInteractiveTap}>
                           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                             <div className="min-w-0 space-y-2">
                               <div className="flex flex-wrap gap-2">
                                 {getDisplayKey(item) && (
-                                  <Badge variant="secondary" className="rounded-full">Tono {getDisplayKey(item)}</Badge>
+                                  <Badge variant="secondary" className="rounded-md">Tono {getDisplayKey(item)}</Badge>
                                 )}
                                 {(getPrimaryArrangement(item.song)?.bpm || item.song.bpm) && (
-                                  <Badge variant="secondary" className="rounded-full">{getPrimaryArrangement(item.song)?.bpm || item.song.bpm} BPM</Badge>
+                                  <Badge variant="secondary" className="rounded-md">{getPrimaryArrangement(item.song)?.bpm || item.song.bpm} BPM</Badge>
                                 )}
                                 {(getPrimaryArrangement(item.song)?.meter || item.song.meter) && (
-                                  <Badge variant="secondary" className="rounded-full">{getPrimaryArrangement(item.song)?.meter || item.song.meter}</Badge>
+                                  <Badge variant="secondary" className="rounded-md">{getPrimaryArrangement(item.song)?.meter || item.song.meter}</Badge>
                                 )}
                                 {item.song.arrangements?.length ? (
-                                  <Badge variant="outline" className="rounded-full">{item.song.arrangements.length} arreglo{item.song.arrangements.length === 1 ? "" : "s"}</Badge>
+                                  <Badge variant="outline" className="rounded-md">{item.song.arrangements.length} arreglo{item.song.arrangements.length === 1 ? "" : "s"}</Badge>
                                 ) : null}
                               </div>
                               {getSongPlainNotes(item.song) && (
-                                <p className="text-xs leading-5 text-zinc-500">{getSongPlainNotes(item.song)}</p>
+                                <p className="text-xs leading-5 text-muted-foreground">{getSongPlainNotes(item.song)}</p>
                               )}
                             </div>
                             <div className="flex shrink-0 flex-wrap gap-2">
                               {getSongYoutubeUrl(item.song) && (
-                                <Button asChild variant="outline" size="sm" className="rounded-xl">
+                                <Button asChild variant="outline" size="sm" className="rounded-md">
                                   <a href={getSongYoutubeUrl(item.song) || "#"} target="_blank" rel="noreferrer">
                                     <PlayCircle className="w-3 h-3" />
                                     YouTube
                                   </a>
                                 </Button>
                               )}
-                              <Button variant="ghost" size="sm" className="rounded-xl" onClick={(event) => { event.stopPropagation(); navigate(`/app/songs/${item.song?.id}`); }}>
+                              <Button variant="ghost" size="sm" className="rounded-md" onClick={(event) => { event.stopPropagation(); navigate(`/app/songs/${item.song?.id}`); }}>
                                 <ExternalLink className="w-3 h-3" />
                                 Ver acordes
                               </Button>
@@ -734,7 +720,7 @@ export default function ServiceDetail() {
                           </div>
 
                           {getYoutubeEmbedUrl(getSongYoutubeUrl(item.song)) && (
-                            <div className="overflow-hidden rounded-2xl border border-red-100 bg-black shadow-sm">
+                            <div className="overflow-hidden rounded-md border border-border bg-black shadow-sm">
                               <iframe
                                 title={`YouTube - ${item.song.title}`}
                                 src={getYoutubeEmbedUrl(getSongYoutubeUrl(item.song)) || undefined}
@@ -770,16 +756,16 @@ export default function ServiceDetail() {
           <div className="space-y-3">
             {isPlanner && (
               <div className="flex justify-end">
-                <Button size="sm" className="h-10 rounded-2xl" onClick={() => setShowAssign(true)}>
+                <Button size="sm" className="h-10 rounded-md" onClick={() => setShowAssign(true)}>
                   <Plus className="w-4 h-4 mr-1" /> Asignar
                 </Button>
               </div>
             )}
 
             {service.assignments.length === 0 ? (
-              <Card className="app-card">
+              <Card className="app-empty-state">
                 <CardContent className="p-8 text-center">
-                  <Users className="w-8 h-8 mx-auto text-zinc-300 mb-2" />
+                  <Users className="w-8 h-8 mx-auto text-muted-foreground/50 mb-2" />
                   <p className="text-sm text-muted-foreground">Todavía no hay miembros asignados.</p>
                 </CardContent>
               </Card>
@@ -790,7 +776,7 @@ export default function ServiceDetail() {
                   const isCurrentUserAssigned = a.userId === currentUserId || Boolean(currentUserEmail && assignmentEmail === currentUserEmail);
 
                   return (
-                  <Card key={a.id} className="app-card">
+                  <Card key={a.id} className="app-list-card">
                     <CardContent className="flex items-center gap-3 p-3">
                       <Avatar className="h-9 w-9 shrink-0">
                         <AvatarFallback className="bg-primary/10 text-primary text-xs font-semibold">
@@ -801,7 +787,7 @@ export default function ServiceDetail() {
                         <p className="font-medium text-sm truncate">
                           {a.user?.firstName} {a.user?.lastName}
                         </p>
-                        <p className="text-xs text-zinc-500">{a.position}</p>
+                        <p className="text-xs text-muted-foreground">{a.position}</p>
                       </div>
                       <div className="flex items-center gap-2">
                         {(a.responseStatus === "accepted" || (!a.responseStatus && a.confirmed)) ? (
@@ -837,7 +823,7 @@ export default function ServiceDetail() {
                         {isPlanner && (
                           <button
                             onClick={() => handleRemoveAssignment(a.id)}
-                            className="p-1.5 rounded-lg hover:bg-red-50 text-zinc-400 hover:text-red-500 transition-colors"
+                            className="p-1.5 rounded-md hover:bg-red-50 text-muted-foreground hover:text-red-500 transition-colors"
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -878,17 +864,17 @@ export default function ServiceDetail() {
                   placeholder="Buscar canciones..."
                 />
                 {songResults.length > 0 && !selectedSong && (
-                  <div className="border rounded-lg overflow-hidden">
+                  <div className="overflow-hidden rounded-md border border-border">
                     {songResults.map((s) => (
                       <button
                         key={s.id}
                         type="button"
-                        className="w-full text-left px-3 py-2 text-sm hover:bg-zinc-50 border-b last:border-b-0"
+                        className="w-full border-b px-3 py-2 text-left text-sm hover:bg-secondary last:border-b-0"
                         onClick={() => { setSelectedSong(s); setItemTitle(s.title); setSongSearch(s.title); setSongResults([]); }}
                       >
                         <p className="font-medium">{s.title}</p>
-                        {s.author && <p className="text-xs text-zinc-500">{s.author}</p>}
-                        <p className="text-xs text-zinc-400">
+                        {s.author && <p className="text-xs text-muted-foreground">{s.author}</p>}
+                        <p className="text-xs text-muted-foreground">
                           {[s.key, s.bpm ? `${s.bpm} BPM` : null].filter(Boolean).join(" · ") || "Biblioteca de canciones"}
                         </p>
                       </button>

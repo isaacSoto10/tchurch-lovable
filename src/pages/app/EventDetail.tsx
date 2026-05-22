@@ -3,8 +3,6 @@ import { useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -47,15 +45,15 @@ function getInitials(firstName?: string | null, lastName?: string | null, email?
 }
 
 function whatsappEventShare(event: Event) {
-  const date = new Date(event.date).toLocaleString("en-US", {
+  const date = new Date(event.date).toLocaleString("es-US", {
     weekday: "short",
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
   });
-  const location = event.location ? `\nLocation: ${event.location}` : "";
-  return `https://wa.me/?text=${encodeURIComponent(`📅 ${event.title}\n${date}${location}`)}`;
+  const location = event.location ? `\nLugar: ${event.location}` : "";
+  return `https://wa.me/?text=${encodeURIComponent(`${event.title}\n${date}${location}`)}`;
 }
 
 export default function EventDetail() {
@@ -129,8 +127,8 @@ export default function EventDetail() {
   if (!event) {
     return (
       <div className="p-4 text-center">
-        <p className="text-muted-foreground">Event not found</p>
-        <Button variant="ghost" onClick={() => navigate("/app/events")} className="mt-2">Back</Button>
+        <p className="text-muted-foreground">Evento no encontrado</p>
+        <Button variant="ghost" onClick={() => navigate("/app/events")} className="mt-2">Volver</Button>
       </div>
     );
   }
@@ -141,53 +139,54 @@ export default function EventDetail() {
   const leaderName = [event.leaderFirstName, event.leaderLastName].filter(Boolean).join(" ") || event.leaderEmail || null;
 
   return (
-    <div className="min-h-screen bg-zinc-50">
+    <div className="app-page space-y-4">
       {/* Header */}
-      <div className="bg-white border-b border-zinc-200 sticky top-0 z-10">
-        <div className="flex items-center gap-3 px-4 py-3">
-          <button onClick={() => navigate("/app/events")} className="p-2 -ml-2 rounded-lg hover:bg-zinc-100">
-            <ArrowLeft className="w-5 h-5 text-zinc-600" />
+      <div className="app-page-header">
+        <div className="flex items-center gap-3 px-4 py-4">
+          <button onClick={() => navigate("/app/events")} className="-ml-1 flex h-10 w-10 items-center justify-center rounded-md border border-border bg-card shadow-sm hover:bg-secondary">
+            <ArrowLeft className="w-5 h-5 text-muted-foreground" />
           </button>
           <div className="flex-1 min-w-0">
-            <h1 className="font-semibold text-zinc-900 truncate">{event.title}</h1>
+            <p className="app-page-kicker">Evento</p>
+            <h1 className="truncate text-xl font-semibold text-foreground">{event.title}</h1>
           </div>
           {canManage && (
-            <Button variant="ghost" size="sm" className="text-red-500" onClick={() => setShowDelete(true)}>
+            <Button variant="ghost" size="sm" className="rounded-md text-red-500" onClick={() => setShowDelete(true)}>
               <Trash2 className="w-4 h-4" />
             </Button>
           )}
         </div>
       </div>
 
-      <div className="p-4 space-y-4">
+      <div className="space-y-4">
 
         {/* Event Info */}
-        <Card>
+        <Card className="app-list-card">
           <CardContent className="p-4 space-y-3">
             <div className="flex items-center gap-2">
-              <Badge variant="secondary">{event.type}</Badge>
-              {event.ministryName && <Badge variant="outline">{event.ministryName}</Badge>}
+              <Badge variant="secondary" className="rounded-md">{event.type}</Badge>
+              {event.ministryName && <Badge variant="outline" className="rounded-md">{event.ministryName}</Badge>}
             </div>
 
             <div className="space-y-2 text-sm">
-              <div className="flex items-center gap-3 text-zinc-600">
+              <div className="flex items-center gap-3 text-muted-foreground">
                 <Calendar className="w-4 h-4 shrink-0" />
-                <span>{new Date(event.date).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</span>
+                <span>{new Date(event.date).toLocaleDateString("es-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</span>
               </div>
-              <div className="flex items-center gap-3 text-zinc-600">
+              <div className="flex items-center gap-3 text-muted-foreground">
                 <Clock className="w-4 h-4 shrink-0" />
-                <span>{new Date(event.date).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
-                  {event.endDate && ` - ${new Date(event.endDate).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`}
+                <span>{new Date(event.date).toLocaleTimeString("es-US", { hour: "numeric", minute: "2-digit" })}
+                  {event.endDate && ` - ${new Date(event.endDate).toLocaleTimeString("es-US", { hour: "numeric", minute: "2-digit" })}`}
                 </span>
               </div>
               {event.location && (
-                <div className="flex items-center gap-3 text-zinc-600">
+                <div className="flex items-center gap-3 text-muted-foreground">
                   <MapPin className="w-4 h-4 shrink-0" />
                   <span>{event.location}</span>
                 </div>
               )}
               {leaderName && (
-                <div className="flex items-center gap-3 text-zinc-600">
+                <div className="flex items-center gap-3 text-muted-foreground">
                   <Users className="w-4 h-4 shrink-0" />
                   <span>{leaderName}</span>
                 </div>
@@ -197,7 +196,7 @@ export default function EventDetail() {
             {event.description && (
               <>
                 <Separator />
-                <p className="text-sm text-zinc-600">{event.description}</p>
+                <p className="text-sm text-muted-foreground">{event.description}</p>
               </>
             )}
 
@@ -205,38 +204,38 @@ export default function EventDetail() {
               <>
                 <Separator />
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Special notes</p>
-                  <p className="mt-1 whitespace-pre-wrap text-sm text-zinc-600">{event.notes}</p>
+                  <p className="app-section-title">Notas especiales</p>
+                  <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">{event.notes}</p>
                 </div>
               </>
             )}
 
-            <Button variant="outline" asChild className="w-full">
+            <Button variant="outline" asChild className="w-full rounded-md">
               <a href={whatsappEventShare(event)} target="_blank" rel="noreferrer">
-                <MessageCircle className="w-4 h-4 mr-2" /> Share on WhatsApp
+                <MessageCircle className="w-4 h-4 mr-2" /> Compartir por WhatsApp
               </a>
             </Button>
           </CardContent>
         </Card>
 
         {/* RSVP */}
-        <Card>
+        <Card className="app-list-card">
           <CardContent className="p-4 space-y-3">
-            <p className="font-medium text-sm">Will you attend?</p>
+            <p className="font-medium text-sm">¿Vas a asistir?</p>
             <div className="flex gap-2">
               <Button
                 size="sm"
                 variant={myRsvp === "yes" ? "default" : "outline"}
-                className="flex-1"
+                className="flex-1 rounded-md"
                 onClick={() => handleRSVP("yes")}
                 disabled={rsvpLoading}
               >
-                <Check className="w-4 h-4 mr-1" /> Yes
+                <Check className="w-4 h-4 mr-1" /> Sí
               </Button>
               <Button
                 size="sm"
                 variant={myRsvp === "no" ? "default" : "outline"}
-                className="flex-1"
+                className="flex-1 rounded-md"
                 onClick={() => handleRSVP("no")}
                 disabled={rsvpLoading}
               >
@@ -245,11 +244,11 @@ export default function EventDetail() {
               <Button
                 size="sm"
                 variant={myRsvp === "maybe" ? "default" : "outline"}
-                className="flex-1"
+                className="flex-1 rounded-md"
                 onClick={() => handleRSVP("maybe")}
                 disabled={rsvpLoading}
               >
-                Maybe
+                Quizás
               </Button>
             </div>
           </CardContent>
@@ -257,13 +256,13 @@ export default function EventDetail() {
 
         {/* Attendees */}
         {(event.attendees || []).length > 0 && (
-          <Card>
+          <Card className="app-list-card">
             <CardContent className="p-4 space-y-4">
-              <p className="font-medium text-sm">Attendees</p>
+              <p className="font-medium text-sm">Asistentes</p>
               <div className="space-y-3">
                 {yesCount > 0 && (
                   <div>
-                    <p className="text-xs text-emerald-600 font-medium mb-2">Going ({yesCount})</p>
+                    <p className="text-xs text-emerald-600 font-medium mb-2">Asisten ({yesCount})</p>
                     <div className="space-y-2">
                       {(event.attendees || []).filter((a) => a.status === "yes").map((a) => (
                         <div key={a.id} className="flex items-center gap-3">
@@ -282,7 +281,7 @@ export default function EventDetail() {
                 )}
                 {maybeCount > 0 && (
                   <div>
-                    <p className="text-xs text-amber-600 font-medium mb-2">Maybe ({maybeCount})</p>
+                    <p className="text-xs text-amber-600 font-medium mb-2">Quizás ({maybeCount})</p>
                     <div className="space-y-2">
                       {(event.attendees || []).filter((a) => a.status === "maybe").map((a) => (
                         <div key={a.id} className="flex items-center gap-3">
@@ -301,7 +300,7 @@ export default function EventDetail() {
                 )}
                 {noCount > 0 && (
                   <div>
-                    <p className="text-xs text-zinc-400 font-medium mb-2">Not Going ({noCount})</p>
+                    <p className="text-xs text-muted-foreground font-medium mb-2">No asisten ({noCount})</p>
                     <div className="space-y-2">
                       {(event.attendees || []).filter((a) => a.status === "no").map((a) => (
                         <div key={a.id} className="flex items-center gap-3 opacity-50">
@@ -328,12 +327,12 @@ export default function EventDetail() {
       <Dialog open={showDelete} onOpenChange={setShowDelete}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete Event</DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">Are you sure you want to delete "{event.title}"? This cannot be undone.</p>
+          <DialogTitle>Eliminar evento</DialogTitle>
+        </DialogHeader>
+          <p className="text-sm text-muted-foreground">¿Seguro que quieres eliminar "{event.title}"? Esta acción no se puede deshacer.</p>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowDelete(false)}>Cancel</Button>
-            <Button variant="destructive" onClick={handleDelete}>Delete</Button>
+            <Button variant="outline" onClick={() => setShowDelete(false)}>Cancelar</Button>
+            <Button variant="destructive" onClick={handleDelete}>Eliminar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

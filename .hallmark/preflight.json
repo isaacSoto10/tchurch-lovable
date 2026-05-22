@@ -1,0 +1,20 @@
+{
+  "scannedAt": "2026-05-21",
+  "framework": "Vite React",
+  "styling": "Tailwind CSS with shadcn/ui tokens",
+  "fontStack": "Inter via src/index.css",
+  "palette": "CSS custom properties in src/index.css with church brand color support on dashboards",
+  "motion": "framer-motion is installed; dashboard keeps motion subtle and CSS-driven",
+  "preserved": [
+    "React Router app shell",
+    "shadcn/ui component primitives",
+    "existing church brandColor field",
+    "4-8px Tailwind spacing rhythm"
+  ],
+  "introduced": [
+    "Hallmark dashboard hierarchy",
+    "lower-radius operational cards",
+    "brand-accent marks instead of large gradient fills",
+    "asymmetric agenda-plus-rail layout"
+  ]
+}

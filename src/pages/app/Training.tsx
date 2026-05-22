@@ -21,10 +21,10 @@ interface Category {
 }
 
 const CATEGORY_COLORS: Record<string, string> = {
-  volunteer: "bg-purple-100 text-purple-800",
-  tech: "bg-blue-100 text-blue-800",
-  worship: "bg-amber-100 text-amber-800",
-  general: "bg-gray-100 text-gray-800",
+  volunteer: "bg-secondary text-secondary-foreground",
+  tech: "bg-secondary text-secondary-foreground",
+  worship: "bg-accent text-accent-foreground",
+  general: "bg-secondary text-secondary-foreground",
 };
 
 export default function Training() {
@@ -70,15 +70,17 @@ export default function Training() {
   }
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">Training</h1>
+    <div className="app-page space-y-5">
+      <div className="app-page-header p-4 sm:p-5">
+        <p className="app-page-kicker">Formación</p>
+        <h1 className="app-page-title">Capacitación</h1>
+        <p className="app-page-copy">Materiales y progreso para preparar equipos con claridad.</p>
       </div>
 
-      <Card className="mb-6">
+      <Card className="app-list-card">
         <CardContent className="p-4">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium">Overall Progress</span>
+            <span className="text-sm font-medium">Progreso general</span>
             <span className="text-sm text-muted-foreground">{completedCount} / {materials.length}</span>
           </div>
           <Progress value={overallProgress} className="h-2" />
@@ -86,19 +88,21 @@ export default function Training() {
       </Card>
 
       {categories.length > 0 && (
-        <div className="flex gap-2 mb-4 flex-wrap">
+        <div className="flex gap-2 flex-wrap">
           <Button
             size="sm"
             variant={selectedCategory === "all" ? "default" : "outline"}
+            className="rounded-md"
             onClick={() => setSelectedCategory("all")}
           >
-            All
+            Todo
           </Button>
           {categories.map((cat) => (
             <Button
               key={cat.id}
               size="sm"
               variant={selectedCategory === cat.id ? "default" : "outline"}
+              className="rounded-md"
               onClick={() => setSelectedCategory(cat.id)}
             >
               {cat.name} ({cat.count})
@@ -109,16 +113,21 @@ export default function Training() {
 
       <div className="grid gap-3">
         {filteredMaterials.length === 0 && (
-          <p className="text-sm text-muted-foreground">No training materials{selectedCategory !== "all" ? ` in ${selectedCategory}` : ""}.</p>
+          <div className="app-empty-state">
+            <BookOpen className="mx-auto mb-2 h-8 w-8 text-muted-foreground/50" />
+            <p className="text-sm text-muted-foreground">
+              No hay materiales{selectedCategory !== "all" ? ` en ${selectedCategory}` : ""}.
+            </p>
+          </div>
         )}
         {filteredMaterials.map((material) => (
-          <Card key={material.id} className={material.completed ? "opacity-60" : ""}>
+          <Card key={material.id} className={`app-list-card ${material.completed ? "opacity-65" : ""}`}>
             <CardContent className="p-4 flex items-start gap-4">
-              <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${material.completed ? "bg-green-100" : "bg-primary/10"}`}>
+              <div className={`app-icon-tile ${material.completed ? "bg-emerald-100 text-emerald-700" : ""}`}>
                 {material.completed ? (
                   <CheckCircle className="w-5 h-5 text-green-600" />
                 ) : (
-                  <BookOpen className="w-5 h-5 text-primary" />
+                  <BookOpen className="w-5 h-5" />
                 )}
               </div>
               <div className="flex-1 min-w-0">
@@ -127,7 +136,7 @@ export default function Training() {
                   <p className="text-sm text-muted-foreground mt-0.5 line-clamp-2">{material.description}</p>
                 )}
                 {material.category && (
-                  <span className={`text-xs px-2 py-0.5 rounded mt-1 inline-block ${CATEGORY_COLORS[material.category.toLowerCase()] || "bg-gray-100 text-gray-800"}`}>
+                  <span className={`mt-1 inline-block rounded-md px-2 py-0.5 text-xs ${CATEGORY_COLORS[material.category.toLowerCase()] || "bg-secondary text-secondary-foreground"}`}>
                     {material.category}
                   </span>
                 )}
@@ -140,9 +149,9 @@ export default function Training() {
                   variant="outline"
                   size="sm"
                   onClick={() => handleMarkComplete(material.id)}
-                  className="shrink-0"
+                  className="shrink-0 rounded-md"
                 >
-                  Mark Complete
+                  Completar
                 </Button>
               )}
             </CardContent>

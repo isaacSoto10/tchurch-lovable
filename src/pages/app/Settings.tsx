@@ -205,9 +205,9 @@ export default function Settings() {
         }),
       });
       setWhatsappSettings(data);
-      setWhatsappMessage("WhatsApp settings saved.");
+      setWhatsappMessage("Configuración de WhatsApp guardada.");
     } catch (e) {
-      setWhatsappError("Could not save WhatsApp settings.");
+      setWhatsappError("No se pudo guardar la configuración de WhatsApp.");
     } finally {
       setSavingWhatsApp(false);
     }
@@ -221,10 +221,10 @@ export default function Settings() {
       const data = await fetchApi<{ ok?: boolean; disabled?: boolean; error?: string }>("/whatsapp/settings", {
         method: "POST",
       });
-      if (data.ok === false && !data.disabled) throw new Error(data.error || "Could not send test.");
-      setWhatsappMessage(data.disabled ? "Preferences saved. WhatsApp Cloud API is not configured yet." : "Test WhatsApp sent.");
+      if (data.ok === false && !data.disabled) throw new Error(data.error || "No se pudo enviar la prueba.");
+      setWhatsappMessage(data.disabled ? "Preferencias guardadas. WhatsApp Cloud API todavía no está configurado." : "Prueba de WhatsApp enviada.");
     } catch (e) {
-      setWhatsappError(e instanceof Error ? e.message : "Could not send test WhatsApp.");
+      setWhatsappError(e instanceof Error ? e.message : "No se pudo enviar la prueba de WhatsApp.");
     } finally {
       setTestingWhatsApp(false);
     }
@@ -287,14 +287,6 @@ export default function Settings() {
     }
   }
 
-  function handleSwitchChurch() {
-    if (churches.length <= 1) return;
-    const others = churches.filter((c) => c.id !== selectedChurch?.id);
-    if (others.length > 0) {
-      switchChurch(others[0]);
-    }
-  }
-
   const initials = `${profile?.firstName?.[0] || ""}${profile?.lastName?.[0] || ""}`.toUpperCase() || "?";
 
   if (loading) {
@@ -307,24 +299,24 @@ export default function Settings() {
 
   return (
     <div className="mobile-page mx-auto max-w-2xl space-y-5">
-      <div className="app-card-soft p-4">
-        <p className="mobile-section-title">Preferencias</p>
-        <h1 className="mt-1 text-3xl font-black tracking-tight text-zinc-950">Configuración</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Administra tu perfil, notificaciones y acceso de la iglesia.</p>
+      <div className="app-page-header p-4 sm:p-5">
+        <p className="app-page-kicker">Preferencias</p>
+        <h1 className="app-page-title">Configuración</h1>
+        <p className="app-page-copy">Administra tu perfil, notificaciones y acceso de la iglesia.</p>
       </div>
 
       <Tabs defaultValue="profile" className="w-full">
-        <TabsList className="flex h-auto w-full justify-start gap-1 overflow-x-auto rounded-2xl bg-muted p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <TabsTrigger value="profile" className="shrink-0 rounded-xl">Perfil</TabsTrigger>
-          <TabsTrigger value="notifications" className="shrink-0 rounded-xl">Notificaciones</TabsTrigger>
-          <TabsTrigger value="whatsapp" className="shrink-0 rounded-xl">
+        <TabsList className="flex h-auto w-full justify-start gap-1 overflow-x-auto rounded-md bg-muted p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <TabsTrigger value="profile" className="shrink-0 rounded-sm">Perfil</TabsTrigger>
+          <TabsTrigger value="notifications" className="shrink-0 rounded-sm">Notificaciones</TabsTrigger>
+          <TabsTrigger value="whatsapp" className="shrink-0 rounded-sm">
             <MessageCircle className="w-4 h-4 mr-1.5" />
             WhatsApp
           </TabsTrigger>
           {isAdmin && (
             <>
-              <TabsTrigger value="church" className="shrink-0 rounded-xl">Iglesia</TabsTrigger>
-              <TabsTrigger value="members" className="shrink-0 rounded-xl">
+              <TabsTrigger value="church" className="shrink-0 rounded-sm">Iglesia</TabsTrigger>
+              <TabsTrigger value="members" className="shrink-0 rounded-sm">
                 Miembros
                 {pendingMembers.length > 0 && (
                   <Badge variant="destructive" className="ml-1.5 h-5 w-5 p-0 text-xs justify-center items-center">
@@ -359,8 +351,8 @@ export default function Settings() {
                   </p>
                   <p className="text-sm text-muted-foreground">{profile?.email}</p>
                   {selectedChurch && (
-                    <Badge variant="secondary" className="mt-1 capitalize">
-                      {selectedChurch.role?.toLowerCase()} in {selectedChurch.name}
+                    <Badge variant="secondary" className="mt-1 rounded-md capitalize">
+                      {selectedChurch.role?.toLowerCase()} en {selectedChurch.name}
                     </Badge>
                   )}
                 </div>
@@ -398,6 +390,7 @@ export default function Settings() {
                             key={church.id}
                             variant="outline"
                             size="sm"
+                            className="rounded-md"
                             onClick={() => switchChurch(church)}
                           >
                             {church.name}
@@ -507,7 +500,7 @@ export default function Settings() {
         </TabsContent>
 
         <TabsContent value="whatsapp" className="mt-6">
-          <Card className="app-card border-emerald-100 bg-gradient-to-br from-white to-emerald-50/50">
+          <Card className="app-list-card border-emerald-100 bg-emerald-50/50">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <MessageCircle className="w-5 h-5 text-emerald-600" />
@@ -526,7 +519,7 @@ export default function Settings() {
                 <>
                   {!whatsappSettings.config.configured && (
                     <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-                      WhatsApp Cloud API is not configured yet, but users can still save opt-in preferences and group links.
+                      WhatsApp Cloud API todavía no está configurado, pero los usuarios pueden guardar preferencias y links de grupo.
                     </div>
                   )}
 
@@ -536,7 +529,7 @@ export default function Settings() {
                       value={whatsappSettings.user.whatsappPhone}
                       onChange={(event) => updateWhatsAppUser("whatsappPhone", event.target.value)}
                       placeholder="+1 555 123 4567"
-                      className="w-full px-3 py-2 border rounded-md text-sm"
+                    className="app-control w-full px-3 py-2 text-sm"
                     />
                   </div>
 
@@ -725,7 +718,7 @@ export default function Settings() {
                       {pendingMembers.map((member) => (
                         <div
                           key={member.id}
-                          className="flex items-center justify-between p-3 border rounded-lg"
+                          className="app-list-card flex items-center justify-between p-3"
                         >
                           <div className="flex items-center gap-3">
                             <Avatar className="h-10 w-10">

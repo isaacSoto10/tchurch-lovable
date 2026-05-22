@@ -144,10 +144,10 @@ export default function Giving() {
 
   return (
     <div className="mobile-page space-y-5">
-      <div className="app-card-soft p-4">
-        <p className="mobile-section-title">Generosidad</p>
-        <h1 className="mt-1 text-3xl font-black tracking-tight text-zinc-950">Dar</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
+      <div className="app-page-header p-4 sm:p-5">
+        <p className="app-page-kicker">Generosidad</p>
+        <h1 className="app-page-title">Dar</h1>
+        <p className="app-page-copy">
           Diezmos, ofrendas y donaciones para {selectedChurch?.name || "tu iglesia"}.
         </p>
       </div>
@@ -165,8 +165,8 @@ export default function Giving() {
           </CardHeader>
         </Card>
       ) : (
-        <Card className="app-card overflow-hidden">
-          <CardHeader className="bg-gradient-to-br from-primary/10 to-emerald-50">
+        <Card className="app-list-card overflow-hidden">
+          <CardHeader className="bg-secondary/50">
             <CardTitle className="flex items-center gap-2">
               <Heart className="h-5 w-5 text-primary" />
               Nueva donación
@@ -180,7 +180,7 @@ export default function Giving() {
                   key={amount}
                   type="button"
                   variant={form.amount === amount ? "default" : "outline"}
-                  className="h-12 rounded-2xl"
+                  className="h-11 rounded-md"
                   onClick={() => setForm((current) => ({ ...current, amount }))}
                 >
                   ${amount}
@@ -191,11 +191,11 @@ export default function Giving() {
               value={form.amount}
               onChange={(event) => setForm((current) => ({ ...current, amount: event.target.value }))}
               inputMode="decimal"
-              className="h-12 rounded-2xl text-lg font-bold"
+              className="app-control text-lg font-bold"
               placeholder="Cantidad"
             />
             <Select value={form.fundId} onValueChange={(fundId) => setForm((current) => ({ ...current, fundId }))}>
-              <SelectTrigger className="h-12 rounded-2xl">
+              <SelectTrigger className="app-control">
                 <SelectValue placeholder="Fondo" />
               </SelectTrigger>
               <SelectContent>
@@ -205,7 +205,7 @@ export default function Giving() {
               </SelectContent>
             </Select>
             <Select value={form.frequency} onValueChange={(frequency) => setForm((current) => ({ ...current, frequency }))}>
-              <SelectTrigger className="h-12 rounded-2xl">
+              <SelectTrigger className="app-control">
                 <SelectValue placeholder="Frecuencia" />
               </SelectTrigger>
               <SelectContent>
@@ -216,15 +216,15 @@ export default function Giving() {
               </SelectContent>
             </Select>
             <div className="grid gap-3 sm:grid-cols-2">
-              <Input value={form.donorName} onChange={(event) => setForm((current) => ({ ...current, donorName: event.target.value }))} className="h-12 rounded-2xl" placeholder="Nombre" />
-              <Input value={form.donorEmail} onChange={(event) => setForm((current) => ({ ...current, donorEmail: event.target.value }))} className="h-12 rounded-2xl" placeholder="Correo para recibo" />
+              <Input value={form.donorName} onChange={(event) => setForm((current) => ({ ...current, donorName: event.target.value }))} className="app-control" placeholder="Nombre" />
+              <Input value={form.donorEmail} onChange={(event) => setForm((current) => ({ ...current, donorEmail: event.target.value }))} className="app-control" placeholder="Correo para recibo" />
             </div>
-            <Textarea value={form.note} onChange={(event) => setForm((current) => ({ ...current, note: event.target.value }))} className="min-h-24 rounded-2xl" placeholder="Nota opcional" />
-            <div className="flex items-center justify-between rounded-2xl border p-3">
+            <Textarea value={form.note} onChange={(event) => setForm((current) => ({ ...current, note: event.target.value }))} className="min-h-24 rounded-md" placeholder="Nota opcional" />
+            <div className="flex items-center justify-between rounded-md border p-3">
               <span className="text-sm font-medium">Dar anónimamente</span>
               <Switch checked={form.anonymous} onCheckedChange={(anonymous) => setForm((current) => ({ ...current, anonymous }))} />
             </div>
-            <Button onClick={startCheckout} disabled={submitting} className="h-12 w-full rounded-2xl text-base font-bold">
+            <Button onClick={startCheckout} disabled={submitting} className="h-11 w-full rounded-md text-base font-semibold">
               {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ExternalLink className="mr-2 h-4 w-4" />}
               Continuar a pago seguro
             </Button>
@@ -232,7 +232,7 @@ export default function Giving() {
         </Card>
       )}
 
-      <Card className="app-card">
+      <Card className="app-list-card">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Receipt className="h-5 w-5" />
@@ -254,7 +254,7 @@ export default function Giving() {
                     </p>
                   </div>
                   <div className="text-right">
-                    <p className="font-black">{money(donation.amountCents)}</p>
+                    <p className="dashboard-metric font-semibold">{money(donation.amountCents)}</p>
                     <Badge variant={donation.status === "succeeded" ? "secondary" : "outline"}>{donation.status}</Badge>
                   </div>
                 </div>
@@ -265,7 +265,7 @@ export default function Giving() {
       </Card>
 
       {(canViewFinance || isAdmin) && (
-        <Card className="app-card">
+        <Card className="app-list-card">
           <CardHeader>
             <CardTitle>Finanzas</CardTitle>
             <CardDescription>{money(summary.totalCents)} confirmados · {summary.gifts} donaciones</CardDescription>
@@ -278,7 +278,7 @@ export default function Giving() {
                     <p className="truncate font-semibold">{transaction.donorName || transaction.donorEmail || "Donante"} · {transaction.fundName}</p>
                     <p className="text-xs text-muted-foreground">{transaction.manualMethod || transaction.paymentProvider} · {transaction.status}</p>
                   </div>
-                  <p className="font-black">{money(transaction.amountCents)}</p>
+                  <p className="dashboard-metric font-semibold">{money(transaction.amountCents)}</p>
                 </div>
               ))}
             </div>

@@ -85,32 +85,52 @@ export default function MyAssignments() {
   }
 
   return (
-    <div>
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold">Mis asignaciones</h1>
-        <p className="text-sm text-muted-foreground">Acepta o declina tus servicios asignados</p>
+    <div className="app-page space-y-5">
+      <div className="app-page-header p-4 sm:p-5">
+        <div className="app-page-header-grid">
+          <div className="min-w-0">
+            <p className="app-page-kicker">Servicio personal</p>
+            <h1 className="app-page-title">Mis asignaciones</h1>
+            <p className="app-page-copy">Confirma dónde participas y mantén clara tu disponibilidad para el equipo.</p>
+          </div>
+          <div className="grid grid-cols-3 gap-2 sm:min-w-[300px]">
+            <div className="dashboard-stat">
+              <span className="dashboard-metric block text-xl font-semibold">{pendingAssignments.length}</span>
+              <span className="mt-1 block truncate text-xs text-muted-foreground">Pendientes</span>
+            </div>
+            <div className="dashboard-stat">
+              <span className="dashboard-metric block text-xl font-semibold">{confirmedAssignments.length}</span>
+              <span className="mt-1 block truncate text-xs text-muted-foreground">Confirmadas</span>
+            </div>
+            <div className="dashboard-stat">
+              <span className="dashboard-metric block text-xl font-semibold">{declinedAssignments.length}</span>
+              <span className="mt-1 block truncate text-xs text-muted-foreground">Declinadas</span>
+            </div>
+          </div>
+        </div>
       </div>
 
       {pendingAssignments.length > 0 && (
-        <div className="mb-8">
-          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-4">
-            Pendientes de respuesta
-          </h2>
+        <section>
+          <div className="app-section-heading">
+            <h2 className="app-section-title">Pendientes de respuesta</h2>
+            <span className="app-count-pill">{pendingAssignments.length}</span>
+          </div>
           <div className="space-y-3">
             {pendingAssignments.map((assignment) => (
-              <Card key={assignment.id}>
+              <Card key={assignment.id} className="app-list-card">
                 <CardContent className="p-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="app-icon-tile bg-amber-50 text-amber-700">
                         <Calendar className="w-5 h-5 text-amber-600" />
                       </div>
-                      <div>
-                        <p className="font-medium">{assignment.service?.title || "Service"}</p>
+                      <div className="min-w-0">
+                        <p className="truncate font-medium">{assignment.service?.title || "Servicio"}</p>
                         <p className="text-sm text-muted-foreground">
-                          {assignment.position} ·{" "}
+                          {assignment.position} -{" "}
                           {assignment.service?.date
-                            ? new Date(assignment.service.date).toLocaleDateString("en-US", {
+                            ? new Date(assignment.service.date).toLocaleDateString("es-US", {
                                 weekday: "short",
                                 month: "short",
                                 day: "numeric",
@@ -119,11 +139,11 @@ export default function MyAssignments() {
                         </p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
                       <Button
                         size="sm"
                         variant="outline"
-                        className="text-red-500 hover:text-red-600 hover:bg-red-50"
+                        className="h-9 rounded-md text-red-500 hover:bg-red-50 hover:text-red-600"
                         disabled={actionLoading === assignment.id}
                         onClick={() => handleRespond(assignment.id, "decline")}
                       >
@@ -132,6 +152,7 @@ export default function MyAssignments() {
                       </Button>
                       <Button
                         size="sm"
+                        className="h-9 rounded-md"
                         disabled={actionLoading === assignment.id}
                         onClick={() => handleRespond(assignment.id, "accept")}
                       >
@@ -144,30 +165,31 @@ export default function MyAssignments() {
               </Card>
             ))}
           </div>
-        </div>
+        </section>
       )}
 
-      <div>
-        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-4">
-          Próximas confirmadas
-        </h2>
+      <section>
+        <div className="app-section-heading">
+          <h2 className="app-section-title">Próximas confirmadas</h2>
+          <span className="app-count-pill">{confirmedAssignments.length}</span>
+        </div>
         {confirmedAssignments.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No hay asignaciones confirmadas.</p>
+          <div className="app-empty-state text-sm">No hay asignaciones confirmadas.</div>
         ) : (
           <div className="space-y-3">
             {confirmedAssignments.map((assignment) => (
-              <Card key={assignment.id}>
+              <Card key={assignment.id} className="app-list-card">
                 <CardContent className="p-4">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center">
+                    <div className="app-icon-tile bg-emerald-50 text-emerald-700">
                       <Check className="w-5 h-5 text-green-600" />
                     </div>
-                    <div>
-                      <p className="font-medium">{assignment.service?.title || "Service"}</p>
+                    <div className="min-w-0">
+                      <p className="truncate font-medium">{assignment.service?.title || "Servicio"}</p>
                       <p className="text-sm text-muted-foreground">
-                        {assignment.position} ·{" "}
+                        {assignment.position} -{" "}
                         {assignment.service?.date
-                          ? new Date(assignment.service.date).toLocaleDateString("en-US", {
+                          ? new Date(assignment.service.date).toLocaleDateString("es-US", {
                               weekday: "short",
                               month: "short",
                               day: "numeric",
@@ -181,27 +203,28 @@ export default function MyAssignments() {
             ))}
           </div>
         )}
-      </div>
+      </section>
 
       {declinedAssignments.length > 0 && (
-        <div className="mt-8">
-          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-4">
-            Declinadas
-          </h2>
+        <section>
+          <div className="app-section-heading">
+            <h2 className="app-section-title">Declinadas</h2>
+            <span className="app-count-pill">{declinedAssignments.length}</span>
+          </div>
           <div className="space-y-3">
             {declinedAssignments.map((assignment) => (
-              <Card key={assignment.id}>
+              <Card key={assignment.id} className="app-list-card opacity-75">
                 <CardContent className="p-4">
-                  <div className="flex items-center gap-3 opacity-75">
-                    <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+                  <div className="flex items-center gap-3">
+                    <div className="app-icon-tile bg-red-50 text-red-700">
                       <X className="w-5 h-5 text-red-600" />
                     </div>
-                    <div>
-                      <p className="font-medium">{assignment.service?.title || "Service"}</p>
+                    <div className="min-w-0">
+                      <p className="truncate font-medium">{assignment.service?.title || "Servicio"}</p>
                       <p className="text-sm text-muted-foreground">
-                        {assignment.position} ·{" "}
+                        {assignment.position} -{" "}
                         {assignment.service?.date
-                          ? new Date(assignment.service.date).toLocaleDateString("en-US", {
+                          ? new Date(assignment.service.date).toLocaleDateString("es-US", {
                               weekday: "short",
                               month: "short",
                               day: "numeric",
@@ -214,7 +237,7 @@ export default function MyAssignments() {
               </Card>
             ))}
           </div>
-        </div>
+        </section>
       )}
     </div>
   );

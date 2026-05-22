@@ -116,7 +116,7 @@ function leaderName(event: EventItem) {
 }
 
 function formatDate(value: string) {
-  return new Date(value).toLocaleDateString("en-US", {
+  return new Date(value).toLocaleDateString("es-US", {
     weekday: "short",
     month: "short",
     day: "numeric",
@@ -125,11 +125,11 @@ function formatDate(value: string) {
 }
 
 function formatTime(value: string) {
-  return new Date(value).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  return new Date(value).toLocaleTimeString("es-US", { hour: "numeric", minute: "2-digit" });
 }
 
 function typeLabel(type?: string | null) {
-  return type && TYPE_LABELS[type as EventType] ? TYPE_LABELS[type as EventType] : type || "Event";
+  return type && TYPE_LABELS[type as EventType] ? TYPE_LABELS[type as EventType] : type || "Evento";
 }
 
 export default function Events() {
@@ -177,7 +177,7 @@ export default function Events() {
       setUsers(Array.isArray(userData) ? userData : []);
     } catch (error) {
       console.error("Failed to load events:", error);
-      toast({ title: "Failed to load events", variant: "destructive" });
+      toast({ title: "No se pudieron cargar los eventos", variant: "destructive" });
     } finally {
       setLoading(false);
     }
@@ -279,7 +279,7 @@ export default function Events() {
       await loadPage();
     } catch (error) {
       console.error("Failed to save event:", error);
-      toast({ title: "Failed to save event", variant: "destructive" });
+      toast({ title: "No se pudo guardar el evento", variant: "destructive" });
     } finally {
       setSubmitting(false);
     }
@@ -294,7 +294,7 @@ export default function Events() {
       await loadPage();
     } catch (error) {
       console.error("Failed to delete event:", error);
-      toast({ title: "Failed to delete event", variant: "destructive" });
+      toast({ title: "No se pudo eliminar el evento", variant: "destructive" });
     }
   }
 
@@ -307,33 +307,33 @@ export default function Events() {
   }
 
   return (
-    <div className="space-y-6">
-      <Card className="overflow-hidden border-primary/10 bg-gradient-to-br from-white via-slate-50 to-sky-50">
+    <div className="app-page space-y-6">
+      <Card className="app-page-header overflow-hidden">
         <CardHeader className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <Badge variant="secondary" className="w-fit gap-1">
+            <Badge variant="secondary" className="w-fit gap-1 rounded-md">
               <CalendarDays className="h-3.5 w-3.5" />
-              Church calendar
+              Calendario
             </Badge>
             {canManage && (
-              <Button size="sm" onClick={openNewDialog} className="rounded-full">
+              <Button size="sm" onClick={openNewDialog} className="h-10 rounded-md">
                 <Plus className="h-4 w-4" />
-                Create event
+                Crear evento
               </Button>
             )}
           </div>
           <div>
-            <CardTitle className="text-2xl leading-tight">Events that are easy to understand.</CardTitle>
-            <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              Keep the essentials visible: when it happens, where it happens, and who owns it.
+            <CardTitle className="app-page-title">Eventos claros para toda la iglesia.</CardTitle>
+            <p className="app-page-copy">
+              Mantén visible cuándo sucede, dónde sucede y quién lo coordina.
             </p>
           </div>
           <select
             value={typeFilter}
             onChange={(event) => setTypeFilter(event.target.value)}
-            className="min-h-11 rounded-2xl border bg-white px-4 text-sm font-medium outline-none"
+            className="app-control px-4 text-sm font-medium outline-none"
           >
-            <option value="">All types</option>
+            <option value="">Todos los tipos</option>
             {EVENT_TYPES.map((eventType) => (
               <option key={eventType.value} value={eventType.value}>{TYPE_LABELS[eventType.value]}</option>
             ))}
@@ -341,20 +341,20 @@ export default function Events() {
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-3 gap-2">
-            <Stat label="Upcoming" value={upcoming.length} />
-            <Stat label="Ministry-led" value={events.filter((event) => event.ministryId).length} />
-            <Stat label="With location" value={events.filter((event) => event.location).length} />
+            <Stat label="Próximos" value={upcoming.length} />
+            <Stat label="Ministerios" value={events.filter((event) => event.ministryId).length} />
+            <Stat label="Con lugar" value={events.filter((event) => event.location).length} />
           </div>
         </CardContent>
       </Card>
 
       <section className="space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-bold uppercase tracking-wider text-muted-foreground">Upcoming events</h2>
+          <h2 className="app-section-title">Próximos eventos</h2>
           <Badge variant="outline">{upcoming.length}</Badge>
         </div>
         {upcoming.length === 0 ? (
-          <EmptyState text="No upcoming events yet." />
+          <EmptyState text="Todavía no hay eventos próximos." />
         ) : (
           upcoming.map((event) => (
             <EventCard
@@ -371,11 +371,11 @@ export default function Events() {
 
       <section className="space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-bold uppercase tracking-wider text-muted-foreground">Past events</h2>
+          <h2 className="app-section-title">Eventos pasados</h2>
           <Badge variant="outline">{past.length}</Badge>
         </div>
         {past.length === 0 ? (
-          <EmptyState text="Past events will appear here." />
+          <EmptyState text="Los eventos pasados aparecerán aquí." />
         ) : (
           past.slice(0, 10).map((event) => (
             <EventCard
@@ -394,7 +394,7 @@ export default function Events() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-h-[92svh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{editingEvent ? "Edit event" : "Create event"}</DialogTitle>
+            <DialogTitle>{editingEvent ? "Editar evento" : "Crear evento"}</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleSubmit} className="space-y-5">
             <div className="grid gap-2 sm:grid-cols-2">
@@ -403,8 +403,8 @@ export default function Events() {
                   key={eventType.value}
                   type="button"
                   onClick={() => applyTemplate(eventType.value)}
-                  className={`rounded-2xl border p-3 text-left transition-colors ${
-                    form.type === eventType.value ? "border-primary bg-primary/5" : "bg-white hover:bg-muted/40"
+                  className={`rounded-md border p-3 text-left transition-colors ${
+                    form.type === eventType.value ? "border-primary bg-primary/5" : "bg-card hover:bg-muted/40"
                   }`}
                 >
                   <p className="text-sm font-semibold">{TYPE_LABELS[eventType.value]}</p>
@@ -416,17 +416,17 @@ export default function Events() {
             <div className="space-y-3">
               <Input
                 required
-                placeholder="Event title"
+                placeholder="Título del evento"
                 value={form.title}
                 onChange={(event) => setForm((prev) => ({ ...prev, title: event.target.value }))}
-                className="rounded-2xl"
+                className="rounded-md"
               />
               <Textarea
                 rows={3}
-                placeholder="Short description"
+                placeholder="Descripción corta"
                 value={form.description}
                 onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))}
-                className="resize-none rounded-2xl"
+                className="resize-none rounded-md"
               />
             </div>
 
@@ -436,13 +436,13 @@ export default function Events() {
                 required
                 value={form.start}
                 onChange={(event) => updateStart(event.target.value)}
-                className="rounded-2xl"
+                className="rounded-md"
               />
               <Input
                 type="datetime-local"
                 value={form.end}
                 onChange={(event) => setForm((prev) => ({ ...prev, end: event.target.value }))}
-                className="rounded-2xl"
+                className="rounded-md"
               />
             </div>
 
@@ -454,7 +454,7 @@ export default function Events() {
                   variant={form.duration === option ? "default" : "outline"}
                   size="sm"
                   onClick={() => updateDuration(option)}
-                  className="rounded-full"
+                  className="rounded-md"
                 >
                   {option % 60 === 0 ? `${option / 60}h` : `${option}m`}
                 </Button>
@@ -463,26 +463,26 @@ export default function Events() {
 
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="space-y-1.5">
-                <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Organizing ministry</span>
+                <span className="text-xs font-semibold text-muted-foreground">Ministerio organizador</span>
                 <select
                   value={form.ministryId}
                   onChange={(event) => setForm((prev) => ({ ...prev, ministryId: event.target.value }))}
-                  className="w-full min-h-10 rounded-2xl border bg-white px-3 text-sm outline-none"
+                  className="app-control w-full px-3 text-sm outline-none"
                 >
-                  <option value="">No ministry / church-wide</option>
+                  <option value="">Sin ministerio / toda la iglesia</option>
                   {ministries.map((ministry) => (
                     <option key={ministry.id} value={ministry.id}>{ministry.name}</option>
                   ))}
                 </select>
               </label>
               <label className="space-y-1.5">
-                <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Event leader</span>
+                <span className="text-xs font-semibold text-muted-foreground">Líder del evento</span>
                 <select
                   value={form.leaderId}
                   onChange={(event) => setForm((prev) => ({ ...prev, leaderId: event.target.value }))}
-                  className="w-full min-h-10 rounded-2xl border bg-white px-3 text-sm outline-none"
+                  className="app-control w-full px-3 text-sm outline-none"
                 >
-                  <option value="">Select a leader</option>
+                  <option value="">Selecciona un líder</option>
                   {leaderOptions.map((user) => (
                     <option key={user.id} value={user.id}>{displayName(user)}</option>
                   ))}
@@ -491,32 +491,32 @@ export default function Events() {
             </div>
 
             <Input
-              placeholder="Location"
+              placeholder="Lugar"
               value={form.location}
               onChange={(event) => setForm((prev) => ({ ...prev, location: event.target.value }))}
-              className="rounded-2xl"
+              className="rounded-md"
             />
             <Textarea
               rows={3}
-              placeholder="Special notes: setup, parking, childcare, what to bring..."
+              placeholder="Notas especiales: montaje, estacionamiento, cuidado de niños, qué traer..."
               value={form.notes}
               onChange={(event) => setForm((prev) => ({ ...prev, notes: event.target.value }))}
-              className="resize-none rounded-2xl"
+              className="resize-none rounded-md"
             />
 
-            <div className="rounded-2xl border bg-muted/40 p-4 text-sm">
-              <p className="font-semibold">{form.title || "Event preview"}</p>
-              <p className="mt-1 text-muted-foreground">{form.start ? `${formatDate(form.start)} · ${formatTime(form.start)}` : "Pick a time"}</p>
+            <div className="rounded-md border bg-muted/40 p-4 text-sm">
+              <p className="font-semibold">{form.title || "Vista previa del evento"}</p>
+              <p className="mt-1 text-muted-foreground">{form.start ? `${formatDate(form.start)} - ${formatTime(form.start)}` : "Elige una hora"}</p>
               <p className="mt-1 text-muted-foreground">
-                {selectedMinistry?.name || selectedLeader ? [selectedMinistry?.name, selectedLeader ? displayName(selectedLeader) : ""].filter(Boolean).join(" · ") : "Choose a ministry or leader"}
+                {selectedMinistry?.name || selectedLeader ? [selectedMinistry?.name, selectedLeader ? displayName(selectedLeader) : ""].filter(Boolean).join(" - ") : "Elige un ministerio o líder"}
               </p>
             </div>
 
             <div className="flex justify-end gap-2">
-              <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
+              <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
               <Button type="submit" disabled={submitting || !form.title.trim() || !form.start || (!form.ministryId && !form.leaderId)}>
                 {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-                {submitting ? "Saving..." : editingEvent ? "Update" : "Create"}
+                {submitting ? "Guardando..." : editingEvent ? "Actualizar" : "Crear"}
               </Button>
             </div>
           </form>
@@ -526,12 +526,12 @@ export default function Events() {
       <AlertDialog open={!!deleteId} onOpenChange={(open) => !open && setDeleteId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete event</AlertDialogTitle>
-            <AlertDialogDescription>This cannot be undone.</AlertDialogDescription>
+            <AlertDialogTitle>Eliminar evento</AlertDialogTitle>
+            <AlertDialogDescription>Esta acción no se puede deshacer.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete}>Delete</AlertDialogAction>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDelete}>Eliminar</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -541,16 +541,16 @@ export default function Events() {
 
 function Stat({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-2xl bg-white/80 p-3 text-center shadow-sm">
-      <p className="text-2xl font-bold">{value}</p>
-      <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">{label}</p>
+    <div className="dashboard-stat text-center">
+      <p className="dashboard-metric text-2xl font-semibold">{value}</p>
+      <p className="text-xs font-medium text-muted-foreground">{label}</p>
     </div>
   );
 }
 
 function EmptyState({ text }: { text: string }) {
   return (
-    <Card>
+    <Card className="app-list-card border-dashed">
       <CardContent className="p-8 text-center text-sm text-muted-foreground">{text}</CardContent>
     </Card>
   );
@@ -574,16 +574,16 @@ function EventCard({
   const leader = leaderName(event);
 
   return (
-    <Card className="cursor-pointer transition-shadow hover:shadow-md" onClick={onOpen}>
+    <Card className="app-list-card cursor-pointer" onClick={onOpen}>
       <CardContent className={compact ? "p-4" : "p-5"}>
         <div className="flex items-start gap-3">
-          <div className="h-12 w-1 rounded-full bg-primary" />
+          <div className="h-12 w-2 shrink-0 rounded-sm bg-primary" />
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap gap-2">
               <Badge variant="secondary">{typeLabel(event.type)}</Badge>
               {event.ministryName && (
                 <Badge variant="outline" className="gap-1">
-                  <span className="h-2 w-2 rounded-full" style={{ backgroundColor: event.ministryColor || "#6366f1" }} />
+                  <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: event.ministryColor || "hsl(var(--primary))" }} />
                   {event.ministryName}
                 </Badge>
               )}
@@ -611,7 +611,7 @@ function EventCard({
           </div>
           {canManage && (
             <div className="flex gap-1" onClick={(event) => event.stopPropagation()}>
-              <Button variant="ghost" size="sm" onClick={onEdit}>Edit</Button>
+              <Button variant="ghost" size="sm" className="rounded-md" onClick={onEdit}>Editar</Button>
               <Button variant="ghost" size="icon" onClick={onDelete}>
                 <Trash2 className="h-4 w-4 text-destructive" />
               </Button>

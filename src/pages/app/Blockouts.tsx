@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -53,11 +53,7 @@ export default function Blockouts() {
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
-    loadData();
-  }, [fetchApi]);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true);
     try {
       const [usersData] = await Promise.all([fetchApi("/users")]);
@@ -90,11 +86,15 @@ export default function Blockouts() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [fetchApi]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   const handleSubmit = async () => {
     if (!selectedUser || !startDate || !endDate) {
-      toast({ title: "Please fill in all required fields", variant: "destructive" });
+      toast({ title: "Completa los campos requeridos", variant: "destructive" });
       return;
     }
 
@@ -114,7 +114,7 @@ export default function Blockouts() {
       resetForm();
       loadData();
     } catch (e) {
-      toast({ title: "Failed to add blockout date", variant: "destructive" });
+      toast({ title: "No se pudo agregar la fecha bloqueada", variant: "destructive" });
     } finally {
       setSubmitting(false);
     }
@@ -128,7 +128,7 @@ export default function Blockouts() {
   };
 
   const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString("en-US", {
+    return new Date(dateStr).toLocaleDateString("es-US", {
       month: "short",
       day: "numeric",
       year: "numeric",
@@ -140,25 +140,27 @@ export default function Blockouts() {
   };
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold">Blockout Dates</h1>
-          <p className="text-sm text-muted-foreground">Manage unavailable dates for team members</p>
-        </div>
+    <div className="app-page space-y-5">
+      <div className="app-page-header p-4 sm:p-5">
+        <div className="app-page-header-grid">
+          <div className="min-w-0">
+            <p className="app-page-kicker">Disponibilidad</p>
+            <h1 className="app-page-title">Fechas bloqueadas</h1>
+            <p className="app-page-copy">Registra días en los que el equipo no está disponible para servir.</p>
+          </div>
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
-            <Button size="sm">
-              <Plus className="w-4 h-4 mr-1" /> Add Blockout
+            <Button size="sm" className="h-10 rounded-md">
+              <Plus className="w-4 h-4 mr-1" /> Agregar fecha
             </Button>
           </DialogTrigger>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Add Blockout Date</DialogTitle>
+              <DialogTitle>Agregar fecha bloqueada</DialogTitle>
             </DialogHeader>
             <div className="space-y-4">
               <div>
-                <label className="text-sm font-medium">Member *</label>
+                <label className="text-sm font-medium">Miembro *</label>
                 <Select
                   value={selectedUser?.id || ""}
                   onValueChange={(v) => {
@@ -167,7 +169,7 @@ export default function Blockouts() {
                   }}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Select member" />
+                    <SelectValue placeholder="Selecciona un miembro" />
                   </SelectTrigger>
                   <SelectContent>
                     {users.map((user) => (
@@ -180,7 +182,7 @@ export default function Blockouts() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-sm font-medium">Start Date *</label>
+                  <label className="text-sm font-medium">Fecha inicial *</label>
                   <Input
                     type="date"
                     value={startDate}
@@ -188,7 +190,7 @@ export default function Blockouts() {
                   />
                 </div>
                 <div>
-                  <label className="text-sm font-medium">End Date *</label>
+                  <label className="text-sm font-medium">Fecha final *</label>
                   <Input
                     type="date"
                     value={endDate}
@@ -197,9 +199,9 @@ export default function Blockouts() {
                 </div>
               </div>
               <div>
-                <label className="text-sm font-medium">Reason (optional)</label>
+                <label className="text-sm font-medium">Razón (opcional)</label>
                 <Textarea
-                  placeholder="Vacation, out of town, etc."
+                  placeholder="Vacaciones, viaje, cita, etc."
                   value={reason}
                   onChange={(e) => setReason(e.target.value)}
                   rows={2}
@@ -207,15 +209,16 @@ export default function Blockouts() {
               </div>
               <div className="flex gap-2 justify-end">
                 <Button variant="outline" onClick={() => setDialogOpen(false)}>
-                  Cancel
+                  Cancelar
                 </Button>
                 <Button onClick={handleSubmit} disabled={submitting}>
-                  {submitting ? "Adding..." : "Add Blockout"}
+                  {submitting ? "Agregando..." : "Agregar"}
                 </Button>
               </div>
             </div>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       <div className="space-y-3">
@@ -225,21 +228,21 @@ export default function Blockouts() {
           </div>
         )}
         {!loading && blockouts.length === 0 && (
-          <Card>
+          <Card className="app-list-card border-dashed">
             <CardContent className="p-8 text-center">
               <Calendar className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
-              <p className="text-sm text-muted-foreground">No blockout dates yet</p>
+              <p className="text-sm text-muted-foreground">Todavía no hay fechas bloqueadas</p>
               <p className="text-xs text-muted-foreground mt-1">
-                Team members can add dates when they are unavailable
+                Los miembros del equipo pueden registrar días no disponibles.
               </p>
             </CardContent>
           </Card>
         )}
         {!loading &&
           blockouts.map((blockout) => (
-            <Card key={blockout.id} className={isPastBlockout(blockout.endDate) ? "opacity-60" : ""}>
+            <Card key={blockout.id} className={`app-list-card ${isPastBlockout(blockout.endDate) ? "opacity-60" : ""}`}>
               <CardContent className="p-4 flex items-start gap-3">
-                <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center shrink-0">
+                <div className="app-icon-tile">
                   <User className="w-5 h-5 text-muted-foreground" />
                 </div>
                 <div className="flex-1 min-w-0">
@@ -248,7 +251,7 @@ export default function Blockouts() {
                   </p>
                   <p className="text-sm text-muted-foreground flex items-center gap-1">
                     <Calendar className="w-3 h-3" />
-                    {formatDate(blockout.startDate)} — {formatDate(blockout.endDate)}
+                    {formatDate(blockout.startDate)} - {formatDate(blockout.endDate)}
                   </p>
                   {blockout.reason && (
                     <p className="text-xs text-muted-foreground mt-1">{blockout.reason}</p>
@@ -256,7 +259,7 @@ export default function Blockouts() {
                 </div>
                 {isPastBlockout(blockout.endDate) && (
                   <span className="text-xs text-muted-foreground flex items-center gap-1">
-                    <AlertCircle className="w-3 h-3" /> Past
+                    <AlertCircle className="w-3 h-3" /> Pasada
                   </span>
                 )}
               </CardContent>
