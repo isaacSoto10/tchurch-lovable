@@ -21,12 +21,6 @@ type SupportedFirstFactor = {
   safeIdentifier?: string;
 };
 
-const WEB_SIGNUP_URL = "https://www.tchurchapp.com/sign-up";
-
-function openWebSignup() {
-  window.open(WEB_SIGNUP_URL, "_blank", "noopener,noreferrer");
-}
-
 function getNativeMobileAuthError(err: unknown) {
   if (err instanceof MobileAuthApiError) {
     return err.message;
@@ -243,11 +237,6 @@ function LoginInner() {
                   "Continuar"
                 )}
               </Button>
-              {isNativeMobileAuth ? (
-                <Button className="h-11 w-full" variant="outline" type="button" onClick={openWebSignup} disabled={loading}>
-                  Crear cuenta en el navegador
-                </Button>
-              ) : null}
             </form>
           ) : (
             <form className="space-y-4" noValidate onSubmit={handleCodeSubmit}>
@@ -308,7 +297,7 @@ function LoginInner() {
 
           {isNativeMobileAuth ? (
             <p className="text-center text-sm text-muted-foreground">
-              Si todavía no tienes cuenta, créala en tchurchapp.com o pide una invitación a tu iglesia.
+              Si necesitas acceso, pide una invitación al administrador de tu iglesia.
             </p>
           ) : (
             <p className="text-center text-sm text-muted-foreground">

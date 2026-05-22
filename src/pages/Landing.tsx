@@ -8,7 +8,6 @@ import { useAppAuth } from "@/hooks/useAppAuth";
 export default function Landing() {
   const { isLoaded, isSignedIn } = useAppAuth();
   const isNativePlatform = Capacitor.isNativePlatform();
-  const webSignupUrl = "https://www.tchurchapp.com/sign-up";
 
   if (isLoaded && isSignedIn) {
     return <Navigate to="/app" replace />;
@@ -40,16 +39,9 @@ export default function Landing() {
         className="flex flex-col gap-3 w-full max-w-xs"
       >
         {isNativePlatform ? (
-          <>
-            <Button size="lg" className="w-full text-base" asChild>
-              <Link to="/login">Iniciar sesión</Link>
-            </Button>
-            <Button size="lg" variant="outline" className="w-full text-base" asChild>
-              <a href={webSignupUrl} target="_blank" rel="noreferrer">
-                Crear cuenta en web
-              </a>
-            </Button>
-          </>
+          <Button size="lg" className="w-full text-base" asChild>
+            <Link to="/login">Iniciar sesión</Link>
+          </Button>
         ) : (
           <Button size="lg" className="w-full text-base" asChild>
             <Link to="/signup">Crear cuenta</Link>
