@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { Heart, Loader2, ExternalLink, Receipt, ShieldCheck } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
+import { Capacitor } from "@capacitor/core";
+import { Copy, Heart, Loader2, ExternalLink, Receipt, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -50,6 +52,7 @@ export default function Giving() {
   const { fetchApi } = useApi();
   const { toast } = useToast();
   const { selectedChurch } = useChurch();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [funds, setFunds] = useState<Fund[]>([]);
   const [connected, setConnected] = useState(false);
   const [enabled, setEnabled] = useState(false);
@@ -70,6 +73,38 @@ export default function Giving() {
   });
 
   const isAdmin = selectedChurch?.role === "ADMIN";
+  const publicGivingUrl = selectedChurch?.slug ? `https://www.tchurchapp.com/give/${selectedChurch.slug}` : "";
+
+  function getCheckoutReturnUrl(status: "success" | "canceled") {
+    if (Capacitor.isNativePlatform()) {
+      return `tchurchapp://tchurchapp.com/#/app/giving?${status}=true`;
+    }
+
+    return `${window.location.origin}/app/giving?${status}=true`;
+  }
+
+  function openCheckoutUrl(url: string) {
+    if (Capacitor.isNativePlatform()) {
+      window.open(url, "_system", "noopener,noreferrer");
+      return;
+    }
+
+    const opened = window.open(url, "_blank", "noopener,noreferrer");
+    if (!opened) {
+      window.location.href = url;
+    }
+  }
+
+  async function copyPublicGivingLink() {
+    if (!publicGivingUrl) return;
+
+    try {
+      await navigator.clipboard.writeText(publicGivingUrl);
+      toast({ title: "Link copiado", description: "Ya puedes compartirlo con invitados y miembros." });
+    } catch {
+      toast({ title: "No se pudo copiar", description: publicGivingUrl });
+    }
+  }
 
   const loadGiving = useCallback(async () => {
     setLoading(true);
@@ -104,29 +139,67 @@ export default function Giving() {
     loadGiving();
   }, [loadGiving]);
 
+  useEffect(() => {
+    const success = searchParams.get("success") === "true";
+    const canceled = searchParams.get("canceled") === "true";
+
+    if (!success && !canceled) return;
+
+    if (success) {
+      toast({ title: "Gracias por tu generosidad", description: "Estamos actualizando tu historial de donaciones." });
+    } else {
+      toast({ title: "Pago cancelado", description: "No registramos ninguna donación completada." });
+    }
+
+    loadGiving();
+    setSearchParams({}, { replace: true });
+  }, [loadGiving, searchParams, setSearchParams, toast]);
+
+  useEffect(() => {
+    const refreshAfterCheckout = () => {
+      if (document.visibilityState !== "hidden") {
+        loadGiving();
+      }
+    };
+
+    window.addEventListener("focus", refreshAfterCheckout);
+    document.addEventListener("visibilitychange", refreshAfterCheckout);
+
+    return () => {
+      window.removeEventListener("focus", refreshAfterCheckout);
+      document.removeEventListener("visibilitychange", refreshAfterCheckout);
+    };
+  }, [loadGiving]);
+
   async function startCheckout() {
     if (!form.fundId) {
       toast({ title: "Elige un fondo", variant: "destructive" });
       return;
     }
+
+    const amountCents = Math.round(Number(form.amount) * 100);
+    if (!Number.isFinite(amountCents) || amountCents < 100) {
+      toast({ title: "Cantidad inválida", description: "Ingresa al menos $1.00.", variant: "destructive" });
+      return;
+    }
+
     setSubmitting(true);
     try {
       const data = await fetchApi<{ url: string }>("/giving/checkout", {
         method: "POST",
         body: JSON.stringify({
           fundId: form.fundId,
-          amountCents: Math.round(Number(form.amount) * 100),
+          amountCents,
           frequency: form.frequency,
           donorName: form.donorName,
           donorEmail: form.donorEmail,
           anonymous: form.anonymous,
           note: form.note,
-          returnUrl: "https://www.tchurchapp.com/giving?success=true",
-          cancelUrl: "https://www.tchurchapp.com/giving?canceled=true",
+          returnUrl: getCheckoutReturnUrl("success"),
+          cancelUrl: getCheckoutReturnUrl("canceled"),
         }),
       });
-      window.open(data.url, "_blank", "noopener,noreferrer");
-      window.setTimeout(loadGiving, 2500);
+      openCheckoutUrl(data.url);
     } catch (error) {
       toast({ title: "No se pudo abrir el pago", description: error instanceof Error ? error.message : undefined, variant: "destructive" });
     } finally {
@@ -151,6 +224,32 @@ export default function Giving() {
           Diezmos, ofrendas y donaciones para {selectedChurch?.name || "tu iglesia"}.
         </p>
       </div>
+
+      {publicGivingUrl ? (
+        <Card className="app-card">
+          <CardHeader>
+            <CardTitle>Link público para donar</CardTitle>
+            <CardDescription>
+              Compártelo con visitantes, familiares o cualquier persona que quiera apoyar a la iglesia.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="rounded-2xl bg-muted px-4 py-3 font-mono text-sm text-muted-foreground">
+              {publicGivingUrl}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Button type="button" variant="outline" className="h-11 rounded-2xl" onClick={copyPublicGivingLink}>
+                <Copy className="mr-2 h-4 w-4" />
+                Copiar
+              </Button>
+              <Button type="button" variant="outline" className="h-11 rounded-2xl" onClick={() => openCheckoutUrl(publicGivingUrl)}>
+                <ExternalLink className="mr-2 h-4 w-4" />
+                Abrir
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
 
       {!enabled || !connected ? (
         <Card className="app-card border-amber-200 bg-amber-50">
@@ -241,11 +340,14 @@ export default function Giving() {
           <CardDescription>Donaciones registradas en esta iglesia.</CardDescription>
         </CardHeader>
         <CardContent>
-          {donations.length === 0 ? (
+          {donations.filter((donation) => ["succeeded", "paid", "confirmed"].includes(donation.status)).length === 0 ? (
             <p className="py-4 text-sm text-muted-foreground">Todavía no tienes donaciones registradas.</p>
           ) : (
             <div className="divide-y">
-              {donations.slice(0, 8).map((donation) => (
+              {donations
+                .filter((donation) => ["succeeded", "paid", "confirmed"].includes(donation.status))
+                .slice(0, 8)
+                .map((donation) => (
                 <div key={donation.id} className="flex items-center justify-between gap-3 py-3">
                   <div>
                     <p className="font-semibold">{donation.fundName || "Fondo"}</p>

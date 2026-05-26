@@ -31,6 +31,7 @@ import {
 } from "@/lib/songDisplay";
 import { normalizeKey, transposeChordPro } from "@/lib/musicUtils";
 import { getYoutubeEmbedUrl } from "@/lib/youtube";
+import { canUseServicePresentation } from "@/lib/servicePresentation";
 
 type ServiceItem = {
   id: string;
@@ -675,6 +676,8 @@ export default function ServiceDetail() {
     );
   }
 
+  const canPresentService = canUseServicePresentation(service, selectedChurch?.role, currentUserId, currentUserEmail);
+
   return (
     <div className="mobile-page space-y-4">
       {/* Header */}
@@ -687,6 +690,17 @@ export default function ServiceDetail() {
             <h1 className="truncate text-xl font-black tracking-tight text-zinc-950">{service.title}</h1>
             <p className="mt-0.5 truncate text-sm text-zinc-500">{formatDate(service.date)}</p>
           </div>
+          {canPresentService && (
+            <Button
+              variant="default"
+              size="sm"
+              className="h-10 rounded-2xl px-3"
+              onClick={() => navigate(`/app/services/${service.id}/presentation`)}
+            >
+              <PlayCircle className="w-4 h-4" />
+              Presentar
+            </Button>
+          )}
           <Button variant="outline" size="sm" className="h-10 rounded-2xl px-3" onClick={handleGenerateServicePdf}>
             <FileDown className="w-4 h-4" />
             PDF

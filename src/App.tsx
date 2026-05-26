@@ -18,6 +18,7 @@ const Songs = lazy(() => import("./pages/app/Songs"));
 const SongDetail = lazy(() => import("./pages/app/SongDetail"));
 const Services = lazy(() => import("./pages/app/Services"));
 const ServiceDetail = lazy(() => import("./pages/app/ServiceDetail"));
+const ServicePresentation = lazy(() => import("./pages/app/ServicePresentation"));
 const Announcements = lazy(() => import("./pages/app/Announcements"));
 const Giving = lazy(() => import("./pages/app/Giving"));
 const Ministries = lazy(() => import("./pages/app/Ministries"));
@@ -72,6 +73,7 @@ const App = () => {
                 <Route path="/pricing" element={<Navigate to="/" replace />} />
                 <Route path="/login/*" element={<Login />} />
                 <Route path="/signup/*" element={<Signup />} />
+                <Route path="/app/services/:id/presentation" element={<RequireAuth><ServicePresentation /></RequireAuth>} />
                 <Route path="/app" element={<RequireAuth><AppLayout /></RequireAuth>}>
                   <Route index element={<Dashboard />} />
                   <Route path="songs" element={<Songs />} />

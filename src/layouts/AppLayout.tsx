@@ -1,10 +1,19 @@
 import { useRef } from "react";
-import { Outlet } from "react-router-dom";
+import { NavLink, Outlet } from "react-router-dom";
+import { Heart, Home, ListChecks, Megaphone, Music } from "lucide-react";
 import { AppSidebar } from "../components/AppSidebar";
 import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 import { useChurch } from "@/providers/ChurchProvider";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { usePushNotifications } from "@/hooks/usePushNotifications";
+
+const mobileNavItems = [
+  { label: "Inicio", href: "/app", icon: Home, end: true },
+  { label: "Servicios", href: "/app/services", icon: ListChecks },
+  { label: "Dar", href: "/app/giving", icon: Heart },
+  { label: "Canciones", href: "/app/songs", icon: Music },
+  { label: "Anuncios", href: "/app/announcements", icon: Megaphone },
+];
 
 function AppLayoutInner() {
   const { selectedChurch } = useChurch();
@@ -63,11 +72,40 @@ function AppLayoutInner() {
           </header>
         ) : null}
         <div
-          className="mx-auto flex w-full min-w-0 flex-1 flex-col overflow-x-clip px-3 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-4 sm:px-4 md:px-6 md:pt-6 lg:px-8"
+          className="mx-auto flex w-full min-w-0 flex-1 flex-col overflow-x-clip px-3 pb-[calc(env(safe-area-inset-bottom)+5.75rem)] pt-4 sm:px-4 md:px-6 md:pb-[calc(env(safe-area-inset-bottom)+1rem)] md:pt-6 lg:px-8"
           style={{ maxWidth: "min(100vw, 100%)" }}
         >
           <Outlet />
         </div>
+        {isMobile ? (
+          <nav
+            className="fixed inset-x-0 bottom-0 z-30 border-t border-zinc-200/80 bg-white/95 px-2 pt-2 shadow-[0_-18px_40px_rgba(15,23,42,0.08)] backdrop-blur"
+            style={{ paddingBottom: "max(env(safe-area-inset-bottom), 0.55rem)" }}
+            aria-label="Navegación principal"
+          >
+            <div className="mx-auto grid max-w-md grid-cols-5 gap-1">
+              {mobileNavItems.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <NavLink
+                    key={item.href}
+                    to={item.href}
+                    end={item.end}
+                    className={({ isActive }) =>
+                      [
+                        "flex min-w-0 flex-col items-center justify-center gap-1 rounded-2xl px-1 py-2 text-[0.68rem] font-bold transition",
+                        isActive ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-zinc-100 hover:text-zinc-950",
+                      ].join(" ")
+                    }
+                  >
+                    <Icon className="h-5 w-5" />
+                    <span className="truncate">{item.label}</span>
+                  </NavLink>
+                );
+              })}
+            </div>
+          </nav>
+        ) : null}
       </SidebarInset>
     </div>
   );
