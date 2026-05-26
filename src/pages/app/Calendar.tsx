@@ -154,8 +154,13 @@ export default function Calendar() {
       case "completed":
         return "bg-gray-400";
       default:
-        return "bg-amber-500";
+        return "bg-green-500";
     }
+  };
+
+  const getStatusLabel = (status: string | null) => {
+    if (status === "completed") return "completado";
+    return "confirmado";
   };
 
   return (
@@ -260,7 +265,7 @@ export default function Calendar() {
                   </p>
                 </div>
                 <span className={`text-xs px-2 py-1 rounded text-white ${item.type === "service" ? getStatusColor(item.status) : "bg-indigo-500"}`}>
-                  {item.type === "service" ? (item.status || "service") : (item.typeLabel || "event")}
+                  {item.type === "service" ? getStatusLabel(item.status) : (item.typeLabel || "event")}
                 </span>
               </CardContent>
             </Card>

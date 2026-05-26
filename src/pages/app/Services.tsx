@@ -359,7 +359,7 @@ export default function Services() {
       title: service.title,
       date: service.date ? service.date.slice(0, 16) : "",
       type: service.type,
-      status: service.status,
+      status: service.status === "completed" ? "completed" : "confirmed",
       notes: service.notes || "",
     });
     setDialogOpen(true);
@@ -374,7 +374,7 @@ export default function Services() {
         title: formData.title,
         date: new Date(formData.date).toISOString(),
         type: formData.type,
-        status: formData.status,
+        status: formData.status === "completed" ? "completed" : "confirmed",
         notes: formData.notes || null,
       };
 

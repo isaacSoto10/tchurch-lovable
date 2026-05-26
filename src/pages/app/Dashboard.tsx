@@ -109,10 +109,8 @@ async function safeDashboardFetch<T>(
 }
 
 function statusLabel(status: string) {
-  if (status === "confirmed") return "confirmado";
   if (status === "completed") return "completado";
-  if (status === "draft") return "";
-  return status;
+  return "confirmado";
 }
 
 export default function Dashboard() {
