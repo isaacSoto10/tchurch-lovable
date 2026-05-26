@@ -7,6 +7,15 @@
 		"iosScheme": "tchurchapp",
 		"androidScheme": "https"
 	},
+	"plugins": {
+		"PushNotifications": {
+			"presentationOptions": [
+				"badge",
+				"sound",
+				"alert"
+			]
+		}
+	},
 	"packageClassList": [
 		"FilesystemPlugin",
 		"PushNotificationsPlugin",

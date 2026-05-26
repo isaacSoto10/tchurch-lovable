@@ -1,0 +1,6 @@
+import{c as n}from"./index-9D-PKojt.js";/**
+ * @license lucide-react v1.8.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */const i=[["circle",{cx:"9",cy:"12",r:"1",key:"1vctgf"}],["circle",{cx:"9",cy:"5",r:"1",key:"hp0tcf"}],["circle",{cx:"9",cy:"19",r:"1",key:"fkjjf6"}],["circle",{cx:"15",cy:"12",r:"1",key:"1tmaij"}],["circle",{cx:"15",cy:"5",r:"1",key:"19l28e"}],["circle",{cx:"15",cy:"19",r:"1",key:"f4zoj3"}]],s=n("grip-vertical",i);function o(e){if(!e)return null;try{const t=new URL(e),r=t.hostname.replace(/^www\./,"");if(r==="youtu.be")return t.pathname.split("/").filter(Boolean)[0]||null;if(r.endsWith("youtube.com"))return t.pathname.startsWith("/embed/")||t.pathname.startsWith("/shorts/")?t.pathname.split("/").filter(Boolean)[1]||null:t.searchParams.get("v")}catch{const t=e.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([\w-]{6,})/i);return(t==null?void 0:t[1])??null}return null}function l(e){const t=o(e);if(!t)return null;const r=new URLSearchParams({rel:"0",modestbranding:"1",playsinline:"1",enablejsapi:"1"});if(typeof window<"u"){const c=window.location.origin;r.set("origin",c.startsWith("http")?c:"https://www.tchurchapp.com")}return`https://www.youtube.com/embed/${t}?${r.toString()}`}export{s as G,l as g};

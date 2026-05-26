@@ -589,7 +589,7 @@ export default function Services() {
     await persistItemOrder(serviceId, newItems, items);
   };
 
-  const handlePointerMove = (event: PointerEvent<HTMLElement>) => {
+  const handlePointerMove = (event: PointerEvent<Element>) => {
     if (!draggingItemId || !dragServiceId) return;
     event.preventDefault();
     const target = document
@@ -601,7 +601,7 @@ export default function Services() {
     }
   };
 
-  const handlePointerUp = async (event: PointerEvent<HTMLElement>) => {
+  const handlePointerUp = async (event: PointerEvent<Element>) => {
     event.preventDefault();
     event.stopPropagation();
     suppressNextCardClickRef.current = true;
@@ -716,7 +716,7 @@ export default function Services() {
             <h1 className="mt-1 text-3xl font-black tracking-tight text-zinc-950">Servicios</h1>
             <p className="mt-1 text-sm text-muted-foreground">Organiza el flujo, canciones y equipo de cada reunión.</p>
           </div>
-          {isAdmin && <Button size="sm" onClick={openNewDialog} className="h-11 shrink-0 rounded-2xl px-4 shadow-sm">
+          {isPlanner && <Button size="sm" onClick={openNewDialog} className="h-11 shrink-0 rounded-2xl px-4 shadow-sm">
           <Plus className="w-4 h-4 mr-1" /> Nuevo
         </Button>}
         </div>
@@ -1116,7 +1116,7 @@ export default function Services() {
                           >
                             <FileDown className="w-3 h-3 mr-1" /> PDF
                           </Button>
-                          {isAdmin && <Button size="sm" variant="outline" className="h-10 rounded-xl" onClick={() => openAddItemDialog(svc.id)}>
+                          {isPlanner && <Button size="sm" variant="outline" className="h-10 rounded-xl" onClick={() => openAddItemDialog(svc.id)}>
                             <Plus className="w-3 h-3 mr-1" /> Agregar
                           </Button>}
                         </div>
@@ -1199,7 +1199,7 @@ export default function Services() {
                                       {expandedSongItems[item.id] ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                                     </Button>
                                   )}
-                                  {isAdmin && (
+                                  {isPlanner && (
                                     <Button
                                       variant="ghost"
                                       size="icon"
@@ -1263,6 +1263,7 @@ export default function Services() {
                                           src={youtubeEmbedUrl}
                                           className="aspect-video w-full"
                                           allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                          referrerPolicy="strict-origin-when-cross-origin"
                                           allowFullScreen
                                         />
                                       </div>
@@ -1293,7 +1294,7 @@ export default function Services() {
                     <div>
                       <div className="mb-3 flex items-center justify-between">
                         <h4 className="text-sm font-bold text-zinc-950">Equipo</h4>
-                        {isAdmin && <Button size="sm" variant="outline" className="h-10 rounded-xl" onClick={() => openAssignDialog(svc.id)}>
+                        {isPlanner && <Button size="sm" variant="outline" className="h-10 rounded-xl" onClick={() => openAssignDialog(svc.id)}>
                           <Plus className="w-3 h-3 mr-1" /> Asignar
                         </Button>}
                       </div>
@@ -1312,7 +1313,7 @@ export default function Services() {
                               {assignment.user?.firstName} {assignment.user?.lastName}
                             </span>
                             <span className="text-xs text-muted-foreground">{assignment.position}</span>
-                            {isAdmin && (
+                            {isPlanner && (
                               <Button
                                 variant="ghost"
                                 size="icon"

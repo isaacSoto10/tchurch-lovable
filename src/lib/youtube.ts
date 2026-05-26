@@ -30,5 +30,22 @@ export function getYoutubeVideoId(url: string | null | undefined): string | null
 
 export function getYoutubeEmbedUrl(url: string | null | undefined): string | null {
   const videoId = getYoutubeVideoId(url);
-  return videoId ? `https://www.youtube.com/embed/${videoId}` : null;
+  if (!videoId) return null;
+
+  const params = new URLSearchParams({
+    rel: "0",
+    modestbranding: "1",
+    playsinline: "1",
+    enablejsapi: "1",
+  });
+
+  if (typeof window !== "undefined") {
+    const origin = window.location.origin;
+    params.set(
+      "origin",
+      origin.startsWith("http") ? origin : "https://www.tchurchapp.com"
+    );
+  }
+
+  return `https://www.youtube.com/embed/${videoId}?${params.toString()}`;
 }

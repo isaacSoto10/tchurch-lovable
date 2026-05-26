@@ -86,7 +86,37 @@ type UserOption = {
   email?: string | null;
 };
 
-type Tab = "flow" | "team";
+type Tab = "flow" | "team" | "rehearse";
+
+type PlanningNoteKey = "vocals" | "band" | "audioVisual" | "person";
+
+type PlanningDetails = {
+  timing?: string;
+  serviceKey?: string;
+  selectedKey?: string;
+  key?: string;
+  notes?: Partial<Record<PlanningNoteKey, string>>;
+  [key: string]: unknown;
+};
+
+const NOTE_LABELS: Record<PlanningNoteKey, string> = {
+  vocals: "Voces",
+  band: "Banda",
+  audioVisual: "Audio / Visual",
+  person: "Persona",
+};
+
+const TIMING_LABELS: Record<string, string> = {
+  pre_service: "Antes del servicio",
+  during: "Durante el servicio",
+  post_service: "Después del servicio",
+};
+
+const TEAM_MATRIX_GROUPS = [
+  { title: "Liderazgo", positions: ["Preacher", "Service Director", "Worship Leader"] },
+  { title: "Banda", positions: ["Vocals", "Acoustic Guitar", "Electric Guitar", "Bass", "Keys", "Drums"] },
+  { title: "Audio / Visual", positions: ["Sound Tech", "Visuals Tech", "Camera", "Lyrics"] },
+] as const;
 
 function formatDate(d: string) {
   return new Date(d).toLocaleDateString("es-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
@@ -110,6 +140,42 @@ function formatItemType(type: string) {
   return ITEM_TYPES.find((item) => item.value === type.toLowerCase())?.label || type;
 }
 
+function getPlanningDetails(item: ServiceItem): PlanningDetails {
+  return (item.details || {}) as PlanningDetails;
+}
+
+function getItemTimingLabel(item: ServiceItem) {
+  const timing = getPlanningDetails(item).timing;
+  return typeof timing === "string" ? TIMING_LABELS[timing] || "Durante el servicio" : "Durante el servicio";
+}
+
+function getPlanningNotes(item: ServiceItem) {
+  return getPlanningDetails(item).notes || {};
+}
+
+function hasPlanningNotes(item: ServiceItem) {
+  const notes = getPlanningNotes(item);
+  return (Object.keys(NOTE_LABELS) as PlanningNoteKey[]).some((key) => Boolean(notes[key]?.trim()));
+}
+
+function getPersonName(user: Assignment["user"]) {
+  return [user?.firstName, user?.lastName].filter(Boolean).join(" ").trim() || user?.email || "Sin nombre";
+}
+
+function getPositionAssignments(assignments: Assignment[], position: string) {
+  const normalizedPosition = position.toLowerCase();
+  return assignments.filter((assignment) => {
+    const normalizedAssignment = assignment.position.toLowerCase();
+    return normalizedAssignment === normalizedPosition || normalizedAssignment.includes(normalizedPosition);
+  });
+}
+
+function getAssignmentStatusLabel(assignment: Assignment) {
+  if (assignment.responseStatus === "accepted" || (!assignment.responseStatus && assignment.confirmed)) return "Aceptada";
+  if (assignment.responseStatus === "declined") return "Declinada";
+  return "Pendiente";
+}
+
 export default function ServiceDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -126,6 +192,16 @@ export default function ServiceDetail() {
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
   const [respondingId, setRespondingId] = useState<string | null>(null);
   const [expandedSongItems, setExpandedSongItems] = useState<Record<string, boolean>>({});
+  const [detailsEditingId, setDetailsEditingId] = useState<string | null>(null);
+  const [detailDuration, setDetailDuration] = useState("");
+  const [detailTiming, setDetailTiming] = useState("during");
+  const [detailNotes, setDetailNotes] = useState<Record<PlanningNoteKey, string>>({
+    vocals: "",
+    band: "",
+    audioVisual: "",
+    person: "",
+  });
+  const [savingDetails, setSavingDetails] = useState(false);
   const [draggingItemId, setDraggingItemId] = useState<string | null>(null);
   const [dragOverItemId, setDragOverItemId] = useState<string | null>(null);
   const suppressNextCardClickRef = useRef(false);
@@ -145,6 +221,9 @@ export default function ServiceDetail() {
 
   const isAdmin = selectedChurch?.role === "ADMIN";
   const isPlanner = selectedChurch?.role === "PLANNER" || isAdmin;
+  const selectedUserAssignments = assignUserId && service
+    ? service.assignments.filter((assignment) => assignment.userId === assignUserId)
+    : [];
 
   useEffect(() => {
     if (!id) return;
@@ -180,11 +259,10 @@ export default function ServiceDetail() {
     if (!showAssign) return;
     apiFetch<UserOption[]>("/users")
       .then((data) => {
-        const existing = new Set(service?.assignments.map((assignment) => assignment.userId) || []);
-        setAvailableUsers((Array.isArray(data) ? data : []).filter((user) => !existing.has(user.id)));
+        setAvailableUsers(Array.isArray(data) ? data : []);
       })
       .catch(() => setAvailableUsers([]));
-  }, [showAssign, service?.assignments]);
+  }, [showAssign]);
 
   useEffect(() => {
     if (isSongItemType(itemType) && songSearch.length >= 2) {
@@ -438,6 +516,62 @@ export default function ServiceDetail() {
     setExpandedSongItems((prev) => ({ ...prev, [itemId]: !prev[itemId] }));
   }
 
+  function startItemDetails(item: ServiceItem) {
+    const details = getPlanningDetails(item);
+    const notes = details.notes || {};
+
+    if (detailsEditingId === item.id) {
+      setDetailsEditingId(null);
+      return;
+    }
+
+    setDetailsEditingId(item.id);
+    setDetailDuration(item.duration ? String(item.duration) : "");
+    setDetailTiming(typeof details.timing === "string" ? details.timing : "during");
+    setDetailNotes({
+      vocals: notes.vocals || "",
+      band: notes.band || "",
+      audioVisual: notes.audioVisual || "",
+      person: notes.person || "",
+    });
+  }
+
+  async function saveItemDetails(item: ServiceItem) {
+    const duration = detailDuration ? Number(detailDuration) : null;
+    const nextDetails: PlanningDetails = {
+      ...(item.details || {}),
+      timing: detailTiming,
+      notes: {
+        vocals: detailNotes.vocals.trim(),
+        band: detailNotes.band.trim(),
+        audioVisual: detailNotes.audioVisual.trim(),
+        person: detailNotes.person.trim(),
+      },
+    };
+
+    setSavingDetails(true);
+    try {
+      await apiFetch(`/service-items/${item.id}`, {
+        method: "PUT",
+        body: JSON.stringify({ duration, details: nextDetails }),
+      });
+
+      setService((prev) => prev ? {
+        ...prev,
+        items: prev.items.map((serviceItem) =>
+          serviceItem.id === item.id ? { ...serviceItem, duration, details: nextDetails } : serviceItem
+        ),
+      } : prev);
+      setDetailsEditingId(null);
+      toast({ title: "Detalles guardados" });
+    } catch (error) {
+      console.error("No se pudieron guardar los detalles:", error);
+      toast({ title: "No se pudieron guardar los detalles", variant: "destructive" });
+    } finally {
+      setSavingDetails(false);
+    }
+  }
+
   function stopInteractiveTap(event: SyntheticEvent) {
     event.stopPropagation();
   }
@@ -566,12 +700,15 @@ export default function ServiceDetail() {
 
         <div className="px-4 pb-3">
           <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as Tab)}>
-            <TabsList className="grid h-11 w-full grid-cols-2 rounded-2xl bg-zinc-100/70 p-1">
+            <TabsList className="grid h-11 w-full grid-cols-3 rounded-2xl bg-zinc-100/70 p-1">
               <TabsTrigger value="flow" className="text-xs flex items-center gap-1">
                 <Music className="w-3 h-3" /> Flujo
               </TabsTrigger>
               <TabsTrigger value="team" className="text-xs flex items-center gap-1">
                 <Users className="w-3 h-3" /> Equipo
+              </TabsTrigger>
+              <TabsTrigger value="rehearse" className="text-xs flex items-center gap-1">
+                <PlayCircle className="w-3 h-3" /> Ensayo
               </TabsTrigger>
             </TabsList>
           </Tabs>
@@ -668,6 +805,9 @@ export default function ServiceDetail() {
                         {getDisplayKey(item) && (
                           <Badge variant="secondary" className="shrink-0 rounded-full text-xs">Tono {getDisplayKey(item)}</Badge>
                         )}
+                        <Badge variant="outline" className="hidden shrink-0 rounded-full text-xs sm:inline-flex">
+                          {getItemTimingLabel(item)}
+                        </Badge>
                         {item.song && (
                           <div className="flex shrink-0 items-center gap-1">
                             <Button variant="outline" size="sm" className="h-9 rounded-xl" onClick={(event) => { event.stopPropagation(); navigate(`/app/songs/${item.song?.id}`); }}>
@@ -686,6 +826,20 @@ export default function ServiceDetail() {
                           </div>
                         )}
                         {isPlanner && (
+                          <Button
+                            type="button"
+                            variant={detailsEditingId === item.id ? "default" : "outline"}
+                            size="sm"
+                            className="h-9 rounded-xl px-2 text-xs"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              startItemDetails(item);
+                            }}
+                          >
+                            Detalles
+                          </Button>
+                        )}
+                        {isPlanner && (
                           <button
                             onClick={(event) => { event.stopPropagation(); handleDeleteItem(item.id); }}
                             className="p-1.5 rounded-lg hover:bg-red-50 text-zinc-400 hover:text-red-500 transition-colors"
@@ -694,6 +848,66 @@ export default function ServiceDetail() {
                           </button>
                         )}
                       </div>
+
+                      {detailsEditingId === item.id && (
+                        <div
+                          className="space-y-3 border-t border-zinc-100 bg-white p-3"
+                          onClick={stopInteractiveTap}
+                          onPointerDown={stopInteractiveTap}
+                          onTouchStart={stopInteractiveTap}
+                        >
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <div className="space-y-1.5">
+                              <Label className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">Duración</Label>
+                              <Input
+                                type="number"
+                                min="0"
+                                placeholder="5"
+                                value={detailDuration}
+                                onChange={(event) => setDetailDuration(event.target.value)}
+                                className="h-11 rounded-2xl"
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">Momento</Label>
+                              <Select value={detailTiming} onValueChange={setDetailTiming}>
+                                <SelectTrigger className="h-11 rounded-2xl">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="pre_service">Antes del servicio</SelectItem>
+                                  <SelectItem value="during">Durante el servicio</SelectItem>
+                                  <SelectItem value="post_service">Después del servicio</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          </div>
+
+                          <div className="grid gap-3">
+                            {(Object.keys(NOTE_LABELS) as PlanningNoteKey[]).map((key) => (
+                              <div key={key} className="space-y-1.5">
+                                <Label className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">{NOTE_LABELS[key]}</Label>
+                                <Textarea
+                                  value={detailNotes[key]}
+                                  onChange={(event) => setDetailNotes((current) => ({ ...current, [key]: event.target.value }))}
+                                  placeholder={`Notas para ${NOTE_LABELS[key].toLowerCase()}...`}
+                                  rows={2}
+                                  className="rounded-2xl"
+                                />
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="flex justify-end gap-2">
+                            <Button type="button" variant="outline" size="sm" className="rounded-xl" onClick={() => setDetailsEditingId(null)}>
+                              Cancelar
+                            </Button>
+                            <Button type="button" size="sm" className="rounded-xl" onClick={() => saveItemDetails(item)} disabled={savingDetails}>
+                              {savingDetails ? <Loader2 className="h-4 w-4 animate-spin" /> : "Guardar detalles"}
+                            </Button>
+                          </div>
+                        </div>
+                      )}
 
                       {isSongItemType(item.type) && item.song && expandedSongItems[item.id] && (
                           <div className="space-y-3 border-t border-zinc-100 bg-gradient-to-br from-white to-zinc-50/80 p-3" onClick={stopInteractiveTap} onPointerDown={stopInteractiveTap} onTouchStart={stopInteractiveTap}>
@@ -733,6 +947,38 @@ export default function ServiceDetail() {
                             </div>
                           </div>
 
+                          <div className="grid gap-2 rounded-2xl border border-zinc-100 bg-white p-3">
+                            <div className="flex flex-wrap gap-2">
+                              <Badge variant="outline" className="rounded-full">{getItemTimingLabel(item)}</Badge>
+                              {getPrimaryArrangement(item.song)?.sequence && (
+                                <Badge variant="outline" className="rounded-full">Secuencia lista</Badge>
+                              )}
+                              {hasPlanningNotes(item) && (
+                                <Badge variant="outline" className="rounded-full">Notas de equipo</Badge>
+                              )}
+                            </div>
+                            {getPrimaryArrangement(item.song)?.sequence && (
+                              <div className="rounded-xl bg-zinc-50 p-3">
+                                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-zinc-500">Secuencia</p>
+                                <p className="mt-1 text-sm text-zinc-800">{getPrimaryArrangement(item.song)?.sequence}</p>
+                              </div>
+                            )}
+                            {hasPlanningNotes(item) && (
+                              <div className="grid gap-2">
+                                {(Object.keys(NOTE_LABELS) as PlanningNoteKey[]).map((key) => {
+                                  const note = getPlanningNotes(item)[key];
+                                  if (!note?.trim()) return null;
+                                  return (
+                                    <div key={key} className="rounded-xl bg-zinc-50 p-3">
+                                      <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-primary">{NOTE_LABELS[key]}</p>
+                                      <p className="mt-1 text-sm leading-5 text-zinc-600">{note}</p>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+
                           {getYoutubeEmbedUrl(getSongYoutubeUrl(item.song)) && (
                             <div className="overflow-hidden rounded-2xl border border-red-100 bg-black shadow-sm">
                               <iframe
@@ -740,6 +986,7 @@ export default function ServiceDetail() {
                                 src={getYoutubeEmbedUrl(getSongYoutubeUrl(item.song)) || undefined}
                                 className="aspect-video w-full"
                                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                referrerPolicy="strict-origin-when-cross-origin"
                                 allowFullScreen
                               />
                             </div>
@@ -775,6 +1022,38 @@ export default function ServiceDetail() {
                 </Button>
               </div>
             )}
+
+            <Card className="app-card">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Matriz de equipo</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {TEAM_MATRIX_GROUPS.map((group) => (
+                  <div key={group.title} className="space-y-2">
+                    <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-zinc-500">{group.title}</p>
+                    {group.positions.map((position) => {
+                      const assigned = getPositionAssignments(service.assignments, position);
+                      return (
+                        <div key={position} className="flex items-center justify-between gap-3 rounded-2xl bg-zinc-50 px-3 py-2">
+                          <span className="text-sm font-semibold text-zinc-900">{position}</span>
+                          {assigned.length ? (
+                            <div className="flex flex-wrap justify-end gap-1.5">
+                              {assigned.map((assignment) => (
+                                <Badge key={assignment.id} variant="secondary" className="rounded-full">
+                                  {getPersonName(assignment.user)} · {getAssignmentStatusLabel(assignment)}
+                                </Badge>
+                              ))}
+                            </div>
+                          ) : (
+                            <Badge variant="outline" className="rounded-full">Se necesita</Badge>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
 
             {service.assignments.length === 0 ? (
               <Card className="app-card">
@@ -848,6 +1127,104 @@ export default function ServiceDetail() {
                   );
                 })}
               </div>
+            )}
+          </div>
+        )}
+
+        {/* REHEARSE TAB */}
+        {activeTab === "rehearse" && (
+          <div className="space-y-3">
+            <Card className="app-card">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Centro de ensayo</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm leading-6 text-zinc-500">
+                  Tonos, secuencias, notas y medios en un solo lugar para que el equipo pueda prepararse sin buscar mensajes.
+                </p>
+              </CardContent>
+            </Card>
+
+            {service.items.filter((item) => isSongItemType(item.type) && item.song).length === 0 ? (
+              <Card className="app-card">
+                <CardContent className="p-8 text-center">
+                  <Music className="w-8 h-8 mx-auto text-zinc-300 mb-2" />
+                  <p className="text-sm text-muted-foreground">Todavía no hay canciones para ensayar.</p>
+                </CardContent>
+              </Card>
+            ) : (
+              service.items
+                .filter((item) => isSongItemType(item.type) && item.song)
+                .map((item, index) => (
+                  <Card key={item.id} className="app-card overflow-hidden">
+                    <CardHeader className="border-b border-zinc-100 bg-gradient-to-br from-white to-zinc-50/80 pb-3">
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-sm font-black text-primary">
+                          {index + 1}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <CardTitle className="truncate text-base">{item.song?.title || item.title}</CardTitle>
+                          <p className="mt-0.5 truncate text-sm text-zinc-500">{item.song?.author || formatItemType(item.type)}</p>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {getDisplayKey(item) && <Badge variant="secondary" className="rounded-full">Tono {getDisplayKey(item)}</Badge>}
+                            {(getPrimaryArrangement(item.song!)?.bpm || item.song?.bpm) && (
+                              <Badge variant="secondary" className="rounded-full">{getPrimaryArrangement(item.song!)?.bpm || item.song?.bpm} BPM</Badge>
+                            )}
+                            {(getPrimaryArrangement(item.song!)?.meter || item.song?.meter) && (
+                              <Badge variant="secondary" className="rounded-full">{getPrimaryArrangement(item.song!)?.meter || item.song?.meter}</Badge>
+                            )}
+                            <Badge variant="outline" className="rounded-full">{getItemTimingLabel(item)}</Badge>
+                          </div>
+                        </div>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-3 p-3">
+                      <div className="rounded-2xl bg-zinc-50 p-3">
+                        <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-zinc-500">Secuencia</p>
+                        <p className="mt-1 text-sm text-zinc-800">{getPrimaryArrangement(item.song!)?.sequence || "Aún no hay secuencia guardada."}</p>
+                      </div>
+
+                      {hasPlanningNotes(item) && (
+                        <div className="grid gap-2">
+                          {(Object.keys(NOTE_LABELS) as PlanningNoteKey[]).map((key) => {
+                            const note = getPlanningNotes(item)[key];
+                            if (!note?.trim()) return null;
+                            return (
+                              <div key={key} className="rounded-2xl border border-zinc-100 bg-white p-3">
+                                <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-primary">{NOTE_LABELS[key]}</p>
+                                <p className="mt-1 text-sm leading-5 text-zinc-600">{note}</p>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {getYoutubeEmbedUrl(getSongYoutubeUrl(item.song!)) && (
+                        <div className="overflow-hidden rounded-2xl border border-red-100 bg-black shadow-sm">
+                          <iframe
+                            title={`YouTube - ${item.song?.title || item.title}`}
+                            src={getYoutubeEmbedUrl(getSongYoutubeUrl(item.song!)) || undefined}
+                            className="aspect-video w-full"
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                            referrerPolicy="strict-origin-when-cross-origin"
+                            allowFullScreen
+                          />
+                        </div>
+                      )}
+
+                      <ChordProPreview
+                        value={getSongChordPro(item.song)}
+                        originalKey={getOriginalKey(item)}
+                        selectedKey={getDisplayKey(item)}
+                        onSelectedKeyChange={(key) => handleSaveItemKey(item, key)}
+                        title={item.song?.title || item.title}
+                        artist={item.song?.author}
+                        maxLines={28}
+                        emptyText="Esta canción todavía no tiene acordes guardados."
+                      />
+                    </CardContent>
+                  </Card>
+                ))
             )}
           </div>
         )}
@@ -933,10 +1310,15 @@ export default function ServiceDetail() {
                 {availableUsers.map((user) => (
                   <option key={user.id} value={user.id}>
                     {[user.firstName, user.lastName].filter(Boolean).join(" ") || user.email}
-                    {user.email ? ` (${user.email})` : ""}
                   </option>
                 ))}
               </select>
+              {selectedUserAssignments.length > 0 && (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+                  Este miembro ya está asignado como {selectedUserAssignments.map((assignment) => assignment.position).join(", ")}.
+                  Puedes asignarlo otra vez si también servirá en esta posición.
+                </div>
+              )}
             </div>
             <div className="space-y-2">
               <Label>Posición</Label>

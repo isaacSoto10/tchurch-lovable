@@ -9,6 +9,11 @@ const config: CapacitorConfig = {
     iosScheme: 'tchurchapp',
     androidScheme: 'https',
   },
+  plugins: {
+    PushNotifications: {
+      presentationOptions: ['badge', 'sound', 'alert'],
+    },
+  },
 };
 
 export default config;

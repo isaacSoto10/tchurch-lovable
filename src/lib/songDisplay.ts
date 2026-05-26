@@ -6,6 +6,7 @@ export type SongArrangement = {
   key?: string | null;
   bpm?: number | null;
   meter?: string | null;
+  sequence?: string | null;
   lyrics?: string | null;
   notes?: string | null;
 };
