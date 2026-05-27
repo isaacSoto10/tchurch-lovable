@@ -128,14 +128,14 @@ function getDisplayChordPro(item: PresentationServiceItem) {
 function splitSongLines(lines: ChordProDisplayLine[]) {
   const chunks: ChordProDisplayLine[][] = [];
   let current: ChordProDisplayLine[] = [];
-  let currentUnits = 0;
+  let currentRows = 0;
+  // Keep enough music on each slide to use the full phone screen without shrinking the chart.
+  const maxRowsPerSlide = 21;
 
-  function lineUnits(line: ChordProDisplayLine) {
+  function lineRows(line: ChordProDisplayLine) {
     if (line.kind === "blank") return 0.35;
-    if (line.kind === "section" || line.kind === "meta") return 0.85;
-    const visibleColumns = Math.max(line.chords.length, line.lyrics.length);
-    const longLinePenalty = Math.max(0, visibleColumns - 30) / 24;
-    return (line.chords ? 0.95 : 0) + (line.lyrics ? 1.05 : 0.15) + longLinePenalty;
+    if (line.kind === "section" || line.kind === "meta") return 0.95;
+    return (line.chords ? 0.95 : 0) + (line.lyrics ? 1 : 0.35);
   }
 
   function hasMusicLine(chunk: ChordProDisplayLine[]) {
@@ -146,7 +146,7 @@ function splitSongLines(lines: ChordProDisplayLine[]) {
     if (!current.length) return;
     chunks.push(current);
     current = [];
-    currentUnits = 0;
+    currentRows = 0;
   }
 
   for (const line of lines) {
@@ -155,22 +155,25 @@ function splitSongLines(lines: ChordProDisplayLine[]) {
       continue;
     }
 
-    const units = lineUnits(line);
+    const rows = lineRows(line);
     const startsNewSection = line.kind === "section" || line.kind === "meta";
 
-    if ((startsNewSection && hasMusicLine(current)) || (hasMusicLine(current) && currentUnits + units > 1.35)) {
+    if (
+      (startsNewSection && hasMusicLine(current) && currentRows >= maxRowsPerSlide * 0.55) ||
+      (hasMusicLine(current) && currentRows + rows > maxRowsPerSlide)
+    ) {
       pushCurrent();
     }
 
     current.push(line);
-    currentUnits += units;
+    currentRows += rows;
   }
 
   pushCurrent();
   return chunks.length ? chunks : [[{ kind: "line", chords: "", lyrics: "Esta canción todavía no tiene acordes guardados." }]];
 }
 
-function splitWideDisplayLine(line: ChordProDisplayLine, maxColumns = 30): ChordProDisplayLine[] {
+function splitWideDisplayLine(line: ChordProDisplayLine, maxColumns = 38): ChordProDisplayLine[] {
   if (line.kind !== "line") return [line];
 
   const width = Math.max(line.chords.length, line.lyrics.length);
