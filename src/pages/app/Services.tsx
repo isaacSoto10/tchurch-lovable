@@ -99,6 +99,15 @@ interface Member {
   role?: string;
 }
 
+type PlanningNoteKey = "vocals" | "band" | "audioVisual" | "person";
+
+const NOTE_LABELS: Record<PlanningNoteKey, string> = {
+  vocals: "Voces",
+  band: "Banda",
+  audioVisual: "Audio / Visual",
+  person: "Persona",
+};
+
 const SERVICE_TYPES = [
   { label: "Servicio dominical", value: "Sunday Service" },
   { label: "Estudio bíblico", value: "Wednesday Bible Study" },
@@ -270,6 +279,23 @@ export default function Services() {
   };
 
   const getItemDisplayKey = (item: ServiceItem) => getItemSavedKey(item) || getItemOriginalKey(item);
+
+  const getPlanningNotes = (item: ServiceItem) => {
+    const notes = item.details?.notes;
+    return notes && typeof notes === "object" ? notes as Partial<Record<PlanningNoteKey, string>> : {};
+  };
+
+  const hasPlanningNotes = (item: ServiceItem) => {
+    const notes = getPlanningNotes(item);
+    return (Object.keys(NOTE_LABELS) as PlanningNoteKey[]).some((key) => Boolean(notes[key]?.trim()));
+  };
+
+  const getPlanningNoteEntries = (item: ServiceItem) => {
+    const notes = getPlanningNotes(item);
+    return (Object.keys(NOTE_LABELS) as PlanningNoteKey[])
+      .map((key) => ({ key, label: NOTE_LABELS[key], note: notes[key]?.trim() || "" }))
+      .filter((entry) => entry.note);
+  };
 
   const getItemDisplayChordPro = (item: ServiceItem) => {
     if (!item.song) return null;
@@ -1146,72 +1172,101 @@ export default function Services() {
                                 <div
                                   data-service-item-id={item.id}
                                   data-service-id={svc.id}
-                                  className="flex items-center gap-2 p-3"
+                                  className="p-3"
                                   onClick={() => {
                                     if (isSong) toggleSongItem(item.id);
                                   }}
                                 >
-                                  <GripVertical
-                                    className="h-4 w-4 shrink-0 cursor-grab touch-none text-muted-foreground/60 active:cursor-grabbing"
-                                    onClick={stopInteractiveTap}
-                                    onPointerDown={(event) => {
-                                      event.preventDefault();
-                                      event.stopPropagation();
-                                      event.currentTarget.setPointerCapture(event.pointerId);
-                                      suppressNextCardClickRef.current = true;
-                                      setDraggingItemId(item.id);
-                                      setDragOverItemId(item.id);
-                                      setDragServiceId(svc.id);
-                                    }}
-                                    onPointerMove={handlePointerMove}
-                                    onPointerUp={handlePointerUp}
-                                    onPointerCancel={handlePointerUp}
-                                    aria-label="Arrastrar para reordenar"
-                                  />
-                                  <span className="text-xs text-muted-foreground w-4">{idx + 1}</span>
-                                  {getItemIcon(item.type)}
-                                  <div className="min-w-0 flex-1">
-                                    <p className="truncate text-sm font-medium">{item.song?.title || item.title}</p>
-                                    {item.song?.author && (
-                                      <p className="truncate text-xs text-muted-foreground">{item.song.author}</p>
-                                    )}
+                                  <div className="flex items-start gap-3">
+                                    <GripVertical
+                                      className="mt-2 h-4 w-4 shrink-0 cursor-grab touch-none text-muted-foreground/60 active:cursor-grabbing"
+                                      onClick={stopInteractiveTap}
+                                      onPointerDown={(event) => {
+                                        event.preventDefault();
+                                        event.stopPropagation();
+                                        event.currentTarget.setPointerCapture(event.pointerId);
+                                        suppressNextCardClickRef.current = true;
+                                        setDraggingItemId(item.id);
+                                        setDragOverItemId(item.id);
+                                        setDragServiceId(svc.id);
+                                      }}
+                                      onPointerMove={handlePointerMove}
+                                      onPointerUp={handlePointerUp}
+                                      onPointerCancel={handlePointerUp}
+                                      aria-label="Arrastrar para reordenar"
+                                    />
+                                    <span className="mt-2 w-4 shrink-0 text-xs text-muted-foreground">{idx + 1}</span>
+                                    <div className="mt-1 shrink-0">{getItemIcon(item.type)}</div>
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-start justify-between gap-2">
+                                        <div className="min-w-0">
+                                          <p className="break-words text-base font-bold leading-snug text-zinc-950">{item.song?.title || item.title}</p>
+                                          <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                                            {item.song?.author || item.type}
+                                            {item.duration ? ` · ${item.duration}m` : ""}
+                                          </p>
+                                        </div>
+                                        {isSong && (
+                                          <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className="h-9 w-9 shrink-0 rounded-xl"
+                                            aria-label={expandedSongItems[item.id] ? "Contraer detalles de la canción" : "Expandir detalles de la canción"}
+                                            onClick={(event) => {
+                                              event.stopPropagation();
+                                              toggleSongItem(item.id);
+                                            }}
+                                          >
+                                            {expandedSongItems[item.id] ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                                          </Button>
+                                        )}
+                                      </div>
+
+                                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                                        {displayKey && (
+                                          <Badge variant="secondary" className="rounded-full text-xs">Tono {displayKey}</Badge>
+                                        )}
+                                        {hasPlanningNotes(item) && (
+                                          <Badge variant="outline" className="rounded-full text-xs">Notas de equipo</Badge>
+                                        )}
+                                        {item.duration && (
+                                          <span className="inline-flex items-center rounded-full bg-white px-2.5 py-1 text-xs text-muted-foreground ring-1 ring-zinc-200">
+                                            <Clock className="mr-1 h-3 w-3" />
+                                            {item.duration}m
+                                          </span>
+                                        )}
+                                        {isPlanner && (
+                                          <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className="h-9 w-9 rounded-xl text-zinc-400 hover:text-red-500"
+                                            onClick={(event) => {
+                                              event.stopPropagation();
+                                              handleDeleteItem(svc.id, item.id);
+                                            }}
+                                            aria-label="Eliminar elemento"
+                                          >
+                                            <X className="w-3 h-3" />
+                                          </Button>
+                                        )}
+                                      </div>
+                                      {hasPlanningNotes(item) && (
+                                        <div className="mt-2 grid gap-1.5">
+                                          {getPlanningNoteEntries(item).slice(0, 2).map((entry) => (
+                                            <p key={entry.key} className="line-clamp-2 rounded-xl bg-white px-3 py-2 text-xs leading-5 text-zinc-600 ring-1 ring-zinc-200">
+                                              <span className="font-bold text-primary">{entry.label}: </span>
+                                              {entry.note}
+                                            </p>
+                                          ))}
+                                          {getPlanningNoteEntries(item).length > 2 && (
+                                            <p className="text-[11px] font-semibold text-muted-foreground">
+                                              +{getPlanningNoteEntries(item).length - 2} detalle(s) más
+                                            </p>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
                                   </div>
-                                  {displayKey && (
-                                    <Badge variant="secondary" className="shrink-0 rounded-full text-xs">Tono {displayKey}</Badge>
-                                  )}
-                                  {item.duration && (
-                                    <span className="text-xs text-muted-foreground flex items-center">
-                                      <Clock className="w-3 h-3 mr-1" />
-                                      {item.duration}m
-                                    </span>
-                                  )}
-                                  {isSong && (
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-9 w-9 rounded-xl"
-                                      aria-label={expandedSongItems[item.id] ? "Contraer detalles de la canción" : "Expandir detalles de la canción"}
-                                      onClick={(event) => {
-                                        event.stopPropagation();
-                                        toggleSongItem(item.id);
-                                      }}
-                                    >
-                                      {expandedSongItems[item.id] ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                                    </Button>
-                                  )}
-                                  {isPlanner && (
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-9 w-9 rounded-xl"
-                                      onClick={(event) => {
-                                        event.stopPropagation();
-                                        handleDeleteItem(svc.id, item.id);
-                                      }}
-                                    >
-                                      <X className="w-3 h-3" />
-                                    </Button>
-                                  )}
                                 </div>
 
                                 {isSong && expandedSongItems[item.id] && (
@@ -1232,6 +1287,21 @@ export default function Services() {
                                     </div>
 
                                     {plainNotes && <p className="text-xs leading-5 text-muted-foreground">{plainNotes}</p>}
+
+                                    {hasPlanningNotes(item) && (
+                                      <div className="grid gap-2">
+                                        {(Object.keys(NOTE_LABELS) as PlanningNoteKey[]).map((key) => {
+                                          const note = getPlanningNotes(item)[key];
+                                          if (!note?.trim()) return null;
+                                          return (
+                                            <div key={key} className="rounded-2xl border border-zinc-100 bg-zinc-50 p-3">
+                                              <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-primary">{NOTE_LABELS[key]}</p>
+                                              <p className="mt-1 text-sm leading-5 text-zinc-600">{note}</p>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
 
                                     <div className="flex flex-wrap gap-2">
                                       {youtubeUrl && (

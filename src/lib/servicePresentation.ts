@@ -89,7 +89,7 @@ const ITEM_TYPE_LABELS: Record<string, string> = {
   other: "Otro",
 };
 
-const MAX_SONG_SLIDE_WEIGHT = 13;
+const MAX_SONG_SLIDE_WEIGHT = 10;
 
 function getPlanningDetails(item: PresentationServiceItem) {
   return (item.details || {}) as Record<string, unknown>;

@@ -682,34 +682,38 @@ export default function ServiceDetail() {
     <div className="mobile-page space-y-4">
       {/* Header */}
       <div className="app-card-soft overflow-hidden">
-        <div className="flex items-center gap-3 px-4 py-4">
-          <button onClick={() => navigate("/app/services")} className="-ml-1 flex h-10 w-10 items-center justify-center rounded-2xl bg-white shadow-sm hover:bg-zinc-50">
-            <ArrowLeft className="w-5 h-5 text-zinc-600" />
-          </button>
-          <div className="flex-1 min-w-0">
-            <h1 className="truncate text-xl font-black tracking-tight text-zinc-950">{service.title}</h1>
-            <p className="mt-0.5 truncate text-sm text-zinc-500">{formatDate(service.date)}</p>
+        <div className="px-4 py-4">
+          <div className="flex items-start gap-3">
+            <button onClick={() => navigate("/app/services")} className="-ml-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white shadow-sm hover:bg-zinc-50">
+              <ArrowLeft className="w-5 h-5 text-zinc-600" />
+            </button>
+            <div className="flex-1 min-w-0">
+              <h1 className="line-clamp-2 text-2xl font-black leading-tight tracking-tight text-zinc-950">{service.title}</h1>
+              <p className="mt-0.5 truncate text-sm text-zinc-500">{formatDate(service.date)}</p>
+            </div>
+            {isAdmin && (
+              <Button variant="ghost" size="sm" className="h-10 w-10 shrink-0 rounded-2xl text-red-500" onClick={handleDeleteService}>
+                <Trash2 className="w-4 h-4" />
+              </Button>
+            )}
           </div>
-          {canPresentService && (
-            <Button
-              variant="default"
-              size="sm"
-              className="h-10 rounded-2xl px-3"
-              onClick={() => navigate(`/app/services/${service.id}/presentation`)}
-            >
-              <PlayCircle className="w-4 h-4" />
-              Presentar
+          <div className="mt-3 flex items-center gap-2">
+            {canPresentService && (
+              <Button
+                variant="default"
+                size="sm"
+                className="h-10 flex-1 rounded-2xl px-3"
+                onClick={() => navigate(`/app/services/${service.id}/presentation`)}
+              >
+                <PlayCircle className="w-4 h-4" />
+                Presentar
+              </Button>
+            )}
+            <Button variant="outline" size="sm" className="h-10 flex-1 rounded-2xl px-3" onClick={handleGenerateServicePdf}>
+              <FileDown className="w-4 h-4" />
+              PDF
             </Button>
-          )}
-          <Button variant="outline" size="sm" className="h-10 rounded-2xl px-3" onClick={handleGenerateServicePdf}>
-            <FileDown className="w-4 h-4" />
-            PDF
-          </Button>
-          {isAdmin && (
-            <Button variant="ghost" size="sm" className="h-10 w-10 rounded-2xl text-red-500" onClick={handleDeleteService}>
-              <Trash2 className="w-4 h-4" />
-            </Button>
-          )}
+          </div>
         </div>
 
         <div className="px-4 pb-3">
@@ -779,8 +783,9 @@ export default function ServiceDetail() {
                     }}
                   >
                     <CardContent className="p-0">
-                      <div className="flex items-center gap-3 p-3">
-                        <div className="flex flex-col gap-1 shrink-0">
+                      <div className="p-3">
+                        <div className="flex items-start gap-3">
+                          <div className="flex shrink-0 flex-col gap-1 pt-1">
                           {idx > 0 && (
                             <button onClick={(event) => { event.stopPropagation(); handleMoveUp(item); }} className="p-0.5 rounded hover:bg-zinc-100 text-zinc-400">
                               <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path d="M5 15l7-7 7 7" /></svg>
@@ -805,62 +810,74 @@ export default function ServiceDetail() {
                               <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7" /></svg>
                             </button>
                           )}
-                        </div>
-                        <div className="w-8 h-8 bg-primary/10 rounded-lg flex items-center justify-center shrink-0">
-                          {isSongItemType(item.type) ? <Music className="w-4 h-4 text-primary" /> : <Clock className="w-4 h-4 text-primary" />}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-bold text-sm text-zinc-950">{item.song?.title || item.title}</p>
-                          <p className="text-xs text-zinc-500">
-                            {formatItemType(item.type)}{item.duration ? ` · ${item.duration} min` : ""}
-                            {item.song?.author ? ` · ${item.song.author}` : ""}
-                          </p>
-                        </div>
-                        {getDisplayKey(item) && (
-                          <Badge variant="secondary" className="shrink-0 rounded-full text-xs">Tono {getDisplayKey(item)}</Badge>
-                        )}
-                        <Badge variant="outline" className="hidden shrink-0 rounded-full text-xs sm:inline-flex">
-                          {getItemTimingLabel(item)}
-                        </Badge>
-                        {item.song && (
-                          <div className="flex shrink-0 items-center gap-1">
-                            <Button variant="outline" size="sm" className="h-9 rounded-xl" onClick={(event) => { event.stopPropagation(); navigate(`/app/songs/${item.song?.id}`); }}>
-                              <FileText className="w-3 h-3" />
-                              Canción
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-9 w-9 rounded-xl"
-                              aria-label={expandedSongItems[item.id] ? "Contraer detalles de canción" : "Expandir detalles de canción"}
-                              onClick={(event) => { event.stopPropagation(); toggleSongItem(item.id); }}
-                            >
-                              {expandedSongItems[item.id] ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                            </Button>
                           </div>
-                        )}
-                        {isPlanner && (
-                          <Button
-                            type="button"
-                            variant={detailsEditingId === item.id ? "default" : "outline"}
-                            size="sm"
-                            className="h-9 rounded-xl px-2 text-xs"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              startItemDetails(item);
-                            }}
-                          >
-                            Detalles
-                          </Button>
-                        )}
-                        {isPlanner && (
-                          <button
-                            onClick={(event) => { event.stopPropagation(); handleDeleteItem(item.id); }}
-                            className="p-1.5 rounded-lg hover:bg-red-50 text-zinc-400 hover:text-red-500 transition-colors"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        )}
+                          <div className="mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-primary/10">
+                            {isSongItemType(item.type) ? <Music className="w-4 h-4 text-primary" /> : <Clock className="w-4 h-4 text-primary" />}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="break-words text-base font-bold leading-snug text-zinc-950">{item.song?.title || item.title}</p>
+                              <p className="mt-0.5 text-xs leading-5 text-zinc-500">
+                                {formatItemType(item.type)}{item.duration ? ` · ${item.duration} min` : ""}
+                                {item.song?.author ? ` · ${item.song.author}` : ""}
+                              </p>
+                            </div>
+                            {item.song && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-9 w-9 shrink-0 rounded-xl"
+                                aria-label={expandedSongItems[item.id] ? "Contraer detalles de canción" : "Expandir detalles de canción"}
+                                onClick={(event) => { event.stopPropagation(); toggleSongItem(item.id); }}
+                              >
+                                {expandedSongItems[item.id] ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                              </Button>
+                            )}
+                          </div>
+
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            {getDisplayKey(item) && (
+                              <Badge variant="secondary" className="rounded-full text-xs">Tono {getDisplayKey(item)}</Badge>
+                            )}
+                            <Badge variant="outline" className="rounded-full text-xs">
+                              {getItemTimingLabel(item)}
+                            </Badge>
+                            {hasPlanningNotes(item) && (
+                              <Badge variant="outline" className="rounded-full text-xs">Notas de equipo</Badge>
+                            )}
+                            {item.song && (
+                              <Button variant="outline" size="sm" className="h-9 rounded-xl px-3 text-xs" onClick={(event) => { event.stopPropagation(); navigate(`/app/songs/${item.song?.id}`); }}>
+                                <FileText className="w-3 h-3" />
+                                Canción
+                              </Button>
+                            )}
+                            {isPlanner && (
+                              <Button
+                                type="button"
+                                variant={detailsEditingId === item.id ? "default" : "outline"}
+                                size="sm"
+                                className="h-9 rounded-xl px-3 text-xs"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  startItemDetails(item);
+                                }}
+                              >
+                                Detalles
+                              </Button>
+                            )}
+                            {isPlanner && (
+                              <button
+                                onClick={(event) => { event.stopPropagation(); handleDeleteItem(item.id); }}
+                                className="rounded-lg p-2 text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-500"
+                                aria-label="Eliminar elemento"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        </div>
                       </div>
 
                       {detailsEditingId === item.id && (
