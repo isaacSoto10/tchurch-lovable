@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type SyntheticEvent } from "react";
-import { chordProToDisplayLines, hasChordPro } from "@/lib/songDisplay";
+import { chordProToDisplayLines, hasChordPro, type ChordProDisplayLine } from "@/lib/songDisplay";
 import { ALL_KEYS, normalizeKey, transposeChordPro } from "@/lib/musicUtils";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
@@ -17,6 +17,37 @@ type ChordProPreviewProps = {
   compact?: boolean;
   fullHeight?: boolean;
 };
+
+function splitWideDisplayLine(line: ChordProDisplayLine, maxColumns: number): ChordProDisplayLine[] {
+  if (line.kind !== "line") return [line];
+
+  const width = Math.max(line.chords.length, line.lyrics.length);
+  if (width <= maxColumns) return [line];
+
+  const segments: ChordProDisplayLine[] = [];
+  let start = 0;
+
+  while (start < width) {
+    let end = Math.min(start + maxColumns, width);
+
+    if (end < width) {
+      const lyricWindow = line.lyrics.slice(start, end);
+      const lastSpace = Math.max(lyricWindow.lastIndexOf(" "), lyricWindow.lastIndexOf("\t"));
+      if (lastSpace > Math.floor(maxColumns * 0.58)) {
+        end = start + lastSpace + 1;
+      }
+    }
+
+    const chords = line.chords.slice(start, end).trimEnd();
+    const lyrics = line.lyrics.slice(start, end).trimEnd();
+    if (chords.trim() || lyrics.trim()) {
+      segments.push({ kind: "line", chords, lyrics });
+    }
+    start = end;
+  }
+
+  return segments.length ? segments : [line];
+}
 
 export function ChordProPreview({
   value,
@@ -96,20 +127,32 @@ export function ChordProPreview({
     );
   }
 
-  const lines = chordProToDisplayLines(displayValue, maxLines);
+  const rawLines = chordProToDisplayLines(displayValue, maxLines);
+  const lines = compact || fullHeight
+    ? rawLines.flatMap((line) => splitWideDisplayLine(line, fullHeight ? 34 : 30))
+    : rawLines;
   const isTruncated = Boolean(displayValue && displayValue.replace(/\r\n/g, "\n").split("\n").length > maxLines);
+  const maxColumns = Math.max(
+    12,
+    ...lines.map((line) => line.kind === "line" ? Math.max(line.chords.length, line.lyrics.length) : 0)
+  );
+  const chartFontSize = fullHeight
+    ? `clamp(0.5rem, calc((100svw - 1.25rem) / ${maxColumns} * 1.16), 0.86rem)`
+    : compact
+      ? `clamp(0.48rem, calc((100svw - 3.5rem) / ${maxColumns} * 1.08), 0.78rem)`
+      : undefined;
   const containerClassName = fullHeight
     ? "flex min-h-full flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm shadow-zinc-200/60"
     : "overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm shadow-zinc-200/60";
   const headerClassName = compact
     ? "flex flex-col gap-2 border-b border-zinc-100 bg-zinc-50 px-2.5 py-2 sm:flex-row sm:items-center sm:justify-between sm:px-3"
     : fullHeight
-      ? "flex shrink-0 flex-col gap-2 border-b border-zinc-100 bg-zinc-50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between sm:px-4"
+      ? "flex shrink-0 flex-col gap-1.5 border-b border-zinc-100 bg-zinc-50 px-2 py-1.5 sm:flex-row sm:items-center sm:justify-between sm:px-4 sm:py-2"
       : "flex flex-col gap-2 border-b border-zinc-100 bg-zinc-50 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-4";
   const bodyClassName = compact
-    ? "max-h-[44vh] overflow-auto px-2.5 py-2 font-mono text-[10px] leading-5 sm:max-h-[28rem] sm:px-3 sm:text-[12px]"
+    ? "max-h-[58svh] overflow-auto overflow-x-hidden px-1.5 py-2 font-mono text-[9px] leading-4 sm:max-h-[28rem] sm:px-3 sm:text-[12px] sm:leading-5"
     : fullHeight
-      ? "min-h-0 flex-1 overflow-auto px-2.5 py-3 font-mono text-[10.5px] leading-5 sm:px-4 sm:text-[13px] sm:leading-6"
+      ? "min-h-0 flex-1 overflow-auto overflow-x-hidden px-1.5 py-2 pb-[calc(1rem+env(safe-area-inset-bottom))] font-mono text-[8.5px] leading-4 sm:px-4 sm:py-3 sm:pb-6 sm:text-[12px] sm:leading-5"
     : "max-h-[32rem] overflow-auto px-3 py-3 font-mono text-[12px] leading-6 sm:px-4 sm:text-[13px]";
   const controlButtonClassName = compact
     ? "flex h-8 w-8 items-center justify-center rounded-xl text-zinc-700 hover:bg-zinc-100 active:scale-95"
@@ -186,13 +229,13 @@ export function ChordProPreview({
       <div className={bodyClassName}>
         {lines.map((line, index) => {
           if (line.kind === "blank") {
-            return <div key={index} className="h-3" />;
+            return <div key={index} className={compact || fullHeight ? "h-1.5" : "h-3"} />;
           }
 
           if (line.kind === "section") {
             return (
-              <div key={index} className="mb-2 mt-3 first:mt-0">
-                <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-primary">
+              <div key={index} className={compact || fullHeight ? "mb-1.5 mt-2 first:mt-0" : "mb-2 mt-3 first:mt-0"}>
+                <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-primary sm:px-2.5 sm:py-1 sm:text-[11px]">
                   {line.label}
                 </span>
               </div>
@@ -208,14 +251,18 @@ export function ChordProPreview({
           }
 
           return (
-            <div key={index} className="w-max min-w-full max-w-none py-0.5 pr-3">
+            <div
+              key={index}
+              className="w-full min-w-0 max-w-full py-0.5"
+              style={chartFontSize ? { fontSize: chartFontSize } : undefined}
+            >
               {line.chords && (
-                <div className="whitespace-pre font-bold text-primary">
+                <div className="whitespace-pre text-[1em] font-bold leading-[1.18] text-primary">
                   {line.chords}
                 </div>
               )}
               {line.lyrics && (
-                <div className="whitespace-pre text-zinc-900">
+                <div className="whitespace-pre text-[1em] leading-[1.28] text-zinc-900">
                   {line.lyrics}
                 </div>
               )}

@@ -32,7 +32,13 @@ import {
 import { normalizeKey, transposeChordPro } from "@/lib/musicUtils";
 import { getYoutubeEmbedUrl } from "@/lib/youtube";
 import { canUseServicePresentation } from "@/lib/servicePresentation";
-import { getAssignmentPersonName, getAssignmentStatusText, getMusicAssignments, summarizeAssignments } from "@/lib/serviceAssignments";
+import {
+  getAssignmentPersonName,
+  getAssignmentRoleLabel,
+  getAssignmentStatusText,
+  getMusicAssignmentSummaries,
+  getMusicAssignments,
+} from "@/lib/serviceAssignments";
 
 type ServiceItem = {
   id: string;
@@ -236,7 +242,7 @@ export default function ServiceDetail() {
     ? service.assignments.filter((assignment) => assignment.userId === assignUserId)
     : [];
   const serviceMusicAssignments = getMusicAssignments(service?.assignments || []);
-  const serviceMusicSummary = summarizeAssignments(service?.assignments || [], 3);
+  const serviceMusicAssignmentDetails = getMusicAssignmentSummaries(service?.assignments || [], 8);
 
   useEffect(() => {
     if (!id) return;
@@ -823,72 +829,85 @@ export default function ServiceDetail() {
                             </button>
                           )}
                           </div>
-                          <div className="mt-1 hidden h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-primary/10 sm:flex">
+                          <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-2xl bg-primary/10 sm:h-9 sm:w-9">
                             {isSongItemType(item.type) ? <Music className="w-4 h-4 text-primary" /> : <Clock className="w-4 h-4 text-primary" />}
                           </div>
                           <div className="min-w-0 flex-1">
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0 flex-1">
-                              <p className="line-clamp-2 text-[15px] font-bold leading-tight text-zinc-950 sm:text-base">{item.song?.title || item.title}</p>
-                              <p className="mt-0.5 line-clamp-2 text-xs leading-4 text-zinc-500 sm:leading-5">
-                                {formatItemType(item.type)}{item.duration ? ` · ${item.duration} min` : ""}
-                                {item.song?.author ? ` · ${item.song.author}` : ""}
-                              </p>
+                            <div className="flex items-start gap-2">
+                              <div className="min-w-0 flex-1">
+                                <p className="line-clamp-2 break-words text-[15px] font-bold leading-tight text-zinc-950 sm:text-base">
+                                  {item.song?.title || item.title}
+                                </p>
+                                <p className="mt-0.5 line-clamp-2 text-xs leading-4 text-zinc-500 sm:leading-5">
+                                  {formatItemType(item.type)}{item.duration ? ` · ${item.duration} min` : ""}
+                                  {item.song?.author ? ` · ${item.song.author}` : ""}
+                                </p>
+                              </div>
+                              <div className="flex shrink-0 items-center justify-end gap-1">
+                                {getDisplayKey(item) && (
+                                  <Badge variant="secondary" className="hidden rounded-full px-2 py-1 text-[11px] sm:inline-flex sm:text-xs">Tono {getDisplayKey(item)}</Badge>
+                                )}
+                                {item.song && (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-9 w-9 shrink-0 rounded-xl bg-primary/5 text-primary"
+                                    aria-label={expandedSongItems[item.id] ? "Contraer detalles de canción" : "Expandir detalles de canción"}
+                                    onClick={(event) => { event.stopPropagation(); toggleSongItem(item.id); }}
+                                  >
+                                    {expandedSongItems[item.id] ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                                  </Button>
+                                )}
+                              </div>
                             </div>
-                            {item.song && (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-9 w-9 shrink-0 rounded-xl"
-                                aria-label={expandedSongItems[item.id] ? "Contraer detalles de canción" : "Expandir detalles de canción"}
-                                onClick={(event) => { event.stopPropagation(); toggleSongItem(item.id); }}
-                              >
-                                {expandedSongItems[item.id] ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                              </Button>
-                            )}
-                          </div>
 
-                          <div className="mt-2 flex flex-wrap items-center gap-1.5 sm:gap-2">
-                            {getDisplayKey(item) && (
-                              <Badge variant="secondary" className="rounded-full px-2 py-0.5 text-[11px] sm:text-xs">Tono {getDisplayKey(item)}</Badge>
-                            )}
-                            <Badge variant="outline" className="rounded-full px-2 py-0.5 text-[11px] sm:text-xs">
-                              {getItemTimingLabel(item)}
-                            </Badge>
-                            {hasPlanningNotes(item) && (
-                              <Badge variant="outline" className="rounded-full px-2 py-0.5 text-[11px] sm:text-xs">Notas de equipo</Badge>
-                            )}
-                            {item.song && (
-                              <Button variant="outline" size="sm" className="h-8 flex-1 rounded-xl px-2 text-xs sm:h-9 sm:flex-none sm:px-3" onClick={(event) => { event.stopPropagation(); navigate(`/app/songs/${item.song?.id}`); }}>
-                                <FileText className="w-3 h-3" />
-                                Canción
-                              </Button>
-                            )}
-                            {isPlanner && (
-                              <Button
-                                type="button"
-                                variant={detailsEditingId === item.id ? "default" : "outline"}
-                                size="sm"
-                                className="h-8 flex-1 rounded-xl px-2 text-xs sm:h-9 sm:flex-none sm:px-3"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  startItemDetails(item);
-                                }}
-                              >
-                                Detalles
-                              </Button>
-                            )}
-                            {isPlanner && (
-                              <button
-                                onClick={(event) => { event.stopPropagation(); handleDeleteItem(item.id); }}
-                                className="rounded-lg p-1.5 text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-500 sm:p-2"
-                                aria-label="Eliminar elemento"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            )}
-                          </div>
-                          {item.song && (
+                            <div className={`${item.song && !expandedSongItems[item.id] ? "hidden sm:flex" : "flex"} mt-2 flex-wrap items-center gap-1.5 sm:gap-2`}>
+                              {getDisplayKey(item) && (
+                                <Badge variant="secondary" className="rounded-full px-2 py-0.5 text-[11px] sm:hidden">Tono {getDisplayKey(item)}</Badge>
+                              )}
+                              <Badge variant="outline" className="rounded-full px-2 py-0.5 text-[11px] sm:text-xs">
+                                {getItemTimingLabel(item)}
+                              </Badge>
+                              {hasPlanningNotes(item) && (
+                                <Badge variant="outline" className="rounded-full px-2 py-0.5 text-[11px] sm:text-xs">Notas de equipo</Badge>
+                              )}
+                              {item.song && getSongYoutubeUrl(item.song) && (
+                                <Badge variant="outline" className="rounded-full border-red-100 bg-red-50 px-2 py-0.5 text-[11px] text-red-600 sm:text-xs">YouTube</Badge>
+                              )}
+                            </div>
+
+                            <div className="mt-2 flex flex-wrap items-center gap-1.5 sm:gap-2">
+                              {item.song && (
+                                <Button variant="outline" size="sm" className="h-8 rounded-xl px-2 text-xs sm:h-9 sm:px-3" onClick={(event) => { event.stopPropagation(); navigate(`/app/songs/${item.song?.id}`); }}>
+                                  <FileText className="w-3 h-3" />
+                                  Canción
+                                </Button>
+                              )}
+                              {isPlanner && (
+                                <Button
+                                  type="button"
+                                  variant={detailsEditingId === item.id ? "default" : "outline"}
+                                  size="sm"
+                                  className="h-8 rounded-xl px-2 text-xs sm:h-9 sm:px-3"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    startItemDetails(item);
+                                  }}
+                                >
+                                  Detalles
+                                </Button>
+                              )}
+                              {isPlanner && (
+                                <button
+                                  onClick={(event) => { event.stopPropagation(); handleDeleteItem(item.id); }}
+                                  className="ml-auto rounded-lg p-1.5 text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-500 sm:p-2"
+                                  aria-label="Eliminar elemento"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              )}
+                            </div>
+                          {item.song && expandedSongItems[item.id] && (
                             <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] font-semibold text-zinc-500">
                               {(getPrimaryArrangement(item.song)?.bpm || item.song.bpm) && (
                                 <span className="rounded-full bg-zinc-100 px-2.5 py-1">
@@ -908,13 +927,24 @@ export default function ServiceDetail() {
                               )}
                             </div>
                           )}
-                          {item.song && serviceMusicSummary.length > 0 && (
-                            <p className="mt-2 line-clamp-2 rounded-xl bg-primary/5 px-3 py-2 text-xs font-semibold leading-5 text-primary ring-1 ring-primary/10">
-                              Equipo: {serviceMusicSummary.join(" · ")}
-                              {serviceMusicAssignments.length > serviceMusicSummary.length ? ` +${serviceMusicAssignments.length - serviceMusicSummary.length}` : ""}
-                            </p>
+                          {item.song && expandedSongItems[item.id] && serviceMusicAssignmentDetails.length > 0 && (
+                            <div className="mt-2 rounded-xl bg-primary/5 px-2.5 py-2 ring-1 ring-primary/10">
+                              <p className="text-[10px] font-black uppercase tracking-[0.16em] text-primary/75">Asignados hoy</p>
+                              <div className="mt-1 flex flex-wrap gap-1.5">
+                                {serviceMusicAssignmentDetails.slice(0, 5).map((assignment) => (
+                                  <span key={assignment.id} className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-primary ring-1 ring-primary/10">
+                                    {assignment.roleLabel}: {assignment.personName}
+                                  </span>
+                                ))}
+                                {serviceMusicAssignments.length > 5 && (
+                                  <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-primary ring-1 ring-primary/10">
+                                    +{serviceMusicAssignments.length - 5} más
+                                  </span>
+                                )}
+                              </div>
+                            </div>
                           )}
-                          {hasPlanningNotes(item) && (
+                          {(!item.song || expandedSongItems[item.id]) && hasPlanningNotes(item) && (
                             <div className="mt-2 grid gap-1.5">
                               {getPlanningNoteEntries(item).slice(0, 2).map((entry) => (
                                 <p key={entry.key} className="line-clamp-2 rounded-xl bg-white px-3 py-2 text-xs leading-5 text-zinc-600 ring-1 ring-zinc-200">
@@ -1069,13 +1099,13 @@ export default function ServiceDetail() {
 
                           {serviceMusicAssignments.length > 0 && (
                             <div className="rounded-2xl border border-primary/10 bg-primary/5 p-3">
-                              <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-primary">Equipo del servicio</p>
+                              <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-primary">Quién canta/toca este día</p>
                               <div className="mt-2 grid gap-2">
                                 {serviceMusicAssignments.map((assignment) => (
                                   <div key={assignment.id} className="flex items-center justify-between gap-3 rounded-xl bg-white px-3 py-2 ring-1 ring-primary/10">
                                     <div className="min-w-0">
                                       <p className="truncate text-sm font-bold text-zinc-950">{getAssignmentPersonName(assignment.user)}</p>
-                                      <p className="truncate text-xs text-zinc-500">{assignment.position}</p>
+                                      <p className="truncate text-xs text-zinc-500">{getAssignmentRoleLabel(assignment.position)}{assignment.position ? ` · ${assignment.position}` : ""}</p>
                                     </div>
                                     <Badge variant="secondary" className="shrink-0 rounded-full text-[11px]">
                                       {getAssignmentStatusText(assignment)}
@@ -1093,7 +1123,7 @@ export default function ServiceDetail() {
                                 src={getYoutubeEmbedUrl(getSongYoutubeUrl(item.song)) || undefined}
                                 className="aspect-video w-full"
                                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                                referrerPolicy="strict-origin-when-cross-origin"
+                                referrerPolicy="origin"
                                 allowFullScreen
                               />
                             </div>
@@ -1325,7 +1355,7 @@ export default function ServiceDetail() {
                             src={getYoutubeEmbedUrl(getSongYoutubeUrl(item.song!)) || undefined}
                             className="aspect-video w-full"
                             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                            referrerPolicy="strict-origin-when-cross-origin"
+                            referrerPolicy="origin"
                             allowFullScreen
                           />
                         </div>
@@ -1354,11 +1384,11 @@ export default function ServiceDetail() {
         <DialogContent className="flex h-[100svh] max-h-[100svh] w-screen max-w-none flex-col gap-0 overflow-hidden rounded-none border-0 p-0 sm:h-[92vh] sm:max-w-5xl sm:rounded-[2rem] sm:border">
           {chartItem?.song && (
             <>
-              <DialogHeader className="border-b border-zinc-100 px-3 py-2 text-left">
-                <DialogTitle className="line-clamp-1 pr-8 text-lg font-black leading-tight text-zinc-950">
+              <DialogHeader className="border-b border-zinc-100 px-2.5 py-1.5 text-left sm:px-3 sm:py-2">
+                <DialogTitle className="line-clamp-1 pr-8 text-base font-black leading-tight text-zinc-950 sm:text-lg">
                   {chartItem.song.title}
                 </DialogTitle>
-                <div className="flex flex-wrap gap-1.5 pt-1 text-xs text-zinc-500">
+                <div className="flex flex-wrap gap-1 pt-0.5 text-[11px] text-zinc-500 sm:gap-1.5 sm:text-xs">
                   {chartItem.song.author && <span>{chartItem.song.author}</span>}
                   {getDisplayKey(chartItem) && <Badge variant="secondary" className="rounded-full">Tono {getDisplayKey(chartItem)}</Badge>}
                   {(getPrimaryArrangement(chartItem.song)?.bpm || chartItem.song.bpm) && (
@@ -1368,10 +1398,19 @@ export default function ServiceDetail() {
                     <Badge variant="outline" className="rounded-full">{getPrimaryArrangement(chartItem.song)?.meter || chartItem.song.meter}</Badge>
                   )}
                 </div>
+                {serviceMusicAssignmentDetails.length > 0 && (
+                  <div className="flex gap-1 overflow-x-auto pb-0.5 pt-1">
+                    {serviceMusicAssignmentDetails.map((assignment) => (
+                      <span key={assignment.id} className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary">
+                        {assignment.roleLabel}: {assignment.personName}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </DialogHeader>
-              <div className="min-h-0 flex-1 overflow-auto bg-zinc-50 p-2 sm:p-4">
+              <div className="min-h-0 flex-1 overflow-auto bg-zinc-50 p-1 sm:p-4">
                 {hasPlanningNotes(chartItem) && (
-                  <div className="mb-3 grid gap-2 sm:grid-cols-2">
+                  <div className="mb-2 grid max-h-[18svh] gap-2 overflow-auto sm:max-h-none sm:grid-cols-2">
                     {getPlanningNoteEntries(chartItem).map((entry) => (
                       <div key={entry.key} className="rounded-2xl border border-zinc-100 bg-white p-3 shadow-sm">
                         <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-primary">{entry.label}</p>

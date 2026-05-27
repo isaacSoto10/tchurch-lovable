@@ -75,37 +75,37 @@ function SongSlide({ slide, showChords }: { slide: Extract<PresentationSlide, { 
 
     return Math.max(longestLine, 12);
   }, [slide.lines]);
-  const chartFontSize = `clamp(0.58rem, calc((100vw - 3.5rem) / ${maxColumns} * 1.62), 1.35rem)`;
+  const chartFontSize = `clamp(0.72rem, calc((100svw - 1.25rem) / ${maxColumns} * 1.18), 1.32rem)`;
 
   return (
-    <div className="mx-auto flex h-full w-full max-w-6xl flex-col px-3 pb-2 pt-0 sm:px-8 sm:pb-4 sm:pt-1">
-      <div className="mb-1 flex flex-wrap items-center gap-1.5 sm:mb-2 sm:gap-2">
-        <span className="rounded-full bg-violet-500/15 px-2.5 py-1 text-[9px] font-black uppercase tracking-[0.2em] text-violet-200 sm:px-3 sm:text-xs sm:tracking-[0.28em]">
+    <div className="mx-auto flex h-full w-full max-w-none flex-col px-2 pb-1 pt-0 sm:max-w-6xl sm:px-8 sm:pb-4 sm:pt-1">
+      <div className="mb-1 flex flex-wrap items-center gap-1 sm:mb-1.5 sm:gap-2">
+        <span className="rounded-full bg-violet-500/15 px-2 py-0.5 text-[7px] font-black uppercase tracking-[0.16em] text-violet-200 sm:px-3 sm:py-1 sm:text-xs sm:tracking-[0.28em]">
           {slide.itemIndex}. Canción
         </span>
-        {slide.key && <Badge className="rounded-full bg-white/10 text-[10px] text-white hover:bg-white/10 sm:text-xs">Tono {slide.key}</Badge>}
+        {slide.key && <Badge className="rounded-full bg-white/10 px-2 py-0.5 text-[8px] text-white hover:bg-white/10 sm:text-xs">Tono {slide.key}</Badge>}
         {slide.bpm && <Badge className="hidden rounded-full bg-white/10 text-xs text-white hover:bg-white/10 sm:inline-flex">{slide.bpm} BPM</Badge>}
         {slide.meter && <Badge className="hidden rounded-full bg-white/10 text-xs text-white hover:bg-white/10 sm:inline-flex">{slide.meter}</Badge>}
       </div>
 
-      <div className="mb-1.5 sm:mb-3">
-        <h1 className="line-clamp-2 text-[clamp(1.05rem,2.65vw,2.1rem)] font-black leading-[1] tracking-tight text-white">{slide.title}</h1>
-        {slide.artist && <p className="mt-0.5 truncate text-xs font-medium text-slate-300 sm:mt-1 sm:text-lg">{slide.artist}</p>}
+      <div className="mb-1.5 sm:mb-2">
+        <h1 className="line-clamp-1 text-[clamp(1rem,5vw,1.75rem)] font-black leading-[0.95] tracking-tight text-white">{slide.title}</h1>
+        {slide.artist && <p className="mt-0.5 truncate text-[9px] font-medium text-slate-300 sm:text-sm">{slide.artist}</p>}
         {slide.totalParts > 1 && (
-          <p className="mt-0.5 text-[9px] font-bold uppercase tracking-[0.2em] text-violet-200/80 sm:mt-1 sm:text-xs sm:tracking-[0.24em]">
+          <p className="mt-0.5 text-[7px] font-bold uppercase tracking-[0.16em] text-violet-200/80 sm:text-[11px] sm:tracking-[0.24em]">
             Parte {slide.part} de {slide.totalParts}
           </p>
         )}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto rounded-[1.25rem] border border-white/10 bg-white/[0.04] p-2 shadow-2xl shadow-black/30 sm:rounded-[1.75rem] sm:p-5">
-        <div className="w-max min-w-full space-y-0.5 font-mono sm:space-y-1.5">
+      <div className="min-h-0 flex-1 overflow-auto overflow-x-hidden rounded-[1rem] border border-white/10 bg-white/[0.04] p-2 shadow-2xl shadow-black/30 sm:rounded-[1.75rem] sm:p-5">
+        <div className="w-full min-w-0 space-y-0 font-mono sm:space-y-1">
           {slide.lines.map((line, index) => {
             if (line.kind === "blank") return <div key={index} className="h-1 sm:h-1.5" />;
             if (line.kind === "section" || line.kind === "meta") {
               return (
-                <div key={index} className="pt-1">
-                  <span className="rounded-full bg-violet-400/15 px-2.5 py-1 text-[9px] font-black uppercase tracking-[0.2em] text-violet-200 sm:px-3 sm:text-xs sm:tracking-[0.28em]">
+                <div key={index} className="pt-0.5">
+                  <span className="rounded-full bg-violet-400/15 px-2 py-0.5 text-[8px] font-black uppercase tracking-[0.18em] text-violet-200 sm:px-3 sm:py-1 sm:text-xs sm:tracking-[0.28em]">
                     {line.label}
                   </span>
                 </div>
@@ -115,14 +115,14 @@ function SongSlide({ slide, showChords }: { slide: Extract<PresentationSlide, { 
             if (!showChords && !line.lyrics.trim()) return null;
 
             return (
-              <div key={index} className="leading-none" style={{ fontSize: chartFontSize }}>
+              <div key={index} className="min-w-0 leading-none" style={{ fontSize: chartFontSize }}>
                 {showChords && line.chords && (
-                  <pre className="whitespace-pre text-[1em] font-black leading-[1] text-violet-300">
+                  <pre className="whitespace-pre text-[1em] font-black leading-[1.08] text-violet-300">
                     {line.chords}
                   </pre>
                 )}
                 {line.lyrics && (
-                  <pre className="whitespace-pre text-[1em] font-semibold leading-[1.08] text-white">
+                  <pre className="whitespace-pre text-[1em] font-semibold leading-[1.18] text-white">
                     {line.lyrics}
                   </pre>
                 )}
@@ -343,8 +343,8 @@ export default function ServicePresentation() {
           Salir
         </Button>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-black text-white">{service.title}</p>
-          <p className="truncate text-xs text-slate-400">{formatServiceDate(service.date)}</p>
+          <p className="truncate text-xs font-black text-white sm:text-sm">{service.title}</p>
+          <p className="truncate text-[10px] text-slate-400 sm:text-xs">{formatServiceDate(service.date)}</p>
         </div>
         {currentSlide?.kind === "song" && (
           <Button
@@ -361,7 +361,7 @@ export default function ServicePresentation() {
         </div>
       </header>
 
-      <main className="relative z-10 h-[calc(100svh-3.25rem)] min-h-0 sm:h-[calc(100svh-8rem)]">
+      <main className="relative z-10 h-[calc(100svh-2.8rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] min-h-0 sm:h-[calc(100svh-8rem)]">
         {slides.length === 0 ? (
           <div className="flex h-full items-center justify-center px-6 text-center">
             <div>

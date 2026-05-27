@@ -32,20 +32,22 @@ export function getYoutubeEmbedUrl(url: string | null | undefined): string | nul
   const videoId = getYoutubeVideoId(url);
   if (!videoId) return null;
 
+  const fallbackOrigin = "https://www.tchurchapp.com";
   const params = new URLSearchParams({
     rel: "0",
     modestbranding: "1",
     playsinline: "1",
     iv_load_policy: "3",
     fs: "1",
+    enablejsapi: "1",
   });
 
+  let origin = fallbackOrigin;
   if (typeof window !== "undefined") {
-    const origin = window.location.origin;
-    if (origin.startsWith("http")) {
-      params.set("origin", origin);
-    }
+    origin = window.location.origin.startsWith("http") ? window.location.origin : fallbackOrigin;
   }
+  params.set("origin", origin);
+  params.set("widget_referrer", fallbackOrigin);
 
-  return `https://www.youtube-nocookie.com/embed/${videoId}?${params.toString()}`;
+  return `https://www.youtube.com/embed/${videoId}?${params.toString()}`;
 }

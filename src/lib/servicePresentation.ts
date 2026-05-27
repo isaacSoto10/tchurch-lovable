@@ -127,26 +127,78 @@ function getDisplayChordPro(item: PresentationServiceItem) {
 
 function splitSongLines(lines: ChordProDisplayLine[]) {
   const chunks: ChordProDisplayLine[][] = [];
-  let pendingLabels: ChordProDisplayLine[] = [];
+  let current: ChordProDisplayLine[] = [];
+  let currentUnits = 0;
+
+  function lineUnits(line: ChordProDisplayLine) {
+    if (line.kind === "blank") return 0.35;
+    if (line.kind === "section" || line.kind === "meta") return 0.85;
+    const visibleColumns = Math.max(line.chords.length, line.lyrics.length);
+    const longLinePenalty = Math.max(0, visibleColumns - 30) / 24;
+    return (line.chords ? 0.95 : 0) + (line.lyrics ? 1.05 : 0.15) + longLinePenalty;
+  }
+
+  function hasMusicLine(chunk: ChordProDisplayLine[]) {
+    return chunk.some((line) => line.kind === "line");
+  }
+
+  function pushCurrent() {
+    if (!current.length) return;
+    chunks.push(current);
+    current = [];
+    currentUnits = 0;
+  }
 
   for (const line of lines) {
     if (line.kind === "blank") {
-      if (pendingLabels.length > 0) continue;
+      if (!current.length) continue;
       continue;
     }
 
-    if (line.kind === "section" || line.kind === "meta") {
-      if (pendingLabels.length > 0) chunks.push(pendingLabels);
-      pendingLabels = [line];
-      continue;
+    const units = lineUnits(line);
+    const startsNewSection = line.kind === "section" || line.kind === "meta";
+
+    if ((startsNewSection && hasMusicLine(current)) || (hasMusicLine(current) && currentUnits + units > 1.35)) {
+      pushCurrent();
     }
 
-    chunks.push([...pendingLabels, line]);
-    pendingLabels = [];
+    current.push(line);
+    currentUnits += units;
   }
 
-  if (pendingLabels.length > 0) chunks.push(pendingLabels);
+  pushCurrent();
   return chunks.length ? chunks : [[{ kind: "line", chords: "", lyrics: "Esta canción todavía no tiene acordes guardados." }]];
+}
+
+function splitWideDisplayLine(line: ChordProDisplayLine, maxColumns = 30): ChordProDisplayLine[] {
+  if (line.kind !== "line") return [line];
+
+  const width = Math.max(line.chords.length, line.lyrics.length);
+  if (width <= maxColumns) return [line];
+
+  const segments: ChordProDisplayLine[] = [];
+  let start = 0;
+
+  while (start < width) {
+    let end = Math.min(start + maxColumns, width);
+
+    if (end < width) {
+      const lyricWindow = line.lyrics.slice(start, end);
+      const lastSpace = Math.max(lyricWindow.lastIndexOf(" "), lyricWindow.lastIndexOf("\t"));
+      if (lastSpace > Math.floor(maxColumns * 0.58)) {
+        end = start + lastSpace + 1;
+      }
+    }
+
+    const chords = line.chords.slice(start, end).trimEnd();
+    const lyrics = line.lyrics.slice(start, end).trimEnd();
+    if (chords.trim() || lyrics.trim()) {
+      segments.push({ kind: "line", chords, lyrics });
+    }
+    start = end;
+  }
+
+  return segments.length ? segments : [line];
 }
 
 function getCueNotes(item: PresentationServiceItem) {
@@ -171,7 +223,7 @@ function getCueNotes(item: PresentationServiceItem) {
 function buildSongSlides(item: PresentationServiceItem, itemIndex: number): PresentationSlide[] {
   const arrangement = getPrimaryArrangement(item.song);
   const chordPro = getDisplayChordPro(item);
-  const displayLines = chordProToDisplayLines(chordPro, 500);
+  const displayLines = chordProToDisplayLines(chordPro, 500).flatMap((line) => splitWideDisplayLine(line));
   const chunks = splitSongLines(displayLines);
   const key = getServiceItemKey(item);
 
