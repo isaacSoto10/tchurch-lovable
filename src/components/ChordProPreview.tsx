@@ -15,6 +15,7 @@ type ChordProPreviewProps = {
   title?: string | null;
   artist?: string | null;
   compact?: boolean;
+  fullHeight?: boolean;
 };
 
 export function ChordProPreview({
@@ -27,6 +28,7 @@ export function ChordProPreview({
   title = "Hoja de acordes",
   artist,
   compact = false,
+  fullHeight = false,
 }: ChordProPreviewProps) {
   const { toast } = useToast();
   const normalizedOriginalKey = normalizeKey(originalKey);
@@ -96,11 +98,18 @@ export function ChordProPreview({
 
   const lines = chordProToDisplayLines(displayValue, maxLines);
   const isTruncated = Boolean(displayValue && displayValue.replace(/\r\n/g, "\n").split("\n").length > maxLines);
+  const containerClassName = fullHeight
+    ? "flex min-h-full flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm shadow-zinc-200/60"
+    : "overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm shadow-zinc-200/60";
   const headerClassName = compact
     ? "flex flex-col gap-2 border-b border-zinc-100 bg-zinc-50 px-2.5 py-2 sm:flex-row sm:items-center sm:justify-between sm:px-3"
-    : "flex flex-col gap-2 border-b border-zinc-100 bg-zinc-50 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-4";
+    : fullHeight
+      ? "flex shrink-0 flex-col gap-2 border-b border-zinc-100 bg-zinc-50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between sm:px-4"
+      : "flex flex-col gap-2 border-b border-zinc-100 bg-zinc-50 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-4";
   const bodyClassName = compact
     ? "max-h-[44vh] overflow-auto px-2.5 py-2 font-mono text-[10px] leading-5 sm:max-h-[28rem] sm:px-3 sm:text-[12px]"
+    : fullHeight
+      ? "min-h-0 flex-1 overflow-auto px-2.5 py-3 font-mono text-[10.5px] leading-5 sm:px-4 sm:text-[13px] sm:leading-6"
     : "max-h-[32rem] overflow-auto px-3 py-3 font-mono text-[12px] leading-6 sm:px-4 sm:text-[13px]";
   const controlButtonClassName = compact
     ? "flex h-8 w-8 items-center justify-center rounded-xl text-zinc-700 hover:bg-zinc-100 active:scale-95"
@@ -110,7 +119,7 @@ export function ChordProPreview({
     : "h-9 rounded-xl border-0 bg-primary/10 px-2 text-sm font-bold text-primary outline-none";
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm shadow-zinc-200/60">
+    <div className={containerClassName}>
       <div
         className={headerClassName}
         onClick={stopCardToggle}

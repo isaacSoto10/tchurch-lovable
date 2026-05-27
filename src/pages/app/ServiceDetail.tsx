@@ -14,7 +14,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, ArrowLeft, Plus, Trash2, GripVertical, Check, X, Clock, Users, Music, ExternalLink, PlayCircle, FileText, ChevronDown, ChevronUp, FileDown } from "lucide-react";
+import { Loader2, ArrowLeft, Plus, Trash2, GripVertical, Check, X, Clock, Users, Music, ExternalLink, PlayCircle, FileText, ChevronDown, ChevronUp, FileDown, Maximize2 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useChurch } from "@/providers/ChurchProvider";
 import { useToast } from "@/components/ui/use-toast";
@@ -32,6 +32,7 @@ import {
 import { normalizeKey, transposeChordPro } from "@/lib/musicUtils";
 import { getYoutubeEmbedUrl } from "@/lib/youtube";
 import { canUseServicePresentation } from "@/lib/servicePresentation";
+import { getAssignmentPersonName, getAssignmentStatusText, getMusicAssignments, summarizeAssignments } from "@/lib/serviceAssignments";
 
 type ServiceItem = {
   id: string;
@@ -200,6 +201,7 @@ export default function ServiceDetail() {
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
   const [respondingId, setRespondingId] = useState<string | null>(null);
   const [expandedSongItems, setExpandedSongItems] = useState<Record<string, boolean>>({});
+  const [chartItemId, setChartItemId] = useState<string | null>(null);
   const [detailsEditingId, setDetailsEditingId] = useState<string | null>(null);
   const [detailDuration, setDetailDuration] = useState("");
   const [detailTiming, setDetailTiming] = useState("during");
@@ -213,6 +215,7 @@ export default function ServiceDetail() {
   const [draggingItemId, setDraggingItemId] = useState<string | null>(null);
   const [dragOverItemId, setDragOverItemId] = useState<string | null>(null);
   const suppressNextCardClickRef = useRef(false);
+  const chartItem = service?.items.find((item) => item.id === chartItemId) || null;
 
   // Add item form
   const [itemTitle, setItemTitle] = useState("");
@@ -232,6 +235,8 @@ export default function ServiceDetail() {
   const selectedUserAssignments = assignUserId && service
     ? service.assignments.filter((assignment) => assignment.userId === assignUserId)
     : [];
+  const serviceMusicAssignments = getMusicAssignments(service?.assignments || []);
+  const serviceMusicSummary = summarizeAssignments(service?.assignments || [], 3);
 
   useEffect(() => {
     if (!id) return;
@@ -790,11 +795,11 @@ export default function ServiceDetail() {
                     }}
                   >
                     <CardContent className="p-0">
-                      <div className="p-3">
-                        <div className="flex items-start gap-3">
-                          <div className="flex shrink-0 flex-col gap-1 pt-1">
+                      <div className="p-2.5 sm:p-3">
+                        <div className="flex items-start gap-2 sm:gap-3">
+                          <div className="flex w-4 shrink-0 flex-col items-center gap-1 pt-1 sm:w-auto">
                           {idx > 0 && (
-                            <button onClick={(event) => { event.stopPropagation(); handleMoveUp(item); }} className="p-0.5 rounded hover:bg-zinc-100 text-zinc-400">
+                            <button onClick={(event) => { event.stopPropagation(); handleMoveUp(item); }} className="hidden p-0.5 rounded text-zinc-400 hover:bg-zinc-100 sm:block">
                               <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path d="M5 15l7-7 7 7" /></svg>
                             </button>
                           )}
@@ -813,19 +818,19 @@ export default function ServiceDetail() {
                             onPointerCancel={handlePointerUp}
                           />
                           {idx < service.items.length - 1 && (
-                            <button onClick={(event) => { event.stopPropagation(); handleMoveDown(item); }} className="p-0.5 rounded hover:bg-zinc-100 text-zinc-400">
+                            <button onClick={(event) => { event.stopPropagation(); handleMoveDown(item); }} className="hidden p-0.5 rounded text-zinc-400 hover:bg-zinc-100 sm:block">
                               <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7" /></svg>
                             </button>
                           )}
                           </div>
-                          <div className="mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-primary/10">
+                          <div className="mt-1 hidden h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-primary/10 sm:flex">
                             {isSongItemType(item.type) ? <Music className="w-4 h-4 text-primary" /> : <Clock className="w-4 h-4 text-primary" />}
                           </div>
-                          <div className="flex-1 min-w-0">
+                          <div className="min-w-0 flex-1">
                           <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0">
-                              <p className="break-words text-base font-bold leading-snug text-zinc-950">{item.song?.title || item.title}</p>
-                              <p className="mt-0.5 text-xs leading-5 text-zinc-500">
+                            <div className="min-w-0 flex-1">
+                              <p className="line-clamp-2 text-[15px] font-bold leading-tight text-zinc-950 sm:text-base">{item.song?.title || item.title}</p>
+                              <p className="mt-0.5 line-clamp-2 text-xs leading-4 text-zinc-500 sm:leading-5">
                                 {formatItemType(item.type)}{item.duration ? ` · ${item.duration} min` : ""}
                                 {item.song?.author ? ` · ${item.song.author}` : ""}
                               </p>
@@ -843,18 +848,18 @@ export default function ServiceDetail() {
                             )}
                           </div>
 
-                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <div className="mt-2 flex flex-wrap items-center gap-1.5 sm:gap-2">
                             {getDisplayKey(item) && (
-                              <Badge variant="secondary" className="rounded-full text-xs">Tono {getDisplayKey(item)}</Badge>
+                              <Badge variant="secondary" className="rounded-full px-2 py-0.5 text-[11px] sm:text-xs">Tono {getDisplayKey(item)}</Badge>
                             )}
-                            <Badge variant="outline" className="rounded-full text-xs">
+                            <Badge variant="outline" className="rounded-full px-2 py-0.5 text-[11px] sm:text-xs">
                               {getItemTimingLabel(item)}
                             </Badge>
                             {hasPlanningNotes(item) && (
-                              <Badge variant="outline" className="rounded-full text-xs">Notas de equipo</Badge>
+                              <Badge variant="outline" className="rounded-full px-2 py-0.5 text-[11px] sm:text-xs">Notas de equipo</Badge>
                             )}
                             {item.song && (
-                              <Button variant="outline" size="sm" className="h-9 rounded-xl px-3 text-xs" onClick={(event) => { event.stopPropagation(); navigate(`/app/songs/${item.song?.id}`); }}>
+                              <Button variant="outline" size="sm" className="h-8 flex-1 rounded-xl px-2 text-xs sm:h-9 sm:flex-none sm:px-3" onClick={(event) => { event.stopPropagation(); navigate(`/app/songs/${item.song?.id}`); }}>
                                 <FileText className="w-3 h-3" />
                                 Canción
                               </Button>
@@ -864,7 +869,7 @@ export default function ServiceDetail() {
                                 type="button"
                                 variant={detailsEditingId === item.id ? "default" : "outline"}
                                 size="sm"
-                                className="h-9 rounded-xl px-3 text-xs"
+                                className="h-8 flex-1 rounded-xl px-2 text-xs sm:h-9 sm:flex-none sm:px-3"
                                 onClick={(event) => {
                                   event.stopPropagation();
                                   startItemDetails(item);
@@ -876,7 +881,7 @@ export default function ServiceDetail() {
                             {isPlanner && (
                               <button
                                 onClick={(event) => { event.stopPropagation(); handleDeleteItem(item.id); }}
-                                className="rounded-lg p-2 text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-500"
+                                className="rounded-lg p-1.5 text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-500 sm:p-2"
                                 aria-label="Eliminar elemento"
                               >
                                 <Trash2 className="w-4 h-4" />
@@ -902,6 +907,12 @@ export default function ServiceDetail() {
                                 <span className="rounded-full bg-red-50 px-2.5 py-1 text-red-600">YouTube</span>
                               )}
                             </div>
+                          )}
+                          {item.song && serviceMusicSummary.length > 0 && (
+                            <p className="mt-2 line-clamp-2 rounded-xl bg-primary/5 px-3 py-2 text-xs font-semibold leading-5 text-primary ring-1 ring-primary/10">
+                              Equipo: {serviceMusicSummary.join(" · ")}
+                              {serviceMusicAssignments.length > serviceMusicSummary.length ? ` +${serviceMusicAssignments.length - serviceMusicSummary.length}` : ""}
+                            </p>
                           )}
                           {hasPlanningNotes(item) && (
                             <div className="mt-2 grid gap-1.5">
@@ -1013,9 +1024,13 @@ export default function ServiceDetail() {
                                   </a>
                                 </Button>
                               )}
+                              <Button variant="ghost" size="sm" className="rounded-xl" onClick={(event) => { event.stopPropagation(); setChartItemId(item.id); }}>
+                                <Maximize2 className="w-3 h-3" />
+                                Ver acordes
+                              </Button>
                               <Button variant="ghost" size="sm" className="rounded-xl" onClick={(event) => { event.stopPropagation(); navigate(`/app/songs/${item.song?.id}`); }}>
                                 <ExternalLink className="w-3 h-3" />
-                                Ver acordes
+                                Editar canción
                               </Button>
                             </div>
                           </div>
@@ -1052,6 +1067,25 @@ export default function ServiceDetail() {
                             )}
                           </div>
 
+                          {serviceMusicAssignments.length > 0 && (
+                            <div className="rounded-2xl border border-primary/10 bg-primary/5 p-3">
+                              <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-primary">Equipo del servicio</p>
+                              <div className="mt-2 grid gap-2">
+                                {serviceMusicAssignments.map((assignment) => (
+                                  <div key={assignment.id} className="flex items-center justify-between gap-3 rounded-xl bg-white px-3 py-2 ring-1 ring-primary/10">
+                                    <div className="min-w-0">
+                                      <p className="truncate text-sm font-bold text-zinc-950">{getAssignmentPersonName(assignment.user)}</p>
+                                      <p className="truncate text-xs text-zinc-500">{assignment.position}</p>
+                                    </div>
+                                    <Badge variant="secondary" className="shrink-0 rounded-full text-[11px]">
+                                      {getAssignmentStatusText(assignment)}
+                                    </Badge>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
                           {getYoutubeEmbedUrl(getSongYoutubeUrl(item.song)) && (
                             <div className="overflow-hidden rounded-2xl border border-red-100 bg-black shadow-sm">
                               <iframe
@@ -1065,17 +1099,28 @@ export default function ServiceDetail() {
                             </div>
                           )}
 
-                          <ChordProPreview
-                            value={getSongChordPro(item.song)}
-                            originalKey={getOriginalKey(item)}
-                            selectedKey={getDisplayKey(item)}
-                            onSelectedKeyChange={(key) => handleSaveItemKey(item, key)}
-                            title={item.song.title}
-                            artist={item.song.author}
-                            maxLines={22}
-                            emptyText="Esta canción todavía no tiene acordes guardados."
-                            compact
-                          />
+                          <div className="rounded-2xl border border-zinc-100 bg-white p-3 shadow-sm">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="text-sm font-bold text-zinc-950">Hoja de acordes</p>
+                                <p className="mt-0.5 text-xs leading-5 text-zinc-500">
+                                  Abre la hoja en pantalla amplia para conservar posiciones y cambiar el tono.
+                                </p>
+                              </div>
+                              <Button
+                                type="button"
+                                size="sm"
+                                className="shrink-0 rounded-xl"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setChartItemId(item.id);
+                                }}
+                              >
+                                <Maximize2 className="h-3.5 w-3.5" />
+                                Abrir
+                              </Button>
+                            </div>
+                          </div>
                         </div>
                       )}
                     </CardContent>
@@ -1304,6 +1349,53 @@ export default function ServiceDetail() {
           </div>
         )}
       </div>
+
+      <Dialog open={Boolean(chartItem)} onOpenChange={(open) => { if (!open) setChartItemId(null); }}>
+        <DialogContent className="flex h-[100svh] max-h-[100svh] w-screen max-w-none flex-col gap-0 overflow-hidden rounded-none border-0 p-0 sm:h-[92vh] sm:max-w-5xl sm:rounded-[2rem] sm:border">
+          {chartItem?.song && (
+            <>
+              <DialogHeader className="border-b border-zinc-100 px-3 py-2 text-left">
+                <DialogTitle className="line-clamp-1 pr-8 text-lg font-black leading-tight text-zinc-950">
+                  {chartItem.song.title}
+                </DialogTitle>
+                <div className="flex flex-wrap gap-1.5 pt-1 text-xs text-zinc-500">
+                  {chartItem.song.author && <span>{chartItem.song.author}</span>}
+                  {getDisplayKey(chartItem) && <Badge variant="secondary" className="rounded-full">Tono {getDisplayKey(chartItem)}</Badge>}
+                  {(getPrimaryArrangement(chartItem.song)?.bpm || chartItem.song.bpm) && (
+                    <Badge variant="outline" className="rounded-full">{getPrimaryArrangement(chartItem.song)?.bpm || chartItem.song.bpm} BPM</Badge>
+                  )}
+                  {(getPrimaryArrangement(chartItem.song)?.meter || chartItem.song.meter) && (
+                    <Badge variant="outline" className="rounded-full">{getPrimaryArrangement(chartItem.song)?.meter || chartItem.song.meter}</Badge>
+                  )}
+                </div>
+              </DialogHeader>
+              <div className="min-h-0 flex-1 overflow-auto bg-zinc-50 p-2 sm:p-4">
+                {hasPlanningNotes(chartItem) && (
+                  <div className="mb-3 grid gap-2 sm:grid-cols-2">
+                    {getPlanningNoteEntries(chartItem).map((entry) => (
+                      <div key={entry.key} className="rounded-2xl border border-zinc-100 bg-white p-3 shadow-sm">
+                        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-primary">{entry.label}</p>
+                        <p className="mt-1 text-sm leading-5 text-zinc-600">{entry.note}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <ChordProPreview
+                  value={getSongChordPro(chartItem.song)}
+                  originalKey={getOriginalKey(chartItem)}
+                  selectedKey={getDisplayKey(chartItem)}
+                  onSelectedKeyChange={(key) => handleSaveItemKey(chartItem, key)}
+                  title={chartItem.song.title}
+                  artist={chartItem.song.author}
+                  maxLines={500}
+                  emptyText="Esta canción todavía no tiene acordes guardados."
+                  fullHeight
+                />
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* ADD ITEM DIALOG */}
       <Dialog open={showAddItem} onOpenChange={(open) => { setShowAddItem(open); if (!open) resetItemForm(); }}>

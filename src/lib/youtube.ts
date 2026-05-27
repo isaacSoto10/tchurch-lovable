@@ -36,16 +36,16 @@ export function getYoutubeEmbedUrl(url: string | null | undefined): string | nul
     rel: "0",
     modestbranding: "1",
     playsinline: "1",
-    enablejsapi: "1",
+    iv_load_policy: "3",
+    fs: "1",
   });
 
   if (typeof window !== "undefined") {
     const origin = window.location.origin;
-    params.set(
-      "origin",
-      origin.startsWith("http") ? origin : "https://www.tchurchapp.com"
-    );
+    if (origin.startsWith("http")) {
+      params.set("origin", origin);
+    }
   }
 
-  return `https://www.youtube.com/embed/${videoId}?${params.toString()}`;
+  return `https://www.youtube-nocookie.com/embed/${videoId}?${params.toString()}`;
 }

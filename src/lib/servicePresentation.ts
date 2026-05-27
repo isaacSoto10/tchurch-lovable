@@ -89,8 +89,6 @@ const ITEM_TYPE_LABELS: Record<string, string> = {
   other: "Otro",
 };
 
-const MAX_SONG_SLIDE_WEIGHT = 7;
-
 function getPlanningDetails(item: PresentationServiceItem) {
   return (item.details || {}) as Record<string, unknown>;
 }
@@ -127,37 +125,27 @@ function getDisplayChordPro(item: PresentationServiceItem) {
   return transposeChordPro(chordPro, originalKey, selectedKey);
 }
 
-function getLineWeight(line: ChordProDisplayLine) {
-  if (line.kind === "blank") return 0.75;
-  if (line.kind === "section" || line.kind === "meta") return 2;
-
-  const visibleColumns = Math.max(line.chords.length, line.lyrics.length);
-  const wrapsOnPhone = Math.max(1, Math.ceil(visibleColumns / 24));
-  const baseWeight = line.chords && line.lyrics ? 2 : 1.25;
-
-  return baseWeight + Math.max(0, wrapsOnPhone - 1) * 1.35;
-}
-
 function splitSongLines(lines: ChordProDisplayLine[]) {
   const chunks: ChordProDisplayLine[][] = [];
-  let current: ChordProDisplayLine[] = [];
-  let weight = 0;
+  let pendingLabels: ChordProDisplayLine[] = [];
 
   for (const line of lines) {
-    const lineWeight = getLineWeight(line);
-    if (current.length > 0 && weight + lineWeight > MAX_SONG_SLIDE_WEIGHT) {
-      chunks.push(current);
-      current = line.kind === "blank" ? [] : [line];
-      weight = line.kind === "blank" ? 0 : lineWeight;
+    if (line.kind === "blank") {
+      if (pendingLabels.length > 0) continue;
       continue;
     }
 
-    if (current.length === 0 && line.kind === "blank") continue;
-    current.push(line);
-    weight += lineWeight;
+    if (line.kind === "section" || line.kind === "meta") {
+      if (pendingLabels.length > 0) chunks.push(pendingLabels);
+      pendingLabels = [line];
+      continue;
+    }
+
+    chunks.push([...pendingLabels, line]);
+    pendingLabels = [];
   }
 
-  if (current.length > 0) chunks.push(current);
+  if (pendingLabels.length > 0) chunks.push(pendingLabels);
   return chunks.length ? chunks : [[{ kind: "line", chords: "", lyrics: "Esta canción todavía no tiene acordes guardados." }]];
 }
 

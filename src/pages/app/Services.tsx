@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Pencil, Trash2, Search, ChevronUp, ChevronDown, Music, FileText, Bell, X, Check, Clock, Users, ExternalLink, PlayCircle, GripVertical, FileDown } from "lucide-react";
+import { Plus, Pencil, Trash2, Search, ChevronUp, ChevronDown, Music, FileText, Bell, X, Check, Clock, Users, ExternalLink, PlayCircle, GripVertical, FileDown, Maximize2 } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
 import { useChurch } from "@/providers/ChurchProvider";
@@ -21,6 +21,7 @@ import {
 } from "@/lib/songDisplay";
 import { normalizeKey, transposeChordPro } from "@/lib/musicUtils";
 import { getYoutubeEmbedUrl } from "@/lib/youtube";
+import { getAssignmentPersonName, getAssignmentStatusText, getMusicAssignments, summarizeAssignments } from "@/lib/serviceAssignments";
 import {
   Dialog,
   DialogContent,
@@ -73,6 +74,7 @@ interface ServiceAssignment {
   userId: string;
   position: string;
   confirmed: boolean;
+  responseStatus?: "pending" | "accepted" | "declined" | null;
   user?: {
     id: string;
     firstName?: string;
@@ -187,6 +189,7 @@ export default function Services() {
 
   const [expandedService, setExpandedService] = useState<string | null>(null);
   const [expandedSongItems, setExpandedSongItems] = useState<Record<string, boolean>>({});
+  const [chartSelection, setChartSelection] = useState<{ serviceId: string; itemId: string } | null>(null);
   const [serviceItems, setServiceItems] = useState<Record<string, ServiceItem[]>>({});
   const [serviceAssignments, setServiceAssignments] = useState<Record<string, ServiceAssignment[]>>({});
   const [itemsLoading, setItemsLoading] = useState<Record<string, boolean>>({});
@@ -194,6 +197,9 @@ export default function Services() {
   const [dragOverItemId, setDragOverItemId] = useState<string | null>(null);
   const [dragServiceId, setDragServiceId] = useState<string | null>(null);
   const suppressNextCardClickRef = useRef(false);
+  const chartItem = chartSelection
+    ? (serviceItems[chartSelection.serviceId] || []).find((item) => item.id === chartSelection.itemId) || null
+    : null;
 
   const [addItemDialogOpen, setAddItemDialogOpen] = useState(false);
   const [assignDialogOpen, setAssignDialogOpen] = useState(false);
@@ -773,6 +779,55 @@ export default function Services() {
         </Select>
       </div>
 
+      <Dialog open={Boolean(chartItem)} onOpenChange={(open) => { if (!open) setChartSelection(null); }}>
+        <DialogContent className="flex h-[100svh] max-h-[100svh] w-screen max-w-none flex-col gap-0 overflow-hidden rounded-none border-0 p-0 sm:h-[92vh] sm:max-w-5xl sm:rounded-[2rem] sm:border">
+          {chartItem?.song && (
+            <>
+              <DialogHeader className="border-b border-zinc-100 px-3 py-2 text-left">
+                <DialogTitle className="line-clamp-1 pr-8 text-lg font-black leading-tight text-zinc-950">
+                  {chartItem.song.title}
+                </DialogTitle>
+                <div className="flex flex-wrap gap-1.5 pt-1 text-xs text-zinc-500">
+                  {chartItem.song.author && <span>{chartItem.song.author}</span>}
+                  {getItemDisplayKey(chartItem) && <Badge variant="secondary" className="rounded-full">Tono {getItemDisplayKey(chartItem)}</Badge>}
+                  {(getPrimaryArrangement(chartItem.song)?.bpm || chartItem.song.bpm) && (
+                    <Badge variant="outline" className="rounded-full">{getPrimaryArrangement(chartItem.song)?.bpm || chartItem.song.bpm} BPM</Badge>
+                  )}
+                  {(getPrimaryArrangement(chartItem.song)?.meter || chartItem.song.meter) && (
+                    <Badge variant="outline" className="rounded-full">{getPrimaryArrangement(chartItem.song)?.meter || chartItem.song.meter}</Badge>
+                  )}
+                </div>
+              </DialogHeader>
+              <div className="min-h-0 flex-1 overflow-auto bg-zinc-50 p-2 sm:p-4">
+                {hasPlanningNotes(chartItem) && (
+                  <div className="mb-3 grid gap-2 sm:grid-cols-2">
+                    {getPlanningNoteEntries(chartItem).map((entry) => (
+                      <div key={entry.key} className="rounded-2xl border border-zinc-100 bg-white p-3 shadow-sm">
+                        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-primary">{entry.label}</p>
+                        <p className="mt-1 text-sm leading-5 text-zinc-600">{entry.note}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <ChordProPreview
+                  value={getSongChordPro(chartItem.song)}
+                  originalKey={getItemOriginalKey(chartItem)}
+                  selectedKey={getItemDisplayKey(chartItem)}
+                  onSelectedKeyChange={(key) => {
+                    if (chartSelection) void handleSaveItemKey(chartSelection.serviceId, chartItem, key);
+                  }}
+                  title={chartItem.song.title}
+                  artist={chartItem.song.author}
+                  maxLines={500}
+                  emptyText="Esta canción todavía no tiene acordes guardados."
+                  fullHeight
+                />
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogTrigger />
         <DialogContent>
@@ -1160,8 +1215,8 @@ export default function Services() {
                             const plainNotes = isSong ? getSongPlainNotes(item.song) : null;
                             const arrangement = isSong ? getPrimaryArrangement(item.song) : null;
                             const displayKey = isSong ? getItemDisplayKey(item) : null;
-                            const chordPro = isSong ? getSongChordPro(item.song) : null;
-
+                            const serviceMusicAssignments = getMusicAssignments(serviceAssignments[svc.id] || []);
+                            const assignmentSummary = summarizeAssignments(serviceAssignments[svc.id] || [], 3);
                             return (
                               <div
                                 key={item.id}
@@ -1172,12 +1227,12 @@ export default function Services() {
                                 <div
                                   data-service-item-id={item.id}
                                   data-service-id={svc.id}
-                                  className="p-3"
+                                  className="p-2.5 sm:p-3"
                                   onClick={() => {
                                     if (isSong) toggleSongItem(item.id);
                                   }}
                                 >
-                                  <div className="flex items-start gap-3">
+                                  <div className="flex items-start gap-2 sm:gap-3">
                                     <GripVertical
                                       className="mt-2 h-4 w-4 shrink-0 cursor-grab touch-none text-muted-foreground/60 active:cursor-grabbing"
                                       onClick={stopInteractiveTap}
@@ -1195,13 +1250,13 @@ export default function Services() {
                                       onPointerCancel={handlePointerUp}
                                       aria-label="Arrastrar para reordenar"
                                     />
-                                    <span className="mt-2 w-4 shrink-0 text-xs text-muted-foreground">{idx + 1}</span>
-                                    <div className="mt-1 shrink-0">{getItemIcon(item.type)}</div>
+                                    <span className="mt-2 hidden w-4 shrink-0 text-xs text-muted-foreground sm:inline">{idx + 1}</span>
+                                    <div className="mt-1 hidden shrink-0 sm:block">{getItemIcon(item.type)}</div>
                                     <div className="min-w-0 flex-1">
                                       <div className="flex items-start justify-between gap-2">
-                                        <div className="min-w-0">
-                                          <p className="break-words text-base font-bold leading-snug text-zinc-950">{item.song?.title || item.title}</p>
-                                          <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                                        <div className="min-w-0 flex-1">
+                                          <p className="line-clamp-2 text-[15px] font-bold leading-tight text-zinc-950 sm:text-base">{item.song?.title || item.title}</p>
+                                          <p className="mt-0.5 line-clamp-2 text-xs leading-4 text-muted-foreground sm:leading-5">
                                             {item.song?.author || item.type}
                                             {item.duration ? ` · ${item.duration}m` : ""}
                                           </p>
@@ -1222,15 +1277,15 @@ export default function Services() {
                                         )}
                                       </div>
 
-                                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                                      <div className="mt-2 flex flex-wrap items-center gap-1.5 sm:gap-2">
                                         {displayKey && (
-                                          <Badge variant="secondary" className="rounded-full text-xs">Tono {displayKey}</Badge>
+                                          <Badge variant="secondary" className="rounded-full px-2 py-0.5 text-[11px] sm:text-xs">Tono {displayKey}</Badge>
                                         )}
                                         {hasPlanningNotes(item) && (
-                                          <Badge variant="outline" className="rounded-full text-xs">Notas de equipo</Badge>
+                                          <Badge variant="outline" className="rounded-full px-2 py-0.5 text-[11px] sm:text-xs">Notas de equipo</Badge>
                                         )}
                                         {item.duration && (
-                                          <span className="inline-flex items-center rounded-full bg-white px-2.5 py-1 text-xs text-muted-foreground ring-1 ring-zinc-200">
+                                          <span className="inline-flex items-center rounded-full bg-white px-2 py-0.5 text-[11px] text-muted-foreground ring-1 ring-zinc-200 sm:px-2.5 sm:py-1 sm:text-xs">
                                             <Clock className="mr-1 h-3 w-3" />
                                             {item.duration}m
                                           </span>
@@ -1269,6 +1324,12 @@ export default function Services() {
                                             <span className="rounded-full bg-red-50 px-2.5 py-1 text-red-600 ring-1 ring-red-100">YouTube</span>
                                           )}
                                         </div>
+                                      )}
+                                      {isSong && assignmentSummary.length > 0 && (
+                                        <p className="mt-2 line-clamp-2 rounded-xl bg-primary/5 px-3 py-2 text-xs font-semibold leading-5 text-primary ring-1 ring-primary/10">
+                                          Equipo: {assignmentSummary.join(" · ")}
+                                          {serviceMusicAssignments.length > assignmentSummary.length ? ` +${serviceMusicAssignments.length - assignmentSummary.length}` : ""}
+                                        </p>
                                       )}
                                       {plainNotes && (
                                         <p className="mt-2 line-clamp-2 rounded-xl bg-white px-3 py-2 text-xs leading-5 text-zinc-600 ring-1 ring-zinc-200">
@@ -1328,6 +1389,25 @@ export default function Services() {
                                       </div>
                                     )}
 
+                                    {serviceMusicAssignments.length > 0 && (
+                                      <div className="rounded-2xl border border-primary/10 bg-primary/5 p-3">
+                                        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-primary">Equipo del servicio</p>
+                                        <div className="mt-2 grid gap-2">
+                                          {serviceMusicAssignments.map((assignment) => (
+                                            <div key={assignment.id} className="flex items-center justify-between gap-3 rounded-xl bg-white px-3 py-2 ring-1 ring-primary/10">
+                                              <div className="min-w-0">
+                                                <p className="truncate text-sm font-bold text-zinc-950">{getAssignmentPersonName(assignment.user)}</p>
+                                                <p className="truncate text-xs text-zinc-500">{assignment.position}</p>
+                                              </div>
+                                              <Badge variant="secondary" className="shrink-0 rounded-full text-[11px]">
+                                                {getAssignmentStatusText(assignment)}
+                                              </Badge>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+
                                     <div className="flex flex-wrap gap-2">
                                       {youtubeUrl && (
                                         <Button asChild variant="outline" size="sm" className="rounded-xl">
@@ -1343,11 +1423,23 @@ export default function Services() {
                                         className="rounded-xl"
                                         onClick={(event) => {
                                           event.stopPropagation();
+                                          setChartSelection({ serviceId: svc.id, itemId: item.id });
+                                        }}
+                                      >
+                                        <Maximize2 className="w-3 h-3" />
+                                        Ver acordes
+                                      </Button>
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="rounded-xl"
+                                        onClick={(event) => {
+                                          event.stopPropagation();
                                           navigate(`/app/songs/${item.song?.id}`);
                                         }}
                                       >
                                         <ExternalLink className="w-3 h-3" />
-                                        Ver acordes
+                                        Editar canción
                                       </Button>
                                     </div>
 
@@ -1364,17 +1456,28 @@ export default function Services() {
                                       </div>
                                     )}
 
-                                    <ChordProPreview
-                                      value={chordPro}
-                                      originalKey={getItemOriginalKey(item)}
-                                      selectedKey={displayKey}
-                                      onSelectedKeyChange={(key) => handleSaveItemKey(svc.id, item, key)}
-                                      title={item.song?.title || item.title}
-                                      artist={item.song?.author}
-                                      maxLines={16}
-                                      emptyText="Esta canción todavía no tiene acordes guardados."
-                                      compact
-                                    />
+                                    <div className="rounded-2xl border border-zinc-100 bg-zinc-50 p-3">
+                                      <div className="flex items-center justify-between gap-3">
+                                        <div className="min-w-0">
+                                          <p className="text-sm font-bold text-zinc-950">Hoja de acordes</p>
+                                          <p className="mt-0.5 text-xs leading-5 text-zinc-500">
+                                            Ábrela en pantalla amplia para ver acordes y letra sin encimarse.
+                                          </p>
+                                        </div>
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          className="shrink-0 rounded-xl"
+                                          onClick={(event) => {
+                                            event.stopPropagation();
+                                            setChartSelection({ serviceId: svc.id, itemId: item.id });
+                                          }}
+                                        >
+                                          <Maximize2 className="h-3.5 w-3.5" />
+                                          Abrir
+                                        </Button>
+                                      </div>
+                                    </div>
                                   </div>
                                 )}
                               </div>
