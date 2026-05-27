@@ -89,7 +89,7 @@ const ITEM_TYPE_LABELS: Record<string, string> = {
   other: "Otro",
 };
 
-const MAX_SONG_SLIDE_WEIGHT = 10;
+const MAX_SONG_SLIDE_WEIGHT = 7;
 
 function getPlanningDetails(item: PresentationServiceItem) {
   return (item.details || {}) as Record<string, unknown>;
@@ -128,9 +128,14 @@ function getDisplayChordPro(item: PresentationServiceItem) {
 }
 
 function getLineWeight(line: ChordProDisplayLine) {
-  if (line.kind === "blank") return 1;
+  if (line.kind === "blank") return 0.75;
   if (line.kind === "section" || line.kind === "meta") return 2;
-  return line.chords && line.lyrics ? 2 : 1;
+
+  const visibleColumns = Math.max(line.chords.length, line.lyrics.length);
+  const wrapsOnPhone = Math.max(1, Math.ceil(visibleColumns / 24));
+  const baseWeight = line.chords && line.lyrics ? 2 : 1.25;
+
+  return baseWeight + Math.max(0, wrapsOnPhone - 1) * 1.35;
 }
 
 function splitSongLines(lines: ChordProDisplayLine[]) {

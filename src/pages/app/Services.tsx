@@ -1250,6 +1250,31 @@ export default function Services() {
                                           </Button>
                                         )}
                                       </div>
+                                      {isSong && (
+                                        <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] font-semibold text-zinc-500">
+                                          {(arrangement?.bpm || item.song?.bpm) && (
+                                            <span className="rounded-full bg-white px-2.5 py-1 ring-1 ring-zinc-200">
+                                              {arrangement?.bpm || item.song?.bpm} BPM
+                                            </span>
+                                          )}
+                                          {(arrangement?.meter || item.song?.meter) && (
+                                            <span className="rounded-full bg-white px-2.5 py-1 ring-1 ring-zinc-200">
+                                              {arrangement?.meter || item.song?.meter}
+                                            </span>
+                                          )}
+                                          {arrangement?.sequence && (
+                                            <span className="rounded-full bg-white px-2.5 py-1 ring-1 ring-zinc-200">Secuencia lista</span>
+                                          )}
+                                          {youtubeUrl && (
+                                            <span className="rounded-full bg-red-50 px-2.5 py-1 text-red-600 ring-1 ring-red-100">YouTube</span>
+                                          )}
+                                        </div>
+                                      )}
+                                      {plainNotes && (
+                                        <p className="mt-2 line-clamp-2 rounded-xl bg-white px-3 py-2 text-xs leading-5 text-zinc-600 ring-1 ring-zinc-200">
+                                          {plainNotes}
+                                        </p>
+                                      )}
                                       {hasPlanningNotes(item) && (
                                         <div className="mt-2 grid gap-1.5">
                                           {getPlanningNoteEntries(item).slice(0, 2).map((entry) => (
@@ -1346,8 +1371,9 @@ export default function Services() {
                                       onSelectedKeyChange={(key) => handleSaveItemKey(svc.id, item, key)}
                                       title={item.song?.title || item.title}
                                       artist={item.song?.author}
-                                      maxLines={24}
+                                      maxLines={16}
                                       emptyText="Esta canción todavía no tiene acordes guardados."
+                                      compact
                                     />
                                   </div>
                                 )}

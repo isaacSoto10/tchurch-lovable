@@ -159,6 +159,13 @@ function hasPlanningNotes(item: ServiceItem) {
   return (Object.keys(NOTE_LABELS) as PlanningNoteKey[]).some((key) => Boolean(notes[key]?.trim()));
 }
 
+function getPlanningNoteEntries(item: ServiceItem) {
+  const notes = getPlanningNotes(item);
+  return (Object.keys(NOTE_LABELS) as PlanningNoteKey[])
+    .map((key) => ({ key, label: NOTE_LABELS[key], note: notes[key]?.trim() || "" }))
+    .filter((entry) => entry.note);
+}
+
 function getPersonName(user: Assignment["user"]) {
   return [user?.firstName, user?.lastName].filter(Boolean).join(" ").trim() || user?.email || "Sin nombre";
 }
@@ -876,6 +883,41 @@ export default function ServiceDetail() {
                               </button>
                             )}
                           </div>
+                          {item.song && (
+                            <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] font-semibold text-zinc-500">
+                              {(getPrimaryArrangement(item.song)?.bpm || item.song.bpm) && (
+                                <span className="rounded-full bg-zinc-100 px-2.5 py-1">
+                                  {getPrimaryArrangement(item.song)?.bpm || item.song.bpm} BPM
+                                </span>
+                              )}
+                              {(getPrimaryArrangement(item.song)?.meter || item.song.meter) && (
+                                <span className="rounded-full bg-zinc-100 px-2.5 py-1">
+                                  {getPrimaryArrangement(item.song)?.meter || item.song.meter}
+                                </span>
+                              )}
+                              {getPrimaryArrangement(item.song)?.sequence && (
+                                <span className="rounded-full bg-zinc-100 px-2.5 py-1">Secuencia lista</span>
+                              )}
+                              {getSongYoutubeUrl(item.song) && (
+                                <span className="rounded-full bg-red-50 px-2.5 py-1 text-red-600">YouTube</span>
+                              )}
+                            </div>
+                          )}
+                          {hasPlanningNotes(item) && (
+                            <div className="mt-2 grid gap-1.5">
+                              {getPlanningNoteEntries(item).slice(0, 2).map((entry) => (
+                                <p key={entry.key} className="line-clamp-2 rounded-xl bg-white px-3 py-2 text-xs leading-5 text-zinc-600 ring-1 ring-zinc-200">
+                                  <span className="font-bold text-primary">{entry.label}: </span>
+                                  {entry.note}
+                                </p>
+                              ))}
+                              {getPlanningNoteEntries(item).length > 2 && (
+                                <p className="text-[11px] font-semibold text-zinc-500">
+                                  +{getPlanningNoteEntries(item).length - 2} detalle(s) más
+                                </p>
+                              )}
+                            </div>
+                          )}
                         </div>
                         </div>
                       </div>
@@ -1030,8 +1072,9 @@ export default function ServiceDetail() {
                             onSelectedKeyChange={(key) => handleSaveItemKey(item, key)}
                             title={item.song.title}
                             artist={item.song.author}
-                            maxLines={36}
+                            maxLines={22}
                             emptyText="Esta canción todavía no tiene acordes guardados."
+                            compact
                           />
                         </div>
                       )}
@@ -1250,8 +1293,9 @@ export default function ServiceDetail() {
                         onSelectedKeyChange={(key) => handleSaveItemKey(item, key)}
                         title={item.song?.title || item.title}
                         artist={item.song?.author}
-                        maxLines={28}
+                        maxLines={20}
                         emptyText="Esta canción todavía no tiene acordes guardados."
+                        compact
                       />
                     </CardContent>
                   </Card>

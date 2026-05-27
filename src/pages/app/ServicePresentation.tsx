@@ -68,34 +68,34 @@ function useWakeLock() {
 
 function SongSlide({ slide, showChords }: { slide: Extract<PresentationSlide, { kind: "song" }>; showChords: boolean }) {
   return (
-    <div className="mx-auto flex h-full w-full max-w-5xl flex-col px-5 pb-3 pt-2 sm:px-10">
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <span className="rounded-full bg-violet-500/15 px-3 py-1 text-xs font-black uppercase tracking-[0.28em] text-violet-200">
+    <div className="mx-auto flex h-full w-full max-w-5xl flex-col px-4 pb-2 pt-1 sm:px-10 sm:pb-3 sm:pt-2">
+      <div className="mb-2 flex flex-wrap items-center gap-1.5 sm:mb-3 sm:gap-2">
+        <span className="rounded-full bg-violet-500/15 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.22em] text-violet-200 sm:px-3 sm:text-xs sm:tracking-[0.28em]">
           {slide.itemIndex}. Canción
         </span>
-        {slide.key && <Badge className="rounded-full bg-white/10 text-xs text-white hover:bg-white/10">Tono {slide.key}</Badge>}
-        {slide.bpm && <Badge className="rounded-full bg-white/10 text-xs text-white hover:bg-white/10">{slide.bpm} BPM</Badge>}
-        {slide.meter && <Badge className="rounded-full bg-white/10 text-xs text-white hover:bg-white/10">{slide.meter}</Badge>}
+        {slide.key && <Badge className="rounded-full bg-white/10 text-[10px] text-white hover:bg-white/10 sm:text-xs">Tono {slide.key}</Badge>}
+        {slide.bpm && <Badge className="hidden rounded-full bg-white/10 text-xs text-white hover:bg-white/10 sm:inline-flex">{slide.bpm} BPM</Badge>}
+        {slide.meter && <Badge className="hidden rounded-full bg-white/10 text-xs text-white hover:bg-white/10 sm:inline-flex">{slide.meter}</Badge>}
       </div>
 
-      <div className="mb-4">
-        <h1 className="text-[clamp(2rem,8vw,4.75rem)] font-black leading-[0.95] tracking-tight text-white">{slide.title}</h1>
-        {slide.artist && <p className="mt-2 text-lg font-medium text-slate-300 sm:text-2xl">{slide.artist}</p>}
+      <div className="mb-3 sm:mb-4">
+        <h1 className="text-[clamp(1.75rem,6.5vw,4rem)] font-black leading-[0.98] tracking-tight text-white">{slide.title}</h1>
+        {slide.artist && <p className="mt-1 text-base font-medium text-slate-300 sm:mt-2 sm:text-2xl">{slide.artist}</p>}
         {slide.totalParts > 1 && (
-          <p className="mt-2 text-xs font-bold uppercase tracking-[0.24em] text-violet-200/80">
+          <p className="mt-1 text-[10px] font-bold uppercase tracking-[0.22em] text-violet-200/80 sm:mt-2 sm:text-xs sm:tracking-[0.24em]">
             Parte {slide.part} de {slide.totalParts}
           </p>
         )}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto rounded-[1.75rem] border border-white/10 bg-white/[0.04] p-4 shadow-2xl shadow-black/30 sm:p-8">
-        <div className="space-y-2 font-mono">
+      <div className="min-h-0 flex-1 overflow-hidden rounded-[1.5rem] border border-white/10 bg-white/[0.04] p-3 shadow-2xl shadow-black/30 sm:rounded-[1.75rem] sm:p-8">
+        <div className="space-y-1.5 font-mono sm:space-y-2">
           {slide.lines.map((line, index) => {
-            if (line.kind === "blank") return <div key={index} className="h-2" />;
+            if (line.kind === "blank") return <div key={index} className="h-1.5 sm:h-2" />;
             if (line.kind === "section" || line.kind === "meta") {
               return (
                 <div key={index} className="pt-1">
-                  <span className="rounded-full bg-violet-400/15 px-3 py-1 text-xs font-black uppercase tracking-[0.28em] text-violet-200 sm:text-sm">
+                  <span className="rounded-full bg-violet-400/15 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.22em] text-violet-200 sm:px-3 sm:text-sm sm:tracking-[0.28em]">
                     {line.label}
                   </span>
                 </div>
@@ -107,12 +107,12 @@ function SongSlide({ slide, showChords }: { slide: Extract<PresentationSlide, { 
             return (
               <div key={index} className="leading-tight">
                 {showChords && line.chords && (
-                  <pre className="whitespace-pre-wrap text-[clamp(1.05rem,4.7vw,2.2rem)] font-black leading-[1.02] text-violet-300">
+                  <pre className="whitespace-pre-wrap text-[clamp(0.8rem,3.35vw,1.8rem)] font-black leading-[1] text-violet-300">
                     {line.chords}
                   </pre>
                 )}
                 {line.lyrics && (
-                  <pre className="whitespace-pre-wrap text-[clamp(1.45rem,6.2vw,3rem)] font-semibold leading-[1.06] text-white">
+                  <pre className="whitespace-pre-wrap text-[clamp(1rem,4.55vw,2.35rem)] font-semibold leading-[1.08] text-white">
                     {line.lyrics}
                   </pre>
                 )}
@@ -327,8 +327,8 @@ export default function ServicePresentation() {
     >
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(120deg,rgba(255,255,255,0.08),transparent_35%,rgba(124,58,237,0.12))]" />
 
-      <header className="relative z-10 flex items-center gap-2 px-4 py-2 sm:px-6" onClick={stopStageEvent}>
-        <Button variant="ghost" className="h-9 rounded-full bg-white/10 px-3 text-white hover:bg-white/15 hover:text-white" onClick={exitToService}>
+      <header className="relative z-10 flex items-center gap-2 px-3 py-2 sm:px-6" onClick={stopStageEvent}>
+        <Button variant="ghost" className="h-9 rounded-full bg-white/10 px-2.5 text-white hover:bg-white/15 hover:text-white sm:px-3" onClick={exitToService}>
           <ArrowLeft className="h-4 w-4" />
           Salir
         </Button>
@@ -339,19 +339,19 @@ export default function ServicePresentation() {
         {currentSlide?.kind === "song" && (
           <Button
             variant="ghost"
-            className="h-9 rounded-full bg-white/10 px-3 text-white hover:bg-white/15 hover:text-white"
+            className="h-9 rounded-full bg-white/10 px-2.5 text-white hover:bg-white/15 hover:text-white sm:px-3"
             onClick={() => setShowChords((current) => !current)}
           >
             {showChords ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
             Acordes
           </Button>
         )}
-        <div className="rounded-full bg-white/10 px-3 py-2 text-sm font-black text-white">
+        <div className="rounded-full bg-white/10 px-2.5 py-2 text-sm font-black text-white sm:px-3">
           {slides.length ? slideIndex + 1 : 0} / {slides.length}
         </div>
       </header>
 
-      <main className="relative z-10 h-[calc(100svh-8.25rem)] min-h-0">
+      <main className="relative z-10 h-[calc(100svh-3.75rem)] min-h-0 sm:h-[calc(100svh-8.25rem)]">
         {slides.length === 0 ? (
           <div className="flex h-full items-center justify-center px-6 text-center">
             <div>
@@ -367,7 +367,7 @@ export default function ServicePresentation() {
         ) : null}
       </main>
 
-      <footer className="relative z-10 flex items-center gap-3 px-4 py-2 sm:px-6" onClick={stopStageEvent}>
+      <footer className="relative z-10 hidden items-center gap-3 px-4 py-2 sm:flex sm:px-6" onClick={stopStageEvent}>
         <Button
           variant="ghost"
           className="h-12 w-12 rounded-full bg-white/10 text-white hover:bg-white/15 hover:text-white"
