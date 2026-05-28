@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Pencil, Trash2, Search, ChevronUp, ChevronDown, Music, FileText, Bell, X, Check, Clock, Users, ExternalLink, PlayCircle, GripVertical, FileDown, Maximize2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Search, ChevronUp, ChevronDown, Music, FileText, Bell, X, Check, Clock, Users, GripVertical, FileDown, Maximize2, PlayCircle } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
 import { useChurch } from "@/providers/ChurchProvider";
@@ -14,22 +14,14 @@ import {
   getPrimaryArrangement,
   getSongDisplayKey,
   getSongChordPro,
-  getSongPlainNotes,
   getSongYoutubeUrl,
   isSongItemType,
   type SongLike,
 } from "@/lib/songDisplay";
 import { normalizeKey, transposeChordPro } from "@/lib/musicUtils";
-import { getYoutubeEmbedUrl } from "@/lib/youtube";
-import {
-  getAssignmentPersonName,
-  getAssignmentRoleLabel,
-  getAssignmentStatusText,
-  getMusicAssignmentSummaries,
-  getMusicAssignments,
-} from "@/lib/serviceAssignments";
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogHeader,
   DialogTitle,
@@ -206,10 +198,6 @@ export default function Services() {
   const chartItem = chartSelection
     ? (serviceItems[chartSelection.serviceId] || []).find((item) => item.id === chartSelection.itemId) || null
     : null;
-  const chartMusicAssignmentDetails = chartSelection
-    ? getMusicAssignmentSummaries(serviceAssignments[chartSelection.serviceId] || [], 8)
-    : [];
-
   const [addItemDialogOpen, setAddItemDialogOpen] = useState(false);
   const [assignDialogOpen, setAssignDialogOpen] = useState(false);
   const [selectedServiceId, setSelectedServiceId] = useState<string | null>(null);
@@ -299,6 +287,8 @@ export default function Services() {
     const notes = item.details?.notes;
     return notes && typeof notes === "object" ? notes as Partial<Record<PlanningNoteKey, string>> : {};
   };
+
+  const getVocalNote = (item: ServiceItem) => getPlanningNotes(item).vocals?.trim() || "";
 
   const hasPlanningNotes = (item: ServiceItem) => {
     const notes = getPlanningNotes(item);
@@ -792,39 +782,38 @@ export default function Services() {
         <DialogContent className="flex h-[100svh] max-h-[100svh] w-screen max-w-none flex-col gap-0 overflow-hidden rounded-none border-0 p-0 sm:h-[92vh] sm:max-w-5xl sm:rounded-[2rem] sm:border">
           {chartItem?.song && (
             <>
-              <DialogHeader className="border-b border-zinc-100 px-2.5 py-1.5 text-left sm:px-3 sm:py-2">
-                <DialogTitle className="line-clamp-1 pr-8 text-base font-black leading-tight text-zinc-950 sm:text-lg">
-                  {chartItem.song.title}
-                </DialogTitle>
-                <div className="flex flex-wrap gap-1 pt-0.5 text-[11px] text-zinc-500 sm:gap-1.5 sm:text-xs">
-                  {chartItem.song.author && <span>{chartItem.song.author}</span>}
-                  {getItemDisplayKey(chartItem) && <Badge variant="secondary" className="rounded-full">Tono {getItemDisplayKey(chartItem)}</Badge>}
-                  {(getPrimaryArrangement(chartItem.song)?.bpm || chartItem.song.bpm) && (
-                    <Badge variant="outline" className="rounded-full">{getPrimaryArrangement(chartItem.song)?.bpm || chartItem.song.bpm} BPM</Badge>
-                  )}
-                  {(getPrimaryArrangement(chartItem.song)?.meter || chartItem.song.meter) && (
-                    <Badge variant="outline" className="rounded-full">{getPrimaryArrangement(chartItem.song)?.meter || chartItem.song.meter}</Badge>
-                  )}
-                </div>
-                {chartMusicAssignmentDetails.length > 0 && (
-                  <div className="flex gap-1 overflow-x-auto pb-0.5 pt-1">
-                    {chartMusicAssignmentDetails.map((assignment) => (
-                      <span key={assignment.id} className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary">
-                        {assignment.roleLabel}: {assignment.personName}
-                      </span>
-                    ))}
+              <DialogHeader className="border-b border-zinc-100 px-3 py-2 pr-14 text-left sm:px-4 sm:py-3 sm:pr-16">
+                <div className="min-w-0">
+                  <DialogTitle className="line-clamp-1 text-base font-black leading-tight text-zinc-950 sm:text-lg">
+                    {chartItem.song.title}
+                  </DialogTitle>
+                  <div className="flex flex-wrap gap-1 pt-0.5 text-[11px] text-zinc-500 sm:gap-1.5 sm:text-xs">
+                    {chartItem.song.author && <span>{chartItem.song.author}</span>}
+                    {getItemDisplayKey(chartItem) && <Badge variant="secondary" className="rounded-full">Tono {getItemDisplayKey(chartItem)}</Badge>}
+                    {(getPrimaryArrangement(chartItem.song)?.bpm || chartItem.song.bpm) && (
+                      <Badge variant="outline" className="rounded-full">{getPrimaryArrangement(chartItem.song)?.bpm || chartItem.song.bpm} BPM</Badge>
+                    )}
+                    {(getPrimaryArrangement(chartItem.song)?.meter || chartItem.song.meter) && (
+                      <Badge variant="outline" className="rounded-full">{getPrimaryArrangement(chartItem.song)?.meter || chartItem.song.meter}</Badge>
+                    )}
                   </div>
-                )}
+                </div>
+                <DialogClose asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="absolute right-2 top-2 h-10 w-10 rounded-2xl bg-white text-zinc-600 shadow-sm ring-1 ring-zinc-200 hover:bg-zinc-50 sm:right-3 sm:top-3"
+                    aria-label="Cerrar acordes"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </DialogClose>
               </DialogHeader>
               <div className="min-h-0 flex-1 overflow-auto bg-zinc-50 p-1 sm:p-4">
-                {hasPlanningNotes(chartItem) && (
-                  <div className="mb-2 grid max-h-[18svh] gap-2 overflow-auto sm:max-h-none sm:grid-cols-2">
-                    {getPlanningNoteEntries(chartItem).map((entry) => (
-                      <div key={entry.key} className="rounded-2xl border border-zinc-100 bg-white p-3 shadow-sm">
-                        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-primary">{entry.label}</p>
-                        <p className="mt-1 text-sm leading-5 text-zinc-600">{entry.note}</p>
-                      </div>
-                    ))}
+                {getVocalNote(chartItem) && (
+                  <div className="mb-2 rounded-2xl border border-primary/10 bg-white p-3 shadow-sm">
+                    <p className="text-sm font-semibold leading-5 text-primary">Canta: {getVocalNote(chartItem)}</p>
                   </div>
                 )}
                 <ChordProPreview
@@ -840,6 +829,13 @@ export default function Services() {
                   emptyText="Esta canción todavía no tiene acordes guardados."
                   fullHeight
                 />
+              </div>
+              <div className="border-t border-zinc-100 bg-white p-3 sm:hidden">
+                <DialogClose asChild>
+                  <Button type="button" variant="outline" className="h-11 w-full rounded-2xl">
+                    Cerrar
+                  </Button>
+                </DialogClose>
               </div>
             </>
           )}
@@ -1228,13 +1224,8 @@ export default function Services() {
                         <div className="space-y-2">
                           {(serviceItems[svc.id] || []).map((item, idx) => {
                             const isSong = isSongItemType(item.type) && item.song;
+                            const vocalNote = isSong ? getVocalNote(item) : "";
                             const youtubeUrl = isSong ? getSongYoutubeUrl(item.song) : null;
-                            const youtubeEmbedUrl = getYoutubeEmbedUrl(youtubeUrl);
-                            const plainNotes = isSong ? getSongPlainNotes(item.song) : null;
-                            const arrangement = isSong ? getPrimaryArrangement(item.song) : null;
-                            const displayKey = isSong ? getItemDisplayKey(item) : null;
-                            const serviceMusicAssignments = getMusicAssignments(serviceAssignments[svc.id] || []);
-                            const assignmentDetails = getMusicAssignmentSummaries(serviceAssignments[svc.id] || [], 8);
                             return (
                               <div
                                 key={item.id}
@@ -1282,9 +1273,6 @@ export default function Services() {
                                           </p>
                                         </div>
                                         <div className="flex shrink-0 items-center justify-end gap-1">
-                                          {displayKey && (
-                                            <Badge variant="secondary" className="hidden rounded-full px-2 py-1 text-[11px] sm:inline-flex sm:text-xs">Tono {displayKey}</Badge>
-                                          )}
                                           {isSong && (
                                             <Button
                                               variant="ghost"
@@ -1302,80 +1290,36 @@ export default function Services() {
                                         </div>
                                       </div>
 
-                                      <div className="mt-2 flex flex-wrap items-center gap-1.5 sm:gap-2">
-                                        {displayKey && (
-                                          <Badge variant="secondary" className="rounded-full px-2 py-0.5 text-[11px] sm:hidden">Tono {displayKey}</Badge>
-                                        )}
-                                        {hasPlanningNotes(item) && (
-                                          <Badge variant="outline" className="rounded-full px-2 py-0.5 text-[11px] sm:text-xs">Notas de equipo</Badge>
-                                        )}
-                                        {item.duration && (
-                                          <span className="inline-flex items-center rounded-full bg-white px-2 py-0.5 text-[11px] text-muted-foreground ring-1 ring-zinc-200 sm:px-2.5 sm:py-1 sm:text-xs">
-                                            <Clock className="mr-1 h-3 w-3" />
-                                            {item.duration}m
-                                          </span>
-                                        )}
-                                        {youtubeUrl && (
-                                          <Badge variant="outline" className="rounded-full border-red-100 bg-red-50 px-2 py-0.5 text-[11px] text-red-600 sm:text-xs">YouTube</Badge>
-                                        )}
-                                        {isPlanner && (
-                                          <Button
-                                            variant="ghost"
-                                            size="icon"
-                                            className={`${isSong && !expandedSongItems[item.id] ? "hidden sm:inline-flex" : "inline-flex"} ml-auto h-8 w-8 rounded-xl text-zinc-400 hover:text-red-500 sm:h-9 sm:w-9`}
-                                            onClick={(event) => {
-                                              event.stopPropagation();
-                                              handleDeleteItem(svc.id, item.id);
-                                            }}
-                                            aria-label="Eliminar elemento"
-                                          >
-                                            <X className="w-3 h-3" />
-                                          </Button>
-                                        )}
-                                      </div>
-                                      {isSong && expandedSongItems[item.id] && (
-                                        <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] font-semibold text-zinc-500">
-                                          {(arrangement?.bpm || item.song?.bpm) && (
-                                            <span className="rounded-full bg-white px-2.5 py-1 ring-1 ring-zinc-200">
-                                              {arrangement?.bpm || item.song?.bpm} BPM
+                                      {!isSong && (
+                                        <div className="mt-2 flex flex-wrap items-center gap-1.5 sm:gap-2">
+                                          {item.duration && (
+                                            <span className="inline-flex items-center rounded-full bg-white px-2 py-0.5 text-[11px] text-muted-foreground ring-1 ring-zinc-200 sm:px-2.5 sm:py-1 sm:text-xs">
+                                              <Clock className="mr-1 h-3 w-3" />
+                                              {item.duration}m
                                             </span>
                                           )}
-                                          {(arrangement?.meter || item.song?.meter) && (
-                                            <span className="rounded-full bg-white px-2.5 py-1 ring-1 ring-zinc-200">
-                                              {arrangement?.meter || item.song?.meter}
-                                            </span>
-                                          )}
-                                          {arrangement?.sequence && (
-                                            <span className="rounded-full bg-white px-2.5 py-1 ring-1 ring-zinc-200">Secuencia lista</span>
-                                          )}
-                                          {youtubeUrl && (
-                                            <span className="rounded-full bg-red-50 px-2.5 py-1 text-red-600 ring-1 ring-red-100">YouTube</span>
+                                          {isPlanner && (
+                                            <Button
+                                              variant="ghost"
+                                              size="icon"
+                                              className="ml-auto h-8 w-8 rounded-xl text-zinc-400 hover:text-red-500 sm:h-9 sm:w-9"
+                                              onClick={(event) => {
+                                                event.stopPropagation();
+                                                handleDeleteItem(svc.id, item.id);
+                                              }}
+                                              aria-label="Eliminar elemento"
+                                            >
+                                              <X className="w-3 h-3" />
+                                            </Button>
                                           )}
                                         </div>
                                       )}
-                                      {isSong && expandedSongItems[item.id] && assignmentDetails.length > 0 && (
-                                        <div className="mt-2 rounded-xl bg-primary/5 px-2.5 py-2 ring-1 ring-primary/10">
-                                          <p className="text-[10px] font-black uppercase tracking-[0.16em] text-primary/75">Asignados hoy</p>
-                                          <div className="mt-1 flex flex-wrap gap-1.5">
-                                            {assignmentDetails.slice(0, 5).map((assignment) => (
-                                              <span key={assignment.id} className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-primary ring-1 ring-primary/10">
-                                                {assignment.roleLabel}: {assignment.personName}
-                                              </span>
-                                            ))}
-                                            {serviceMusicAssignments.length > 5 && (
-                                              <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-primary ring-1 ring-primary/10">
-                                                +{serviceMusicAssignments.length - 5} más
-                                              </span>
-                                            )}
-                                          </div>
-                                        </div>
-                                      )}
-                                      {isSong && expandedSongItems[item.id] && plainNotes && (
-                                        <p className="mt-2 line-clamp-2 rounded-xl bg-white px-3 py-2 text-xs leading-5 text-zinc-600 ring-1 ring-zinc-200">
-                                          {plainNotes}
+                                      {isSong && vocalNote && (
+                                        <p className="mt-2 line-clamp-2 text-xs font-semibold leading-5 text-primary sm:text-sm">
+                                          Canta: {vocalNote}
                                         </p>
                                       )}
-                                      {(!isSong || expandedSongItems[item.id]) && hasPlanningNotes(item) && (
+                                      {!isSong && hasPlanningNotes(item) && (
                                         <div className="mt-2 grid gap-1.5">
                                           {getPlanningNoteEntries(item).slice(0, 2).map((entry) => (
                                             <p key={entry.key} className="line-clamp-2 rounded-xl bg-white px-3 py-2 text-xs leading-5 text-zinc-600 ring-1 ring-zinc-200">
@@ -1396,68 +1340,25 @@ export default function Services() {
 
                                 {isSong && expandedSongItems[item.id] && (
                                   <div className="space-y-3 border-t border-zinc-100 bg-white p-3" onClick={stopInteractiveTap} onPointerDown={stopInteractiveTap} onTouchStart={stopInteractiveTap}>
-                                    <div className="flex flex-wrap gap-2">
-                                      {displayKey && (
-                                        <Badge variant="secondary" className="rounded-full">Tono {displayKey}</Badge>
-                                      )}
-                                      {(arrangement?.bpm || item.song?.bpm) && (
-                                        <Badge variant="secondary" className="rounded-full">{arrangement?.bpm || item.song?.bpm} BPM</Badge>
-                                      )}
-                                      {(arrangement?.meter || item.song?.meter) && (
-                                        <Badge variant="secondary" className="rounded-full">{arrangement?.meter || item.song?.meter}</Badge>
-                                      )}
-                                      {item.song?.arrangements?.length ? (
-                                        <Badge variant="outline" className="rounded-full">{item.song.arrangements.length} arreglo{item.song.arrangements.length === 1 ? "" : "s"}</Badge>
-                                      ) : null}
-                                    </div>
-
-                                    {plainNotes && <p className="text-xs leading-5 text-muted-foreground">{plainNotes}</p>}
-
-                                    {hasPlanningNotes(item) && (
-                                      <div className="grid gap-2">
-                                        {(Object.keys(NOTE_LABELS) as PlanningNoteKey[]).map((key) => {
-                                          const note = getPlanningNotes(item)[key];
-                                          if (!note?.trim()) return null;
-                                          return (
-                                            <div key={key} className="rounded-2xl border border-zinc-100 bg-zinc-50 p-3">
-                                              <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-primary">{NOTE_LABELS[key]}</p>
-                                              <p className="mt-1 text-sm leading-5 text-zinc-600">{note}</p>
-                                            </div>
-                                          );
-                                        })}
-                                      </div>
-                                    )}
-
-                                    {serviceMusicAssignments.length > 0 && (
-                                      <div className="rounded-2xl border border-primary/10 bg-primary/5 p-3">
-                                        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-primary">Quién canta/toca este día</p>
-                                        <div className="mt-2 grid gap-2">
-                                          {serviceMusicAssignments.map((assignment) => (
-                                            <div key={assignment.id} className="flex items-center justify-between gap-3 rounded-xl bg-white px-3 py-2 ring-1 ring-primary/10">
-                                              <div className="min-w-0">
-                                                <p className="truncate text-sm font-bold text-zinc-950">{getAssignmentPersonName(assignment.user)}</p>
-                                                <p className="truncate text-xs text-zinc-500">{getAssignmentRoleLabel(assignment.position)}{assignment.position ? ` · ${assignment.position}` : ""}</p>
-                                              </div>
-                                              <Badge variant="secondary" className="shrink-0 rounded-full text-[11px]">
-                                                {getAssignmentStatusText(assignment)}
-                                              </Badge>
-                                            </div>
-                                          ))}
-                                        </div>
-                                      </div>
-                                    )}
-
-                                    <div className="flex flex-wrap gap-2">
+                                    <div className="flex flex-wrap items-center gap-2">
                                       {youtubeUrl && (
-                                        <Button asChild variant="outline" size="sm" className="rounded-xl">
-                                          <a href={youtubeUrl} target="_blank" rel="noreferrer">
-                                            <PlayCircle className="w-3 h-3" />
-                                            YouTube
-                                          </a>
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          size="sm"
+                                          className="rounded-xl"
+                                          onClick={(event) => {
+                                            event.stopPropagation();
+                                            window.open(youtubeUrl, "_blank", "noopener,noreferrer");
+                                          }}
+                                        >
+                                          <PlayCircle className="w-3 h-3" />
+                                          YouTube
                                         </Button>
                                       )}
                                       <Button
-                                        variant="ghost"
+                                        type="button"
+                                        variant="outline"
                                         size="sm"
                                         className="rounded-xl"
                                         onClick={(event) => {
@@ -1468,55 +1369,37 @@ export default function Services() {
                                         <Maximize2 className="w-3 h-3" />
                                         Ver acordes
                                       </Button>
-                                      <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        className="rounded-xl"
-                                        onClick={(event) => {
-                                          event.stopPropagation();
-                                          navigate(`/app/songs/${item.song?.id}`);
-                                        }}
-                                      >
-                                        <ExternalLink className="w-3 h-3" />
-                                        Editar canción
-                                      </Button>
-                                    </div>
-
-                                    {youtubeEmbedUrl && (
-                                      <div className="overflow-hidden rounded-2xl border border-red-100 bg-black shadow-sm">
-                                        <iframe
-                                          title={`YouTube - ${item.song?.title || item.title}`}
-                                          src={youtubeEmbedUrl}
-                                          className="aspect-video w-full"
-                                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                                          referrerPolicy="origin"
-                                          allowFullScreen
-                                        />
-                                      </div>
-                                    )}
-
-                                    <div className="rounded-2xl border border-zinc-100 bg-zinc-50 p-3">
-                                      <div className="flex items-center justify-between gap-3">
-                                        <div className="min-w-0">
-                                          <p className="text-sm font-bold text-zinc-950">Hoja de acordes</p>
-                                          <p className="mt-0.5 text-xs leading-5 text-zinc-500">
-                                            Ábrela en pantalla amplia para ver acordes y letra sin encimarse.
-                                          </p>
-                                        </div>
+                                      {isPlanner && item.song.id && (
                                         <Button
                                           type="button"
+                                          variant="ghost"
                                           size="sm"
-                                          className="shrink-0 rounded-xl"
+                                          className="rounded-xl"
                                           onClick={(event) => {
                                             event.stopPropagation();
-                                            setChartSelection({ serviceId: svc.id, itemId: item.id });
+                                            navigate(`/app/songs/${item.song!.id}`);
                                           }}
                                         >
-                                          <Maximize2 className="h-3.5 w-3.5" />
-                                          Abrir
+                                          Editar canción
                                         </Button>
-                                      </div>
+                                      )}
+                                      {isPlanner && (
+                                        <Button
+                                          type="button"
+                                          variant="ghost"
+                                          size="icon"
+                                          className="ml-auto h-9 w-9 rounded-xl text-zinc-400 hover:bg-red-50 hover:text-red-500"
+                                          aria-label="Eliminar canción del servicio"
+                                          onClick={(event) => {
+                                            event.stopPropagation();
+                                            handleDeleteItem(svc.id, item.id);
+                                          }}
+                                        >
+                                          <X className="h-4 w-4" />
+                                        </Button>
+                                      )}
                                     </div>
+
                                   </div>
                                 )}
                               </div>

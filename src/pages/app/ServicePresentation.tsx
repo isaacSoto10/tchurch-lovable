@@ -66,46 +66,103 @@ function useWakeLock() {
   }, []);
 }
 
-function SongSlide({ slide, showChords }: { slide: Extract<PresentationSlide, { kind: "song" }>; showChords: boolean }) {
-  const maxColumns = useMemo(() => {
-    const longestLine = slide.lines.reduce((longest, line) => {
-      if (line.kind !== "line") return longest;
-      return Math.max(longest, line.chords.length, line.lyrics.length);
-    }, 1);
+function useMeasuredElement<T extends HTMLElement>() {
+  const ref = useRef<T | null>(null);
+  const [size, setSize] = useState({ width: 0, height: 0 });
 
-    return Math.max(longestLine, 12);
-  }, [slide.lines]);
-  const chartFontSize = `clamp(0.72rem, calc((100svw - 1.25rem) / ${maxColumns} * 1.18), 1.32rem)`;
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+
+    function updateSize() {
+      setSize({ width: element.clientWidth, height: element.clientHeight });
+    }
+
+    updateSize();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateSize);
+    observer?.observe(element);
+    window.addEventListener("resize", updateSize);
+    window.visualViewport?.addEventListener("resize", updateSize);
+
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", updateSize);
+      window.visualViewport?.removeEventListener("resize", updateSize);
+    };
+  }, []);
+
+  return [ref, size] as const;
+}
+
+function SongSlide({ slide, showChords }: { slide: Extract<PresentationSlide, { kind: "song" }>; showChords: boolean }) {
+  const [chartBodyRef, chartSize] = useMeasuredElement<HTMLDivElement>();
+  const chartMetrics = useMemo(() => {
+    return slide.lines.reduce(
+      (metrics, line) => {
+        if (line.kind === "blank") {
+          return { ...metrics, rows: metrics.rows + 0.25 };
+        }
+
+        if (line.kind === "section" || line.kind === "meta") {
+          return { ...metrics, rows: metrics.rows + 0.65 };
+        }
+
+        const hasChords = showChords && line.chords.trim().length > 0;
+        const hasLyrics = line.lyrics.trim().length > 0;
+        const maxColumns = Math.max(metrics.maxColumns, showChords ? line.chords.length : 0, line.lyrics.length);
+        const rows = hasChords && hasLyrics ? 2.05 : hasChords ? 1.02 : hasLyrics ? 1.08 : 0.4;
+        return { maxColumns, rows: metrics.rows + rows };
+      },
+      { maxColumns: 12, rows: 0 }
+    );
+  }, [showChords, slide.lines]);
+  const fallbackWidth = typeof window === "undefined" ? 360 : Math.max(window.innerWidth - 10, 320);
+  const fallbackHeight = typeof window === "undefined" ? 620 : Math.max(window.innerHeight - 96, 420);
+  const chartWidth = chartSize.width || fallbackWidth;
+  const chartHeight = chartSize.height || fallbackHeight;
+  const widthLimitedFont = (chartWidth / Math.max(chartMetrics.maxColumns, 1)) * 1.76;
+  const heightLimitedFont = (chartHeight / Math.max(chartMetrics.rows, 1)) * 1.06;
+  const isCompactStage = chartWidth < 640;
+  const minChartFontSize = isCompactStage ? 27 : 30;
+  const maxChartFontSize = isCompactStage ? 46 : 64;
+  const chartFontSizePx = Math.round(
+    Math.max(minChartFontSize, Math.min(widthLimitedFont, heightLimitedFont, maxChartFontSize))
+  );
 
   return (
-    <div className="mx-auto flex h-full w-full max-w-none flex-col px-2 pb-1 pt-0 sm:max-w-6xl sm:px-8 sm:pb-4 sm:pt-1">
-      <div className="mb-1 flex flex-wrap items-center gap-1 sm:mb-1.5 sm:gap-2">
-        <span className="rounded-full bg-violet-500/15 px-2 py-0.5 text-[7px] font-black uppercase tracking-[0.16em] text-violet-200 sm:px-3 sm:py-1 sm:text-xs sm:tracking-[0.28em]">
+    <div className="mx-auto flex h-full w-full max-w-none flex-col px-1 pb-1 pt-0 sm:max-w-6xl sm:px-8 sm:pb-4 sm:pt-1">
+      <div className="mb-0.5 flex flex-wrap items-center gap-1 sm:mb-1.5 sm:gap-2">
+        <span className="rounded-full bg-violet-500/15 px-1.5 py-px text-[6px] font-black uppercase tracking-[0.14em] text-violet-200 sm:px-3 sm:py-1 sm:text-xs sm:tracking-[0.28em]">
           {slide.itemIndex}. Canción
         </span>
-        {slide.key && <Badge className="rounded-full bg-white/10 px-2 py-0.5 text-[8px] text-white hover:bg-white/10 sm:text-xs">Tono {slide.key}</Badge>}
+        {slide.key && <Badge className="rounded-full bg-white/10 px-1.5 py-px text-[7px] text-white hover:bg-white/10 sm:px-2 sm:py-0.5 sm:text-xs">Tono {slide.key}</Badge>}
         {slide.bpm && <Badge className="hidden rounded-full bg-white/10 text-xs text-white hover:bg-white/10 sm:inline-flex">{slide.bpm} BPM</Badge>}
         {slide.meter && <Badge className="hidden rounded-full bg-white/10 text-xs text-white hover:bg-white/10 sm:inline-flex">{slide.meter}</Badge>}
+        {slide.totalParts > 1 && (
+          <span className="rounded-full bg-white/10 px-1.5 py-px text-[7px] font-bold uppercase tracking-[0.12em] text-violet-100/90 sm:hidden">
+            {slide.part}/{slide.totalParts}
+          </span>
+        )}
       </div>
 
-      <div className="mb-1.5 sm:mb-2">
-        <h1 className="line-clamp-1 text-[clamp(1rem,5vw,1.75rem)] font-black leading-[0.95] tracking-tight text-white">{slide.title}</h1>
-        {slide.artist && <p className="mt-0.5 truncate text-[9px] font-medium text-slate-300 sm:text-sm">{slide.artist}</p>}
+      <div className="hidden sm:mb-2 sm:block">
+        <h1 className="line-clamp-1 text-[clamp(1rem,4.8vw,2.25rem)] font-black leading-none tracking-tight text-white">{slide.title}</h1>
+        {slide.artist && <p className="mt-0.5 hidden truncate text-[clamp(0.8rem,3.4vw,1.25rem)] font-medium text-slate-300 sm:block">{slide.artist}</p>}
         {slide.totalParts > 1 && (
-          <p className="mt-0.5 text-[7px] font-bold uppercase tracking-[0.16em] text-violet-200/80 sm:text-[11px] sm:tracking-[0.24em]">
+          <p className="mt-0.5 hidden text-[11px] font-bold uppercase tracking-[0.24em] text-violet-200/80 sm:block">
             Parte {slide.part} de {slide.totalParts}
           </p>
         )}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto overflow-x-hidden rounded-[1rem] border border-white/10 bg-white/[0.04] p-2 shadow-2xl shadow-black/30 sm:rounded-[1.75rem] sm:p-5">
-        <div className="w-full min-w-0 space-y-0 font-mono sm:space-y-1">
+      <div className="min-h-0 flex-1 overflow-hidden rounded-[0.9rem] border border-white/10 bg-black/20 p-1.5 shadow-2xl shadow-black/30 sm:rounded-[1.75rem] sm:p-5">
+        <div ref={chartBodyRef} className="h-full w-full min-w-0 overflow-hidden font-mono">
           {slide.lines.map((line, index) => {
-            if (line.kind === "blank") return <div key={index} className="h-1 sm:h-1.5" />;
+            if (line.kind === "blank") return <div key={index} className="h-1" />;
             if (line.kind === "section" || line.kind === "meta") {
               return (
-                <div key={index} className="pt-0.5">
-                  <span className="rounded-full bg-violet-400/15 px-2 py-0.5 text-[8px] font-black uppercase tracking-[0.18em] text-violet-200 sm:px-3 sm:py-1 sm:text-xs sm:tracking-[0.28em]">
+                <div key={index} className="pb-1 pt-0.5">
+                  <span className="rounded-full bg-violet-400/15 px-2 py-px text-[8px] font-black uppercase tracking-[0.16em] text-violet-200 sm:px-3 sm:py-1 sm:text-xs sm:tracking-[0.28em]">
                     {line.label}
                   </span>
                 </div>
@@ -115,14 +172,18 @@ function SongSlide({ slide, showChords }: { slide: Extract<PresentationSlide, { 
             if (!showChords && !line.lyrics.trim()) return null;
 
             return (
-              <div key={index} className="min-w-0 leading-none" style={{ fontSize: chartFontSize }}>
+              <div
+                key={index}
+                className="min-w-0 overflow-hidden pb-[0.08em] leading-none last:pb-0"
+                style={{ fontSize: `${chartFontSizePx}px`, fontVariantLigatures: "none" }}
+              >
                 {showChords && line.chords && (
-                  <pre className="whitespace-pre text-[1em] font-black leading-[1.08] text-violet-300">
+                  <pre className="overflow-hidden whitespace-pre text-[1em] font-black leading-[1.02] text-violet-300">
                     {line.chords}
                   </pre>
                 )}
                 {line.lyrics && (
-                  <pre className="whitespace-pre text-[1em] font-semibold leading-[1.18] text-white">
+                  <pre className="overflow-hidden whitespace-pre text-[1em] font-black leading-[1.08] text-white">
                     {line.lyrics}
                   </pre>
                 )}
@@ -337,31 +398,36 @@ export default function ServicePresentation() {
     >
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(120deg,rgba(255,255,255,0.08),transparent_35%,rgba(124,58,237,0.12))]" />
 
-      <header className="relative z-10 flex items-center gap-2 px-3 py-1.5 sm:px-6" onClick={stopStageEvent}>
-        <Button variant="ghost" className="h-8 rounded-full bg-white/10 px-2 text-white hover:bg-white/15 hover:text-white sm:h-9 sm:px-3" onClick={exitToService}>
+      <header className="relative z-10 flex h-9 items-center gap-1.5 px-2 py-1 sm:h-auto sm:gap-2 sm:px-6 sm:py-1.5" onClick={stopStageEvent}>
+        <Button variant="ghost" className="h-7 rounded-full bg-white/10 px-2 text-xs text-white hover:bg-white/15 hover:text-white sm:h-9 sm:px-3 sm:text-sm" onClick={exitToService}>
           <ArrowLeft className="h-4 w-4" />
           Salir
         </Button>
-        <div className="min-w-0 flex-1">
+        <div className="hidden min-w-0 flex-1 sm:block">
           <p className="truncate text-xs font-black text-white sm:text-sm">{service.title}</p>
           <p className="truncate text-[10px] text-slate-400 sm:text-xs">{formatServiceDate(service.date)}</p>
+        </div>
+        <div className="min-w-0 flex-1 sm:hidden">
+          <p className="truncate text-center text-[11px] font-black leading-none text-white">
+            {currentSlide?.title || service.title}
+          </p>
         </div>
         {currentSlide?.kind === "song" && (
           <Button
             variant="ghost"
-            className="h-8 rounded-full bg-white/10 px-2 text-white hover:bg-white/15 hover:text-white sm:h-9 sm:px-3"
+            className="h-7 rounded-full bg-white/10 px-2 text-xs text-white hover:bg-white/15 hover:text-white sm:h-9 sm:px-3 sm:text-sm"
             onClick={() => setShowChords((current) => !current)}
           >
             {showChords ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
             Acordes
           </Button>
         )}
-        <div className="rounded-full bg-white/10 px-2.5 py-1.5 text-sm font-black text-white sm:px-3 sm:py-2">
+        <div className="rounded-full bg-white/10 px-2 py-1 text-xs font-black text-white sm:px-3 sm:py-2 sm:text-sm">
           {slides.length ? slideIndex + 1 : 0} / {slides.length}
         </div>
       </header>
 
-      <main className="relative z-10 h-[calc(100svh-2.8rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] min-h-0 sm:h-[calc(100svh-8rem)]">
+      <main className="relative z-10 h-[calc(100svh-2.25rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] min-h-0 sm:h-[calc(100svh-7rem)]">
         {slides.length === 0 ? (
           <div className="flex h-full items-center justify-center px-6 text-center">
             <div>

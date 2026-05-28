@@ -89,6 +89,9 @@ const ITEM_TYPE_LABELS: Record<string, string> = {
   other: "Otro",
 };
 
+const CHART_WRAP_COLUMNS = 22;
+const MAX_RENDERED_ROWS_PER_SONG_SLIDE = 21;
+
 function getPlanningDetails(item: PresentationServiceItem) {
   return (item.details || {}) as Record<string, unknown>;
 }
@@ -129,13 +132,16 @@ function splitSongLines(lines: ChordProDisplayLine[]) {
   const chunks: ChordProDisplayLine[][] = [];
   let current: ChordProDisplayLine[] = [];
   let currentRows = 0;
-  // Keep enough music on each slide to use the full phone screen without shrinking the chart.
-  const maxRowsPerSlide = 21;
 
   function lineRows(line: ChordProDisplayLine) {
-    if (line.kind === "blank") return 0.35;
-    if (line.kind === "section" || line.kind === "meta") return 0.95;
-    return (line.chords ? 0.95 : 0) + (line.lyrics ? 1 : 0.35);
+    if (line.kind === "blank") return 0.5;
+    if (line.kind === "section" || line.kind === "meta") return 1;
+
+    const hasChords = Boolean(line.chords.trim());
+    const hasLyrics = Boolean(line.lyrics.trim());
+    if (hasChords && hasLyrics) return 2;
+    if (hasChords || hasLyrics) return 1;
+    return 0.5;
   }
 
   function hasMusicLine(chunk: ChordProDisplayLine[]) {
@@ -159,8 +165,8 @@ function splitSongLines(lines: ChordProDisplayLine[]) {
     const startsNewSection = line.kind === "section" || line.kind === "meta";
 
     if (
-      (startsNewSection && hasMusicLine(current) && currentRows >= maxRowsPerSlide * 0.55) ||
-      (hasMusicLine(current) && currentRows + rows > maxRowsPerSlide)
+      (startsNewSection && hasMusicLine(current) && currentRows >= MAX_RENDERED_ROWS_PER_SONG_SLIDE * 0.62) ||
+      (hasMusicLine(current) && currentRows + rows > MAX_RENDERED_ROWS_PER_SONG_SLIDE)
     ) {
       pushCurrent();
     }
@@ -173,7 +179,49 @@ function splitSongLines(lines: ChordProDisplayLine[]) {
   return chunks.length ? chunks : [[{ kind: "line", chords: "", lyrics: "Esta canción todavía no tiene acordes guardados." }]];
 }
 
-function splitWideDisplayLine(line: ChordProDisplayLine, maxColumns = 38): ChordProDisplayLine[] {
+function isInsideToken(value: string, index: number) {
+  const before = value[index - 1];
+  const after = value[index];
+  return Boolean(before && after && !/\s/.test(before) && !/\s/.test(after));
+}
+
+function isSafeSplitColumn(line: Extract<ChordProDisplayLine, { kind: "line" }>, index: number) {
+  return !isInsideToken(line.chords, index) && !isInsideToken(line.lyrics, index);
+}
+
+function isBreakAfterWhitespace(value: string, index: number) {
+  return /\s/.test(value[index - 1] || "");
+}
+
+function findSplitColumn(line: Extract<ChordProDisplayLine, { kind: "line" }>, start: number, width: number, maxColumns: number) {
+  const remaining = width - start;
+  if (remaining <= maxColumns) return width;
+
+  let target = Math.min(start + maxColumns, width);
+  const shortTail = width - target;
+
+  if (shortTail > 0 && shortTail < maxColumns * 0.45) {
+    target = start + Math.ceil(remaining / 2);
+  }
+
+  const minSplit = start + Math.max(6, Math.floor(maxColumns * 0.58));
+  for (let index = target; index >= minSplit; index -= 1) {
+    if (
+      isSafeSplitColumn(line, index) &&
+      (isBreakAfterWhitespace(line.lyrics, index) || isBreakAfterWhitespace(line.chords, index))
+    ) {
+      return index;
+    }
+  }
+
+  for (let index = target; index >= minSplit; index -= 1) {
+    if (isSafeSplitColumn(line, index)) return index;
+  }
+
+  return target;
+}
+
+function splitWideDisplayLine(line: ChordProDisplayLine, maxColumns = CHART_WRAP_COLUMNS): ChordProDisplayLine[] {
   if (line.kind !== "line") return [line];
 
   const width = Math.max(line.chords.length, line.lyrics.length);
@@ -183,15 +231,7 @@ function splitWideDisplayLine(line: ChordProDisplayLine, maxColumns = 38): Chord
   let start = 0;
 
   while (start < width) {
-    let end = Math.min(start + maxColumns, width);
-
-    if (end < width) {
-      const lyricWindow = line.lyrics.slice(start, end);
-      const lastSpace = Math.max(lyricWindow.lastIndexOf(" "), lyricWindow.lastIndexOf("\t"));
-      if (lastSpace > Math.floor(maxColumns * 0.58)) {
-        end = start + lastSpace + 1;
-      }
-    }
+    const end = Math.max(start + 1, findSplitColumn(line, start, width, maxColumns));
 
     const chords = line.chords.slice(start, end).trimEnd();
     const lyrics = line.lyrics.slice(start, end).trimEnd();
