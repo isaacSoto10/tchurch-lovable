@@ -20,7 +20,6 @@ import { useChurch } from "@/providers/ChurchProvider";
 import { useToast } from "@/components/ui/use-toast";
 import { ChordProPreview } from "@/components/ChordProPreview";
 import {
-  getPrimaryArrangement,
   getSongDisplayKey,
   getSongChordPro,
   getSongYoutubeUrl,
@@ -28,7 +27,6 @@ import {
   type SongArrangement,
   type SongLike,
 } from "@/lib/songDisplay";
-import { getYoutubeEmbedUrl } from "@/lib/youtube";
 import { normalizeKey, transposeChordPro } from "@/lib/musicUtils";
 import { canUseServicePresentation } from "@/lib/servicePresentation";
 
@@ -831,10 +829,17 @@ export default function ServiceDetail() {
                                 <p className="line-clamp-2 break-words text-[15px] font-bold leading-tight text-zinc-950 sm:text-base">
                                   {item.song?.title || item.title}
                                 </p>
-                                <p className="mt-0.5 line-clamp-2 text-xs leading-4 text-zinc-500 sm:leading-5">
-                                  {formatItemType(item.type)}{item.duration ? ` · ${item.duration} min` : ""}
-                                  {item.song?.author ? ` · ${item.song.author}` : ""}
-                                </p>
+                                {item.song ? (
+                                  (item.song.author || getDisplayKey(item)) && (
+                                    <p className="mt-0.5 line-clamp-2 text-xs leading-4 text-zinc-500 sm:leading-5">
+                                      {[item.song.author, getDisplayKey(item) ? `Tono ${getDisplayKey(item)}` : null].filter(Boolean).join(" · ")}
+                                    </p>
+                                  )
+                                ) : (
+                                  <p className="mt-0.5 line-clamp-2 text-xs leading-4 text-zinc-500 sm:leading-5">
+                                    {formatItemType(item.type)}{item.duration ? ` · ${item.duration} min` : ""}
+                                  </p>
+                                )}
                               </div>
                               <div className="flex shrink-0 items-center justify-end gap-1">
                                 {item.song && (
@@ -842,6 +847,7 @@ export default function ServiceDetail() {
                                     variant="ghost"
                                     size="icon"
                                     className="h-9 w-9 shrink-0 rounded-xl bg-primary/5 text-primary"
+                                    aria-expanded={Boolean(expandedSongItems[item.id])}
                                     aria-label={expandedSongItems[item.id] ? "Contraer detalles de canción" : "Expandir detalles de canción"}
                                     onClick={(event) => { event.stopPropagation(); toggleSongItem(item.id); }}
                                   >
@@ -1007,20 +1013,6 @@ export default function ServiceDetail() {
                               <Maximize2 className="w-3 h-3" />
                               Ver acordes
                             </Button>
-                            {isPlanner && item.song.id && (
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                className="rounded-xl"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  navigate(`/app/songs/${item.song!.id}`);
-                                }}
-                              >
-                                Editar canción
-                              </Button>
-                            )}
                             {isPlanner && (
                               <Button
                                 type="button"
@@ -1176,7 +1168,7 @@ export default function ServiceDetail() {
               </CardHeader>
               <CardContent>
                 <p className="text-sm leading-6 text-zinc-500">
-                  Tonos, secuencias, notas y medios en un solo lugar para que el equipo pueda prepararse sin buscar mensajes.
+                  Títulos, tonos, voces y recursos bajo demanda para que el equipo pueda prepararse sin buscar mensajes.
                 </p>
               </CardContent>
             </Card>
@@ -1191,53 +1183,97 @@ export default function ServiceDetail() {
             ) : (
               service.items
                 .filter((item) => isSongItemType(item.type) && item.song)
-                .map((item, index) => (
-                  <Card key={item.id} className="app-card overflow-hidden">
-                    <CardHeader className="border-b border-zinc-100 bg-gradient-to-br from-white to-zinc-50/80 pb-3">
-                      <div className="flex items-start gap-3">
-                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-sm font-black text-primary">
-                          {index + 1}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <CardTitle className="truncate text-base">{item.song?.title || item.title}</CardTitle>
-                          <p className="mt-0.5 truncate text-sm text-zinc-500">{item.song?.author || formatItemType(item.type)}</p>
-                        </div>
-                      </div>
-                    </CardHeader>
-                    <CardContent className="space-y-3 p-3">
-                      {getVocalNote(item) && (
-                        <div className="rounded-2xl border border-primary/10 bg-primary/5 p-3">
-                          <p className="text-sm font-semibold leading-5 text-primary">Canta: {getVocalNote(item)}</p>
-                        </div>
-                      )}
+                .map((item, index) => {
+                  const displayKey = getDisplayKey(item);
+                  const vocalNote = getVocalNote(item);
+                  const youtubeUrl = getSongYoutubeUrl(item.song);
+                  const isExpanded = Boolean(expandedSongItems[item.id]);
 
-                      {getYoutubeEmbedUrl(getSongYoutubeUrl(item.song!)) && (
-                        <div className="overflow-hidden rounded-2xl border border-red-100 bg-black shadow-sm">
-                          <iframe
-                            title={`YouTube - ${item.song?.title || item.title}`}
-                            src={getYoutubeEmbedUrl(getSongYoutubeUrl(item.song!)) || undefined}
-                            className="aspect-video w-full"
-                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                            referrerPolicy="origin"
-                            allowFullScreen
-                          />
-                        </div>
-                      )}
+                  return (
+                    <Card
+                      key={item.id}
+                      className="app-card overflow-hidden"
+                      onClick={() => toggleSongItem(item.id)}
+                    >
+                      <CardContent className="p-0">
+                        <div className="p-3">
+                          <div className="flex items-start gap-3">
+                            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-sm font-black text-primary">
+                              {index + 1}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="line-clamp-2 break-words text-base font-bold leading-tight text-zinc-950">
+                                {item.song?.title || item.title}
+                              </p>
+                              {(item.song?.author || displayKey) && (
+                                <p className="mt-0.5 line-clamp-1 text-sm text-zinc-500">
+                                  {[item.song?.author, displayKey ? `Tono ${displayKey}` : null].filter(Boolean).join(" · ")}
+                                </p>
+                              )}
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-9 w-9 shrink-0 rounded-xl bg-primary/5 text-primary"
+                              aria-expanded={isExpanded}
+                              aria-label={isExpanded ? "Contraer recursos de canción" : "Expandir recursos de canción"}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                toggleSongItem(item.id);
+                              }}
+                            >
+                              {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                            </Button>
+                          </div>
 
-                      <ChordProPreview
-                        value={getSongChordPro(item.song)}
-                        originalKey={getOriginalKey(item)}
-                        selectedKey={getDisplayKey(item)}
-                        onSelectedKeyChange={(key) => handleSaveItemKey(item, key)}
-                        title={item.song?.title || item.title}
-                        artist={item.song?.author}
-                        maxLines={20}
-                        emptyText="Esta canción todavía no tiene acordes guardados."
-                        compact
-                      />
-                    </CardContent>
-                  </Card>
-                ))
+                          {vocalNote && (
+                            <p className="mt-2 line-clamp-2 text-sm font-semibold leading-5 text-primary">
+                              Canta: {vocalNote}
+                            </p>
+                          )}
+                        </div>
+
+                        {isExpanded && (
+                          <div
+                            className="flex flex-wrap items-center gap-2 border-t border-zinc-100 bg-gradient-to-br from-white to-zinc-50/80 p-3"
+                            onClick={stopInteractiveTap}
+                            onPointerDown={stopInteractiveTap}
+                            onTouchStart={stopInteractiveTap}
+                          >
+                            {youtubeUrl && (
+                              <Button asChild type="button" variant="outline" size="sm" className="rounded-xl">
+                                <a
+                                  href={youtubeUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  onClick={stopInteractiveTap}
+                                  onPointerDown={stopInteractiveTap}
+                                  onTouchStart={stopInteractiveTap}
+                                >
+                                  <PlayCircle className="w-3 h-3" />
+                                  YouTube
+                                </a>
+                              </Button>
+                            )}
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="rounded-xl"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setChartItemId(item.id);
+                              }}
+                            >
+                              <Maximize2 className="w-3 h-3" />
+                              Ver acordes
+                            </Button>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  );
+                })
             )}
           </div>
         )}
@@ -1255,13 +1291,8 @@ export default function ServiceDetail() {
                     </DialogTitle>
                     <div className="flex flex-wrap gap-1 pt-0.5 text-[11px] text-zinc-500 sm:gap-1.5 sm:text-xs">
                       {chartItem.song.author && <span>{chartItem.song.author}</span>}
-                      {getDisplayKey(chartItem) && <Badge variant="secondary" className="rounded-full">Tono {getDisplayKey(chartItem)}</Badge>}
-                      {(getPrimaryArrangement(chartItem.song)?.bpm || chartItem.song.bpm) && (
-                        <Badge variant="outline" className="rounded-full">{getPrimaryArrangement(chartItem.song)?.bpm || chartItem.song.bpm} BPM</Badge>
-                      )}
-                      {(getPrimaryArrangement(chartItem.song)?.meter || chartItem.song.meter) && (
-                        <Badge variant="outline" className="rounded-full">{getPrimaryArrangement(chartItem.song)?.meter || chartItem.song.meter}</Badge>
-                      )}
+                      {chartItem.song.author && getDisplayKey(chartItem) && <span aria-hidden="true">·</span>}
+                      {getDisplayKey(chartItem) && <span>Tono {getDisplayKey(chartItem)}</span>}
                     </div>
                   </div>
                   <DialogClose asChild>

@@ -100,38 +100,39 @@ function SongSlide({ slide, showChords }: { slide: Extract<PresentationSlide, { 
     return slide.lines.reduce(
       (metrics, line) => {
         if (line.kind === "blank") {
-          return { ...metrics, rows: metrics.rows + 0.25 };
+          return { ...metrics, rows: metrics.rows + 0.2 };
         }
 
         if (line.kind === "section" || line.kind === "meta") {
-          return { ...metrics, rows: metrics.rows + 0.65 };
+          return { ...metrics, rows: metrics.rows + 0.95 };
         }
 
         const hasChords = showChords && line.chords.trim().length > 0;
         const hasLyrics = line.lyrics.trim().length > 0;
         const maxColumns = Math.max(metrics.maxColumns, showChords ? line.chords.length : 0, line.lyrics.length);
-        const rows = hasChords && hasLyrics ? 2.05 : hasChords ? 1.02 : hasLyrics ? 1.08 : 0.4;
+        const rows = hasChords && hasLyrics ? 2.02 : hasChords ? 1.02 : hasLyrics ? 1.08 : 0.25;
         return { maxColumns, rows: metrics.rows + rows };
       },
       { maxColumns: 12, rows: 0 }
     );
   }, [showChords, slide.lines]);
-  const fallbackWidth = typeof window === "undefined" ? 360 : Math.max(window.innerWidth - 10, 320);
-  const fallbackHeight = typeof window === "undefined" ? 620 : Math.max(window.innerHeight - 96, 420);
+  const fallbackWidth = typeof window === "undefined" ? 360 : Math.max(window.innerWidth - 4, 320);
+  const fallbackHeight = typeof window === "undefined" ? 620 : Math.max(window.innerHeight - 56, 420);
   const chartWidth = chartSize.width || fallbackWidth;
   const chartHeight = chartSize.height || fallbackHeight;
-  const widthLimitedFont = (chartWidth / Math.max(chartMetrics.maxColumns, 1)) * 1.76;
-  const heightLimitedFont = (chartHeight / Math.max(chartMetrics.rows, 1)) * 1.06;
   const isCompactStage = chartWidth < 640;
-  const minChartFontSize = isCompactStage ? 27 : 30;
+  const chartLetterSpacingEm = isCompactStage ? -0.045 : -0.02;
+  const columnFitMultiplier = isCompactStage ? 1.92 : 1.72;
+  const widthLimitedFont = (chartWidth / Math.max(chartMetrics.maxColumns, 1)) * columnFitMultiplier;
+  const heightLimitedFont = (chartHeight / Math.max(chartMetrics.rows, 1)) * 0.98;
   const maxChartFontSize = isCompactStage ? 46 : 64;
-  const chartFontSizePx = Math.round(
-    Math.max(minChartFontSize, Math.min(widthLimitedFont, heightLimitedFont, maxChartFontSize))
-  );
+  const fittedChartFontSize = Math.min(widthLimitedFont, heightLimitedFont, maxChartFontSize);
+  const minChartFontSize = isCompactStage ? 24 : 30;
+  const chartFontSizePx = Math.round(Math.max(minChartFontSize, fittedChartFontSize));
 
   return (
-    <div className="mx-auto flex h-full w-full max-w-none flex-col px-1 pb-1 pt-0 sm:max-w-6xl sm:px-8 sm:pb-4 sm:pt-1">
-      <div className="mb-0.5 flex flex-wrap items-center gap-1 sm:mb-1.5 sm:gap-2">
+    <div className="mx-auto flex h-full w-full max-w-none flex-col px-0.5 pb-0.5 pt-0 sm:max-w-6xl sm:px-8 sm:pb-4 sm:pt-1">
+      <div className="mb-0.5 flex min-h-[1.1rem] flex-wrap items-center gap-1 sm:mb-1.5 sm:gap-2">
         <span className="rounded-full bg-violet-500/15 px-1.5 py-px text-[6px] font-black uppercase tracking-[0.14em] text-violet-200 sm:px-3 sm:py-1 sm:text-xs sm:tracking-[0.28em]">
           {slide.itemIndex}. Canción
         </span>
@@ -155,7 +156,7 @@ function SongSlide({ slide, showChords }: { slide: Extract<PresentationSlide, { 
         )}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-hidden rounded-[0.9rem] border border-white/10 bg-black/20 p-1.5 shadow-2xl shadow-black/30 sm:rounded-[1.75rem] sm:p-5">
+      <div className="min-h-0 flex-1 overflow-hidden rounded-xl border border-white/10 bg-black/20 p-1 shadow-2xl shadow-black/30 sm:rounded-[1.75rem] sm:p-5">
         <div ref={chartBodyRef} className="h-full w-full min-w-0 overflow-hidden font-mono">
           {slide.lines.map((line, index) => {
             if (line.kind === "blank") return <div key={index} className="h-1" />;
@@ -174,16 +175,20 @@ function SongSlide({ slide, showChords }: { slide: Extract<PresentationSlide, { 
             return (
               <div
                 key={index}
-                className="min-w-0 overflow-hidden pb-[0.08em] leading-none last:pb-0"
-                style={{ fontSize: `${chartFontSizePx}px`, fontVariantLigatures: "none" }}
+                className="min-w-0 overflow-hidden pb-[0.04em] leading-none last:pb-0"
+                style={{
+                  fontSize: `${chartFontSizePx}px`,
+                  fontVariantLigatures: "none",
+                  letterSpacing: `${chartLetterSpacingEm}em`,
+                }}
               >
                 {showChords && line.chords && (
-                  <pre className="overflow-hidden whitespace-pre text-[1em] font-black leading-[1.02] text-violet-300">
+                  <pre className="overflow-hidden whitespace-pre text-[1em] font-black leading-[0.96] text-violet-300">
                     {line.chords}
                   </pre>
                 )}
                 {line.lyrics && (
-                  <pre className="overflow-hidden whitespace-pre text-[1em] font-black leading-[1.08] text-white">
+                  <pre className="overflow-hidden whitespace-pre text-[1em] font-black leading-[1.02] text-white">
                     {line.lyrics}
                   </pre>
                 )}
@@ -398,8 +403,8 @@ export default function ServicePresentation() {
     >
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(120deg,rgba(255,255,255,0.08),transparent_35%,rgba(124,58,237,0.12))]" />
 
-      <header className="relative z-10 flex h-9 items-center gap-1.5 px-2 py-1 sm:h-auto sm:gap-2 sm:px-6 sm:py-1.5" onClick={stopStageEvent}>
-        <Button variant="ghost" className="h-7 rounded-full bg-white/10 px-2 text-xs text-white hover:bg-white/15 hover:text-white sm:h-9 sm:px-3 sm:text-sm" onClick={exitToService}>
+      <header className="relative z-10 flex h-8 items-center gap-1 px-1.5 py-0.5 sm:h-auto sm:gap-2 sm:px-6 sm:py-1.5" onClick={stopStageEvent}>
+        <Button variant="ghost" className="h-6 rounded-full bg-white/10 px-1.5 text-[11px] text-white hover:bg-white/15 hover:text-white sm:h-9 sm:px-3 sm:text-sm" onClick={exitToService}>
           <ArrowLeft className="h-4 w-4" />
           Salir
         </Button>
@@ -415,19 +420,19 @@ export default function ServicePresentation() {
         {currentSlide?.kind === "song" && (
           <Button
             variant="ghost"
-            className="h-7 rounded-full bg-white/10 px-2 text-xs text-white hover:bg-white/15 hover:text-white sm:h-9 sm:px-3 sm:text-sm"
+            className="h-6 rounded-full bg-white/10 px-1.5 text-[11px] text-white hover:bg-white/15 hover:text-white sm:h-9 sm:px-3 sm:text-sm"
             onClick={() => setShowChords((current) => !current)}
           >
             {showChords ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
             Acordes
           </Button>
         )}
-        <div className="rounded-full bg-white/10 px-2 py-1 text-xs font-black text-white sm:px-3 sm:py-2 sm:text-sm">
+        <div className="rounded-full bg-white/10 px-1.5 py-0.5 text-[11px] font-black text-white sm:px-3 sm:py-2 sm:text-sm">
           {slides.length ? slideIndex + 1 : 0} / {slides.length}
         </div>
       </header>
 
-      <main className="relative z-10 h-[calc(100svh-2.25rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] min-h-0 sm:h-[calc(100svh-7rem)]">
+      <main className="relative z-10 h-[calc(100svh-2rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] min-h-0 sm:h-[calc(100svh-7rem)]">
         {slides.length === 0 ? (
           <div className="flex h-full items-center justify-center px-6 text-center">
             <div>

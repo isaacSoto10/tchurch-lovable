@@ -11,7 +11,6 @@ import { useToast } from "@/components/ui/use-toast";
 import { useChurch } from "@/providers/ChurchProvider";
 import { ChordProPreview } from "@/components/ChordProPreview";
 import {
-  getPrimaryArrangement,
   getSongDisplayKey,
   getSongChordPro,
   getSongYoutubeUrl,
@@ -782,33 +781,31 @@ export default function Services() {
         <DialogContent className="flex h-[100svh] max-h-[100svh] w-screen max-w-none flex-col gap-0 overflow-hidden rounded-none border-0 p-0 sm:h-[92vh] sm:max-w-5xl sm:rounded-[2rem] sm:border">
           {chartItem?.song && (
             <>
-              <DialogHeader className="border-b border-zinc-100 px-3 py-2 pr-14 text-left sm:px-4 sm:py-3 sm:pr-16">
-                <div className="min-w-0">
-                  <DialogTitle className="line-clamp-1 text-base font-black leading-tight text-zinc-950 sm:text-lg">
-                    {chartItem.song.title}
-                  </DialogTitle>
-                  <div className="flex flex-wrap gap-1 pt-0.5 text-[11px] text-zinc-500 sm:gap-1.5 sm:text-xs">
-                    {chartItem.song.author && <span>{chartItem.song.author}</span>}
-                    {getItemDisplayKey(chartItem) && <Badge variant="secondary" className="rounded-full">Tono {getItemDisplayKey(chartItem)}</Badge>}
-                    {(getPrimaryArrangement(chartItem.song)?.bpm || chartItem.song.bpm) && (
-                      <Badge variant="outline" className="rounded-full">{getPrimaryArrangement(chartItem.song)?.bpm || chartItem.song.bpm} BPM</Badge>
-                    )}
-                    {(getPrimaryArrangement(chartItem.song)?.meter || chartItem.song.meter) && (
-                      <Badge variant="outline" className="rounded-full">{getPrimaryArrangement(chartItem.song)?.meter || chartItem.song.meter}</Badge>
-                    )}
+              <DialogHeader className="border-b border-zinc-100 px-3 py-2 text-left sm:px-4 sm:py-3">
+                <div className="flex items-start gap-3">
+                  <div className="min-w-0 flex-1">
+                    <DialogTitle className="line-clamp-1 text-base font-black leading-tight text-zinc-950 sm:text-lg">
+                      {chartItem.song.title}
+                    </DialogTitle>
+                    <div className="flex flex-wrap gap-1 pt-0.5 text-[11px] text-zinc-500 sm:gap-1.5 sm:text-xs">
+                      {chartItem.song.author && <span>{chartItem.song.author}</span>}
+                      {chartItem.song.author && getItemDisplayKey(chartItem) && <span aria-hidden="true">·</span>}
+                      {getItemDisplayKey(chartItem) && <span>Tono {getItemDisplayKey(chartItem)}</span>}
+                    </div>
                   </div>
+                  <DialogClose asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-10 shrink-0 rounded-2xl px-3"
+                      aria-label="Cerrar acordes"
+                    >
+                      <X className="h-4 w-4 sm:mr-1" />
+                      <span className="hidden sm:inline">Cerrar</span>
+                    </Button>
+                  </DialogClose>
                 </div>
-                <DialogClose asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="absolute right-2 top-2 h-10 w-10 rounded-2xl bg-white text-zinc-600 shadow-sm ring-1 ring-zinc-200 hover:bg-zinc-50 sm:right-3 sm:top-3"
-                    aria-label="Cerrar acordes"
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
-                </DialogClose>
               </DialogHeader>
               <div className="min-h-0 flex-1 overflow-auto bg-zinc-50 p-1 sm:p-4">
                 {getVocalNote(chartItem) && (
@@ -830,10 +827,10 @@ export default function Services() {
                   fullHeight
                 />
               </div>
-              <div className="border-t border-zinc-100 bg-white p-3 sm:hidden">
+              <div className="shrink-0 border-t border-zinc-100 bg-white/95 p-3 backdrop-blur">
                 <DialogClose asChild>
-                  <Button type="button" variant="outline" className="h-11 w-full rounded-2xl">
-                    Cerrar
+                  <Button type="button" className="h-11 w-full rounded-2xl sm:ml-auto sm:w-auto">
+                    Cerrar acordes
                   </Button>
                 </DialogClose>
               </div>
@@ -1226,6 +1223,7 @@ export default function Services() {
                             const isSong = isSongItemType(item.type) && item.song;
                             const vocalNote = isSong ? getVocalNote(item) : "";
                             const youtubeUrl = isSong ? getSongYoutubeUrl(item.song) : null;
+                            const displayKey = isSong ? getItemDisplayKey(item) : null;
                             return (
                               <div
                                 key={item.id}
@@ -1238,6 +1236,7 @@ export default function Services() {
                                   data-service-id={svc.id}
                                   className="p-2.5 sm:p-3"
                                   onClick={() => {
+                                    if (suppressNextCardClickRef.current) return;
                                     if (isSong) toggleSongItem(item.id);
                                   }}
                                 >
@@ -1267,10 +1266,17 @@ export default function Services() {
                                           <p className="line-clamp-2 break-words text-[15px] font-bold leading-tight text-zinc-950 sm:text-base">
                                             {item.song?.title || item.title}
                                           </p>
-                                          <p className="mt-0.5 line-clamp-2 text-xs leading-4 text-muted-foreground sm:leading-5">
-                                            {item.song?.author || item.type}
-                                            {item.duration ? ` · ${item.duration}m` : ""}
-                                          </p>
+                                          {isSong ? (
+                                            (item.song?.author || displayKey) && (
+                                              <p className="mt-0.5 line-clamp-2 text-xs leading-4 text-muted-foreground sm:leading-5">
+                                                {[item.song?.author, displayKey ? `Tono ${displayKey}` : null].filter(Boolean).join(" · ")}
+                                              </p>
+                                            )
+                                          ) : (
+                                            <p className="mt-0.5 line-clamp-2 text-xs leading-4 text-muted-foreground sm:leading-5">
+                                              {item.type}{item.duration ? ` · ${item.duration}m` : ""}
+                                            </p>
+                                          )}
                                         </div>
                                         <div className="flex shrink-0 items-center justify-end gap-1">
                                           {isSong && (
@@ -1278,6 +1284,7 @@ export default function Services() {
                                               variant="ghost"
                                               size="icon"
                                               className="h-9 w-9 shrink-0 rounded-xl bg-primary/5 text-primary"
+                                              aria-expanded={Boolean(expandedSongItems[item.id])}
                                               aria-label={expandedSongItems[item.id] ? "Contraer detalles de la canción" : "Expandir detalles de la canción"}
                                               onClick={(event) => {
                                                 event.stopPropagation();
@@ -1369,20 +1376,6 @@ export default function Services() {
                                         <Maximize2 className="w-3 h-3" />
                                         Ver acordes
                                       </Button>
-                                      {isPlanner && item.song.id && (
-                                        <Button
-                                          type="button"
-                                          variant="ghost"
-                                          size="sm"
-                                          className="rounded-xl"
-                                          onClick={(event) => {
-                                            event.stopPropagation();
-                                            navigate(`/app/songs/${item.song!.id}`);
-                                          }}
-                                        >
-                                          Editar canción
-                                        </Button>
-                                      )}
                                       {isPlanner && (
                                         <Button
                                           type="button"

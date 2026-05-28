@@ -89,7 +89,7 @@ const ITEM_TYPE_LABELS: Record<string, string> = {
   other: "Otro",
 };
 
-const CHART_WRAP_COLUMNS = 22;
+const CHART_WRAP_COLUMNS = 26;
 const MAX_RENDERED_ROWS_PER_SONG_SLIDE = 21;
 
 function getPlanningDetails(item: PresentationServiceItem) {
@@ -135,12 +135,12 @@ function splitSongLines(lines: ChordProDisplayLine[]) {
 
   function lineRows(line: ChordProDisplayLine) {
     if (line.kind === "blank") return 0.5;
-    if (line.kind === "section" || line.kind === "meta") return 1;
+    if (line.kind === "section" || line.kind === "meta") return 0.85;
 
     const hasChords = Boolean(line.chords.trim());
     const hasLyrics = Boolean(line.lyrics.trim());
-    if (hasChords && hasLyrics) return 2;
-    if (hasChords || hasLyrics) return 1;
+    if (hasChords && hasLyrics) return 2.1;
+    if (hasChords || hasLyrics) return 1.1;
     return 0.5;
   }
 
@@ -165,7 +165,7 @@ function splitSongLines(lines: ChordProDisplayLine[]) {
     const startsNewSection = line.kind === "section" || line.kind === "meta";
 
     if (
-      (startsNewSection && hasMusicLine(current) && currentRows >= MAX_RENDERED_ROWS_PER_SONG_SLIDE * 0.62) ||
+      (startsNewSection && hasMusicLine(current) && currentRows >= MAX_RENDERED_ROWS_PER_SONG_SLIDE * 0.68) ||
       (hasMusicLine(current) && currentRows + rows > MAX_RENDERED_ROWS_PER_SONG_SLIDE)
     ) {
       pushCurrent();
@@ -221,6 +221,22 @@ function findSplitColumn(line: Extract<ChordProDisplayLine, { kind: "line" }>, s
   return target;
 }
 
+function firstContentColumn(value: string) {
+  const index = value.search(/\S/);
+  return index === -1 ? Number.POSITIVE_INFINITY : index;
+}
+
+function trimSharedLeadingColumns(chords: string, lyrics: string) {
+  const sharedColumns = Math.min(firstContentColumn(chords), firstContentColumn(lyrics));
+
+  if (!Number.isFinite(sharedColumns)) {
+    return { chords: chords.trimStart(), lyrics: lyrics.trimStart() };
+  }
+
+  if (sharedColumns <= 0) return { chords, lyrics };
+  return { chords: chords.slice(sharedColumns), lyrics: lyrics.slice(sharedColumns) };
+}
+
 function splitWideDisplayLine(line: ChordProDisplayLine, maxColumns = CHART_WRAP_COLUMNS): ChordProDisplayLine[] {
   if (line.kind !== "line") return [line];
 
@@ -233,8 +249,10 @@ function splitWideDisplayLine(line: ChordProDisplayLine, maxColumns = CHART_WRAP
   while (start < width) {
     const end = Math.max(start + 1, findSplitColumn(line, start, width, maxColumns));
 
-    const chords = line.chords.slice(start, end).trimEnd();
-    const lyrics = line.lyrics.slice(start, end).trimEnd();
+    const { chords, lyrics } = trimSharedLeadingColumns(
+      line.chords.slice(start, end).trimEnd(),
+      line.lyrics.slice(start, end).trimEnd()
+    );
     if (chords.trim() || lyrics.trim()) {
       segments.push({ kind: "line", chords, lyrics });
     }

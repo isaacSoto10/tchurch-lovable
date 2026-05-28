@@ -25,3 +25,8 @@ test -f ios/App/CapacitorPushNotifications/Package.swift
 test -d ios/App/CapacitorPushNotifications/ios/Sources/PushNotificationsPlugin
 test -f ios/App/CapacitorShare/Package.swift
 test -d ios/App/CapacitorShare/ios/Sources/SharePlugin
+
+if grep -q "node_modules/@capacitor" ios/App/CapApp-SPM/Package.swift; then
+  echo "CapApp-SPM must use committed vendored Capacitor packages, not node_modules." >&2
+  exit 1
+fi
