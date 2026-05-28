@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Capacitor } from "@capacitor/core";
-import { Copy, Heart, Loader2, ExternalLink, Receipt, ShieldCheck } from "lucide-react";
+import QRCode from "qrcode";
+import { Copy, Download, Heart, Loader2, ExternalLink, QrCode, Receipt, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -48,6 +49,15 @@ function money(cents: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format((Number(cents) || 0) / 100);
 }
 
+function sanitizeFileName(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase() || "donaciones";
+}
+
 export default function Giving() {
   const { fetchApi } = useApi();
   const { toast } = useToast();
@@ -62,6 +72,8 @@ export default function Giving() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [summary, setSummary] = useState({ totalCents: 0, gifts: 0 });
   const [canViewFinance, setCanViewFinance] = useState(false);
+  const [qrDataUrl, setQrDataUrl] = useState("");
+  const [qrLoading, setQrLoading] = useState(false);
   const [form, setForm] = useState({
     amount: "50",
     fundId: "",
@@ -74,6 +86,7 @@ export default function Giving() {
 
   const isAdmin = selectedChurch?.role === "ADMIN";
   const publicGivingUrl = selectedChurch?.slug ? `https://www.tchurchapp.com/give/${selectedChurch.slug}` : "";
+  const qrFileName = `tchurch-${sanitizeFileName(selectedChurch?.slug || selectedChurch?.name || "donaciones")}-qr-donaciones.png`;
 
   function getCheckoutReturnUrl(status: "success" | "canceled") {
     if (Capacitor.isNativePlatform()) {
@@ -103,6 +116,51 @@ export default function Giving() {
       toast({ title: "Link copiado", description: "Ya puedes compartirlo con invitados y miembros." });
     } catch {
       toast({ title: "No se pudo copiar", description: publicGivingUrl });
+    }
+  }
+
+  async function downloadPublicGivingQr() {
+    if (!qrDataUrl) {
+      toast({ title: "QR no disponible", description: "Espera unos segundos e intenta otra vez." });
+      return;
+    }
+
+    try {
+      if (Capacitor.isNativePlatform()) {
+        const base64 = qrDataUrl.includes(",") ? qrDataUrl.split(",")[1] : qrDataUrl;
+        const [{ Filesystem, Directory }, { Share }] = await Promise.all([
+          import("@capacitor/filesystem"),
+          import("@capacitor/share"),
+        ]);
+        const saved = await Filesystem.writeFile({
+          path: qrFileName,
+          data: base64,
+          directory: Directory.Cache,
+          recursive: true,
+        });
+
+        await Share.share({
+          title: "QR para donaciones",
+          text: `Donaciones para ${selectedChurch?.name || "la iglesia"}`,
+          url: saved.uri,
+          dialogTitle: "Guardar o compartir QR",
+        });
+        return;
+      }
+
+      const link = document.createElement("a");
+      link.href = qrDataUrl;
+      link.download = qrFileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      toast({ title: "QR descargado", description: "El archivo PNG ya está listo para imprimir o compartir." });
+    } catch (error) {
+      toast({
+        title: "No se pudo descargar el QR",
+        description: error instanceof Error ? error.message : undefined,
+        variant: "destructive",
+      });
     }
   }
 
@@ -138,6 +196,54 @@ export default function Giving() {
   useEffect(() => {
     loadGiving();
   }, [loadGiving]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function generateQr() {
+      if (!publicGivingUrl) {
+        setQrDataUrl("");
+        setQrLoading(false);
+        return;
+      }
+
+      setQrLoading(true);
+      try {
+        const dataUrl = await QRCode.toDataURL(publicGivingUrl, {
+          errorCorrectionLevel: "M",
+          margin: 2,
+          width: 768,
+          color: {
+            dark: "#111827",
+            light: "#ffffff",
+          },
+        });
+
+        if (active) {
+          setQrDataUrl(dataUrl);
+        }
+      } catch (error) {
+        if (active) {
+          setQrDataUrl("");
+          toast({
+            title: "No se pudo generar el QR",
+            description: error instanceof Error ? error.message : undefined,
+            variant: "destructive",
+          });
+        }
+      } finally {
+        if (active) {
+          setQrLoading(false);
+        }
+      }
+    }
+
+    generateQr();
+
+    return () => {
+      active = false;
+    };
+  }, [publicGivingUrl, toast]);
 
   useEffect(() => {
     const success = searchParams.get("success") === "true";
@@ -228,24 +334,41 @@ export default function Giving() {
       {publicGivingUrl ? (
         <Card className="app-card">
           <CardHeader>
-            <CardTitle>Link público para donar</CardTitle>
+            <CardTitle>Link público y QR para donar</CardTitle>
             <CardDescription>
               Compártelo con visitantes, familiares o cualquier persona que quiera apoyar a la iglesia.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="rounded-2xl bg-muted px-4 py-3 font-mono text-sm text-muted-foreground">
-              {publicGivingUrl}
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <Button type="button" variant="outline" className="h-11 rounded-2xl" onClick={copyPublicGivingLink}>
-                <Copy className="mr-2 h-4 w-4" />
-                Copiar
-              </Button>
-              <Button type="button" variant="outline" className="h-11 rounded-2xl" onClick={() => openCheckoutUrl(publicGivingUrl)}>
-                <ExternalLink className="mr-2 h-4 w-4" />
-                Abrir
-              </Button>
+            <div className="grid gap-4 sm:grid-cols-[176px_1fr] sm:items-center">
+              <div className="mx-auto flex h-44 w-44 items-center justify-center rounded-2xl border bg-white p-3 shadow-sm sm:mx-0">
+                {qrLoading ? (
+                  <Loader2 className="h-7 w-7 animate-spin text-muted-foreground" />
+                ) : qrDataUrl ? (
+                  <img src={qrDataUrl} alt="QR del link público para donar" className="h-full w-full" />
+                ) : (
+                  <QrCode className="h-12 w-12 text-muted-foreground" />
+                )}
+              </div>
+              <div className="space-y-3">
+                <div className="break-all rounded-2xl bg-muted px-4 py-3 font-mono text-sm text-muted-foreground">
+                  {publicGivingUrl}
+                </div>
+                <div className="grid gap-2 sm:grid-cols-3">
+                  <Button type="button" variant="outline" className="h-11 rounded-2xl" onClick={copyPublicGivingLink}>
+                    <Copy className="mr-2 h-4 w-4" />
+                    Copiar
+                  </Button>
+                  <Button type="button" variant="outline" className="h-11 rounded-2xl" onClick={() => openCheckoutUrl(publicGivingUrl)}>
+                    <ExternalLink className="mr-2 h-4 w-4" />
+                    Abrir
+                  </Button>
+                  <Button type="button" variant="outline" className="h-11 rounded-2xl" onClick={downloadPublicGivingQr} disabled={qrLoading || !qrDataUrl}>
+                    <Download className="mr-2 h-4 w-4" />
+                    Descargar QR
+                  </Button>
+                </div>
+              </div>
             </div>
           </CardContent>
         </Card>
