@@ -14,7 +14,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, ArrowLeft, Plus, Trash2, GripVertical, Check, X, Clock, Users, Music, ChevronDown, ChevronUp, FileDown, Maximize2, PlayCircle } from "lucide-react";
+import { Loader2, ArrowLeft, Plus, Trash2, GripVertical, Check, X, Clock, Users, Music, ChevronDown, ChevronUp, FileDown, Maximize2, PlayCircle, Pencil } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useChurch } from "@/providers/ChurchProvider";
 import { useToast } from "@/components/ui/use-toast";
@@ -1013,6 +1013,21 @@ export default function ServiceDetail() {
                               <Maximize2 className="w-3 h-3" />
                               Ver acordes
                             </Button>
+                            {isPlanner && (
+                              <Button
+                                type="button"
+                                variant={detailsEditingId === item.id ? "default" : "outline"}
+                                size="sm"
+                                className="rounded-xl"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  startItemDetails(item);
+                                }}
+                              >
+                                <Pencil className="w-3 h-3" />
+                                Detalles
+                              </Button>
+                            )}
                             {isPlanner && (
                               <Button
                                 type="button"

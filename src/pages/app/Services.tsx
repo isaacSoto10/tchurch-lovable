@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Pencil, Trash2, Search, ChevronUp, ChevronDown, Music, FileText, Bell, X, Check, Clock, Users, GripVertical, FileDown, Maximize2, PlayCircle } from "lucide-react";
+import { Label } from "@/components/ui/label";
+import { Plus, Pencil, Trash2, Search, ChevronUp, ChevronDown, Music, FileText, Bell, X, Check, Clock, Users, GripVertical, FileDown, Maximize2, PlayCircle, Loader2 } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
 import { useChurch } from "@/providers/ChurchProvider";
@@ -100,6 +101,15 @@ interface Member {
 
 type PlanningNoteKey = "vocals" | "band" | "audioVisual" | "person";
 
+type PlanningDetails = {
+  timing?: string;
+  serviceKey?: string;
+  selectedKey?: string;
+  key?: string;
+  notes?: Partial<Record<PlanningNoteKey, string>>;
+  [key: string]: unknown;
+};
+
 const NOTE_LABELS: Record<PlanningNoteKey, string> = {
   vocals: "Voces",
   band: "Banda",
@@ -187,6 +197,16 @@ export default function Services() {
   const [expandedService, setExpandedService] = useState<string | null>(null);
   const [expandedSongItems, setExpandedSongItems] = useState<Record<string, boolean>>({});
   const [chartSelection, setChartSelection] = useState<{ serviceId: string; itemId: string } | null>(null);
+  const [detailsEditing, setDetailsEditing] = useState<{ serviceId: string; itemId: string } | null>(null);
+  const [detailDuration, setDetailDuration] = useState("");
+  const [detailTiming, setDetailTiming] = useState("during");
+  const [detailNotes, setDetailNotes] = useState<Record<PlanningNoteKey, string>>({
+    vocals: "",
+    band: "",
+    audioVisual: "",
+    person: "",
+  });
+  const [savingDetails, setSavingDetails] = useState(false);
   const [serviceItems, setServiceItems] = useState<Record<string, ServiceItem[]>>({});
   const [serviceAssignments, setServiceAssignments] = useState<Record<string, ServiceAssignment[]>>({});
   const [itemsLoading, setItemsLoading] = useState<Record<string, boolean>>({});
@@ -282,8 +302,10 @@ export default function Services() {
 
   const getItemDisplayKey = (item: ServiceItem) => getItemSavedKey(item) || getItemOriginalKey(item);
 
+  const getPlanningDetails = (item: ServiceItem) => (item.details || {}) as PlanningDetails;
+
   const getPlanningNotes = (item: ServiceItem) => {
-    const notes = item.details?.notes;
+    const notes = getPlanningDetails(item).notes;
     return notes && typeof notes === "object" ? notes as Partial<Record<PlanningNoteKey, string>> : {};
   };
 
@@ -330,6 +352,69 @@ export default function Services() {
     } catch (error) {
       console.error("No se pudo guardar el tono:", error);
       toast({ title: "No se pudo guardar el tono", variant: "destructive" });
+    }
+  }
+
+  const isEditingItemDetails = (serviceId: string, itemId: string) =>
+    detailsEditing?.serviceId === serviceId && detailsEditing.itemId === itemId;
+
+  function startItemDetails(serviceId: string, item: ServiceItem) {
+    if (isEditingItemDetails(serviceId, item.id)) {
+      setDetailsEditing(null);
+      return;
+    }
+
+    const details = getPlanningDetails(item);
+    const notes = getPlanningNotes(item);
+    setDetailsEditing({ serviceId, itemId: item.id });
+    setDetailDuration(item.duration ? String(item.duration) : "");
+    setDetailTiming(typeof details.timing === "string" ? details.timing : "during");
+    setDetailNotes({
+      vocals: notes.vocals || "",
+      band: notes.band || "",
+      audioVisual: notes.audioVisual || "",
+      person: notes.person || "",
+    });
+  }
+
+  async function saveItemDetails(serviceId: string, item: ServiceItem) {
+    const duration = detailDuration ? Number(detailDuration) : null;
+    if (duration !== null && Number.isNaN(duration)) {
+      toast({ title: "La duración debe ser un número", variant: "destructive" });
+      return;
+    }
+
+    const nextDetails: PlanningDetails = {
+      ...(item.details || {}),
+      timing: detailTiming,
+      notes: {
+        vocals: detailNotes.vocals.trim(),
+        band: detailNotes.band.trim(),
+        audioVisual: detailNotes.audioVisual.trim(),
+        person: detailNotes.person.trim(),
+      },
+    };
+
+    setSavingDetails(true);
+    try {
+      await fetchApi(`/service-items/${item.id}`, {
+        method: "PUT",
+        body: JSON.stringify({ duration, details: nextDetails }),
+      });
+
+      setServiceItems((prev) => ({
+        ...prev,
+        [serviceId]: (prev[serviceId] || []).map((serviceItem) =>
+          serviceItem.id === item.id ? { ...serviceItem, duration: duration ?? undefined, details: nextDetails } : serviceItem
+        ),
+      }));
+      setDetailsEditing(null);
+      toast({ title: "Detalles guardados" });
+    } catch (error) {
+      console.error("No se pudieron guardar los detalles:", error);
+      toast({ title: "No se pudieron guardar los detalles", variant: "destructive" });
+    } finally {
+      setSavingDetails(false);
     }
   }
 
@@ -1379,6 +1464,21 @@ export default function Services() {
                                       {isPlanner && (
                                         <Button
                                           type="button"
+                                          variant={isEditingItemDetails(svc.id, item.id) ? "default" : "outline"}
+                                          size="sm"
+                                          className="rounded-xl"
+                                          onClick={(event) => {
+                                            event.stopPropagation();
+                                            startItemDetails(svc.id, item);
+                                          }}
+                                        >
+                                          <Pencil className="w-3 h-3" />
+                                          Detalles
+                                        </Button>
+                                      )}
+                                      {isPlanner && (
+                                        <Button
+                                          type="button"
                                           variant="ghost"
                                           size="icon"
                                           className="ml-auto h-9 w-9 rounded-xl text-zinc-400 hover:bg-red-50 hover:text-red-500"
@@ -1393,6 +1493,60 @@ export default function Services() {
                                       )}
                                     </div>
 
+                                    {isEditingItemDetails(svc.id, item.id) && (
+                                      <div className="space-y-3 rounded-2xl border border-zinc-100 bg-zinc-50 p-3">
+                                        <div className="grid gap-3 sm:grid-cols-2">
+                                          <div className="space-y-1.5">
+                                            <Label className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">Duración</Label>
+                                            <Input
+                                              type="number"
+                                              min="0"
+                                              placeholder="5"
+                                              value={detailDuration}
+                                              onChange={(event) => setDetailDuration(event.target.value)}
+                                              className="h-11 rounded-2xl bg-white"
+                                            />
+                                          </div>
+                                          <div className="space-y-1.5">
+                                            <Label className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">Momento</Label>
+                                            <Select value={detailTiming} onValueChange={setDetailTiming}>
+                                              <SelectTrigger className="h-11 rounded-2xl bg-white">
+                                                <SelectValue />
+                                              </SelectTrigger>
+                                              <SelectContent>
+                                                <SelectItem value="pre_service">Antes del servicio</SelectItem>
+                                                <SelectItem value="during">Durante el servicio</SelectItem>
+                                                <SelectItem value="post_service">Después del servicio</SelectItem>
+                                              </SelectContent>
+                                            </Select>
+                                          </div>
+                                        </div>
+
+                                        <div className="grid gap-3">
+                                          {(Object.keys(NOTE_LABELS) as PlanningNoteKey[]).map((key) => (
+                                            <div key={key} className="space-y-1.5">
+                                              <Label className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">{NOTE_LABELS[key]}</Label>
+                                              <Textarea
+                                                value={detailNotes[key]}
+                                                onChange={(event) => setDetailNotes((current) => ({ ...current, [key]: event.target.value }))}
+                                                placeholder={key === "vocals" ? "Ej. Lucy" : `Notas para ${NOTE_LABELS[key].toLowerCase()}...`}
+                                                rows={2}
+                                                className="rounded-2xl bg-white"
+                                              />
+                                            </div>
+                                          ))}
+                                        </div>
+
+                                        <div className="flex justify-end gap-2">
+                                          <Button type="button" variant="outline" size="sm" className="rounded-xl" onClick={() => setDetailsEditing(null)}>
+                                            Cancelar
+                                          </Button>
+                                          <Button type="button" size="sm" className="rounded-xl" onClick={() => saveItemDetails(svc.id, item)} disabled={savingDetails}>
+                                            {savingDetails ? <Loader2 className="h-4 w-4 animate-spin" /> : "Guardar detalles"}
+                                          </Button>
+                                        </div>
+                                      </div>
+                                    )}
                                   </div>
                                 )}
                               </div>
