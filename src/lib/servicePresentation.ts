@@ -90,7 +90,7 @@ const ITEM_TYPE_LABELS: Record<string, string> = {
 };
 
 const CHART_WRAP_COLUMNS = 34;
-const MAX_RENDERED_ROWS_PER_SONG_SLIDE = 21;
+const MAX_RENDERED_ROWS_PER_SONG_SLIDE = 23;
 
 function getPlanningDetails(item: PresentationServiceItem) {
   return (item.details || {}) as Record<string, unknown>;
