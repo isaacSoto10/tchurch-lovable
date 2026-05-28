@@ -369,22 +369,26 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
 
   async function handleFiles(files: FileList | null) {
     if (!files?.length) return;
+    const selectedFiles = Array.from(files);
     setUploading(true);
     try {
-      for (const file of Array.from(files)) {
+      const formData = new FormData();
+      for (const file of selectedFiles) {
         const uploadFile = getUploadFile(file);
-        const formData = new FormData();
         formData.append("file", uploadFile.body, uploadFile.filename);
         formData.append("title", uploadFile.title);
-        if (selectedFolderId) {
-          formData.append("folderId", selectedFolderId);
-        }
-        await fetchApi(`/ministries/${ministryId}/resources`, {
-          method: "POST",
-          body: formData,
-        });
       }
-      toast({ title: "Recurso subido", description: "Los miembros fueron notificados por correo." });
+      if (selectedFolderId) {
+        formData.append("folderId", selectedFolderId);
+      }
+      await fetchApi(`/ministries/${ministryId}/resources`, {
+        method: "POST",
+        body: formData,
+      });
+      toast({
+        title: selectedFiles.length === 1 ? "Recurso subido" : "Recursos subidos",
+        description: "Los miembros fueron notificados por correo.",
+      });
       if (inputRef.current) inputRef.current.value = "";
       await loadResources(selectedFolderId);
     } catch (error) {
