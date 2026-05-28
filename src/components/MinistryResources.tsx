@@ -1,4 +1,5 @@
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Capacitor } from "@capacitor/core";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -29,6 +30,7 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
+  Link,
   Loader2,
   Pencil,
   Trash2,
@@ -40,6 +42,7 @@ type Resource = {
   title: string;
   originalName: string;
   mimeType: string;
+  resourceType: "file" | "link";
   size: number;
   url: string;
   createdAt: string;
@@ -109,6 +112,48 @@ function getUploadFile(file: File): { body: Blob; filename: string; title: strin
   return { body, filename, title };
 }
 
+function isLinkResource(resource: Resource): boolean {
+  return resource.resourceType === "link" || resource.mimeType === "text/uri-list";
+}
+
+function sanitizeDownloadName(value: string): string {
+  return (
+    value
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[\\/:*?"<>|]/g, "-")
+      .replace(/\s+/g, " ")
+      .trim() || `recurso-${Date.now()}`
+  );
+}
+
+function dataUrlToBase64(dataUrl: string): string {
+  return dataUrl.includes(",") ? dataUrl.split(",")[1] : dataUrl;
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      resolve(dataUrlToBase64(result));
+    };
+    reader.onerror = () => reject(reader.error || new Error("No se pudo leer el archivo."));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function fetchResourceAsBlob(url: string): Promise<Blob> {
+  if (url.startsWith("data:")) {
+    const response = await fetch(url);
+    return response.blob();
+  }
+
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return response.blob();
+}
+
 function formatSize(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
   if (bytes < 1024) return `${bytes} B`;
@@ -153,6 +198,11 @@ function normalizeResource(raw: unknown, fallbackFolderId?: string | null): Reso
     originalName:
       readString(raw, ["original_name", "originalName", "filename", "fileName", "name", "title"]) || title,
     mimeType: readString(raw, ["mime_type", "mimeType", "contentType", "type"]) || "",
+    resourceType:
+      readString(raw, ["resource_type", "resourceType", "kind"]) === "link" ||
+      readString(raw, ["mime_type", "mimeType", "contentType", "type"]) === "text/uri-list"
+        ? "link"
+        : "file",
     size: readNumber(raw, ["size", "bytes", "fileSize"]),
     url: readString(raw, ["url", "fileUrl", "downloadUrl", "publicUrl", "signedUrl"]) || "",
     createdAt: readString(raw, ["created_at", "createdAt", "uploadedAt", "created"]) || "",
@@ -212,8 +262,11 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
   const [resources, setResources] = useState<Resource[]>([]);
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
   const [newFolderName, setNewFolderName] = useState("");
+  const [newLinkTitle, setNewLinkTitle] = useState("");
+  const [newLinkUrl, setNewLinkUrl] = useState("");
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [addingLink, setAddingLink] = useState(false);
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [folderToDelete, setFolderToDelete] = useState<ResourceFolder | null>(null);
@@ -222,6 +275,7 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
   const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
   const [editingResource, setEditingResource] = useState<Resource | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
+  const [editingUrl, setEditingUrl] = useState("");
   const [editingFolderId, setEditingFolderId] = useState("");
   const [updatingResourceId, setUpdatingResourceId] = useState<string | null>(null);
 
@@ -345,6 +399,118 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
     }
   }
 
+  async function handleAddLink(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const url = newLinkUrl.trim();
+    if (!url) return;
+
+    setAddingLink(true);
+    try {
+      await fetchApi(`/ministries/${ministryId}/resources`, {
+        method: "POST",
+        body: JSON.stringify({
+          resourceType: "link",
+          title: newLinkTitle.trim(),
+          url,
+          folderId: selectedFolderId,
+        }),
+      });
+
+      setNewLinkTitle("");
+      setNewLinkUrl("");
+      toast({ title: "Link agregado" });
+      await loadResources(selectedFolderId);
+    } catch (error) {
+      console.error("No se pudo agregar el link:", error);
+      toast({
+        title: "No se pudo agregar el link",
+        description: getErrorDescription(error, "Revisa la URL e intenta otra vez."),
+        variant: "destructive",
+      });
+    } finally {
+      setAddingLink(false);
+    }
+  }
+
+  function openResource(resource: Resource) {
+    if (!resource.url) return;
+
+    if (Capacitor.isNativePlatform()) {
+      window.open(resource.url, "_system", "noopener,noreferrer");
+      return;
+    }
+
+    const opened = window.open(resource.url, "_blank", "noopener,noreferrer");
+    if (!opened) {
+      window.location.href = resource.url;
+    }
+  }
+
+  async function downloadResource(resource: Resource) {
+    if (!resource.url || isLinkResource(resource)) return;
+
+    const filename = sanitizeDownloadName(resource.originalName || resource.title || "recurso");
+
+    try {
+      if (Capacitor.isNativePlatform()) {
+        const [{ Filesystem, Directory }, { Share }] = await Promise.all([
+          import("@capacitor/filesystem"),
+          import("@capacitor/share"),
+        ]);
+        let fileUri: string;
+
+        if (resource.url.startsWith("data:")) {
+          const blob = await fetchResourceAsBlob(resource.url);
+          const base64 = await blobToBase64(blob);
+          const saved = await Filesystem.writeFile({
+            path: filename,
+            data: base64,
+            directory: Directory.Cache,
+            recursive: true,
+          });
+          fileUri = saved.uri;
+        } else {
+          await Filesystem.downloadFile({
+            url: resource.url,
+            path: filename,
+            directory: Directory.Cache,
+            recursive: true,
+          });
+          const saved = await Filesystem.getUri({
+            path: filename,
+            directory: Directory.Cache,
+          });
+          fileUri = saved.uri;
+        }
+
+        await Share.share({
+          title: resource.title || resource.originalName || "Recurso",
+          url: fileUri,
+          dialogTitle: "Guardar o compartir recurso",
+        });
+        return;
+      }
+
+      const blob = await fetchResourceAsBlob(resource.url);
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+      toast({ title: "Descarga iniciada" });
+    } catch (error) {
+      console.error("No se pudo descargar el recurso:", error);
+      openResource(resource);
+      toast({
+        title: "Abrimos el recurso",
+        description: "No se pudo guardar directamente, pero puedes abrirlo desde el enlace.",
+      });
+    }
+  }
+
   async function handleDelete(id: string) {
     setDeletingId(id);
     try {
@@ -410,12 +576,14 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
   function startEditingResource(resource: Resource) {
     setEditingResource(resource);
     setEditingTitle(resource.title || resource.originalName || "");
+    setEditingUrl(isLinkResource(resource) ? resource.url : "");
     setEditingFolderId(resource.folderId || "");
   }
 
   function cancelEditingResource() {
     setEditingResource(null);
     setEditingTitle("");
+    setEditingUrl("");
     setEditingFolderId("");
   }
 
@@ -425,6 +593,8 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
 
     const title = editingTitle.trim();
     if (!title) return;
+    const url = editingUrl.trim();
+    if (editingResource && isLinkResource(editingResource) && !url) return;
 
     const nextFolderId = editingFolderId || null;
     setUpdatingResourceId(editingResource.id);
@@ -434,6 +604,7 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
         body: JSON.stringify({
           title,
           folderId: nextFolderId,
+          ...(isLinkResource(editingResource) ? { url } : {}),
         }),
       });
       cancelEditingResource();
@@ -497,6 +668,35 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
                 Agrega PDFs, imágenes, audio, documentos o archivos de planificación para este ministerio.
               </p>
             </div>
+
+            <form onSubmit={handleAddLink} className="space-y-3 rounded-2xl bg-muted/40 p-3">
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                <Link className="h-4 w-4" />
+                Agregar link
+              </div>
+              <div className="grid gap-2 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)_auto]">
+                <Input
+                  value={newLinkTitle}
+                  onChange={(event) => setNewLinkTitle(event.target.value)}
+                  placeholder="Título del link"
+                  aria-label="Título del link"
+                />
+                <Input
+                  value={newLinkUrl}
+                  onChange={(event) => setNewLinkUrl(event.target.value)}
+                  placeholder="https://..."
+                  aria-label="URL del link"
+                  type="url"
+                />
+                <Button type="submit" disabled={addingLink || !newLinkUrl.trim()} className="rounded-full">
+                  {addingLink ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link className="h-4 w-4" />}
+                  {addingLink ? "Agregando..." : "Agregar"}
+                </Button>
+              </div>
+              <p className="text-center text-xs text-muted-foreground sm:text-left">
+                Se guardará en: <span className="font-semibold text-foreground">{selectedFolder?.name || "General"}</span>
+              </p>
+            </form>
           </CardContent>
         </Card>
       )}
@@ -544,7 +744,7 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
                 {!selectedFolderId ? <FolderOpen className="h-4 w-4" /> : <Folder className="h-4 w-4" />}
                 <span className="min-w-0 text-left">
                   <span className="block truncate text-sm">General</span>
-                  <span className="block text-xs opacity-75">{rootResourceCount} archivos</span>
+                  <span className="block text-xs opacity-75">{rootResourceCount} recursos</span>
                 </span>
               </Button>
 
@@ -563,7 +763,7 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
                     {isSelected ? <FolderOpen className="h-4 w-4" /> : <Folder className="h-4 w-4" />}
                     <span className="min-w-0 text-left">
                       <span className="block truncate text-sm">{folder.name}</span>
-                      <span className="block text-xs opacity-75">{fileCount} archivos</span>
+                      <span className="block text-xs opacity-75">{fileCount} recursos</span>
                     </span>
                   </Button>
                 );
@@ -591,55 +791,57 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
         </Card>
       ) : (
         <div className="space-y-2">
-          {visibleResources.map((resource) => (
-            <Card key={resource.id}>
-              <CardContent className="flex items-center gap-3 p-3">
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                  <FileText className="h-5 w-5" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold">{resource.title || resource.originalName}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {formatSize(resource.size)} · {formatDate(resource.createdAt)}
-                  </p>
-                </div>
-                <div className="flex shrink-0 items-center gap-1">
-                  {resource.url ? (
-                    <>
-                      <Button variant="ghost" size="icon" asChild>
-                        <a href={resource.url} target="_blank" rel="noreferrer" aria-label="Abrir recurso">
+          {visibleResources.map((resource) => {
+            const isLink = isLinkResource(resource);
+
+            return (
+              <Card key={resource.id}>
+                <CardContent className="flex items-center gap-3 p-3">
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                    {isLink ? <Link className="h-5 w-5" /> : <FileText className="h-5 w-5" />}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold">{resource.title || resource.originalName}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {(isLink ? "Link" : formatSize(resource.size))} · {formatDate(resource.createdAt)}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
+                    {resource.url ? (
+                      <>
+                        <Button variant="ghost" size="icon" onClick={() => openResource(resource)} aria-label="Abrir recurso">
                           <ExternalLink className="h-4 w-4" />
-                        </a>
-                      </Button>
-                      <Button variant="ghost" size="icon" asChild>
-                        <a href={resource.url} download={resource.originalName} aria-label="Descargar recurso">
-                          <Download className="h-4 w-4" />
-                        </a>
-                      </Button>
-                    </>
-                  ) : (
-                    <Button variant="ghost" size="sm" disabled>
-                      Sin enlace
-                    </Button>
-                  )}
-                  {canManage && (
-                    <>
-                      <Button variant="ghost" size="icon" onClick={() => startEditingResource(resource)} aria-label="Editar recurso">
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" onClick={() => setResourceToDelete(resource)} disabled={deletingId === resource.id}>
-                        {deletingId === resource.id ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                        {!isLink && (
+                          <Button variant="ghost" size="icon" onClick={() => downloadResource(resource)} aria-label="Descargar recurso">
+                            <Download className="h-4 w-4" />
+                          </Button>
                         )}
+                      </>
+                    ) : (
+                      <Button variant="ghost" size="sm" disabled>
+                        Sin enlace
                       </Button>
-                    </>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                    )}
+                    {canManage && (
+                      <>
+                        <Button variant="ghost" size="icon" onClick={() => startEditingResource(resource)} aria-label="Editar recurso">
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" onClick={() => setResourceToDelete(resource)} disabled={deletingId === resource.id}>
+                          {deletingId === resource.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          )}
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
       )}
 
@@ -706,6 +908,18 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
                 placeholder="Nombre del recurso"
               />
             </div>
+            {editingResource && isLinkResource(editingResource) && (
+              <div className="space-y-2">
+                <Label htmlFor="ministry-resource-url">URL del link</Label>
+                <Input
+                  id="ministry-resource-url"
+                  value={editingUrl}
+                  onChange={(event) => setEditingUrl(event.target.value)}
+                  placeholder="https://..."
+                  type="url"
+                />
+              </div>
+            )}
             <div className="space-y-2">
               <Label htmlFor="ministry-resource-folder">Carpeta</Label>
               <select
@@ -726,7 +940,14 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
               <Button type="button" variant="outline" onClick={cancelEditingResource}>
                 Cancelar
               </Button>
-              <Button type="submit" disabled={!editingTitle.trim() || updatingResourceId === editingResource?.id}>
+              <Button
+                type="submit"
+                disabled={
+                  !editingTitle.trim() ||
+                  Boolean(editingResource && isLinkResource(editingResource) && !editingUrl.trim()) ||
+                  updatingResourceId === editingResource?.id
+                }
+              >
                 {updatingResourceId === editingResource?.id ? <Loader2 className="h-4 w-4 animate-spin" /> : "Guardar"}
               </Button>
             </DialogFooter>
