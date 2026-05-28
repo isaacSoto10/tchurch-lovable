@@ -119,12 +119,18 @@ export async function apiFetch<T = unknown>(
 
 export async function fetchUserChurches<T = unknown>(token: string): Promise<T[]> {
   const url = `${API_BASE}/churches/mine`;
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+  };
+
+  const churchId = getChurchId();
+  if (churchId) {
+    headers["x-church-id"] = churchId;
+  }
 
   const res = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
+    headers,
   });
 
   if (!res.ok) {
