@@ -418,38 +418,6 @@ export default function Dashboard() {
         </div>
       )}
 
-      {ministries.length > 0 && (
-        <div>
-          <h2 className="mobile-section-title mb-3">
-            Mis ministerios
-          </h2>
-          <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
-            {ministries.map((m) => (
-              <Card
-                key={m.id}
-                className="app-card min-w-0 cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-md"
-                onClick={() => navigate("/app/ministries")}
-              >
-                <CardContent className="flex items-center gap-3 p-4">
-                  <span
-                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-sm font-bold text-white shadow-sm"
-                    style={{ backgroundColor: m.color || "#6366f1" }}
-                  >
-                    {m.name.charAt(0).toUpperCase()}
-                  </span>
-                  <div className="min-w-0">
-                    <p className="font-medium text-sm truncate">{m.name}</p>
-                    {m.memberCount != null && (
-                      <p className="text-xs text-muted-foreground">{m.memberCount} miembros</p>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </div>
-      )}
-
       {loading ? (
         <div className="flex items-center justify-center py-8">
           <div className="animate-spin w-6 h-6 border-2 border-primary border-t-transparent rounded-full" />
@@ -540,6 +508,38 @@ export default function Dashboard() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {ministries.length > 0 && (
+        <div>
+          <h2 className="mobile-section-title mb-3">
+            Mis ministerios
+          </h2>
+          <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
+            {ministries.map((m) => (
+              <Card
+                key={m.id}
+                className="app-card min-w-0 cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-md"
+                onClick={() => navigate("/app/ministries")}
+              >
+                <CardContent className="flex items-center gap-3 p-4">
+                  <span
+                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-sm font-bold text-white shadow-sm"
+                    style={{ backgroundColor: m.color || "#6366f1" }}
+                  >
+                    {m.name.charAt(0).toUpperCase()}
+                  </span>
+                  <div className="min-w-0">
+                    <p className="font-medium text-sm truncate">{m.name}</p>
+                    {m.memberCount != null && (
+                      <p className="text-xs text-muted-foreground">{m.memberCount} miembros</p>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
         </div>
       )}
 
