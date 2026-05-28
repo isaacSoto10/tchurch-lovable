@@ -105,8 +105,16 @@ export async function apiFetch<T = unknown>(
     throw new ApiError(message, res.status, parsed);
   }
 
-  const data = await res.json();
-  return data;
+  if (res.status === 204) return undefined as T;
+
+  const text = await res.text();
+  if (!text) return undefined as T;
+
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return text as T;
+  }
 }
 
 export async function fetchUserChurches<T = unknown>(token: string): Promise<T[]> {

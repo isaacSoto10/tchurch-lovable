@@ -1,12 +1,11 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Separator } from "@/components/ui/separator";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
@@ -14,7 +13,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, ArrowLeft, Plus, Check, X, UserMinus, Users, Clock, MessageCircle } from "lucide-react";
+import { Loader2, ArrowLeft, Plus, Check, X, UserMinus, Users, Clock, MessageCircle, FileText } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useChurch } from "@/providers/ChurchProvider";
 import { MinistryResources } from "@/components/MinistryResources";
@@ -32,7 +31,16 @@ type MinistryMember = {
   id: string;
   userId: string;
   role: string;
+  status?: string | null;
   user?: UserSummary | null;
+};
+
+type MinistryStats = {
+  memberCount?: number;
+  pendingCount?: number;
+  leaderCount?: number;
+  resourceCount?: number;
+  folderCount?: number;
 };
 
 type Ministry = {
@@ -42,6 +50,17 @@ type Ministry = {
   color?: string | null;
   whatsappGroupUrl?: string | null;
   members?: MinistryMember[];
+  canManage?: boolean;
+  isMember?: boolean;
+  isPending?: boolean;
+  memberRole?: string | null;
+  stats?: MinistryStats;
+  meeting?: {
+    dayOfWeek?: string | null;
+    time?: string | null;
+    location?: string | null;
+  } | null;
+  type?: string | null;
 };
 
 type MyMinistriesResponse = {
@@ -73,6 +92,10 @@ function getInitials(firstName?: string | null, lastName?: string | null, email?
   return (email?.[0] || "?").toUpperCase();
 }
 
+function normalizeRole(role?: string | null): string {
+  return String(role || "").toUpperCase();
+}
+
 export default function MinistryDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -82,6 +105,7 @@ export default function MinistryDetail() {
 
   const [ministry, setMinistry] = useState<Ministry | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>((searchParams.get("tab") as Tab) || "members");
   const [canManage, setCanManage] = useState(false);
   const [isMember, setIsMember] = useState(false);
@@ -103,21 +127,51 @@ export default function MinistryDetail() {
   const [submitting, setSubmitting] = useState(false);
   const [editForm, setEditForm] = useState({ name: "", description: "", color: "", whatsappGroupUrl: "" });
 
+  function applyMinistryData(data: Ministry) {
+    setMinistry(data);
+    setEditForm({
+      name: data.name || "",
+      description: data.description || "",
+      color: data.color || "",
+      whatsappGroupUrl: data.whatsappGroupUrl || "",
+    });
+
+    if (typeof data.canManage === "boolean") setCanManage(data.canManage);
+    if (typeof data.isMember === "boolean") setIsMember(data.isMember);
+    if (typeof data.isPending === "boolean") setIsPending(data.isPending);
+    if ("memberRole" in data) setMyRole(data.memberRole ? normalizeRole(data.memberRole) : null);
+  }
+
   // Fetch ministry
   useEffect(() => {
     if (!id) return;
     async function load() {
+      setLoading(true);
+      setLoadError(null);
       try {
         const data = await apiFetch<Ministry>(`/ministries/${id}`);
-        setMinistry(data);
-        setEditForm({
-          name: data.name || "",
-          description: data.description || "",
-          color: data.color || "",
-          whatsappGroupUrl: data.whatsappGroupUrl || "",
-        });
+        if (!data?.id) throw new Error("Respuesta inválida del ministerio.");
+        applyMinistryData(data);
       } catch (e) {
         console.error(e);
+        const message = e instanceof Error ? e.message : "No se pudo cargar este ministerio.";
+
+        try {
+          const ministries = await apiFetch<Ministry[]>("/ministries");
+          const fallback = Array.isArray(ministries)
+            ? ministries.find((item) => item.id === id)
+            : null;
+
+          if (fallback) {
+            applyMinistryData(fallback);
+            return;
+          }
+        } catch (fallbackError) {
+          console.error("Failed to load ministry fallback list:", fallbackError);
+        }
+
+        setMinistry(null);
+        setLoadError(message);
       } finally {
         setLoading(false);
       }
@@ -130,15 +184,16 @@ export default function MinistryDetail() {
     async function loadMyMinistries() {
       try {
         const data = await apiFetch<MyMinistriesResponse>("/my-ministries");
-        const isAdmin = data.role === "ADMIN" || selectedChurch?.role === "ADMIN";
+        const isAdmin = normalizeRole(data.role) === "ADMIN" || normalizeRole(selectedChurch?.role) === "ADMIN";
         const myIds: string[] = data.myMinistryIds || [];
         const pendingIds: string[] = data.pendingMinistryIds || [];
         const ministryRoles: Record<string, string> = data.ministryRoles || {};
-        const isLeader = ministryRoles[id || ""] === "LEADER";
+        const roleForMinistry = normalizeRole(ministryRoles[id || ""]);
+        const isLeader = roleForMinistry === "LEADER" || roleForMinistry === "CO_LEADER";
         setCanManage(isAdmin || isLeader);
         setIsMember(myIds.includes(id || "") || isAdmin);
         setIsPending(pendingIds.includes(id || ""));
-        setMyRole(isAdmin ? "ADMIN" : (isLeader ? "LEADER" : (myIds.includes(id || "") ? "MEMBER" : null)));
+        setMyRole(isAdmin ? "ADMIN" : (isLeader ? roleForMinistry : (myIds.includes(id || "") ? "MEMBER" : null)));
       } catch (e) {
         console.error(e);
       }
@@ -146,16 +201,16 @@ export default function MinistryDetail() {
     loadMyMinistries();
   }, [id, selectedChurch?.role]);
 
-  // Fetch join requests when tab is active
+  // Fetch join requests as soon as the user can manage so the badge is accurate.
   useEffect(() => {
-    if (activeTab === "join-requests" && canManage && id) {
+    if (canManage && id) {
       setRequestsLoading(true);
       apiFetch<JoinRequestsResponse>(`/ministries/${id}/join-requests`)
         .then((data) => setJoinRequests(data.requests || []))
         .catch(() => setJoinRequests([]))
         .finally(() => setRequestsLoading(false));
     }
-  }, [activeTab, canManage, id]);
+  }, [canManage, id]);
 
   // Fetch announcements when tab is active
   useEffect(() => {
@@ -221,7 +276,7 @@ export default function MinistryDetail() {
       setAddRole("MEMBER");
       // Refresh ministry
       const data = await apiFetch<Ministry>(`/ministries/${id}`);
-      setMinistry(data);
+      applyMinistryData(data);
     } catch (e) {
       console.error(e);
     } finally {
@@ -253,7 +308,7 @@ export default function MinistryDetail() {
       });
       setShowEditMinistry(false);
       const data = await apiFetch<Ministry>(`/ministries/${id}`);
-      setMinistry(data);
+      applyMinistryData(data);
     } catch (e) {
       console.error(e);
     } finally {
@@ -271,11 +326,24 @@ export default function MinistryDetail() {
 
   if (!ministry) {
     return (
-      <div className="p-4 text-center">
-        <p className="text-muted-foreground">Ministry not found</p>
-        <Button variant="ghost" onClick={() => navigate("/app/ministries")} className="mt-2">
-          Back to Ministries
-        </Button>
+      <div className="flex min-h-[60vh] items-center justify-center p-4">
+        <Card className="w-full max-w-sm">
+          <CardContent className="space-y-4 p-6 text-center">
+            <Users className="mx-auto h-10 w-10 text-muted-foreground/60" />
+            <div>
+              <p className="font-semibold text-zinc-900">No se pudo abrir este ministerio</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {loadError || "Verifica tu acceso o intenta de nuevo."}
+              </p>
+            </div>
+            <div className="flex flex-col gap-2">
+              <Button onClick={() => window.location.reload()}>Intentar de nuevo</Button>
+              <Button variant="ghost" onClick={() => navigate("/app/ministries")}>
+                Volver a Ministerios
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     );
   }
@@ -415,18 +483,20 @@ export default function MinistryDetail() {
                       </Avatar>
                       <div className="flex-1 min-w-0">
                         <p className="font-medium text-sm truncate">
-                          {member.user?.firstName} {member.user?.lastName}
+                          {member.user?.firstName || member.user?.lastName
+                            ? `${member.user?.firstName || ""} ${member.user?.lastName || ""}`.trim()
+                            : member.user?.email || "Miembro"}
                         </p>
                         <p className="text-xs text-zinc-500 truncate">{member.user?.email}</p>
                       </div>
                       <div className="flex items-center gap-2">
                         <Badge
-                          variant={member.role === "ADMIN" || member.role === "LEADER" ? "default" : "secondary"}
+                          variant={normalizeRole(member.role) === "ADMIN" || normalizeRole(member.role) === "LEADER" || normalizeRole(member.role) === "CO_LEADER" ? "default" : "secondary"}
                           className="text-xs"
                         >
                           {member.role}
                         </Badge>
-                        {canManage && member.role !== "ADMIN" && (
+                        {canManage && normalizeRole(member.role) !== "ADMIN" && (
                           <button
                             onClick={() => handleRemoveMember(member.userId)}
                             className="p-1.5 rounded-lg hover:bg-red-50 text-zinc-400 hover:text-red-500 transition-colors"
@@ -532,7 +602,19 @@ export default function MinistryDetail() {
 
         {/* RESOURCES TAB */}
         {activeTab === "resources" && (
-          <MinistryResources ministryId={id!} canManage={canManage} />
+          canManage || isMember ? (
+            <MinistryResources ministryId={id!} canManage={canManage} />
+          ) : (
+            <Card>
+              <CardContent className="p-8 text-center">
+                <FileText className="mx-auto mb-2 h-8 w-8 text-muted-foreground/50" />
+                <p className="text-sm font-medium">Recursos solo para miembros</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Solicita unirte para ver clases, documentos y materiales de este ministerio.
+                </p>
+              </CardContent>
+            </Card>
+          )
         )}
       </div>
 

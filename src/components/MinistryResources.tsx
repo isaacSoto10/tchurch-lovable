@@ -199,6 +199,7 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [folderToDelete, setFolderToDelete] = useState<ResourceFolder | null>(null);
+  const [resourceToDelete, setResourceToDelete] = useState<Resource | null>(null);
   const [deletingFolderId, setDeletingFolderId] = useState<string | null>(null);
   const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
   const [editingResource, setEditingResource] = useState<Resource | null>(null);
@@ -318,6 +319,7 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
       toast({ title: "No se pudo eliminar el recurso", variant: "destructive" });
     } finally {
       setDeletingId(null);
+      setResourceToDelete(null);
     }
   }
 
@@ -426,7 +428,14 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
             </form>
 
             <div className="rounded-2xl bg-muted/40 p-3 text-center">
-              <input ref={inputRef} type="file" multiple className="hidden" onChange={(event) => handleFiles(event.target.files)} />
+              <input
+                ref={inputRef}
+                type="file"
+                multiple
+                accept="image/*,audio/*,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.zip"
+                className="hidden"
+                onChange={(event) => handleFiles(event.target.files)}
+              />
               <p className="mb-2 text-xs text-muted-foreground">
                 Se subirá en: <span className="font-semibold text-foreground">{selectedFolder?.name || "General"}</span>
               </p>
@@ -568,7 +577,7 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
                       <Button variant="ghost" size="icon" onClick={() => startEditingResource(resource)} aria-label="Editar recurso">
                         <Pencil className="h-4 w-4" />
                       </Button>
-                      <Button variant="ghost" size="icon" onClick={() => handleDelete(resource.id)} disabled={deletingId === resource.id}>
+                      <Button variant="ghost" size="icon" onClick={() => setResourceToDelete(resource)} disabled={deletingId === resource.id}>
                         {deletingId === resource.id ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
                         ) : (
@@ -603,6 +612,30 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               {deletingFolderId ? <Loader2 className="h-4 w-4 animate-spin" /> : "Eliminar carpeta"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={Boolean(resourceToDelete)} onOpenChange={(open) => !open && setResourceToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Eliminar recurso</AlertDialogTitle>
+            <AlertDialogDescription>
+              ¿Seguro que deseas eliminar "{resourceToDelete?.title || resourceToDelete?.originalName}"? Esta acción no se puede deshacer.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={Boolean(deletingId)}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                if (resourceToDelete) handleDelete(resourceToDelete.id);
+              }}
+              disabled={Boolean(deletingId)}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deletingId ? <Loader2 className="h-4 w-4 animate-spin" /> : "Eliminar recurso"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
