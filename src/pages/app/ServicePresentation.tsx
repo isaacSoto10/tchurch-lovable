@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent, type TouchEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, ChevronLeft, ChevronRight, Eye, EyeOff, Loader2, Music, X } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Eye, EyeOff, ListMusic, Loader2, Music, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { apiFetch } from "@/lib/api";
@@ -94,53 +94,90 @@ function useMeasuredElement<T extends HTMLElement>() {
   return [ref, size] as const;
 }
 
+function getChordTokens(chords: string) {
+  return [...chords.matchAll(/\S+/g)].map((match) => ({
+    chord: match[0],
+    column: match.index ?? 0,
+  }));
+}
+
+function normalizeSectionLabel(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function formatPresentationSectionLabel(label: string) {
+  const normalized = normalizeSectionLabel(label);
+  const number = label.match(/\d+$/)?.[0];
+  const suffix = number ? ` ${number}` : "";
+
+  if (normalized.includes("pre") && (normalized.includes("chorus") || normalized.includes("coro"))) return `Pre-Coro${suffix}`;
+  if (normalized.startsWith("verse") || normalized.startsWith("verso") || normalized.startsWith("estrofa")) return `Verso${suffix}`;
+  if (normalized.startsWith("chorus") || normalized.startsWith("coro")) return `Coro${suffix}`;
+  if (normalized.startsWith("bridge") || normalized.startsWith("puente")) return `Puente${suffix}`;
+  if (normalized.startsWith("interlude") || normalized.startsWith("interludio")) return `Interludio${suffix}`;
+  if (normalized.startsWith("outro") || normalized.startsWith("final") || normalized.startsWith("ending")) return `Final${suffix}`;
+
+  return label;
+}
+
+function getChordTokenLeft(column: number, columns: number) {
+  if (columns <= 1) return 0;
+  return Math.min(92, Math.max(0, (column / columns) * 100));
+}
+
 function SongSlide({ slide, showChords }: { slide: Extract<PresentationSlide, { kind: "song" }>; showChords: boolean }) {
   const [chartBodyRef, chartSize] = useMeasuredElement<HTMLDivElement>();
   const chartMetrics = useMemo(() => {
     return slide.lines.reduce(
       (metrics, line) => {
         if (line.kind === "blank") {
-          return { ...metrics, rows: metrics.rows + 0.2 };
+          return { ...metrics, rows: metrics.rows + 0.28 };
         }
 
         if (line.kind === "section" || line.kind === "meta") {
-          return { ...metrics, rows: metrics.rows + 0.95 };
+          return { ...metrics, rows: metrics.rows + 1.25 };
         }
 
         const hasChords = showChords && line.chords.trim().length > 0;
         const hasLyrics = line.lyrics.trim().length > 0;
         const maxColumns = Math.max(metrics.maxColumns, showChords ? line.chords.length : 0, line.lyrics.length);
-        const rows = hasChords && hasLyrics ? 2.02 : hasChords ? 1.02 : hasLyrics ? 1.08 : 0.25;
+        const rows = hasChords && hasLyrics ? 2.2 : hasChords ? 1.05 : hasLyrics ? 1.28 : 0.35;
         return { maxColumns, rows: metrics.rows + rows };
       },
-      { maxColumns: 12, rows: 0 }
+      { maxColumns: 18, rows: 0 }
     );
   }, [showChords, slide.lines]);
-  const fallbackWidth = typeof window === "undefined" ? 360 : Math.max(window.innerWidth - 4, 320);
-  const fallbackHeight = typeof window === "undefined" ? 620 : Math.max(window.innerHeight - 56, 420);
+  const fallbackWidth = typeof window === "undefined" ? 360 : Math.max(window.innerWidth - 40, 320);
+  const fallbackHeight = typeof window === "undefined" ? 620 : Math.max(window.innerHeight - 118, 420);
   const chartWidth = chartSize.width || fallbackWidth;
   const chartHeight = chartSize.height || fallbackHeight;
   const isCompactStage = chartWidth < 640;
-  const chartLetterSpacingEm = isCompactStage ? -0.045 : -0.02;
-  const columnFitMultiplier = isCompactStage ? 1.92 : 1.72;
-  const widthLimitedFont = (chartWidth / Math.max(chartMetrics.maxColumns, 1)) * columnFitMultiplier;
-  const heightLimitedFont = (chartHeight / Math.max(chartMetrics.rows, 1)) * 0.98;
-  const maxChartFontSize = isCompactStage ? 46 : 64;
-  const fittedChartFontSize = Math.min(widthLimitedFont, heightLimitedFont, maxChartFontSize);
-  const minChartFontSize = isCompactStage ? 24 : 30;
-  const chartFontSizePx = Math.round(Math.max(minChartFontSize, fittedChartFontSize));
+  const widthLimitedFont = (chartWidth / Math.max(chartMetrics.maxColumns, 1)) * (isCompactStage ? 2.05 : 1.8);
+  const heightLimitedFont = (chartHeight / Math.max(chartMetrics.rows, 1)) * (isCompactStage ? 0.94 : 0.9);
+  const minLyricFontSize = isCompactStage ? 20 : 24;
+  const maxLyricFontSize = isCompactStage ? 24 : 38;
+  const lyricFontSizePx = Math.round(
+    Math.max(minLyricFontSize, Math.min(widthLimitedFont, heightLimitedFont, maxLyricFontSize))
+  );
+  const chordFontSizePx = Math.round(
+    Math.max(isCompactStage ? 18 : 22, Math.min(lyricFontSizePx - 1, isCompactStage ? 22 : 34))
+  );
 
   return (
-    <div className="mx-auto flex h-full w-full max-w-none flex-col px-0.5 pb-0.5 pt-0 sm:max-w-6xl sm:px-8 sm:pb-4 sm:pt-1">
-      <div className="mb-0.5 flex min-h-[1.1rem] flex-wrap items-center gap-1 sm:mb-1.5 sm:gap-2">
-        <span className="rounded-full bg-violet-500/15 px-1.5 py-px text-[6px] font-black uppercase tracking-[0.14em] text-violet-200 sm:px-3 sm:py-1 sm:text-xs sm:tracking-[0.28em]">
+    <div className="mx-auto flex h-full w-full max-w-none flex-col px-3 pb-3 pt-0 sm:max-w-6xl sm:px-8 sm:pb-4 sm:pt-1">
+      <div className="mb-3 flex min-h-8 flex-wrap items-center gap-2 sm:mb-3 sm:gap-2.5">
+        <span className="rounded-full bg-violet-500/70 px-3 py-1 text-[11px] font-black uppercase tracking-[0.12em] text-white shadow-lg shadow-violet-950/20 sm:px-4 sm:py-1.5 sm:text-xs sm:tracking-[0.2em]">
           {slide.itemIndex}. Canción
         </span>
-        {slide.key && <Badge className="rounded-full bg-white/10 px-1.5 py-px text-[7px] text-white hover:bg-white/10 sm:px-2 sm:py-0.5 sm:text-xs">Tono {slide.key}</Badge>}
-        {slide.bpm && <Badge className="hidden rounded-full bg-white/10 text-xs text-white hover:bg-white/10 sm:inline-flex">{slide.bpm} BPM</Badge>}
-        {slide.meter && <Badge className="hidden rounded-full bg-white/10 text-xs text-white hover:bg-white/10 sm:inline-flex">{slide.meter}</Badge>}
+        {slide.key && <Badge className="rounded-full border border-white/10 bg-white/[0.12] px-3 py-1 text-[11px] font-bold text-violet-50 hover:bg-white/[0.12] sm:px-3.5 sm:py-1.5 sm:text-xs">Tono {slide.key}</Badge>}
+        {slide.bpm && <Badge className="hidden rounded-full border border-white/10 bg-white/[0.12] text-xs text-white hover:bg-white/[0.12] sm:inline-flex">{slide.bpm} BPM</Badge>}
+        {slide.meter && <Badge className="hidden rounded-full border border-white/10 bg-white/[0.12] text-xs text-white hover:bg-white/[0.12] sm:inline-flex">{slide.meter}</Badge>}
         {slide.totalParts > 1 && (
-          <span className="rounded-full bg-white/10 px-1.5 py-px text-[7px] font-bold uppercase tracking-[0.12em] text-violet-100/90 sm:hidden">
+          <span className="rounded-full border border-white/10 bg-white/[0.12] px-3 py-1 text-[11px] font-bold uppercase tracking-[0.1em] text-violet-50 sm:px-3.5 sm:py-1.5 sm:text-xs">
             {slide.part}/{slide.totalParts}
           </span>
         )}
@@ -156,15 +193,19 @@ function SongSlide({ slide, showChords }: { slide: Extract<PresentationSlide, { 
         )}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-hidden rounded-xl border border-white/10 bg-black/20 p-1 shadow-2xl shadow-black/30 sm:rounded-[1.75rem] sm:p-5">
-        <div ref={chartBodyRef} className="h-full w-full min-w-0 overflow-hidden font-mono">
+      <div className="min-h-0 flex-1 overflow-hidden rounded-2xl border border-white/[0.15] bg-black/25 p-5 shadow-2xl shadow-black/[0.35] sm:rounded-[1.75rem] sm:p-7">
+        <div ref={chartBodyRef} className="h-full w-full min-w-0 overflow-hidden">
           {slide.lines.map((line, index) => {
-            if (line.kind === "blank") return <div key={index} className="h-1" />;
+            if (line.kind === "blank") return <div key={index} className="h-2" />;
             if (line.kind === "section" || line.kind === "meta") {
+              const label = formatPresentationSectionLabel(line.label);
+              const SectionIcon = normalizeSectionLabel(label).includes("coro") ? Sparkles : ListMusic;
+
               return (
-                <div key={index} className="pb-1 pt-0.5">
-                  <span className="rounded-full bg-violet-400/15 px-2 py-px text-[8px] font-black uppercase tracking-[0.16em] text-violet-200 sm:px-3 sm:py-1 sm:text-xs sm:tracking-[0.28em]">
-                    {line.label}
+                <div key={index} className={`${index > 0 ? "mt-3 border-t border-white/10 pt-3" : ""} pb-1`}>
+                  <span className="inline-flex items-center gap-2 rounded-xl border border-violet-300/20 bg-violet-500/[0.18] px-3 py-1.5 text-[11px] font-black uppercase tracking-[0.18em] text-violet-200 shadow-lg shadow-violet-950/20 sm:px-4 sm:text-xs sm:tracking-[0.24em]">
+                    <SectionIcon className="h-3.5 w-3.5" />
+                    {label}
                   </span>
                 </div>
               );
@@ -172,25 +213,42 @@ function SongSlide({ slide, showChords }: { slide: Extract<PresentationSlide, { 
 
             if (!showChords && !line.lyrics.trim()) return null;
 
+            const chordTokens = getChordTokens(line.chords);
+            const lineColumns = Math.max(18, chartMetrics.maxColumns, line.chords.length, line.lyrics.length);
+            const hasLyrics = line.lyrics.trim().length > 0;
+
             return (
               <div
                 key={index}
-                className="min-w-0 overflow-hidden pb-[0.04em] leading-none last:pb-0"
-                style={{
-                  fontSize: `${chartFontSizePx}px`,
-                  fontVariantLigatures: "none",
-                  letterSpacing: `${chartLetterSpacingEm}em`,
-                }}
+                className="min-w-0 overflow-hidden pb-2 leading-none last:pb-0"
+                style={{ fontVariantLigatures: "none" }}
               >
-                {showChords && line.chords && (
-                  <pre className="overflow-hidden whitespace-pre text-[1em] font-black leading-[0.96] text-violet-300">
-                    {line.chords}
-                  </pre>
+                {showChords && chordTokens.length > 0 && (
+                  <div className="relative h-[1.12em] min-w-0 overflow-visible" style={{ fontSize: `${chordFontSizePx}px` }}>
+                    {chordTokens.map((token, tokenIndex) => (
+                      <span
+                        key={`${token.chord}-${token.column}-${tokenIndex}`}
+                        className="absolute top-0 whitespace-nowrap font-black leading-none text-violet-300"
+                        style={{
+                          left: `${getChordTokenLeft(token.column, lineColumns)}%`,
+                          textShadow: "0 0 18px rgba(196,181,253,0.24)",
+                        }}
+                      >
+                        {token.chord}
+                      </span>
+                    ))}
+                  </div>
                 )}
-                {line.lyrics && (
-                  <pre className="overflow-hidden whitespace-pre text-[1em] font-black leading-[1.02] text-white">
-                    {line.lyrics}
-                  </pre>
+                {hasLyrics && (
+                  <p
+                    className="min-w-0 whitespace-pre-wrap break-words font-sans font-black leading-[1.12] text-white"
+                    style={{
+                      fontSize: `${lyricFontSizePx}px`,
+                      textShadow: "0 2px 18px rgba(0,0,0,0.34)",
+                    }}
+                  >
+                    {line.lyrics.trimStart()}
+                  </p>
                 )}
               </div>
             );
@@ -403,8 +461,8 @@ export default function ServicePresentation() {
     >
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(120deg,rgba(255,255,255,0.08),transparent_35%,rgba(124,58,237,0.12))]" />
 
-      <header className="relative z-10 flex h-8 items-center gap-1 px-1.5 py-0.5 sm:h-auto sm:gap-2 sm:px-6 sm:py-1.5" onClick={stopStageEvent}>
-        <Button variant="ghost" className="h-6 rounded-full bg-white/10 px-1.5 text-[11px] text-white hover:bg-white/15 hover:text-white sm:h-9 sm:px-3 sm:text-sm" onClick={exitToService}>
+      <header className="relative z-10 flex h-16 items-center justify-between gap-2 px-4 py-2 sm:h-auto sm:px-6 sm:py-2.5" onClick={stopStageEvent}>
+        <Button variant="ghost" className="h-10 shrink-0 rounded-2xl border border-white/10 bg-white/10 px-3 text-sm font-bold text-white shadow-lg shadow-black/20 hover:bg-white/[0.15] hover:text-white sm:h-10 sm:px-4" onClick={exitToService}>
           <ArrowLeft className="h-4 w-4" />
           Salir
         </Button>
@@ -412,27 +470,29 @@ export default function ServicePresentation() {
           <p className="truncate text-xs font-black text-white sm:text-sm">{service.title}</p>
           <p className="truncate text-[10px] text-slate-400 sm:text-xs">{formatServiceDate(service.date)}</p>
         </div>
-        <div className="min-w-0 flex-1 sm:hidden">
-          <p className="truncate text-center text-[11px] font-black leading-none text-white">
+        <div className="pointer-events-none absolute left-1/2 top-1/2 min-w-0 max-w-[38vw] -translate-x-1/2 -translate-y-1/2 text-center sm:hidden">
+          <p className="truncate text-xl font-black leading-none tracking-tight text-white">
             {currentSlide?.title || service.title}
           </p>
         </div>
-        {currentSlide?.kind === "song" && (
-          <Button
-            variant="ghost"
-            className="h-6 rounded-full bg-white/10 px-1.5 text-[11px] text-white hover:bg-white/15 hover:text-white sm:h-9 sm:px-3 sm:text-sm"
-            onClick={() => setShowChords((current) => !current)}
-          >
-            {showChords ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
-            Acordes
-          </Button>
-        )}
-        <div className="rounded-full bg-white/10 px-1.5 py-0.5 text-[11px] font-black text-white sm:px-3 sm:py-2 sm:text-sm">
-          {slides.length ? slideIndex + 1 : 0} / {slides.length}
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          {currentSlide?.kind === "song" && (
+            <Button
+              variant="ghost"
+              className="h-10 rounded-2xl border border-white/10 bg-white/10 px-3 text-sm font-bold text-white shadow-lg shadow-black/20 hover:bg-white/[0.15] hover:text-white sm:h-10 sm:px-4"
+              onClick={() => setShowChords((current) => !current)}
+            >
+              {showChords ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+              Acordes
+            </Button>
+          )}
+          <div className="flex h-10 items-center rounded-2xl border border-white/10 bg-white/10 px-3 text-sm font-black text-white shadow-lg shadow-black/20 sm:px-4">
+            {slides.length ? slideIndex + 1 : 0} / {slides.length}
+          </div>
         </div>
       </header>
 
-      <main className="relative z-10 h-[calc(100svh-2rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] min-h-0 sm:h-[calc(100svh-7rem)]">
+      <main className="relative z-10 h-[calc(100svh-4rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] min-h-0 sm:h-[calc(100svh-7.5rem)]">
         {slides.length === 0 ? (
           <div className="flex h-full items-center justify-center px-6 text-center">
             <div>

@@ -89,7 +89,7 @@ const ITEM_TYPE_LABELS: Record<string, string> = {
   other: "Otro",
 };
 
-const CHART_WRAP_COLUMNS = 26;
+const CHART_WRAP_COLUMNS = 34;
 const MAX_RENDERED_ROWS_PER_SONG_SLIDE = 21;
 
 function getPlanningDetails(item: PresentationServiceItem) {
