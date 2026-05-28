@@ -1,6 +1,6 @@
 import { useRef } from "react";
 import { NavLink, Outlet } from "react-router-dom";
-import { Heart, Home, ListChecks, Megaphone, Music } from "lucide-react";
+import { Heart, Home, ListChecks, Megaphone, Users } from "lucide-react";
 import { AppSidebar } from "../components/AppSidebar";
 import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 import { useChurch } from "@/providers/ChurchProvider";
@@ -11,7 +11,7 @@ const mobileNavItems = [
   { label: "Inicio", href: "/app", icon: Home, end: true },
   { label: "Servicios", href: "/app/services", icon: ListChecks },
   { label: "Dar", href: "/app/giving", icon: Heart },
-  { label: "Canciones", href: "/app/songs", icon: Music },
+  { label: "Ministerios", href: "/app/ministries", icon: Users },
   { label: "Anuncios", href: "/app/announcements", icon: Megaphone },
 ];
 

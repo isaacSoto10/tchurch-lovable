@@ -224,7 +224,7 @@ export default function Services() {
   const [songSearch, setSongSearch] = useState("");
   const [songs, setSongs] = useState<SongLike[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<typeof TEMPLATE_ITEMS[0] | null>(null);
-  const [selectedSong, setSelectedSong] = useState<typeof songs[0] | null>(null);
+  const [selectedSongs, setSelectedSongs] = useState<SongLike[]>([]);
   const [itemType, setItemType] = useState<ServiceItem["type"]>("song");
   const [itemTitle, setItemTitle] = useState("");
 
@@ -534,7 +534,7 @@ export default function Services() {
     setSongSearch("");
     setSongs([]);
     setSelectedTemplate(null);
-    setSelectedSong(null);
+    setSelectedSongs([]);
     setItemType("song");
     setItemTitle("");
     setAddItemDialogOpen(true);
@@ -546,8 +546,8 @@ export default function Services() {
       return;
     }
     try {
-      const data = await fetchApi(`/songs?q=${encodeURIComponent(query)}&limit=20`);
-      setSongs(Array.isArray(data) ? data.slice(0, 10) : []);
+      const data = await fetchApi(`/songs?q=${encodeURIComponent(query)}&limit=30`);
+      setSongs(Array.isArray(data) ? data.slice(0, 12) : []);
     } catch (e) {
       console.error("No se pudieron buscar canciones:", e);
     }
@@ -556,15 +556,48 @@ export default function Services() {
   const handleAddItem = async () => {
     if (!selectedServiceId) return;
 
+    const existingItems = serviceItems[selectedServiceId] || [];
+    const position = existingItems.length;
+
+    if (newItemType === "song") {
+      if (selectedSongs.length === 0) {
+        toast({ title: "Selecciona al menos una canción", variant: "destructive" });
+        return;
+      }
+
+      try {
+        await Promise.all(selectedSongs.map((song, index) =>
+          fetchApi("/service-items", {
+            method: "POST",
+            body: JSON.stringify({
+              serviceId: selectedServiceId,
+              title: song.title,
+              songId: song.id,
+              type: "song",
+              position: position + index,
+              duration: null,
+              details: {},
+            }),
+          })
+        ));
+        toast({ title: `${selectedSongs.length} canción${selectedSongs.length === 1 ? "" : "es"} agregada${selectedSongs.length === 1 ? "" : "s"}` });
+        setAddItemDialogOpen(false);
+
+        const serviceRes = await fetchApi(`/services/${selectedServiceId}`);
+        if (serviceRes && typeof serviceRes === 'object') {
+          const items = (serviceRes as Record<string, unknown>).items || [];
+          setServiceItems((prev) => ({ ...prev, [selectedServiceId]: Array.isArray(items) ? items as ServiceItem[] : [] }));
+        }
+      } catch (e) {
+        toast({ title: "No se pudieron agregar las canciones", variant: "destructive" });
+      }
+      return;
+    }
+
     let title = itemTitle;
-    let songId: string | undefined;
     let type = itemType;
 
-    if (newItemType === "song" && selectedSong) {
-      title = selectedSong.title;
-      songId = selectedSong.id;
-      type = "song";
-    } else if (newItemType === "template" && selectedTemplate) {
+    if (newItemType === "template" && selectedTemplate) {
       title = selectedTemplate.title;
       type = selectedTemplate.type as ServiceItem["type"];
     }
@@ -574,16 +607,13 @@ export default function Services() {
       return;
     }
 
-    const existingItems = serviceItems[selectedServiceId] || [];
-    const position = existingItems.length;
-
     try {
       await fetchApi("/service-items", {
         method: "POST",
         body: JSON.stringify({
           serviceId: selectedServiceId,
           title,
-          songId,
+          songId: null,
           type,
           position,
           duration: null,
@@ -601,6 +631,14 @@ export default function Services() {
     } catch (e) {
       toast({ title: "No se pudo agregar el elemento", variant: "destructive" });
     }
+  };
+
+  const toggleSelectedSong = (song: SongLike) => {
+    setSelectedSongs((current) =>
+      current.some((selected) => selected.id === song.id)
+        ? current.filter((selected) => selected.id !== song.id)
+        : [...current, song]
+    );
   };
 
   const handleDeleteItem = async (serviceId: string, itemId: string) => {
@@ -1084,7 +1122,7 @@ export default function Services() {
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                   <Input
-                    placeholder="Buscar canciones..."
+                    placeholder="Buscar y seleccionar varias canciones..."
                     className="pl-9"
                     value={songSearch}
                     onChange={(e) => {
@@ -1093,24 +1131,39 @@ export default function Services() {
                     }}
                   />
                 </div>
+                {selectedSongs.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {selectedSongs.map((song) => (
+                      <button
+                        key={song.id}
+                        type="button"
+                        className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary"
+                        onClick={() => toggleSelectedSong(song)}
+                      >
+                        {song.title}
+                        <X className="h-3 w-3" />
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <div className="max-h-60 overflow-y-auto space-y-1">
-                  {songs.map((song) => (
-                    <Button
-                      key={song.id}
-                      variant={selectedSong?.id === song.id ? "default" : "ghost"}
-                      size="sm"
-                      className="w-full justify-start"
-                      onClick={() => {
-                        setSelectedSong(song);
-                        setItemTitle(song.title);
-                      }}
-                    >
-                      <Music className="w-4 h-4 mr-2" />
-                      <span>{song.title}</span>
-                      {song.author && <span className="ml-2 text-xs text-muted-foreground">por {song.author}</span>}
-                      {song.key && <span className="ml-2 text-xs text-muted-foreground">Tono: {song.key}</span>}
-                    </Button>
-                  ))}
+                  {songs.map((song) => {
+                    const selected = selectedSongs.some((selectedSong) => selectedSong.id === song.id);
+                    return (
+                      <Button
+                        key={song.id}
+                        variant={selected ? "default" : "ghost"}
+                        size="sm"
+                        className="w-full justify-start"
+                        onClick={() => toggleSelectedSong(song)}
+                      >
+                        {selected ? <Check className="w-4 h-4 mr-2" /> : <Music className="w-4 h-4 mr-2" />}
+                        <span>{song.title}</span>
+                        {song.author && <span className={`ml-2 text-xs ${selected ? "text-primary-foreground/80" : "text-muted-foreground"}`}>por {song.author}</span>}
+                        {song.key && <span className={`ml-2 text-xs ${selected ? "text-primary-foreground/80" : "text-muted-foreground"}`}>Tono: {song.key}</span>}
+                      </Button>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -1119,8 +1172,8 @@ export default function Services() {
               <Button variant="outline" onClick={() => setAddItemDialogOpen(false)}>
                 Cancelar
               </Button>
-              <Button onClick={handleAddItem} disabled={!itemTitle.trim()}>
-                Agregar elemento
+              <Button onClick={handleAddItem} disabled={newItemType === "song" ? selectedSongs.length === 0 : !itemTitle.trim()}>
+                {newItemType === "song" && selectedSongs.length > 1 ? `Agregar ${selectedSongs.length} canciones` : "Agregar elemento"}
               </Button>
             </div>
           </div>
