@@ -56,6 +56,11 @@ type ResourceState = {
   resources: Resource[];
 };
 
+function resourceFolderPath(ministryId: string, folderId?: string) {
+  const base = `/ministries/${ministryId}/resources/folders`;
+  return folderId ? `${base}/${folderId}` : base;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -89,6 +94,19 @@ function readArray(source: Record<string, unknown>, keys: string[]): unknown[] {
     if (Array.isArray(value)) values.push(...value);
   }
   return values;
+}
+
+function getErrorDescription(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
+function getUploadFile(file: File): { body: Blob; filename: string; title: string } {
+  const fallbackName = `recurso-${Date.now()}`;
+  const title = file.name?.trim() || fallbackName;
+  const filename = title.replace(/[\\/:*?"<>|]/g, "-") || fallbackName;
+  const body = file.type ? file : file.slice(0, file.size, "application/octet-stream");
+
+  return { body, filename, title };
 }
 
 function formatSize(bytes: number): string {
@@ -167,7 +185,7 @@ function normalizeResourcesPayload(payload: unknown): ResourceState {
     return { folders: [], resources: [] };
   }
 
-  const rawFolders = readArray(payload, ["folders"]);
+  const rawFolders = readArray(payload, ["folders", "resourceFolders", "resource_folders"]);
   rawFolders.forEach((rawFolder) => {
     const folder = normalizeFolder(rawFolder);
     if (!folder) return;
@@ -231,21 +249,24 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
     [resources]
   );
 
-  const loadResources = useCallback(async () => {
+  const loadResources = useCallback(async (preferredFolderId?: string | null) => {
     setLoading(true);
     try {
       const data = await fetchApi<unknown>(`/ministries/${ministryId}/resources`);
       const normalized = normalizeResourcesPayload(data);
       setFolders(normalized.folders);
       setResources(normalized.resources);
-      setSelectedFolderId((current) =>
-        current && normalized.folders.some((folder) => folder.id === current) ? current : null
-      );
+      setSelectedFolderId((current) => {
+        const nextFolderId = preferredFolderId ?? current;
+        return nextFolderId && normalized.folders.some((folder) => folder.id === nextFolderId) ? nextFolderId : null;
+      });
+      return normalized;
     } catch (error) {
       console.error("No se pudieron cargar los recursos:", error);
       setFolders([]);
       setResources([]);
       setSelectedFolderId(null);
+      return { folders: [], resources: [] };
     } finally {
       setLoading(false);
     }
@@ -262,7 +283,7 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
 
     setCreatingFolder(true);
     try {
-      const created = await fetchApi<unknown>(`/ministries/${ministryId}/resource-folders`, {
+      const created = await fetchApi<unknown>(resourceFolderPath(ministryId), {
         method: "POST",
         body: JSON.stringify({ name }),
       });
@@ -270,12 +291,23 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
         normalizeFolder(created) ||
         (isRecord(created) ? normalizeFolder(created.folder) || normalizeFolder(created.resourceFolder) : null);
       setNewFolderName("");
-      if (folder) setSelectedFolderId(folder.id);
+      if (folder) {
+        setFolders((current) => [folder, ...current.filter((item) => item.id !== folder.id)]);
+        setSelectedFolderId(folder.id);
+      }
       toast({ title: "Carpeta creada" });
-      await loadResources();
+      const refreshed = await loadResources(folder?.id ?? selectedFolderId);
+      if (folder && !refreshed.folders.some((item) => item.id === folder.id)) {
+        setFolders((current) => [folder, ...current.filter((item) => item.id !== folder.id)]);
+        setSelectedFolderId(folder.id);
+      }
     } catch (error) {
       console.error("No se pudo crear la carpeta:", error);
-      toast({ title: "No se pudo crear la carpeta", variant: "destructive" });
+      toast({
+        title: "No se pudo crear la carpeta",
+        description: getErrorDescription(error, "Intenta otra vez."),
+        variant: "destructive",
+      });
     } finally {
       setCreatingFolder(false);
     }
@@ -286,9 +318,10 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
     setUploading(true);
     try {
       for (const file of Array.from(files)) {
+        const uploadFile = getUploadFile(file);
         const formData = new FormData();
-        formData.append("file", file);
-        formData.append("title", file.name);
+        formData.append("file", uploadFile.body, uploadFile.filename);
+        formData.append("title", uploadFile.title);
         if (selectedFolderId) {
           formData.append("folderId", selectedFolderId);
         }
@@ -299,10 +332,14 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
       }
       toast({ title: "Recurso subido", description: "Los miembros fueron notificados por correo." });
       if (inputRef.current) inputRef.current.value = "";
-      await loadResources();
+      await loadResources(selectedFolderId);
     } catch (error) {
       console.error("No se pudo subir el recurso:", error);
-      toast({ title: "No se pudo subir el recurso", variant: "destructive" });
+      toast({
+        title: "No se pudo subir el recurso",
+        description: getErrorDescription(error, "Revisa el archivo e intenta otra vez."),
+        variant: "destructive",
+      });
     } finally {
       setUploading(false);
     }
@@ -328,14 +365,18 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
 
     setDeletingFolderId(folderToDelete.id);
     try {
-      await fetchApi(`/ministries/${ministryId}/resource-folders/${folderToDelete.id}`, { method: "DELETE" });
+      await fetchApi(resourceFolderPath(ministryId, folderToDelete.id), { method: "DELETE" });
       toast({ title: "Carpeta eliminada" });
       setFolderToDelete(null);
       setSelectedFolderId(null);
       await loadResources();
     } catch (error) {
       console.error("No se pudo eliminar la carpeta:", error);
-      toast({ title: "No se pudo eliminar la carpeta", variant: "destructive" });
+      toast({
+        title: "No se pudo eliminar la carpeta",
+        description: getErrorDescription(error, "Intenta otra vez."),
+        variant: "destructive",
+      });
     } finally {
       setDeletingFolderId(null);
     }
@@ -348,15 +389,19 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
 
     setRenamingFolderId(folder.id);
     try {
-      await fetchApi(`/ministries/${ministryId}/resource-folders/${folder.id}`, {
+      await fetchApi(resourceFolderPath(ministryId, folder.id), {
         method: "PATCH",
         body: JSON.stringify({ name }),
       });
-      await loadResources();
+      await loadResources(folder.id);
       toast({ title: "Carpeta actualizada" });
     } catch (error) {
       console.error("No se pudo renombrar la carpeta:", error);
-      toast({ title: "No se pudo renombrar la carpeta", variant: "destructive" });
+      toast({
+        title: "No se pudo renombrar la carpeta",
+        description: getErrorDescription(error, "Intenta otra vez."),
+        variant: "destructive",
+      });
     } finally {
       setRenamingFolderId(null);
     }
@@ -381,21 +426,26 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
     const title = editingTitle.trim();
     if (!title) return;
 
+    const nextFolderId = editingFolderId || null;
     setUpdatingResourceId(editingResource.id);
     try {
       await fetchApi(`/ministries/${ministryId}/resources/${editingResource.id}`, {
         method: "PATCH",
         body: JSON.stringify({
           title,
-          folderId: editingFolderId || null,
+          folderId: nextFolderId,
         }),
       });
       cancelEditingResource();
-      await loadResources();
+      await loadResources(nextFolderId);
       toast({ title: "Recurso actualizado" });
     } catch (error) {
       console.error("No se pudo actualizar el recurso:", error);
-      toast({ title: "No se pudo actualizar el recurso", variant: "destructive" });
+      toast({
+        title: "No se pudo actualizar el recurso",
+        description: getErrorDescription(error, "Intenta otra vez."),
+        variant: "destructive",
+      });
     } finally {
       setUpdatingResourceId(null);
     }
