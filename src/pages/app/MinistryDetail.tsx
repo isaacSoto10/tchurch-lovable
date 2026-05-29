@@ -16,10 +16,11 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Loader2, ArrowLeft, Plus, Check, X, UserMinus, Users, Clock, MessageCircle, FileText } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useChurch } from "@/providers/ChurchProvider";
+import { MinistryFinance } from "@/components/MinistryFinance";
 import { MinistryResources } from "@/components/MinistryResources";
 import { useToast } from "@/components/ui/use-toast";
 
-type Tab = "members" | "join-requests" | "announcements" | "resources";
+type Tab = "members" | "join-requests" | "announcements" | "resources" | "finance";
 
 type UserSummary = {
   firstName?: string | null;
@@ -380,10 +381,10 @@ export default function MinistryDetail() {
         {/* Tabs */}
         <div className="px-4">
           <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as Tab)} className="w-full">
-            <TabsList className="w-full grid grid-cols-4 h-10 bg-zinc-100/60 p-1 rounded-lg">
-              <TabsTrigger value="members" className="text-xs">Members</TabsTrigger>
+            <TabsList className="flex h-auto w-full justify-start overflow-x-auto rounded-lg bg-zinc-100/60 p-1">
+              <TabsTrigger value="members" className="shrink-0 text-xs">Members</TabsTrigger>
               {canManage && (
-                <TabsTrigger value="join-requests" className="text-xs relative">
+                <TabsTrigger value="join-requests" className="relative shrink-0 text-xs">
                   Requests
                   {joinRequests.length > 0 && (
                     <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[10px] rounded-full flex items-center justify-center">
@@ -392,8 +393,9 @@ export default function MinistryDetail() {
                   )}
                 </TabsTrigger>
               )}
-              <TabsTrigger value="announcements" className="text-xs">Announcements</TabsTrigger>
-              <TabsTrigger value="resources" className="text-xs">Resources</TabsTrigger>
+              <TabsTrigger value="announcements" className="shrink-0 text-xs">Announcements</TabsTrigger>
+              <TabsTrigger value="resources" className="shrink-0 text-xs">Resources</TabsTrigger>
+              <TabsTrigger value="finance" className="shrink-0 text-xs">Finanzas</TabsTrigger>
             </TabsList>
           </Tabs>
         </div>
@@ -615,6 +617,11 @@ export default function MinistryDetail() {
               </CardContent>
             </Card>
           )
+        )}
+
+        {/* FINANCE TAB */}
+        {activeTab === "finance" && (
+          <MinistryFinance ministryId={id!} ministryName={ministry.name} canManage={canManage} />
         )}
       </div>
 

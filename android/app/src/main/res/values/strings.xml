@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Tchurch</string>
+    <string name="title_activity_main">Tchurch</string>
+    <string name="package_name">app.lovable.e5ddf50ff80d4eb7a86a937f7a9f8a62.tchurch</string>
+    <string name="custom_url_scheme">app.lovable.e5ddf50ff80d4eb7a86a937f7a9f8a62.tchurch</string>
+</resources>
