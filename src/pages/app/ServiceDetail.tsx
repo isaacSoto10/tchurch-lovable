@@ -27,7 +27,7 @@ import {
   type SongArrangement,
   type SongLike,
 } from "@/lib/songDisplay";
-import { ALL_KEYS, normalizeKey, transposeChordPro } from "@/lib/musicUtils";
+import { normalizeKey, transposeChordPro } from "@/lib/musicUtils";
 import { canUseServicePresentation } from "@/lib/servicePresentation";
 
 type ServiceItem = {
@@ -876,33 +876,16 @@ export default function ServiceDetail() {
                               </div>
                               <div className="flex shrink-0 items-center justify-end gap-1">
                                 {item.song && (
-                                  <>
-                                    {getOriginalKey(item) && (
-                                      <select
-                                        value={getDisplayKey(item) || getOriginalKey(item) || ""}
-                                        aria-label="Cambiar tono de la canción"
-                                        className="h-9 max-w-[4.75rem] rounded-xl border border-primary/10 bg-primary/5 px-2 text-xs font-bold text-primary outline-none"
-                                        onClick={stopInteractiveTap}
-                                        onPointerDown={stopInteractiveTap}
-                                        onTouchStart={stopInteractiveTap}
-                                        onChange={(event) => handleSaveItemKey(item, event.target.value)}
-                                      >
-                                        {ALL_KEYS.map((key) => (
-                                          <option key={key} value={key}>{key}</option>
-                                        ))}
-                                      </select>
-                                    )}
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-9 w-9 shrink-0 rounded-xl bg-primary/5 text-primary"
-                                      aria-expanded={Boolean(expandedSongItems[item.id])}
-                                      aria-label={expandedSongItems[item.id] ? "Contraer detalles de canción" : "Expandir detalles de canción"}
-                                      onClick={(event) => { event.stopPropagation(); toggleSongItem(item.id); }}
-                                    >
-                                      {expandedSongItems[item.id] ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                                    </Button>
-                                  </>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-9 w-9 shrink-0 rounded-xl bg-primary/5 text-primary"
+                                    aria-expanded={Boolean(expandedSongItems[item.id])}
+                                    aria-label={expandedSongItems[item.id] ? "Contraer detalles de canción" : "Expandir detalles de canción"}
+                                    onClick={(event) => { event.stopPropagation(); toggleSongItem(item.id); }}
+                                  >
+                                    {expandedSongItems[item.id] ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                                  </Button>
                                 )}
                               </div>
                             </div>
@@ -1262,10 +1245,10 @@ export default function ServiceDetail() {
                     >
                       <CardContent className="p-0">
                         <div className="p-3">
-                            <div className="flex items-start gap-3">
-                              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-sm font-black text-primary">
-                                {index + 1}
-                              </div>
+                          <div className="flex items-start gap-3">
+                            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-sm font-black text-primary">
+                              {index + 1}
+                            </div>
                             <div className="min-w-0 flex-1">
                               <p className="line-clamp-2 break-words text-base font-bold leading-tight text-zinc-950">
                                 {item.song?.title || item.title}
@@ -1276,36 +1259,19 @@ export default function ServiceDetail() {
                                 </p>
                               )}
                             </div>
-                            <div className="flex shrink-0 items-center gap-1">
-                              {getOriginalKey(item) && (
-                                <select
-                                  value={displayKey || getOriginalKey(item) || ""}
-                                  aria-label="Cambiar tono de la canción"
-                                  className="h-9 max-w-[4.75rem] rounded-xl border border-primary/10 bg-primary/5 px-2 text-xs font-bold text-primary outline-none"
-                                  onClick={stopInteractiveTap}
-                                  onPointerDown={stopInteractiveTap}
-                                  onTouchStart={stopInteractiveTap}
-                                  onChange={(event) => handleSaveItemKey(item, event.target.value)}
-                                >
-                                  {ALL_KEYS.map((key) => (
-                                    <option key={key} value={key}>{key}</option>
-                                  ))}
-                                </select>
-                              )}
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-9 w-9 shrink-0 rounded-xl bg-primary/5 text-primary"
-                                aria-expanded={isExpanded}
-                                aria-label={isExpanded ? "Contraer recursos de canción" : "Expandir recursos de canción"}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  toggleSongItem(item.id);
-                                }}
-                              >
-                                {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                              </Button>
-                            </div>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-9 w-9 shrink-0 rounded-xl bg-primary/5 text-primary"
+                              aria-expanded={isExpanded}
+                              aria-label={isExpanded ? "Contraer recursos de canción" : "Expandir recursos de canción"}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                toggleSongItem(item.id);
+                              }}
+                            >
+                              {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                            </Button>
                           </div>
 
                           {vocalNote && (
