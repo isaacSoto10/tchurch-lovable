@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { BookOpen, CheckCircle, Loader2, PlayCircle, Plus, Trash2 } from "lucide-react";
+import { BookOpen, CheckCircle, Loader2, Pencil, PlayCircle, Plus, Trash2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -68,6 +68,7 @@ export default function Devotionals() {
   const [showForm, setShowForm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [markingId, setMarkingId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
 
   const published = useMemo(() => devotionals.filter((devotional) => devotional.status === "published"), [devotionals]);
@@ -94,7 +95,39 @@ export default function Devotionals() {
     loadDevotionals();
   }, [loadDevotionals]);
 
-  async function createDevotional(event: React.FormEvent) {
+  function resetForm() {
+    setForm({ ...emptyForm, publishDate: new Date().toISOString().slice(0, 10) });
+    setEditingId(null);
+    setShowForm(false);
+  }
+
+  function openNewForm() {
+    if (showForm && !editingId) {
+      resetForm();
+      return;
+    }
+    setForm({ ...emptyForm, publishDate: new Date().toISOString().slice(0, 10) });
+    setEditingId(null);
+    setShowForm(true);
+  }
+
+  function editDevotional(devotional: Devotional) {
+    setForm({
+      title: devotional.title,
+      scriptureRef: devotional.scriptureRef || "",
+      bibleText: devotional.bibleText || "",
+      body: devotional.body,
+      videoUrl: devotional.videoUrl || "",
+      videoTitle: devotional.videoTitle || "",
+      publishDate: devotional.publishDate.slice(0, 10),
+      status: devotional.status,
+    });
+    setEditingId(devotional.id);
+    setShowForm(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function saveDevotional(event: React.FormEvent) {
     event.preventDefault();
     if (!form.title.trim() || !form.body.trim()) {
       toast({ title: "Título y reflexión son obligatorios", variant: "destructive" });
@@ -103,13 +136,12 @@ export default function Devotionals() {
 
     setSubmitting(true);
     try {
-      await fetchApi("/devotionals", {
-        method: "POST",
+      await fetchApi(editingId ? `/devotionals/${editingId}` : "/devotionals", {
+        method: editingId ? "PUT" : "POST",
         body: JSON.stringify(form),
       });
-      setForm({ ...emptyForm, publishDate: new Date().toISOString().slice(0, 10) });
-      setShowForm(false);
-      toast({ title: "Devocional guardado" });
+      resetForm();
+      toast({ title: editingId ? "Devocional actualizado" : "Devocional guardado" });
       await loadDevotionals();
     } catch (error) {
       toast({
@@ -217,9 +249,14 @@ export default function Devotionals() {
               </Button>
             )}
             {canManage && (
-              <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50 hover:text-red-700" onClick={() => deleteDevotional(devotional.id)}>
-                <Trash2 className="h-4 w-4" />
-              </Button>
+              <>
+                <Button variant="ghost" size="sm" onClick={() => editDevotional(devotional)}>
+                  <Pencil className="h-4 w-4" />
+                </Button>
+                <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50 hover:text-red-700" onClick={() => deleteDevotional(devotional.id)}>
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </>
             )}
           </div>
         </CardContent>
@@ -249,7 +286,7 @@ export default function Devotionals() {
           </p>
         </div>
         {canManage && (
-          <Button size="sm" className="shrink-0 rounded-2xl" onClick={() => setShowForm((current) => !current)}>
+          <Button size="sm" className="shrink-0 rounded-2xl" onClick={() => showForm ? resetForm() : openNewForm()}>
             <Plus className="h-4 w-4" />
           </Button>
         )}
@@ -258,7 +295,10 @@ export default function Devotionals() {
       {canManage && showForm && (
         <Card className="app-card">
           <CardContent className="p-4">
-            <form onSubmit={createDevotional} className="space-y-3">
+            <form onSubmit={saveDevotional} className="space-y-3">
+              <p className="text-sm font-bold text-zinc-950">
+                {editingId ? "Editar devocional" : "Nuevo devocional"}
+              </p>
               <Input value={form.title} onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))} placeholder="Título del devocional" />
               <div className="grid grid-cols-2 gap-2">
                 <Input value={form.scriptureRef} onChange={(event) => setForm((current) => ({ ...current, scriptureRef: event.target.value }))} placeholder="Juan 14:27" />
@@ -277,7 +317,7 @@ export default function Devotionals() {
                 <option value="draft">Borrador</option>
               </select>
               <Button type="submit" className="w-full" disabled={submitting}>
-                {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Guardar devocional"}
+                {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : editingId ? "Actualizar devocional" : "Guardar devocional"}
               </Button>
             </form>
           </CardContent>
