@@ -1,6 +1,6 @@
 import { useRef } from "react";
 import { NavLink, Outlet } from "react-router-dom";
-import { Heart, Home, ListChecks, Megaphone, Users } from "lucide-react";
+import { BookOpen, Heart, Home, ListChecks, Megaphone, Users } from "lucide-react";
 import { AppSidebar } from "../components/AppSidebar";
 import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 import { useChurch } from "@/providers/ChurchProvider";
@@ -12,6 +12,7 @@ const mobileNavItems = [
   { label: "Servicios", href: "/app/services", icon: ListChecks },
   { label: "Dar", href: "/app/giving", icon: Heart },
   { label: "Ministerios", href: "/app/ministries", icon: Users },
+  { label: "Devocional", href: "/app/devotionals", icon: BookOpen },
   { label: "Anuncios", href: "/app/announcements", icon: Megaphone },
 ];
 
@@ -83,7 +84,7 @@ function AppLayoutInner() {
             style={{ paddingBottom: "max(env(safe-area-inset-bottom), 0.55rem)" }}
             aria-label="Navegación principal"
           >
-            <div className="mx-auto grid max-w-md grid-cols-5 gap-1">
+            <div className="mx-auto grid max-w-lg grid-cols-6 gap-1">
               {mobileNavItems.map((item) => {
                 const Icon = item.icon;
                 return (

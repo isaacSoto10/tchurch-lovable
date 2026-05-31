@@ -115,6 +115,7 @@ const navItems: NavItem[] = [
   { title: "Canciones", url: "/app/songs", icon: Music },
   { title: "Servicios", url: "/app/services", icon: ListChecks },
   { title: "Anuncios", url: "/app/announcements", icon: Megaphone },
+  { title: "Devocionales", url: "/app/devotionals", icon: BookOpen },
   { title: "Dar", url: "/app/giving", icon: Heart },
   { title: "Mis asignaciones", url: "/app/my-assignments", icon: ClipboardList },
   { title: "Ministerios", url: "/app/ministries", icon: Users },

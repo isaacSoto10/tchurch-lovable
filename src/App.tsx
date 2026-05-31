@@ -20,6 +20,7 @@ const Services = lazy(() => import("./pages/app/Services"));
 const ServiceDetail = lazy(() => import("./pages/app/ServiceDetail"));
 const ServicePresentation = lazy(() => import("./pages/app/ServicePresentation"));
 const Announcements = lazy(() => import("./pages/app/Announcements"));
+const Devotionals = lazy(() => import("./pages/app/Devotionals"));
 const Giving = lazy(() => import("./pages/app/Giving"));
 const Ministries = lazy(() => import("./pages/app/Ministries"));
 const MinistryDetail = lazy(() => import("./pages/app/MinistryDetail"));
@@ -81,6 +82,7 @@ const App = () => {
                   <Route path="services" element={<Services />} />
                   <Route path="services/:id" element={<ServiceDetail />} />
                   <Route path="announcements" element={<Announcements />} />
+                  <Route path="devotionals" element={<Devotionals />} />
                   <Route path="giving" element={<Giving />} />
                   <Route path="ministries" element={<Ministries />} />
                   <Route path="ministries/:id" element={<MinistryDetail />} />
