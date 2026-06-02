@@ -26,6 +26,13 @@ interface ChurchContextType {
 
 const ChurchContext = createContext<ChurchContextType | null>(null);
 
+function normalizeChurch(church: Church): Church {
+  return {
+    ...church,
+    role: String(church.role || "MEMBER").toUpperCase(),
+  };
+}
+
 export function useChurch() {
   const ctx = useContext(ChurchContext);
   if (!ctx) throw new Error("useChurch must be used within ChurchProvider");
@@ -55,7 +62,7 @@ export function ChurchProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        const userChurches = await fetchUserChurches<Church>(token);
+        const userChurches = (await fetchUserChurches<Church>(token)).map(normalizeChurch);
 
         setChurches(userChurches);
 
@@ -85,8 +92,9 @@ export function ChurchProvider({ children }: { children: ReactNode }) {
   }, [isSignedIn, userId, getToken]);
 
   const selectChurch = (church: Church) => {
-    setSelectedChurch(church);
-    setChurchId(church.id);
+    const normalizedChurch = normalizeChurch(church);
+    setSelectedChurch(normalizedChurch);
+    setChurchId(normalizedChurch.id);
   };
 
   return (

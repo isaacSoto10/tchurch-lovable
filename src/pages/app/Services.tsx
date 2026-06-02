@@ -170,10 +170,14 @@ const TEMPLATE_ITEMS = [
   { title: "Cumpleaños", type: "announcement" },
 ];
 
+function normalizeRole(role?: string | null) {
+  return String(role || "").toUpperCase();
+}
+
 export default function Services() {
   const navigate = useNavigate();
   const { selectedChurch } = useChurch();
-  const isAdmin = selectedChurch?.role === "ADMIN";
+  const isAdmin = normalizeRole(selectedChurch?.role) === "ADMIN";
   const { fetchApi } = useApi();
   const { toast } = useToast();
   const [services, setServices] = useState<Service[]>([]);
@@ -446,7 +450,7 @@ export default function Services() {
     }
   }
 
-  const isPlanner = selectedChurch?.role === "ADMIN" || selectedChurch?.role === "PLANNER";
+  const isPlanner = ["ADMIN", "PLANNER"].includes(normalizeRole(selectedChurch?.role));
   const visibleServiceIds = new Set(
     myAssignments
       .filter((assignment) => assignment.responseStatus !== "declined")
@@ -509,7 +513,7 @@ export default function Services() {
       setDialogOpen(false);
       loadServices();
     } catch (e) {
-      toast({ title: "No se pudo guardar el servicio", variant: "destructive" });
+      toast({ title: e instanceof Error ? e.message : "No se pudo guardar el servicio", variant: "destructive" });
     } finally {
       setSubmitting(false);
     }
