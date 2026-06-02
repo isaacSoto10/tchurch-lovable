@@ -170,8 +170,22 @@ const TEMPLATE_ITEMS = [
   { title: "Cumpleaños", type: "announcement" },
 ];
 
+const MAX_SERVICE_WEEKS = 52;
+
 function normalizeRole(role?: string | null) {
   return String(role || "").toUpperCase();
+}
+
+function getServiceWeeksToCreate(value: string) {
+  const parsed = Number.parseInt(value, 10);
+  if (Number.isNaN(parsed)) return 1;
+  return Math.min(Math.max(parsed, 1), MAX_SERVICE_WEEKS);
+}
+
+function addWeeks(date: Date, weeks: number) {
+  const nextDate = new Date(date);
+  nextDate.setDate(nextDate.getDate() + weeks * 7);
+  return nextDate;
 }
 
 export default function Services() {
@@ -197,6 +211,7 @@ export default function Services() {
     status: "confirmed",
     notes: "",
   });
+  const [weeksToCreate, setWeeksToCreate] = useState("1");
 
   const [expandedService, setExpandedService] = useState<string | null>(null);
   const [expandedSongItems, setExpandedSongItems] = useState<Record<string, boolean>>({});
@@ -469,6 +484,7 @@ export default function Services() {
   const openNewDialog = () => {
     setEditingService(null);
     setFormData({ title: "", date: "", type: "Sunday Service", status: "confirmed", notes: "" });
+    setWeeksToCreate("1");
     setDialogOpen(true);
   };
 
@@ -481,6 +497,7 @@ export default function Services() {
       status: service.status === "completed" ? "completed" : "confirmed",
       notes: service.notes || "",
     });
+    setWeeksToCreate("1");
     setDialogOpen(true);
   };
 
@@ -489,26 +506,38 @@ export default function Services() {
 
     setSubmitting(true);
     try {
-      const payload = {
-        title: formData.title,
-        date: new Date(formData.date).toISOString(),
+      const baseDate = new Date(formData.date);
+      if (Number.isNaN(baseDate.getTime())) {
+        toast({ title: "Selecciona una fecha válida", variant: "destructive" });
+        return;
+      }
+
+      const buildPayload = (serviceDate: Date) => ({
+        title: formData.title.trim(),
+        date: serviceDate.toISOString(),
         type: formData.type,
         status: formData.status === "completed" ? "completed" : "confirmed",
         notes: formData.notes || null,
-      };
+      });
 
       if (editingService) {
         await fetchApi(`/services/${editingService.id}`, {
           method: "PUT",
-          body: JSON.stringify(payload),
+          body: JSON.stringify(buildPayload(baseDate)),
         });
         toast({ title: "Servicio actualizado" });
       } else {
-        await fetchApi("/services", {
-          method: "POST",
-          body: JSON.stringify(payload),
-        });
-        toast({ title: "Servicio creado" });
+        const serviceWeeks = getServiceWeeksToCreate(weeksToCreate);
+        const serviceDates = Array.from({ length: serviceWeeks }, (_, index) => addWeeks(baseDate, index));
+
+        for (const serviceDate of serviceDates) {
+          await fetchApi("/services", {
+            method: "POST",
+            body: JSON.stringify(buildPayload(serviceDate)),
+          });
+        }
+
+        toast({ title: serviceWeeks === 1 ? "Servicio creado" : `${serviceWeeks} servicios creados` });
       }
       setDialogOpen(false);
       loadServices();
@@ -864,6 +893,16 @@ export default function Services() {
     return <Icon className="w-4 h-4" />;
   };
 
+  const serviceWeeks = editingService ? 1 : getServiceWeeksToCreate(weeksToCreate);
+  const submitLabel = editingService ? "Actualizar" : serviceWeeks === 1 ? "Crear servicio" : `Crear ${serviceWeeks} servicios`;
+  const submittingLabel = editingService ? "Guardando..." : serviceWeeks === 1 ? "Creando..." : "Creando servicios...";
+  const servicePreviewDates =
+    !editingService && formData.date && serviceWeeks > 1
+      ? Array.from({ length: serviceWeeks }, (_, index) => addWeeks(new Date(formData.date), index)).filter(
+          (date) => !Number.isNaN(date.getTime())
+        )
+      : [];
+
   return (
     <div className="mobile-page space-y-5">
       <div className="app-card-soft p-4">
@@ -968,15 +1007,17 @@ export default function Services() {
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogTrigger />
-        <DialogContent>
+        <DialogContent className="max-h-[calc(100svh-2rem)] overflow-y-auto sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>
               {editingService ? "Editar servicio" : "Nuevo servicio"}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <div>
+            <div className="space-y-2">
+              <Label htmlFor="service-title">Título</Label>
               <Input
+                id="service-title"
                 placeholder="Título del servicio"
                 value={formData.title}
                 onChange={(e) =>
@@ -984,8 +1025,10 @@ export default function Services() {
                 }
               />
             </div>
-            <div>
+            <div className="space-y-2">
+              <Label htmlFor="service-date">Fecha y hora</Label>
               <Input
+                id="service-date"
                 type="datetime-local"
                 value={formData.date}
                 onChange={(e) =>
@@ -993,7 +1036,32 @@ export default function Services() {
                 }
               />
             </div>
-            <div>
+            {!editingService && (
+              <div className="space-y-2">
+                <Label htmlFor="service-weeks">Semanas a crear</Label>
+                <Input
+                  id="service-weeks"
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={MAX_SERVICE_WEEKS}
+                  value={weeksToCreate}
+                  onChange={(e) => setWeeksToCreate(e.target.value)}
+                  onBlur={() => setWeeksToCreate(String(serviceWeeks))}
+                />
+                {servicePreviewDates.length > 0 && (
+                  <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-600">
+                    <span className="font-medium text-zinc-900">Primeras fechas:</span>{" "}
+                    {servicePreviewDates.slice(0, 3).map((date) =>
+                      date.toLocaleDateString("es-US", { month: "short", day: "numeric" })
+                    ).join(", ")}
+                    {servicePreviewDates.length > 3 && ` y ${servicePreviewDates.length - 3} más`}
+                  </div>
+                )}
+              </div>
+            )}
+            <div className="space-y-2">
+              <Label>Tipo</Label>
               <Select
                 value={formData.type}
                 onValueChange={(v) =>
@@ -1012,8 +1080,10 @@ export default function Services() {
                 </SelectContent>
               </Select>
             </div>
-            <div>
+            <div className="space-y-2">
+              <Label htmlFor="service-notes">Notas</Label>
               <Textarea
+                id="service-notes"
                 placeholder="Notas (opcional)"
                 value={formData.notes}
                 onChange={(e) =>
@@ -1024,7 +1094,8 @@ export default function Services() {
             </div>
             <div className="flex gap-2">
               <Button onClick={handleSubmit} disabled={submitting}>
-                {submitting ? "Guardando..." : editingService ? "Actualizar" : "Crear"}
+                {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                {submitting ? submittingLabel : submitLabel}
               </Button>
               <Button
                 variant="outline"
