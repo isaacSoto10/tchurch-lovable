@@ -48,6 +48,8 @@ export async function apiFetch<T = unknown>(
   token?: string | null
 ): Promise<T> {
   const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
+  const method = (options.method || "GET").toUpperCase();
+  const shouldNoStore = method === "GET" || method === "POST" || method === "PUT" || method === "PATCH" || method === "DELETE";
   const resolvedToken =
     token ??
     (isNativeMobileAuth ? getMobileAuthSession()?.token : null) ??
@@ -55,6 +57,7 @@ export async function apiFetch<T = unknown>(
     null;
   const headers: Record<string, string> = {
     ...(!isFormData ? { "Content-Type": "application/json" } : {}),
+    ...(shouldNoStore ? { "Cache-Control": "no-store", Pragma: "no-cache" } : {}),
     ...(options.headers as Record<string, string>),
   };
 
@@ -72,6 +75,7 @@ export async function apiFetch<T = unknown>(
   try {
     res = await fetch(url, {
       ...options,
+      cache: options.cache ?? (shouldNoStore ? "no-store" : undefined),
       headers,
     });
   } catch (error) {
@@ -130,6 +134,7 @@ export async function fetchUserChurches<T = unknown>(token: string): Promise<T[]
   }
 
   const res = await fetch(url, {
+    cache: "no-store",
     headers,
   });
 

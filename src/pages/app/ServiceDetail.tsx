@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, type DragEvent, type PointerEvent, type SyntheticEvent } from "react";
+import { useCallback, useRef, useState, useEffect, type DragEvent, type PointerEvent, type SyntheticEvent } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,8 +14,8 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, ArrowLeft, Plus, Trash2, GripVertical, Check, X, Clock, Users, Music, ChevronDown, ChevronUp, FileDown, Maximize2, PlayCircle, Pencil } from "lucide-react";
-import { apiFetch } from "@/lib/api";
+import { Loader2, ArrowLeft, Plus, Trash2, GripVertical, Check, X, Clock, Users, Music, ChevronDown, ChevronUp, FileDown, Maximize2, PlayCircle, Pencil, Search } from "lucide-react";
+import { ApiError, apiFetch } from "@/lib/api";
 import { useChurch } from "@/providers/ChurchProvider";
 import { useToast } from "@/components/ui/use-toast";
 import { ChordProPreview } from "@/components/ChordProPreview";
@@ -23,12 +23,14 @@ import {
   getSongDisplayKey,
   getSongChordPro,
   getSongYoutubeUrl,
+  getPrimaryArrangement,
   isSongItemType,
   type SongArrangement,
   type SongLike,
 } from "@/lib/songDisplay";
 import { normalizeKey, transposeChordPro } from "@/lib/musicUtils";
 import { canUseServicePresentation } from "@/lib/servicePresentation";
+import { formatServiceDate } from "@/lib/serviceDates";
 
 type ServiceItem = {
   id: string;
@@ -77,6 +79,22 @@ type SongOption = {
   arrangements?: SongArrangement[] | null;
 };
 
+type LacuerdaCandidate = {
+  id: string;
+  title: string;
+  artist: string | null;
+  source?: string | null;
+  sourceUrl?: string | null;
+  score?: number | null;
+  ref: unknown;
+};
+
+type LacuerdaArrangementResponse = {
+  arrangement?: SongArrangement | null;
+  candidates?: LacuerdaCandidate[];
+  error?: string;
+};
+
 type UserOption = {
   id: string;
   firstName?: string | null;
@@ -115,10 +133,6 @@ const TEAM_MATRIX_GROUPS = [
   { title: "Banda", positions: ["Vocals", "Acoustic Guitar", "Electric Guitar", "Bass", "Keys", "Drums"] },
   { title: "Audio / Visual", positions: ["Sound Tech", "Visuals Tech", "Camera", "Lyrics"] },
 ] as const;
-
-function formatDate(d: string) {
-  return new Date(d).toLocaleDateString("es-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
-}
 
 function getInitials(firstName?: string | null, lastName?: string | null, email?: string): string {
   if (firstName || lastName) return `${firstName?.[0] || ""}${lastName?.[0] || ""}`.toUpperCase();
@@ -224,6 +238,20 @@ export default function ServiceDetail() {
   const [songSearch, setSongSearch] = useState("");
   const [songResults, setSongResults] = useState<SongOption[]>([]);
   const [selectedSongs, setSelectedSongs] = useState<SongOption[]>([]);
+  const [quickLookupOnCreate, setQuickLookupOnCreate] = useState(false);
+  const [quickLookupSong, setQuickLookupSong] = useState<SongOption | null>(null);
+  const [quickLookupCandidates, setQuickLookupCandidates] = useState<LacuerdaCandidate[]>([]);
+  const [quickLookupError, setQuickLookupError] = useState("");
+  const [quickSelectingId, setQuickSelectingId] = useState<string | null>(null);
+
+  // Admin chord tools
+  const [lookupCandidates, setLookupCandidates] = useState<LacuerdaCandidate[]>([]);
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [lookupSelectingId, setLookupSelectingId] = useState<string | null>(null);
+  const [lookupError, setLookupError] = useState("");
+  const [editingChords, setEditingChords] = useState(false);
+  const [chordDraft, setChordDraft] = useState("");
+  const [savingChordEdit, setSavingChordEdit] = useState(false);
 
   // Assign form
   const [assignUserId, setAssignUserId] = useState("");
@@ -232,26 +260,30 @@ export default function ServiceDetail() {
 
   const isAdmin = selectedChurch?.role === "ADMIN";
   const isPlanner = selectedChurch?.role === "PLANNER" || isAdmin;
+  const chartSong = chartItem?.song || null;
+  const chartActiveArrangement = getPrimaryArrangement(chartSong);
+  const chartHasChords = Boolean(getSongChordPro(chartSong));
   const selectedUserAssignments = assignUserId && service
     ? service.assignments.filter((assignment) => assignment.userId === assignUserId)
     : [];
-  useEffect(() => {
+  const loadService = useCallback(async (options: { showLoading?: boolean } = {}) => {
     if (!id) return;
-    async function load() {
-      try {
-        const data = await apiFetch<ServiceResponse>(`/services/${id}`);
-        if (data.error) { navigate("/app/services"); return; }
-        // Sort items by position
-        const sorted = { ...data, items: [...(data.items || [])].sort((a, b) => a.position - b.position) };
-        setService(sorted);
-      } catch (e) {
-        console.error(e);
-      } finally {
-        setLoading(false);
-      }
+    if (options.showLoading) setLoading(true);
+    try {
+      const data = await apiFetch<ServiceResponse>(`/services/${id}?fresh=${Date.now()}`, { cache: "no-store" });
+      if (data.error) { navigate("/app/services"); return; }
+      const sorted = { ...data, items: [...(data.items || [])].sort((a, b) => a.position - b.position) };
+      setService(sorted);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      if (options.showLoading) setLoading(false);
     }
-    load();
   }, [id, navigate]);
+
+  useEffect(() => {
+    void loadService({ showLoading: true });
+  }, [loadService]);
 
   useEffect(() => {
     apiFetch<{ id: string; email?: string | null }>("/users/me")
@@ -287,6 +319,37 @@ export default function ServiceDetail() {
     setSongResults([]);
   }, [songSearch, itemType]);
 
+  async function addSongsToService(songs: SongOption[], options: { keepDialogOpen?: boolean } = {}) {
+    if (!id || songs.length === 0) return;
+    const startPosition = service?.items.length || 0;
+    const duration = itemDuration ? parseInt(itemDuration) : null;
+
+    await Promise.all(songs.map((song, index) =>
+      apiFetch(`/service-items`, {
+        method: "POST",
+        body: JSON.stringify({
+          serviceId: id,
+          title: song.title,
+          type: "song",
+          duration,
+          songId: song.id,
+          position: startPosition + index,
+          details: {},
+        }),
+      })
+    ));
+
+    await loadService();
+    toast({
+      title: `${songs.length} canción${songs.length === 1 ? "" : "es"} agregada${songs.length === 1 ? "" : "s"}`,
+    });
+
+    if (!options.keepDialogOpen) {
+      resetItemForm();
+      setShowAddItem(false);
+    }
+  }
+
   async function handleAddItem(e: React.FormEvent) {
     e.preventDefault();
     if (!id) return;
@@ -295,24 +358,10 @@ export default function ServiceDetail() {
 
     setSubmitting(true);
     try {
-      const startPosition = service?.items.length || 0;
       const duration = itemDuration ? parseInt(itemDuration) : null;
 
       if (isSongItemType(itemType)) {
-        await Promise.all(selectedSongs.map((song, index) =>
-          apiFetch(`/service-items`, {
-            method: "POST",
-            body: JSON.stringify({
-              serviceId: id,
-              title: song.title,
-              type: "song",
-              duration,
-              songId: song.id,
-              position: startPosition + index,
-              details: {},
-            }),
-          })
-        ));
+        await addSongsToService(selectedSongs);
       } else {
         await apiFetch(`/service-items`, {
           method: "POST",
@@ -322,22 +371,235 @@ export default function ServiceDetail() {
             type: itemType.toLowerCase(),
             duration,
             songId: null,
-            position: startPosition,
+            position: service?.items.length || 0,
             details: {},
           }),
         });
+        await loadService();
+        toast({ title: "Elemento agregado" });
+        resetItemForm();
+        setShowAddItem(false);
       }
-      const data = await apiFetch<Service>(`/services/${id}`);
-      setService({ ...data, items: [...(data.items || [])].sort((a, b) => a.position - b.position) });
-      toast({
-        title: isSongItemType(itemType)
-          ? `${selectedSongs.length} canción${selectedSongs.length === 1 ? "" : "es"} agregada${selectedSongs.length === 1 ? "" : "s"}`
-          : "Elemento agregado",
-      });
-      resetItemForm();
-      setShowAddItem(false);
     } catch (e) { console.error(e); }
     finally { setSubmitting(false); }
+  }
+
+  function clearChordLookupState() {
+    setLookupCandidates([]);
+    setLookupError("");
+    setLookupSelectingId(null);
+  }
+
+  async function searchLacuerdaCandidates(song: SongLike | SongOption | null | undefined) {
+    if (!isAdmin || !song?.id) return;
+    setLookupLoading(true);
+    setLookupError("");
+    setLookupCandidates([]);
+    setEditingChords(false);
+    try {
+      const data = await apiFetch<LacuerdaArrangementResponse>(`/songs/${song.id}/lacuerda`, {
+        method: "POST",
+        cache: "no-store",
+        body: JSON.stringify({ action: "search" }),
+      });
+      const candidates = Array.isArray(data.candidates) ? data.candidates.slice(0, 5) : [];
+      setLookupCandidates(candidates);
+      if (candidates.length === 0) {
+        setLookupError("No encontramos versiones en La Cuerda para esta canción.");
+      }
+    } catch (error) {
+      setLookupError(error instanceof Error ? error.message : "No se pudieron buscar acordes en La Cuerda.");
+    } finally {
+      setLookupLoading(false);
+    }
+  }
+
+  function handleOpenChordLookup(item: ServiceItem) {
+    if (!item.song) return;
+    setChartItemId(item.id);
+    void searchLacuerdaCandidates(item.song);
+  }
+
+  async function handleSelectChordCandidate(candidate: LacuerdaCandidate) {
+    if (!isAdmin || !chartSong || lookupSelectingId) return;
+    setLookupSelectingId(candidate.id);
+    setLookupError("");
+    try {
+      const data = await apiFetch<LacuerdaArrangementResponse>(`/songs/${chartSong.id}/lacuerda`, {
+        method: "POST",
+        cache: "no-store",
+        body: JSON.stringify({
+          candidate,
+          arrangementId: chartActiveArrangement?.id || null,
+        }),
+      });
+      if (!data.arrangement) {
+        throw new Error(data.error || "No se pudo importar la versión seleccionada.");
+      }
+      await loadService();
+      setEditingChords(false);
+      setChordDraft("");
+      clearChordLookupState();
+      toast({ title: "Acordes importados desde La Cuerda" });
+    } catch (error) {
+      setLookupError(error instanceof Error ? error.message : "No se pudo importar la versión seleccionada.");
+    } finally {
+      setLookupSelectingId(null);
+    }
+  }
+
+  async function ensureEditableArrangement() {
+    if (!chartSong) return null;
+    if (chartActiveArrangement?.id) return chartActiveArrangement;
+
+    const created = await apiFetch<SongArrangement>(`/arrangements`, {
+      method: "POST",
+      body: JSON.stringify({
+        songId: chartSong.id,
+        name: "Principal",
+        key: chartSong.key || null,
+        bpm: chartSong.bpm || null,
+        meter: chartSong.meter || null,
+        lyrics: chartSong.lyrics || null,
+        sequence: [],
+      }),
+    });
+    return created;
+  }
+
+  function handleEditChords() {
+    if (!isAdmin || !chartSong) return;
+    clearChordLookupState();
+    setChordDraft(chartActiveArrangement?.lyrics || chartSong.lyrics || "");
+    setEditingChords(true);
+  }
+
+  async function handleSaveChordEdit() {
+    if (!isAdmin || !chartSong) return;
+    setSavingChordEdit(true);
+    setLookupError("");
+    try {
+      const arrangement = await ensureEditableArrangement();
+      if (!arrangement?.id) throw new Error("No se pudo preparar el arreglo para editar.");
+      const data = await apiFetch<LacuerdaArrangementResponse>(`/songs/${chartSong.id}/lacuerda`, {
+        method: "POST",
+        cache: "no-store",
+        body: JSON.stringify({
+          action: "saveArrangement",
+          arrangementId: arrangement.id,
+          lyrics: chordDraft,
+        }),
+      });
+      if (!data.arrangement) {
+        throw new Error(data.error || "No se pudieron guardar los acordes.");
+      }
+      await loadService();
+      setEditingChords(false);
+      setChordDraft("");
+      toast({ title: "Acordes guardados" });
+    } catch (error) {
+      setLookupError(error instanceof Error ? error.message : "No se pudieron guardar los acordes.");
+    } finally {
+      setSavingChordEdit(false);
+    }
+  }
+
+  async function handleCreateQuickSong() {
+    if (!id) return;
+    const title = songSearch.trim();
+    if (!title) return;
+    setSubmitting(true);
+    setQuickLookupError("");
+    setQuickLookupCandidates([]);
+    setQuickLookupSong(null);
+    try {
+      let createdSong: SongOption | null = null;
+      try {
+        createdSong = await apiFetch<SongOption>(`/songs`, {
+          method: "POST",
+          body: JSON.stringify({ title }),
+        });
+      } catch (error) {
+        const body = error instanceof ApiError && error.body && typeof error.body === "object"
+          ? error.body as { existingId?: unknown; id?: unknown; title?: unknown; author?: unknown }
+          : null;
+        const existingId = typeof body?.existingId === "string" ? body.existingId : typeof body?.id === "string" ? body.id : "";
+        if (!existingId) throw error;
+        createdSong = {
+          id: existingId,
+          title: typeof body?.title === "string" ? body.title : title,
+          author: typeof body?.author === "string" ? body.author : null,
+        };
+      }
+
+      if (!createdSong?.id) throw new Error("No se pudo crear la canción.");
+
+      if (isAdmin && quickLookupOnCreate) {
+        try {
+          const lookup = await apiFetch<LacuerdaArrangementResponse>(`/songs/${createdSong.id}/lacuerda`, {
+            method: "POST",
+            cache: "no-store",
+            body: JSON.stringify({ action: "search" }),
+          });
+          const candidates = Array.isArray(lookup.candidates) ? lookup.candidates.slice(0, 5) : [];
+          if (candidates.length > 0) {
+            setQuickLookupSong(createdSong);
+            setQuickLookupCandidates(candidates);
+            return;
+          }
+          setQuickLookupError("No encontramos acordes; la canción se agregará sin acordes.");
+        } catch (error) {
+          setQuickLookupError(error instanceof Error ? error.message : "No se pudieron buscar acordes; puedes agregar sin acordes.");
+        }
+      }
+
+      await addSongsToService([createdSong]);
+    } catch (error) {
+      console.error(error);
+      toast({ title: error instanceof Error ? error.message : "No se pudo crear la canción", variant: "destructive" });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleSelectQuickCandidate(candidate: LacuerdaCandidate) {
+    if (!quickLookupSong || quickSelectingId) return;
+    setQuickSelectingId(candidate.id);
+    setQuickLookupError("");
+    try {
+      const data = await apiFetch<LacuerdaArrangementResponse>(`/songs/${quickLookupSong.id}/lacuerda`, {
+        method: "POST",
+        cache: "no-store",
+        body: JSON.stringify({ candidate }),
+      });
+      const arrangement = data.arrangement;
+      if (!arrangement) {
+        throw new Error(data.error || "No se pudo importar la versión seleccionada.");
+      }
+      const updatedSong: SongOption = {
+        ...quickLookupSong,
+        key: arrangement.key || quickLookupSong.key || null,
+        bpm: arrangement.bpm || quickLookupSong.bpm || null,
+        meter: arrangement.meter || quickLookupSong.meter || null,
+        lyrics: arrangement.lyrics || quickLookupSong.lyrics || null,
+        arrangements: [arrangement],
+      };
+      await addSongsToService([updatedSong]);
+    } catch (error) {
+      setQuickLookupError(error instanceof Error ? error.message : "No se pudo importar la versión seleccionada.");
+    } finally {
+      setQuickSelectingId(null);
+    }
+  }
+
+  async function handleAddQuickSongWithoutChords() {
+    if (!quickLookupSong) return;
+    setSubmitting(true);
+    try {
+      await addSongsToService([quickLookupSong]);
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   async function handleDeleteItem(itemId: string) {
@@ -545,6 +807,11 @@ export default function ServiceDetail() {
     setSongSearch("");
     setSongResults([]);
     setSelectedSongs([]);
+    setQuickLookupOnCreate(false);
+    setQuickLookupSong(null);
+    setQuickLookupCandidates([]);
+    setQuickLookupError("");
+    setQuickSelectingId(null);
   }
 
   function toggleSelectedSong(song: SongOption) {
@@ -719,6 +986,9 @@ export default function ServiceDetail() {
   }
 
   const canPresentService = canUseServicePresentation(service, selectedChurch?.role, currentUserId, currentUserEmail);
+  const trimmedSongSearch = songSearch.trim();
+  const hasExactSongMatch = songResults.some((song) => song.title.trim().toLowerCase() === trimmedSongSearch.toLowerCase());
+  const canQuickCreateSong = isAdmin && isSongItemType(itemType) && trimmedSongSearch.length >= 2 && !hasExactSongMatch;
 
   return (
     <div className="mobile-page space-y-4">
@@ -731,7 +1001,7 @@ export default function ServiceDetail() {
             </button>
             <div className="flex-1 min-w-0">
               <h1 className="line-clamp-2 text-2xl font-black leading-tight tracking-tight text-zinc-950">{service.title}</h1>
-              <p className="mt-0.5 truncate text-sm text-zinc-500">{formatDate(service.date)}</p>
+              <p className="mt-0.5 truncate text-sm text-zinc-500">{formatServiceDate(service.date)}</p>
             </div>
             {isAdmin && (
               <Button variant="ghost" size="sm" className="h-10 w-10 shrink-0 rounded-2xl text-red-500" onClick={handleDeleteService}>
@@ -1046,6 +1316,21 @@ export default function ServiceDetail() {
                               <Maximize2 className="w-3 h-3" />
                               Ver acordes
                             </Button>
+                            {isAdmin && !getSongChordPro(item.song) && (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="rounded-xl border-primary/20 bg-primary/5 text-primary"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  handleOpenChordLookup(item);
+                                }}
+                              >
+                                <Search className="w-3 h-3" />
+                                Buscar acordes en La Cuerda
+                              </Button>
+                            )}
                             {isPlanner && (
                               <Button
                                 type="button"
@@ -1327,7 +1612,14 @@ export default function ServiceDetail() {
         )}
       </div>
 
-      <Dialog open={Boolean(chartItem)} onOpenChange={(open) => { if (!open) setChartItemId(null); }}>
+      <Dialog open={Boolean(chartItem)} onOpenChange={(open) => {
+        if (!open) {
+          setChartItemId(null);
+          setEditingChords(false);
+          setChordDraft("");
+          clearChordLookupState();
+        }
+      }}>
         <DialogContent className="flex max-h-[88svh] w-[calc(100vw-1rem)] max-w-5xl flex-col gap-0 overflow-hidden rounded-[1.5rem] border bg-white p-0 sm:max-h-[90vh] sm:rounded-[2rem]">
           {chartItem?.song && (
             <>
@@ -1357,17 +1649,90 @@ export default function ServiceDetail() {
                     <p className="text-sm font-semibold leading-5 text-primary">Canta: {getVocalNote(chartItem)}</p>
                   </div>
                 )}
-                <ChordProPreview
-                  value={getSongChordPro(chartItem.song)}
-                  originalKey={getOriginalKey(chartItem)}
-                  selectedKey={getDisplayKey(chartItem)}
-                  onSelectedKeyChange={(key) => handleSaveItemKey(chartItem, key)}
-                  title={chartItem.song.title}
-                  artist={chartItem.song.author}
-                  maxLines={500}
-                  emptyText="Esta canción todavía no tiene acordes guardados."
-                  fullHeight
-                />
+                {isAdmin && (
+                  <div className="mb-2 space-y-2 rounded-2xl border border-primary/10 bg-white p-3 shadow-sm">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="rounded-xl"
+                        onClick={() => searchLacuerdaCandidates(chartItem.song)}
+                        disabled={lookupLoading}
+                      >
+                        {lookupLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Search className="h-3 w-3" />}
+                        {chartHasChords ? "Cambiar versión" : "Buscar acordes en La Cuerda"}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={editingChords ? "default" : "outline"}
+                        size="sm"
+                        className="rounded-xl"
+                        onClick={handleEditChords}
+                      >
+                        <Pencil className="h-3 w-3" />
+                        Editar acordes
+                      </Button>
+                    </div>
+
+                    {lookupCandidates.length > 0 && (
+                      <div className="space-y-1 rounded-2xl bg-zinc-50 p-2">
+                        <p className="px-2 text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">Elige una versión</p>
+                        {lookupCandidates.map((candidate) => (
+                          <button
+                            key={candidate.id}
+                            type="button"
+                            className="flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left transition-colors hover:bg-white"
+                            disabled={Boolean(lookupSelectingId)}
+                            onClick={() => handleSelectChordCandidate(candidate)}
+                          >
+                            <span className="min-w-0">
+                              <span className="block truncate text-sm font-bold text-zinc-950">{candidate.title}</span>
+                              <span className="block truncate text-xs text-zinc-500">{candidate.artist || "Autor desconocido"}</span>
+                            </span>
+                            <span className="shrink-0 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-bold text-primary">
+                              {lookupSelectingId === candidate.id ? "Importando..." : "Usar"}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {lookupError && <p className="text-xs font-medium leading-5 text-red-600">{lookupError}</p>}
+                  </div>
+                )}
+
+                {editingChords ? (
+                  <div className="space-y-3 rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm">
+                    <Textarea
+                      value={chordDraft}
+                      onChange={(event) => setChordDraft(event.target.value)}
+                      spellCheck={false}
+                      className="min-h-[50svh] resize-y rounded-2xl font-mono text-sm leading-6"
+                      placeholder="Pega o escribe los acordes en formato ChordPro..."
+                    />
+                    <div className="flex flex-wrap justify-end gap-2">
+                      <Button type="button" variant="outline" className="rounded-xl" onClick={() => setEditingChords(false)} disabled={savingChordEdit}>
+                        Cancelar
+                      </Button>
+                      <Button type="button" className="rounded-xl" onClick={handleSaveChordEdit} disabled={savingChordEdit}>
+                        {savingChordEdit ? <Loader2 className="h-4 w-4 animate-spin" /> : "Guardar acordes"}
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <ChordProPreview
+                    value={getSongChordPro(chartItem.song)}
+                    originalKey={getOriginalKey(chartItem)}
+                    selectedKey={getDisplayKey(chartItem)}
+                    onSelectedKeyChange={(key) => handleSaveItemKey(chartItem, key)}
+                    title={chartItem.song.title}
+                    artist={chartItem.song.author}
+                    maxLines={500}
+                    emptyText="Esta canción todavía no tiene acordes guardados."
+                    fullHeight
+                  />
+                )}
               </div>
               <div className="shrink-0 border-t border-zinc-100 bg-white/95 p-3 backdrop-blur">
                 <DialogClose asChild>
@@ -1446,6 +1811,59 @@ export default function ServiceDetail() {
                     })}
                   </div>
                 )}
+                {canQuickCreateSong && (
+                  <div className="space-y-3 rounded-2xl border border-dashed border-primary/25 bg-primary/5 p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-zinc-950">Crear "{trimmedSongSearch}"</p>
+                        <p className="mt-0.5 text-xs leading-5 text-zinc-500">No hay una canción exacta con ese título.</p>
+                      </div>
+                      <Button type="button" size="sm" className="shrink-0 rounded-xl" onClick={handleCreateQuickSong} disabled={submitting}>
+                        {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Crear"}
+                      </Button>
+                    </div>
+                    <label className="flex items-center gap-2 text-xs font-semibold text-zinc-700">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 rounded border-zinc-300 text-primary"
+                        checked={quickLookupOnCreate}
+                        onChange={(event) => setQuickLookupOnCreate(event.target.checked)}
+                      />
+                      Buscar acordes en La Cuerda al crear
+                    </label>
+                  </div>
+                )}
+                {quickLookupCandidates.length > 0 && quickLookupSong && (
+                  <div className="space-y-2 rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm">
+                    <div>
+                      <p className="text-sm font-bold text-zinc-950">Elige una versión para "{quickLookupSong.title}"</p>
+                      <p className="text-xs text-zinc-500">Si ninguna es correcta, puedes agregarla sin acordes.</p>
+                    </div>
+                    <div className="space-y-1">
+                      {quickLookupCandidates.map((candidate) => (
+                        <button
+                          key={candidate.id}
+                          type="button"
+                          className="flex w-full items-center justify-between gap-3 rounded-xl bg-zinc-50 px-3 py-2 text-left transition hover:bg-primary/5"
+                          disabled={Boolean(quickSelectingId)}
+                          onClick={() => handleSelectQuickCandidate(candidate)}
+                        >
+                          <span className="min-w-0">
+                            <span className="block truncate text-sm font-bold text-zinc-950">{candidate.title}</span>
+                            <span className="block truncate text-xs text-zinc-500">{candidate.artist || "Autor desconocido"}</span>
+                          </span>
+                          <span className="shrink-0 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-bold text-primary">
+                            {quickSelectingId === candidate.id ? "Importando..." : "Usar"}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                    <Button type="button" variant="outline" className="w-full rounded-xl" onClick={handleAddQuickSongWithoutChords} disabled={submitting}>
+                      Agregar sin acordes
+                    </Button>
+                  </div>
+                )}
+                {quickLookupError && <p className="text-xs font-medium leading-5 text-red-600">{quickLookupError}</p>}
               </div>
             ) : (
               <div className="space-y-2">
