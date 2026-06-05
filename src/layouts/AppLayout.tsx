@@ -2,10 +2,13 @@ import { useRef } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { BookOpen, Heart, Home, ListChecks, Megaphone, Users } from "lucide-react";
 import { AppSidebar } from "../components/AppSidebar";
+import { TchurchLogo } from "@/components/TchurchLogo";
 import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 import { useChurch } from "@/providers/ChurchProvider";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { usePushNotifications } from "@/hooks/usePushNotifications";
+import { NotificationBell } from "@/components/NotificationBell";
+import { NotificationsProvider } from "@/providers/NotificationsProvider";
 
 const mobileNavItems = [
   { label: "Inicio", href: "/app", icon: Home, end: true },
@@ -63,12 +66,13 @@ function AppLayoutInner() {
           >
             <div className="flex items-center gap-3 px-4 pb-2.5">
               <SidebarTrigger className="h-10 w-10 rounded-2xl border border-zinc-200 bg-white shadow-sm" />
-              <div className="min-w-0">
-                <p className="text-[0.95rem] font-bold leading-tight tracking-tight">Tchurch</p>
+              <div className="min-w-0 flex-1">
+                <TchurchLogo size="xs" wordPurple className="justify-start" />
                 <p className="truncate text-[0.8rem] leading-tight text-muted-foreground">
                   {selectedChurch?.name || "Configura tu iglesia"}
                 </p>
               </div>
+              <NotificationBell />
             </div>
           </header>
         ) : null}
@@ -115,7 +119,9 @@ function AppLayoutInner() {
 export function AppLayout() {
   return (
     <SidebarProvider>
-      <AppLayoutInner />
+      <NotificationsProvider>
+        <AppLayoutInner />
+      </NotificationsProvider>
     </SidebarProvider>
   );
 }

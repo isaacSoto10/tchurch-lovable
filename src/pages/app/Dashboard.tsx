@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { CalendarDays, Music, Users, Megaphone, ListChecks, UsersRound, Calendar, ArrowRight, Plus, Check, X, Loader2, Bell } from "lucide-react";
+import { CalendarDays, Music, Users, Megaphone, ListChecks, UsersRound, Calendar, ArrowRight, Plus, Check, X, Loader2 } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useChurch } from "@/providers/ChurchProvider";
 import { useNavigate } from "react-router-dom";
+import { formatServiceDate, formatServiceTime, parseServiceDate } from "@/lib/serviceDates";
+import { isNativeMobileAuth } from "@/lib/mobileAuth";
 
 interface TimelineItem {
   id: string;
@@ -61,20 +63,8 @@ interface Assignment {
   };
 }
 
-interface AppNotification {
-  id: string;
-  type: string;
-  title: string;
-  body?: string | null;
-  read?: boolean;
-  createdAt?: string;
-  data?: {
-    route?: string;
-  } | null;
-}
-
 function formatDate(dateStr: string) {
-  return new Date(dateStr).toLocaleDateString("es-US", {
+  return formatServiceDate(dateStr, "es-US", {
     weekday: "short",
     month: "short",
     day: "numeric",
@@ -82,17 +72,14 @@ function formatDate(dateStr: string) {
 }
 
 function formatTime(dateStr: string) {
-  return new Date(dateStr).toLocaleTimeString("es-US", {
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  return formatServiceTime(dateStr);
 }
 
 function getItemTime(value: unknown) {
   if (typeof value !== "string") return null;
 
-  const time = new Date(value).getTime();
-  return Number.isFinite(time) ? time : null;
+  const time = parseServiceDate(value)?.getTime();
+  return typeof time === "number" && Number.isFinite(time) ? time : null;
 }
 
 async function safeDashboardFetch<T>(
@@ -122,7 +109,6 @@ export default function Dashboard() {
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [ministries, setMinistries] = useState<Ministry[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
-  const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [loading, setLoading] = useState(true);
   const [respondingId, setRespondingId] = useState<string | null>(null);
 
@@ -140,14 +126,13 @@ export default function Dashboard() {
 
       setLoading(true);
       try {
-        const [statsData, servicesData, eventsData, announcementsData, ministriesData, assignmentsData, notificationsData] = await Promise.all([
+        const [statsData, servicesData, eventsData, announcementsData, ministriesData, assignmentsData] = await Promise.all([
           safeDashboardFetch("stats", () => fetchApi("/dashboard/stats"), null),
           safeDashboardFetch("services", () => fetchApi("/services"), []),
           safeDashboardFetch("events", () => fetchApi("/events"), []),
           safeDashboardFetch("announcements", () => fetchApi("/announcements"), []),
           safeDashboardFetch("ministries", () => fetchApi("/my-ministries"), []),
           safeDashboardFetch("asignaciones", () => fetchApi("/service-assignments/mine"), []),
-          safeDashboardFetch("notificaciones", () => fetchApi("/notifications"), []),
         ]);
 
         if (statsData && typeof statsData === "object" && !("error" in statsData)) {
@@ -204,7 +189,6 @@ export default function Dashboard() {
         setAnnouncements(Array.isArray(announcementsData) ? announcementsData.slice(0, 10) : []);
         const ministryPayload = ministriesData as MinistriesResponse;
         setMinistries(Array.isArray(ministriesData) ? ministriesData : Array.isArray(ministryPayload?.ministries) ? ministryPayload.ministries : []);
-        setNotifications(Array.isArray(notificationsData) ? notificationsData.slice(0, 5) : []);
       } catch (e) {
         console.error("No se pudo cargar el panel:", e);
       } finally {
@@ -255,16 +239,20 @@ export default function Dashboard() {
             <div className="space-y-2">
               <p className="text-xl font-semibold">No hay iglesia seleccionada</p>
               <p className="text-sm text-muted-foreground">
-                Únete a una iglesia existente o crea tu propio espacio para comenzar a usar la app.
+                {isNativeMobileAuth
+                  ? "Únete a la iglesia que te invitó para comenzar a usar la app."
+                  : "Únete a una iglesia existente o crea tu propio espacio para comenzar a usar la app."}
               </p>
             </div>
             <div className="flex w-full flex-col gap-3 sm:flex-row">
               <Button className="flex-1" onClick={() => navigate("/join-church")}>
                 Unirme a una iglesia
               </Button>
-              <Button className="flex-1" variant="outline" onClick={() => navigate("/create-church")}>
-                Crear iglesia
-              </Button>
+              {!isNativeMobileAuth && (
+                <Button className="flex-1" variant="outline" onClick={() => navigate("/create-church")}>
+                  Crear iglesia
+                </Button>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -290,13 +278,12 @@ export default function Dashboard() {
   };
 
   const endOfSunday = getEndOfSunday();
-  const thisWeekItems = timeline.filter((item) => new Date(item.date) <= endOfSunday);
-  const comingUpItems = timeline.filter((item) => new Date(item.date) > endOfSunday);
+  const thisWeekItems = timeline.filter((item) => (parseServiceDate(item.date)?.getTime() || 0) <= endOfSunday.getTime());
+  const comingUpItems = timeline.filter((item) => (parseServiceDate(item.date)?.getTime() || 0) > endOfSunday.getTime());
   const pendingAssignments = assignments
     .filter((assignment) => (assignment.responseStatus || (assignment.confirmed ? "accepted" : "pending")) === "pending")
-    .filter((assignment) => assignment.service?.date && new Date(assignment.service.date).getTime() >= Date.now())
+    .filter((assignment) => assignment.service?.date && (parseServiceDate(assignment.service.date)?.getTime() || 0) >= Date.now())
     .slice(0, 5);
-  const unreadNotifications = notifications.filter((notification) => !notification.read).slice(0, 3);
 
   const statItems = stats
     ? [
@@ -379,37 +366,6 @@ export default function Dashboard() {
                     >
                       <Check className="h-4 w-4" />
                     </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {unreadNotifications.length > 0 && (
-        <div>
-          <h2 className="mobile-section-title mb-3">Notificaciones</h2>
-          <div className="space-y-3">
-            {unreadNotifications.map((notification) => (
-              <Card
-                key={notification.id}
-                className="app-card cursor-pointer border-primary/10 bg-gradient-to-br from-white to-primary/5"
-                onClick={() => {
-                  if (notification.data?.route) {
-                    navigate(notification.data.route.replace(/^\/app/, "/app"));
-                  }
-                }}
-              >
-                <CardContent className="flex items-start gap-3 p-3.5">
-                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-                    <Bell className="h-5 w-5" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-base font-bold leading-tight">{notification.title}</p>
-                    {notification.body && (
-                      <p className="mt-1 line-clamp-2 text-[0.82rem] text-muted-foreground">{notification.body}</p>
-                    )}
                   </div>
                 </CardContent>
               </Card>

@@ -5,6 +5,7 @@ import { useNavigate } from "react-router-dom";
 import { useApi } from "@/hooks/useApi";
 import { useChurch } from "@/providers/ChurchProvider";
 import { useAppAuth } from "@/hooks/useAppAuth";
+import { useNotifications } from "@/providers/NotificationsProvider";
 
 const REGISTERED_TOKEN_KEY = "tchurch_push_token";
 
@@ -19,6 +20,7 @@ export function usePushNotifications() {
   const { fetchApi } = useApi();
   const { selectedChurch } = useChurch();
   const { userId } = useAppAuth();
+  const { refreshNotifications } = useNotifications();
   const registrationContextRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -66,6 +68,7 @@ export function usePushNotifications() {
         listeners.push(
           await PushNotifications.addListener("pushNotificationReceived", (notification) => {
             console.info("[Push] Notificación recibida:", notification.title || notification.body || notification.id);
+            void refreshNotifications();
           })
         );
 
@@ -90,5 +93,5 @@ export function usePushNotifications() {
       mounted = false;
       listeners.forEach((listener) => listener.remove());
     };
-  }, [fetchApi, navigate, selectedChurch, userId]);
+  }, [fetchApi, navigate, refreshNotifications, selectedChurch, userId]);
 }
