@@ -57,7 +57,6 @@ export async function apiFetch<T = unknown>(
     null;
   const headers: Record<string, string> = {
     ...(!isFormData ? { "Content-Type": "application/json" } : {}),
-    ...(shouldNoStore ? { "Cache-Control": "no-store", Pragma: "no-cache" } : {}),
     ...(options.headers as Record<string, string>),
   };
 
