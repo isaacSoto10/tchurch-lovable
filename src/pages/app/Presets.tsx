@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { Navigate, useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { toast } from "@/hooks/use-toast";
 import { ArrowLeft, Check } from "lucide-react";
 import { apiFetch } from "@/lib/api";
-import { useAppAuth } from "@/hooks/useAppAuth";
+import { isNativeMobileAuth } from "@/lib/mobileAuth";
 
 const MINISTRIES = [
   { name: "Worship Team", color: "#f59e0b", emoji: "🎵" },
@@ -31,10 +31,13 @@ function slugify(name: string): string {
     .replace(/^-|-$/g, "");
 }
 
+function getErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
 export default function Presets() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user } = useAppAuth();
 
   const { churchName = "", churchDescription = "" } = (location.state || {}) as {
     churchName: string;
@@ -44,6 +47,10 @@ export default function Presets() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [leaderEmails, setLeaderEmails] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
+
+  if (isNativeMobileAuth) {
+    return <Navigate to="/join-church" replace />;
+  }
 
   function toggleMinistry(name: string) {
     setSelected((prev) => {
@@ -95,8 +102,8 @@ export default function Presets() {
         navigate("/app", { replace: true });
         window.location.reload();
       }
-    } catch (err: any) {
-      toast({ description: err.message || "Failed to create church", variant: "destructive" });
+    } catch (err: unknown) {
+      toast({ description: getErrorMessage(err, "Failed to create church"), variant: "destructive" });
     } finally {
       setLoading(false);
     }
@@ -111,7 +118,7 @@ export default function Presets() {
     <div className="min-h-screen bg-zinc-50 flex flex-col">
       {/* Header */}
       <div className="bg-white border-b border-zinc-200 px-4 py-4">
-        <div className="max-w-sm mx-auto flex items-center gap-3">
+        <div className="max-w-sm md:max-w-4xl mx-auto flex items-center gap-3">
           <button
             onClick={() => navigate("/create-church")}
             className="p-2 -ml-2 rounded-lg hover:bg-zinc-100"
@@ -123,7 +130,7 @@ export default function Presets() {
       </div>
 
       <div className="flex-1 flex flex-col items-center justify-center p-4">
-        <div className="w-full max-w-sm space-y-6">
+        <div className="w-full max-w-sm md:max-w-4xl space-y-6">
           {/* Subtitle */}
           <div className="text-center space-y-1">
             <p className="text-sm text-zinc-500">
@@ -132,7 +139,7 @@ export default function Presets() {
           </div>
 
           {/* Ministry Grid */}
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4">
             {MINISTRIES.map((ministry) => {
               const isSelected = selected.has(ministry.name);
               return (

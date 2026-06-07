@@ -24,6 +24,12 @@ test -d ios/App/CapacitorPushNotifications/ios/Sources/PushNotificationsPlugin
 test -f ios/App/CapacitorShare/Package.swift
 test -d ios/App/CapacitorShare/ios/Sources/SharePlugin
 
+sed -i '' \
+  -e 's#path: "../../../node_modules/@capacitor/filesystem"#path: "../CapacitorFilesystem"#' \
+  -e 's#path: "../../../node_modules/@capacitor/push-notifications"#path: "../CapacitorPushNotifications"#' \
+  -e 's#path: "../../../node_modules/@capacitor/share"#path: "../CapacitorShare"#' \
+  ios/App/CapApp-SPM/Package.swift
+
 if grep -q "node_modules/@capacitor" ios/App/CapApp-SPM/Package.swift; then
   echo "CapApp-SPM must use committed vendored Capacitor packages, not node_modules." >&2
   exit 1

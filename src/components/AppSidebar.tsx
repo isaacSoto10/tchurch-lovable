@@ -27,6 +27,8 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarRail,
+  SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
 import { useChurch } from "@/providers/ChurchProvider";
@@ -34,6 +36,7 @@ import { useApi } from "@/hooks/useApi";
 import { useAppAuth } from "@/hooks/useAppAuth";
 import { useCallback, useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
+import { TchurchLogo } from "@/components/TchurchLogo";
 
 interface Ministry {
   id: string;
@@ -172,11 +175,11 @@ export function AppSidebar() {
 
   return (
     <Sidebar collapsible="icon">
-      <div className="flex items-center gap-2 px-4 border-b" style={{ paddingTop: "max(1rem, env(safe-area-inset-top, 1rem))", paddingBottom: "1rem" }}>
-        <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-primary-foreground font-bold text-sm shrink-0">
-          T
+      <div className="flex items-center gap-2 border-b px-3" style={{ paddingTop: "max(1rem, env(safe-area-inset-top, 1rem))", paddingBottom: "1rem" }}>
+        <div className="min-w-0 flex-1">
+          {collapsed ? <TchurchLogo variant="mark" size="md" /> : <TchurchLogo size="sm" wordPurple />}
         </div>
-        {!collapsed && <span className="font-bold text-base tracking-tight">Tchurch</span>}
+        <SidebarTrigger className="h-9 w-9 shrink-0 rounded-xl border border-zinc-200 bg-white shadow-sm" />
       </div>
       <SidebarContent>
         <SidebarGroup>
@@ -184,7 +187,7 @@ export function AppSidebar() {
             <SidebarMenu>
               {visibleItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild>
+                  <SidebarMenuButton asChild tooltip={item.title}>
                     <NavLink
                       to={item.url}
                       end={item.url === "/app"}
@@ -265,6 +268,7 @@ export function AppSidebar() {
           {!collapsed && <span>Cerrar sesión</span>}
         </button>
       </div>
+      <SidebarRail />
     </Sidebar>
   );
 }

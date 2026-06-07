@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Check, X, Calendar } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
+import { formatServiceDate } from "@/lib/serviceDates";
 
 type Assignment = {
   id: string;
@@ -110,7 +111,7 @@ export default function MyAssignments() {
                         <p className="text-sm text-muted-foreground">
                           {assignment.position} ·{" "}
                           {assignment.service?.date
-                            ? new Date(assignment.service.date).toLocaleDateString("en-US", {
+                            ? formatServiceDate(assignment.service.date, "en-US", {
                                 weekday: "short",
                                 month: "short",
                                 day: "numeric",
@@ -167,7 +168,7 @@ export default function MyAssignments() {
                       <p className="text-sm text-muted-foreground">
                         {assignment.position} ·{" "}
                         {assignment.service?.date
-                          ? new Date(assignment.service.date).toLocaleDateString("en-US", {
+                          ? formatServiceDate(assignment.service.date, "en-US", {
                               weekday: "short",
                               month: "short",
                               day: "numeric",
@@ -201,7 +202,7 @@ export default function MyAssignments() {
                       <p className="text-sm text-muted-foreground">
                         {assignment.position} ·{" "}
                         {assignment.service?.date
-                          ? new Date(assignment.service.date).toLocaleDateString("en-US", {
+                          ? formatServiceDate(assignment.service.date, "en-US", {
                               weekday: "short",
                               month: "short",
                               day: "numeric",

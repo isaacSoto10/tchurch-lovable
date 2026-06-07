@@ -1,130 +1,445 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { ArrowLeft, CheckCircle2, Loader2, Mail, ShieldCheck, XCircle } from "lucide-react";
+import { TchurchLogo } from "@/components/TchurchLogo";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, ArrowLeft, CheckCircle2, XCircle } from "lucide-react";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, setChurchId } from "@/lib/api";
 import { useAppAuth } from "@/hooks/useAppAuth";
+import {
+  isNativeMobileAuth,
+  requestMobileJoinAuthCode,
+  verifyMobileJoinAuthCode,
+  type MobileJoinChurch,
+} from "@/lib/mobileAuth";
+
+type JoinStep = "details" | "verify";
+type PreviewState = "idle" | "checking" | "valid" | "invalid";
+
+type JoinCodePreview = {
+  valid: boolean;
+  church?: MobileJoinChurch;
+  error?: string;
+};
+
+type JoinResponse = {
+  status?: "APPROVED" | "PENDING";
+  church?: MobileJoinChurch;
+  error?: string;
+};
+
+function normalizeJoinCode(value: string) {
+  return value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
+}
+
+function getFriendlyError(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message) return error.message;
+  return fallback;
+}
 
 export default function JoinChurch() {
   const navigate = useNavigate();
-  const { isSignedIn } = useAppAuth();
-  const [joinCode, setJoinCode] = useState("");
+  const [searchParams] = useSearchParams();
+  const { isLoaded, isSignedIn } = useAppAuth();
+  const urlCode = useMemo(
+    () => normalizeJoinCode(searchParams.get("code") || searchParams.get("joinCode") || ""),
+    [searchParams],
+  );
+  const [step, setStep] = useState<JoinStep>("details");
+  const [joinCode, setJoinCode] = useState(urlCode);
+  const [email, setEmail] = useState("");
+  const [verificationCode, setVerificationCode] = useState("");
+  const [church, setChurch] = useState<MobileJoinChurch | null>(null);
+  const [previewState, setPreviewState] = useState<PreviewState>(urlCode.length === 8 ? "checking" : "idle");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("");
+  const processedSignedInCodeRef = useRef("");
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!joinCode.trim() || joinCode.length < 6) return;
+  useEffect(() => {
+    if (urlCode) {
+      setJoinCode(urlCode);
+    }
+  }, [urlCode]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const cleanCode = normalizeJoinCode(joinCode);
+
+    if (cleanCode.length !== 8) {
+      setChurch(null);
+      setPreviewState("idle");
+      return undefined;
+    }
+
+    setPreviewState("checking");
+    apiFetch<JoinCodePreview>(`/churches/join-code?code=${encodeURIComponent(cleanCode)}`)
+      .then((data) => {
+        if (cancelled) return;
+        if (data.valid && data.church) {
+          setChurch(data.church);
+          setPreviewState("valid");
+          setError("");
+          return;
+        }
+        setChurch(null);
+        setPreviewState("invalid");
+        setError(data.error || "No encontramos una iglesia con ese código.");
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setChurch(null);
+        setPreviewState("invalid");
+        setError(getFriendlyError(err, "No pudimos validar el código. Intenta de nuevo."));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [joinCode]);
+
+  const finishJoin = useCallback(async (nextChurch?: MobileJoinChurch | null) => {
+    if (nextChurch?.id) {
+      setChurchId(nextChurch.id);
+    }
+
+    setSuccessMessage(`Listo. Ya tienes acceso a ${nextChurch?.name || "tu iglesia"}.`);
+    window.setTimeout(() => {
+      navigate("/app", { replace: true });
+      window.location.reload();
+    }, 750);
+  }, [navigate]);
+
+  const joinSignedIn = useCallback(async (inputCode = joinCode) => {
+    const cleanCode = normalizeJoinCode(inputCode);
+    if (cleanCode.length !== 8) return;
+
     setLoading(true);
     setError("");
     try {
-      const data = await apiFetch<any>("/churches/join", {
+      const data = await apiFetch<JoinResponse>("/churches/join", {
         method: "POST",
-        body: JSON.stringify({ joinCode: joinCode.trim().toUpperCase() }),
+        body: JSON.stringify({ code: cleanCode }),
       });
+
       if (data.error) {
         setError(data.error);
-      } else if (data.status === "PENDING") {
-        setSuccess(true);
-      } else {
-        navigate("/app", { replace: true });
-        window.location.reload();
+        return;
       }
-    } catch (err: any) {
-      setError(err.message || "Failed to join church");
+
+      if (data.status === "PENDING") {
+        setError("Tu solicitud quedó pendiente. Pide a un administrador que revise tu acceso.");
+        return;
+      }
+
+      await finishJoin(data.church || church);
+    } catch (err) {
+      setError(getFriendlyError(err, "No pudimos unirte a la iglesia. Intenta de nuevo."));
+    } finally {
+      setLoading(false);
+    }
+  }, [church, finishJoin, joinCode]);
+
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn || urlCode.length !== 8 || previewState !== "valid") return;
+    if (processedSignedInCodeRef.current === urlCode) return;
+
+    processedSignedInCodeRef.current = urlCode;
+    void joinSignedIn(urlCode);
+  }, [isLoaded, isSignedIn, joinSignedIn, previewState, urlCode]);
+
+  async function handleMobileJoinStart(e: React.FormEvent) {
+    e.preventDefault();
+    const cleanCode = normalizeJoinCode(joinCode);
+    const cleanEmail = email.trim().toLowerCase();
+
+    if (cleanCode.length !== 8) {
+      setError("Ingresa el código de 8 caracteres de tu iglesia.");
+      return;
+    }
+
+    if (!cleanEmail) {
+      setError("Ingresa tu correo electrónico.");
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+    try {
+      const result = await requestMobileJoinAuthCode(cleanEmail, cleanCode);
+      setEmail(result.email);
+      setChurch(result.church);
+      setStep("verify");
+    } catch (err) {
+      setError(getFriendlyError(err, "No pudimos enviar el código de verificación."));
     } finally {
       setLoading(false);
     }
   }
 
-  if (!isSignedIn) {
-    return (
-      <div className="min-h-screen bg-zinc-50 flex flex-col items-center justify-center p-4">
-        <Card className="w-full max-w-sm text-center">
-          <CardContent className="pt-6">
-            <p className="text-muted-foreground mb-4">Please sign in first to join a church.</p>
-            <Button onClick={() => navigate("/login")}>Sign In</Button>
-          </CardContent>
-        </Card>
-      </div>
-    );
+  async function handleMobileJoinVerify(e: React.FormEvent) {
+    e.preventDefault();
+    const cleanCode = normalizeJoinCode(joinCode);
+    const cleanVerification = verificationCode.replace(/\D/g, "").slice(0, 6);
+
+    if (cleanVerification.length !== 6) return;
+
+    setLoading(true);
+    setError("");
+    try {
+      const session = await verifyMobileJoinAuthCode(email, cleanCode, cleanVerification);
+      await finishJoin(session.church);
+    } catch (err) {
+      setError(getFriendlyError(err, "Ese código no funcionó. Intenta de nuevo."));
+    } finally {
+      setLoading(false);
+    }
   }
 
-  if (success) {
+  const codeIsComplete = joinCode.length === 8;
+  const canSubmitMobileStart = codeIsComplete && Boolean(email.trim()) && !loading;
+  const showChurchSummary = church && previewState === "valid";
+
+  if (!isLoaded) {
     return (
-      <div className="min-h-screen bg-zinc-50 flex flex-col items-center justify-center p-4">
-        <Card className="w-full max-w-sm text-center">
-          <CardContent className="pt-6 space-y-4">
-            <div className="w-16 h-16 bg-amber-50 rounded-full flex items-center justify-center mx-auto">
-              <Loader2 className="w-8 h-8 text-amber-500 animate-spin" />
-            </div>
-            <h2 className="text-xl font-bold text-zinc-900">Request Pending</h2>
-            <p className="text-sm text-zinc-500">
-              Your request to join this church is pending approval from an administrator. You'll be able to access the church once approved.
-            </p>
-            <Button onClick={() => navigate("/app")} className="w-full">
-              Go to Dashboard
-            </Button>
-          </CardContent>
-        </Card>
+      <div className="flex min-h-svh items-center justify-center bg-zinc-50">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-zinc-50 flex flex-col">
-      <div className="bg-white border-b border-zinc-200 px-4 py-4">
-        <div className="max-w-sm mx-auto flex items-center gap-3">
-          <button onClick={() => navigate(-1)} className="p-2 -ml-2 rounded-lg hover:bg-zinc-100">
-            <ArrowLeft className="w-5 h-5 text-zinc-600" />
-          </button>
-          <span className="font-semibold text-zinc-900">Join Church</span>
-        </div>
+    <div className="relative flex min-h-svh flex-col bg-gradient-to-br from-indigo-50 via-white to-violet-50 px-4 py-6">
+      <div className="mx-auto flex w-full max-w-md items-center justify-between pt-[env(safe-area-inset-top)]">
+        <button
+          onClick={() => navigate(-1)}
+          className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white/90 text-slate-700 shadow-sm"
+          aria-label="Volver"
+        >
+          <ArrowLeft className="h-4 w-4" />
+        </button>
+        <TchurchLogo size="xs" wordPurple />
+        <div className="h-10 w-10" />
       </div>
 
-      <div className="flex-1 flex flex-col items-center justify-center p-4">
-        <div className="w-full max-w-sm space-y-6">
-          <div className="text-center space-y-1">
-            <h1 className="text-2xl font-bold text-zinc-900">Join a Church</h1>
-            <p className="text-sm text-zinc-500">Enter the code shared by your church administrator</p>
-          </div>
+      <main className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center py-8">
+        <div className="mb-6 text-center">
+          <TchurchLogo variant="mark" size="hero" className="mx-auto mb-4" />
+          <h1 className="text-3xl font-bold tracking-tight text-slate-950">Únete a tu iglesia</h1>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            Usa el código o enlace que te compartieron. Crear iglesias se hace desde la web.
+          </p>
+        </div>
 
-          <Card>
-            <CardContent className="pt-6">
-              <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="join-code" className="text-center block">Church Code</Label>
-                  <Input
-                    id="join-code"
-                    value={joinCode}
-                    onChange={(e) => setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8))}
-                    placeholder="XXXXXXXX"
-                    className="text-center text-2xl font-mono tracking-[0.3em] uppercase placeholder:normal-case placeholder:text-zinc-300 h-14"
-                    maxLength={8}
-                    autoFocus
-                  />
-                  <p className="text-xs text-zinc-400 text-center">{joinCode.length}/8 characters</p>
-                </div>
+        <Card className="border-slate-200 shadow-xl shadow-indigo-100/60">
+          <CardHeader className="space-y-2 text-center">
+            <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+              {step === "details" ? <Mail className="h-5 w-5" /> : <ShieldCheck className="h-5 w-5" />}
+            </div>
+            <CardTitle>{successMessage ? "Acceso confirmado" : step === "details" ? "Entra directo" : "Verifica tu correo"}</CardTitle>
+            <CardDescription>
+              {successMessage
+                ? successMessage
+                : step === "details"
+                  ? "Confirma tu iglesia y correo para crear tu acceso."
+                  : `Ingresa el código que enviamos a ${email}.`}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            {successMessage ? (
+              <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4 text-center text-sm text-emerald-800">
+                <CheckCircle2 className="mx-auto mb-2 h-6 w-6" />
+                Abriendo Tchurch...
+              </div>
+            ) : null}
 
-                {error && (
-                  <div className="flex items-center gap-2 text-red-500 text-sm">
-                    <XCircle className="w-4 h-4 shrink-0" />
-                    <span>{error}</span>
-                  </div>
-                )}
-
-                <Button type="submit" disabled={loading || joinCode.length < 6} className="w-full h-11">
-                  {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Join Church"}
+            {!successMessage && isSignedIn ? (
+              <form
+                className="space-y-4"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void joinSignedIn();
+                }}
+              >
+                <JoinCodeField
+                  joinCode={joinCode}
+                  loading={loading}
+                  previewState={previewState}
+                  setJoinCode={(value) => {
+                    setJoinCode(value);
+                    setError("");
+                  }}
+                />
+                {showChurchSummary ? <ChurchSummary church={church} /> : null}
+                <ErrorMessage message={error} />
+                <Button className="h-12 w-full" disabled={loading || joinCode.length !== 8 || previewState === "invalid"} type="submit">
+                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Unirme a esta iglesia"}
                 </Button>
               </form>
-            </CardContent>
-          </Card>
-        </div>
+            ) : null}
+
+            {!successMessage && !isSignedIn && isNativeMobileAuth && step === "details" ? (
+              <form className="space-y-4" noValidate onSubmit={handleMobileJoinStart}>
+                <JoinCodeField
+                  joinCode={joinCode}
+                  loading={loading}
+                  previewState={previewState}
+                  setJoinCode={(value) => {
+                    setJoinCode(value);
+                    setError("");
+                  }}
+                />
+                {showChurchSummary ? <ChurchSummary church={church} /> : null}
+                <div className="space-y-2">
+                  <Label htmlFor="email">Correo electrónico</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    autoComplete="email"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    inputMode="email"
+                    value={email}
+                    onChange={(e) => {
+                      setEmail(e.target.value);
+                      setError("");
+                    }}
+                    placeholder="name@example.com"
+                    disabled={loading}
+                  />
+                </div>
+                <ErrorMessage message={error} />
+                <Button className="h-12 w-full" disabled={!canSubmitMobileStart} type="submit">
+                  {loading ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Enviando código...
+                    </>
+                  ) : (
+                    "Crear acceso y unirme"
+                  )}
+                </Button>
+              </form>
+            ) : null}
+
+            {!successMessage && !isSignedIn && isNativeMobileAuth && step === "verify" ? (
+              <form className="space-y-4" noValidate onSubmit={handleMobileJoinVerify}>
+                {church ? <ChurchSummary church={church} /> : null}
+                <div className="space-y-2">
+                  <Label htmlFor="verification-code">Código de verificación</Label>
+                  <Input
+                    id="verification-code"
+                    type="text"
+                    inputMode="numeric"
+                    value={verificationCode}
+                    onChange={(e) => {
+                      setVerificationCode(e.target.value.replace(/\D/g, "").slice(0, 6));
+                      setError("");
+                    }}
+                    placeholder="123456"
+                    disabled={loading}
+                  />
+                </div>
+                <ErrorMessage message={error} />
+                <Button className="h-12 w-full" disabled={loading || verificationCode.length !== 6} type="submit">
+                  {loading ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Verificando...
+                    </>
+                  ) : (
+                    "Entrar a mi iglesia"
+                  )}
+                </Button>
+                <Button
+                  className="w-full"
+                  variant="ghost"
+                  type="button"
+                  disabled={loading}
+                  onClick={() => {
+                    setStep("details");
+                    setVerificationCode("");
+                    setError("");
+                  }}
+                >
+                  Cambiar correo o código
+                </Button>
+              </form>
+            ) : null}
+
+            {!successMessage && !isSignedIn && !isNativeMobileAuth ? (
+              <div className="space-y-3 text-center">
+                <p className="text-sm text-slate-600">Primero crea o inicia sesión para unirte a esta iglesia.</p>
+                <Button className="h-11 w-full" asChild>
+                  <Link to="/signup">Crear cuenta</Link>
+                </Button>
+                <Button className="h-11 w-full" variant="outline" asChild>
+                  <Link to="/login">Iniciar sesión</Link>
+                </Button>
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+      </main>
+    </div>
+  );
+}
+
+function JoinCodeField({
+  joinCode,
+  loading,
+  previewState,
+  setJoinCode,
+}: {
+  joinCode: string;
+  loading: boolean;
+  previewState: PreviewState;
+  setJoinCode: (value: string) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <Label htmlFor="join-code" className="text-center">
+        Código de iglesia
+      </Label>
+      <div className="relative">
+        <Input
+          id="join-code"
+          value={joinCode}
+          onChange={(e) => setJoinCode(normalizeJoinCode(e.target.value))}
+          placeholder="ABC12345"
+          className="h-14 rounded-2xl text-center font-mono text-xl font-bold uppercase tracking-[0.24em] placeholder:tracking-normal"
+          maxLength={8}
+          autoCapitalize="characters"
+          autoCorrect="off"
+          disabled={loading}
+        />
+        {previewState === "checking" ? (
+          <Loader2 className="absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-slate-400" />
+        ) : null}
       </div>
+      <p className="text-center text-xs text-slate-400">{joinCode.length}/8 caracteres</p>
+    </div>
+  );
+}
+
+function ChurchSummary({ church }: { church: MobileJoinChurch }) {
+  return (
+    <div className="rounded-2xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm text-indigo-950">
+      <p className="text-xs font-medium text-indigo-700">Te estás uniendo a</p>
+      <p className="mt-0.5 font-semibold">{church.name}</p>
+    </div>
+  );
+}
+
+function ErrorMessage({ message }: { message: string }) {
+  if (!message) return null;
+
+  return (
+    <div className="flex items-start gap-2 rounded-2xl border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">
+      <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
+      <span>{message}</span>
     </div>
   );
 }

@@ -5,13 +5,28 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2, Users, Plus, ArrowLeft } from "lucide-react";
-import { apiFetch } from "@/lib/api";
+import { TchurchLogo } from "@/components/TchurchLogo";
+import { apiFetch, setChurchId } from "@/lib/api";
 import { useAppAuth } from "@/hooks/useAppAuth";
+import { isNativeMobileAuth } from "@/lib/mobileAuth";
+
+type JoinChurchResponse = {
+  status?: "APPROVED" | "PENDING";
+  church?: {
+    id: string;
+    name?: string;
+  };
+  error?: string;
+};
+
+function getErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
 
 export default function Onboarding() {
   const { user } = useAppAuth();
   const navigate = useNavigate();
-  const [mode, setMode] = useState<"choose" | "join">("choose");
+  const [mode, setMode] = useState<"choose" | "join">(isNativeMobileAuth ? "join" : "choose");
   const [joinCode, setJoinCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -24,18 +39,23 @@ export default function Onboarding() {
     setLoading(true);
     setError("");
     try {
-      const data = await apiFetch<any>(`/churches/join`, {
+      const data = await apiFetch<JoinChurchResponse>(`/churches/join`, {
         method: "POST",
-        body: JSON.stringify({ joinCode: joinCode.trim().toUpperCase() }),
+        body: JSON.stringify({ code: joinCode.trim().toUpperCase() }),
       });
       if (data.error) {
         setError(data.error);
+      } else if (data.status === "PENDING") {
+        setError("Tu solicitud quedó pendiente. Pide a un administrador que revise tu acceso.");
       } else {
+        if (data.church?.id) {
+          setChurchId(data.church.id);
+        }
         navigate("/app", { replace: true });
         window.location.reload();
       }
-    } catch (err: any) {
-      setError(err.message || "Failed to join church");
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, "Failed to join church"));
     } finally {
       setLoading(false);
     }
@@ -43,6 +63,7 @@ export default function Onboarding() {
 
   // Create card → navigate to dedicated form
   function handleCreateNavigate() {
+    if (isNativeMobileAuth) return;
     navigate("/create-church");
   }
 
@@ -54,7 +75,7 @@ export default function Onboarding() {
           <button onClick={() => navigate(-1)} className="p-2 -ml-2 rounded-lg hover:bg-zinc-100">
             <ArrowLeft className="w-5 h-5 text-zinc-600" />
           </button>
-          <span className="font-semibold text-zinc-900">Tchurch</span>
+          <TchurchLogo size="xs" wordPurple />
         </div>
       </div>
 
@@ -63,16 +84,16 @@ export default function Onboarding() {
 
           {/* Welcome */}
           <div className="text-center space-y-2">
-            <div className="w-16 h-16 bg-primary rounded-2xl flex items-center justify-center mx-auto mb-4">
-              <span className="text-3xl">⛪</span>
-            </div>
+            <TchurchLogo variant="mark" size="hero" className="mx-auto mb-4" />
             <h1 className="text-2xl font-bold text-zinc-900">Welcome, {firstName}!</h1>
             <p className="text-sm text-zinc-500">
-              Get started by joining an existing church or creating a new one.
+              {isNativeMobileAuth
+                ? "Get started by joining the church that invited you."
+                : "Get started by joining an existing church or creating a new one."}
             </p>
           </div>
 
-          {mode === "choose" && (
+          {mode === "choose" && !isNativeMobileAuth && (
             <div className="space-y-3">
               <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => setMode("join")}>
                 <CardContent className="p-5 flex items-center gap-4">
@@ -104,7 +125,11 @@ export default function Onboarding() {
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-lg">Join a Church</CardTitle>
-                <CardDescription>Enter the 8-character code shared by your church</CardDescription>
+                  <CardDescription>
+                    {isNativeMobileAuth
+                      ? "Enter the 8-character code from your church. New churches can only be created on the web."
+                      : "Enter the 8-character code shared by your church"}
+                  </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <form onSubmit={handleJoin} className="space-y-4">
@@ -122,10 +147,17 @@ export default function Onboarding() {
                   </div>
                   {error && <p className="text-sm text-red-500">{error}</p>}
                   <div className="flex gap-2">
-                    <Button type="button" variant="outline" onClick={() => { setMode("choose"); setError(""); }} className="flex-1">
-                      Back
-                    </Button>
-                    <Button type="submit" disabled={loading || joinCode.length < 6} className="flex-1">
+                    {!isNativeMobileAuth && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => { setMode("choose"); setError(""); }}
+                        className="flex-1"
+                      >
+                        Back
+                      </Button>
+                    )}
+                    <Button type="submit" disabled={loading || joinCode.length !== 8} className="flex-1">
                       {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Join Church"}
                     </Button>
                   </div>

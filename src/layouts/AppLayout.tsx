@@ -5,7 +5,7 @@ import { AppSidebar } from "../components/AppSidebar";
 import { TchurchLogo } from "@/components/TchurchLogo";
 import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 import { useChurch } from "@/providers/ChurchProvider";
-import { useIsMobile } from "@/hooks/use-mobile";
+import { useIsMobile, useResponsiveLayout } from "@/hooks/use-mobile";
 import { usePushNotifications } from "@/hooks/usePushNotifications";
 import { NotificationBell } from "@/components/NotificationBell";
 import { NotificationsProvider } from "@/providers/NotificationsProvider";
@@ -22,6 +22,9 @@ const mobileNavItems = [
 function AppLayoutInner() {
   const { selectedChurch } = useChurch();
   const isMobile = useIsMobile();
+  const responsive = useResponsiveLayout();
+  const useCompactNavigation = isMobile;
+  const showShortcutBar = useCompactNavigation;
   const { openMobile, setOpenMobile } = useSidebar();
   const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);
@@ -29,14 +32,14 @@ function AppLayoutInner() {
   usePushNotifications();
 
   function handleTouchStart(event: React.TouchEvent<HTMLDivElement>) {
-    if (!isMobile || openMobile) return;
+    if (!useCompactNavigation || openMobile) return;
     const touch = event.touches[0];
     touchStartX.current = touch.clientX;
     touchStartY.current = touch.clientY;
   }
 
   function handleTouchEnd(event: React.TouchEvent<HTMLDivElement>) {
-    if (!isMobile || openMobile || touchStartX.current === null || touchStartY.current === null) return;
+    if (!useCompactNavigation || openMobile || touchStartX.current === null || touchStartY.current === null) return;
 
     const touch = event.changedTouches[0];
     const deltaX = touch.clientX - touchStartX.current;
@@ -53,13 +56,14 @@ function AppLayoutInner() {
 
   return (
     <div
+      data-device-class={responsive.isPhone ? "phone" : responsive.isTablet ? "tablet" : "wide"}
       className="flex min-h-svh w-full flex-1 overflow-x-clip bg-zinc-50"
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
       <AppSidebar />
       <SidebarInset className="min-w-0 w-full max-w-full overflow-x-clip overflow-y-auto">
-        {isMobile ? (
+        {useCompactNavigation ? (
           <header
             className="sticky top-0 z-20 border-b border-zinc-200/80 bg-white/95 shadow-sm shadow-zinc-200/30 backdrop-blur"
             style={{ paddingTop: "max(env(safe-area-inset-top), 0.65rem)" }}
@@ -77,18 +81,32 @@ function AppLayoutInner() {
           </header>
         ) : null}
         <div
-          className="mx-auto flex w-full min-w-0 flex-1 flex-col overflow-x-clip px-3 pb-[calc(env(safe-area-inset-bottom)+5.75rem)] pt-4 sm:px-4 md:px-6 md:pb-[calc(env(safe-area-inset-bottom)+1rem)] md:pt-6 lg:px-8"
-          style={{ maxWidth: "min(100vw, 100%)" }}
+          className="mx-auto flex w-full min-w-0 flex-1 flex-col overflow-x-clip px-3 pb-[calc(env(safe-area-inset-bottom)+5.75rem)] pt-4 sm:px-4 md:max-w-[1120px] md:px-5 md:pb-[calc(env(safe-area-inset-bottom)+1rem)] lg:px-6 xl:max-w-[1320px] xl:px-8"
+          style={{
+            paddingTop: useCompactNavigation ? undefined : "max(env(safe-area-inset-top), 1.5rem)",
+            paddingBottom: showShortcutBar ? "calc(env(safe-area-inset-bottom) + 5.75rem)" : undefined,
+          }}
         >
+          {!useCompactNavigation ? (
+            <div className="mb-4 flex min-w-0 items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-zinc-950">
+                  {selectedChurch?.name || "Configura tu iglesia"}
+                </p>
+                <p className="text-xs text-muted-foreground">Tchurch</p>
+              </div>
+              <NotificationBell />
+            </div>
+          ) : null}
           <Outlet />
         </div>
-        {isMobile ? (
+        {showShortcutBar ? (
           <nav
             className="fixed inset-x-0 bottom-0 z-30 border-t border-zinc-200/80 bg-white/95 px-2 pt-2 shadow-[0_-18px_40px_rgba(15,23,42,0.08)] backdrop-blur"
             style={{ paddingBottom: "max(env(safe-area-inset-bottom), 0.55rem)" }}
             aria-label="Navegación principal"
           >
-            <div className="mx-auto grid max-w-lg grid-cols-6 gap-1">
+            <div className="mx-auto grid max-w-lg grid-cols-6 gap-1 md:max-w-2xl">
               {mobileNavItems.map((item) => {
                 const Icon = item.icon;
                 return (
@@ -117,8 +135,10 @@ function AppLayoutInner() {
 }
 
 export function AppLayout() {
+  const responsive = useResponsiveLayout();
+
   return (
-    <SidebarProvider>
+    <SidebarProvider defaultOpen={!responsive.isTabletPortrait}>
       <NotificationsProvider>
         <AppLayoutInner />
       </NotificationsProvider>

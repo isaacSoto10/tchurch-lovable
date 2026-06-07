@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { Link, Navigate, useNavigate } from "react-router-dom";
-import { ArrowLeft, Loader2, MailPlus, ShieldCheck } from "lucide-react";
+import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
+import { ArrowLeft, Loader2 } from "lucide-react";
+import { TchurchLogo } from "@/components/TchurchLogo";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -11,41 +12,10 @@ import { isNativeMobileAuth, requestMobileAuthCode, verifyMobileAuthCode } from 
 
 type Step = "email" | "code";
 
-function NativeSignupRedirect() {
-  return (
-    <div className="relative flex min-h-svh items-center justify-center bg-gradient-to-br from-indigo-50 via-white to-violet-50 p-4">
-      <Link
-        className="absolute left-4 top-[calc(env(safe-area-inset-top)+1rem)] inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white/90 px-4 py-2 text-sm font-medium text-slate-700 shadow-sm shadow-indigo-100/60 backdrop-blur transition-colors hover:bg-white"
-        to="/"
-      >
-        <ArrowLeft className="h-4 w-4" />
-        Inicio
-      </Link>
-      <Card className="w-full max-w-md border-slate-200 shadow-xl shadow-indigo-100/50">
-        <CardHeader className="space-y-3 text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-            <MailPlus className="h-6 w-6" />
-          </div>
-          <div className="space-y-1">
-            <CardTitle>El acceso a la cuenta lo administra tu iglesia</CardTitle>
-            <CardDescription>
-              Tchurch móvil es para cuentas existentes. Pide a tu administrador que te invite a tu iglesia.
-            </CardDescription>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <Button className="h-11 w-full" asChild>
-            <Link to="/login">Ya tengo una cuenta</Link>
-          </Button>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
 function SignupInner() {
   const { isLoaded: authLoaded, isSignedIn } = useAppAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [step, setStep] = useState<Step>("email");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -64,7 +34,7 @@ function SignupInner() {
   }
 
   if (isNativeMobileAuth) {
-    return <NativeSignupRedirect />;
+    return <Navigate to={`/join-church${location.search}`} replace />;
   }
 
   async function handleSignupSubmit(e: React.FormEvent) {
@@ -186,9 +156,7 @@ function SignupInner() {
       </Link>
       <Card className="w-full max-w-md border-slate-200 shadow-xl shadow-indigo-100/50">
         <CardHeader className="space-y-3 text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-            {step === "email" ? <MailPlus className="h-6 w-6" /> : <ShieldCheck className="h-6 w-6" />}
-          </div>
+          <TchurchLogo variant="stacked" size="sm" wordPurple className="mx-auto" />
           <div className="space-y-1">
             <CardTitle>Crea tu cuenta de Tchurch</CardTitle>
             <CardDescription>

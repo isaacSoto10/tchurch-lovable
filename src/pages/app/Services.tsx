@@ -19,6 +19,7 @@ import {
   type SongLike,
 } from "@/lib/songDisplay";
 import { normalizeKey, transposeChordPro } from "@/lib/musicUtils";
+import { formatServiceDate, formatServiceTime, toServiceDatetimeLocalValue } from "@/lib/serviceDates";
 import {
   Dialog,
   DialogClose,
@@ -492,7 +493,7 @@ export default function Services() {
     setEditingService(service);
     setFormData({
       title: service.title,
-      date: service.date ? service.date.slice(0, 16) : "",
+      date: toServiceDatetimeLocalValue(service.date),
       type: service.type,
       status: service.status === "completed" ? "completed" : "confirmed",
       notes: service.notes || "",
@@ -1007,14 +1008,14 @@ export default function Services() {
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogTrigger />
-        <DialogContent className="max-h-[calc(100svh-2rem)] overflow-y-auto sm:max-w-xl">
+        <DialogContent className="max-h-[calc(100svh-2rem)] overflow-y-auto sm:max-w-xl md:max-w-2xl">
           <DialogHeader>
             <DialogTitle>
               {editingService ? "Editar servicio" : "Nuevo servicio"}
             </DialogTitle>
           </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2 md:col-span-2">
               <Label htmlFor="service-title">Título</Label>
               <Input
                 id="service-title"
@@ -1080,7 +1081,7 @@ export default function Services() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
+            <div className="space-y-2 md:col-span-2">
               <Label htmlFor="service-notes">Notas</Label>
               <Textarea
                 id="service-notes"
@@ -1092,7 +1093,7 @@ export default function Services() {
                 rows={3}
               />
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 md:col-span-2">
               <Button onClick={handleSubmit} disabled={submitting}>
                 {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {submitting ? submittingLabel : submitLabel}
@@ -1128,7 +1129,7 @@ export default function Services() {
       </AlertDialog>
 
       <Dialog open={addItemDialogOpen} onOpenChange={setAddItemDialogOpen}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-xl md:max-w-2xl">
           <DialogHeader>
             <DialogTitle>Agregar elemento al servicio</DialogTitle>
           </DialogHeader>
@@ -1167,7 +1168,7 @@ export default function Services() {
                     ))}
                   </SelectContent>
                 </Select>
-                <div className="grid grid-cols-2 gap-2 max-h-60 overflow-y-auto">
+                <div className="grid grid-cols-2 gap-2 max-h-60 overflow-y-auto md:grid-cols-3">
                   {TEMPLATE_ITEMS.filter((t) => t.type === itemType || itemType === "song").map((t) => (
                     <Button
                       key={t.title}
@@ -1256,7 +1257,7 @@ export default function Services() {
       </Dialog>
 
       <Dialog open={assignDialogOpen} onOpenChange={setAssignDialogOpen}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Asignar miembro del equipo</DialogTitle>
           </DialogHeader>
@@ -1356,17 +1357,14 @@ export default function Services() {
                     </button>
                     <p className="mt-1 text-sm text-muted-foreground">
                       {svc.date
-                        ? new Date(svc.date).toLocaleDateString("es-US", {
+                        ? formatServiceDate(svc.date, "es-US", {
                             weekday: "short",
                             month: "short",
                             day: "numeric",
                           })
                         : ""}
                       {svc.date
-                        ? ` · ${new Date(svc.date).toLocaleTimeString("es-US", {
-                            hour: "numeric",
-                            minute: "2-digit",
-                          })}`
+                        ? ` · ${formatServiceTime(svc.date)}`
                         : ""}
                     </p>
                   </div>
@@ -1404,12 +1402,12 @@ export default function Services() {
                 </div>
 
                 {expandedService === svc.id && (
-                  <div className="mt-4 space-y-5 border-t border-zinc-100 pt-4" onClick={stopInteractiveTap}>
+                  <div className="mt-4 space-y-5 border-t border-zinc-100 pt-4 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.42fr)] lg:gap-5 lg:space-y-0" onClick={stopInteractiveTap}>
                     {svc.notes && (
-                      <p className="text-sm text-muted-foreground">{svc.notes}</p>
+                      <p className="text-sm text-muted-foreground lg:col-span-2">{svc.notes}</p>
                     )}
 
-                    <div>
+                    <div className="min-w-0">
                       <div className="mb-3 flex items-center justify-between">
                         <h4 className="text-sm font-bold text-zinc-950">Flujo del servicio</h4>
                         <div className="flex gap-2">
@@ -1687,7 +1685,7 @@ export default function Services() {
                       )}
                     </div>
 
-                    <div>
+                    <div className="min-w-0 lg:rounded-2xl lg:border lg:border-zinc-100 lg:bg-zinc-50/70 lg:p-3">
                       <div className="mb-3 flex items-center justify-between">
                         <h4 className="text-sm font-bold text-zinc-950">Equipo</h4>
                         {isPlanner && <Button size="sm" variant="outline" className="h-10 rounded-xl" onClick={() => openAssignDialog(svc.id)}>

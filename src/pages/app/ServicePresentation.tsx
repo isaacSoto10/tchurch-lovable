@@ -11,6 +11,7 @@ import {
   type PresentationService,
   type PresentationSlide,
 } from "@/lib/servicePresentation";
+import { formatServiceDate } from "@/lib/serviceDates";
 
 type UserMe = {
   id: string;
@@ -20,15 +21,6 @@ type UserMe = {
 type WakeLockHandle = {
   release: () => Promise<void>;
 };
-
-function formatServiceDate(value: string) {
-  return new Date(value).toLocaleDateString("es-US", {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  });
-}
 
 function useWakeLock() {
   const wakeLockRef = useRef<WakeLockHandle | null>(null);

@@ -5,7 +5,9 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, ExternalLink } from "lucide-react";
+import { TchurchLogo } from "@/components/TchurchLogo";
+import { isNativeMobileAuth } from "@/lib/mobileAuth";
 
 export default function CreateChurchForm() {
   const navigate = useNavigate();
@@ -22,6 +24,51 @@ export default function CreateChurchForm() {
     });
   }
 
+  if (isNativeMobileAuth) {
+    return (
+      <div className="min-h-svh bg-zinc-50 flex flex-col">
+        <div className="bg-white border-b border-zinc-200 px-4 py-4">
+          <div className="max-w-sm mx-auto flex items-center gap-3">
+            <button
+              onClick={() => navigate(-1)}
+              className="p-2 -ml-2 rounded-lg hover:bg-zinc-100"
+            >
+              <ArrowLeft className="w-5 h-5 text-zinc-600" />
+            </button>
+            <TchurchLogo size="xs" wordPurple />
+          </div>
+        </div>
+
+        <div className="flex-1 flex flex-col items-center justify-center p-4">
+          <Card className="w-full max-w-sm border-slate-200 shadow-xl shadow-indigo-100/50">
+            <CardHeader className="space-y-3 text-center">
+              <TchurchLogo variant="mark" size="lg" className="mx-auto" />
+              <div className="space-y-1">
+                <CardTitle>Crear iglesias es desde la web</CardTitle>
+                <CardDescription>
+                  La app móvil es para miembros que se unen a una iglesia existente.
+                </CardDescription>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <Button className="h-11 w-full" onClick={() => navigate("/join-church")}>
+                Unirme a una iglesia
+              </Button>
+              <Button
+                className="h-11 w-full"
+                variant="outline"
+                onClick={() => window.open("https://www.tchurchapp.com/sign-up", "_blank")}
+              >
+                <ExternalLink className="h-4 w-4" />
+                Crear desde la web
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-zinc-50 flex flex-col">
       {/* Header */}
@@ -33,7 +80,7 @@ export default function CreateChurchForm() {
           >
             <ArrowLeft className="w-5 h-5 text-zinc-600" />
           </button>
-          <span className="font-semibold text-zinc-900">Tchurch</span>
+          <TchurchLogo size="xs" wordPurple />
         </div>
       </div>
 

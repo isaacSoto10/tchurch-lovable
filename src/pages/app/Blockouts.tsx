@@ -20,6 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { formatServiceDate as formatCalendarDate, parseServiceDate as parseCalendarDate } from "@/lib/serviceDates";
 
 interface Blockout {
   id: string;
@@ -83,7 +84,11 @@ export default function Blockouts() {
         });
       });
       
-      allBlockouts.sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
+      allBlockouts.sort((a, b) => {
+        const aTime = parseCalendarDate(a.startDate)?.getTime() || 0;
+        const bTime = parseCalendarDate(b.startDate)?.getTime() || 0;
+        return aTime - bTime;
+      });
       setBlockouts(allBlockouts);
     } catch (e) {
       console.error("Failed to load blockouts:", e);
@@ -104,8 +109,8 @@ export default function Blockouts() {
         method: "POST",
         body: JSON.stringify({
           userId: selectedUser.id,
-          startDate: new Date(startDate).toISOString(),
-          endDate: new Date(endDate).toISOString(),
+          startDate,
+          endDate,
           reason: reason || null,
         }),
       });
@@ -128,7 +133,7 @@ export default function Blockouts() {
   };
 
   const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString("en-US", {
+    return formatCalendarDate(dateStr, "en-US", {
       month: "short",
       day: "numeric",
       year: "numeric",
@@ -136,7 +141,10 @@ export default function Blockouts() {
   };
 
   const isPastBlockout = (endDateStr: string) => {
-    return new Date(endDateStr) < new Date();
+    const end = parseCalendarDate(endDateStr);
+    if (!end) return false;
+    end.setHours(23, 59, 59, 999);
+    return end < new Date();
   };
 
   return (

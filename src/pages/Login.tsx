@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
-import { ArrowLeft, Loader2, Mail, ShieldCheck } from "lucide-react";
+import { ArrowLeft, Loader2 } from "lucide-react";
+import { TchurchLogo } from "@/components/TchurchLogo";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -190,9 +191,7 @@ function LoginInner() {
       </Link>
       <Card className="w-full max-w-md border-slate-200 shadow-xl shadow-indigo-100/50">
         <CardHeader className="space-y-3 text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-            {step === "email" ? <Mail className="h-6 w-6" /> : <ShieldCheck className="h-6 w-6" />}
-          </div>
+          <TchurchLogo variant="stacked" size="sm" wordPurple className="mx-auto" />
           <div className="space-y-1">
             <CardTitle>Inicia sesión en Tchurch</CardTitle>
             <CardDescription>
@@ -297,7 +296,10 @@ function LoginInner() {
 
           {isNativeMobileAuth ? (
             <p className="text-center text-sm text-muted-foreground">
-              Si necesitas acceso, pide una invitación al administrador de tu iglesia.
+              ¿No tienes acceso?{" "}
+              <Link className="font-medium text-primary underline-offset-4 hover:underline" to="/join-church">
+                Únete a tu iglesia
+              </Link>
             </p>
           ) : (
             <p className="text-center text-sm text-muted-foreground">

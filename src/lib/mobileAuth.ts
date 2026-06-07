@@ -18,6 +18,24 @@ export type MobileAuthSession = {
   user: MobileAuthUser;
 };
 
+export type MobileJoinChurch = {
+  id: string;
+  name: string;
+  joinCode?: string;
+};
+
+export type MobileJoinStartResponse = {
+  ok: true;
+  email: string;
+  expiresAt: string;
+  church: MobileJoinChurch;
+};
+
+export type MobileJoinVerifyResponse = MobileAuthSession & {
+  ok: true;
+  church: MobileJoinChurch;
+};
+
 export const isNativeMobileAuth = Capacitor.isNativePlatform();
 
 export class MobileAuthApiError extends Error {
@@ -112,6 +130,24 @@ export async function requestMobileAuthCode(email: string) {
 
 export async function verifyMobileAuthCode(email: string, code: string) {
   const session = await postJson<MobileAuthSession & { ok: true }>("/mobile-auth/verify", { email, code });
+  saveMobileAuthSession({
+    token: session.token,
+    expiresAt: session.expiresAt,
+    user: session.user,
+  });
+  return session;
+}
+
+export async function requestMobileJoinAuthCode(email: string, joinCode: string) {
+  return postJson<MobileJoinStartResponse>("/mobile-auth/join/start", { email, joinCode });
+}
+
+export async function verifyMobileJoinAuthCode(email: string, joinCode: string, verificationCode: string) {
+  const session = await postJson<MobileJoinVerifyResponse>("/mobile-auth/join/verify", {
+    email,
+    joinCode,
+    verificationCode,
+  });
   saveMobileAuthSession({
     token: session.token,
     expiresAt: session.expiresAt,

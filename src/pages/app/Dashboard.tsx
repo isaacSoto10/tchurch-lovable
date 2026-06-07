@@ -309,15 +309,15 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="mobile-page space-y-6">
-      <div className="rounded-[1.75rem] border border-zinc-200/80 bg-gradient-to-br from-white via-white to-primary/5 p-4 shadow-sm shadow-zinc-200/60 sm:p-5">
+    <div className="mobile-page space-y-6 md:space-y-7">
+      <div className="rounded-[1.75rem] border border-zinc-200/80 bg-gradient-to-br from-white via-white to-primary/5 p-4 shadow-sm shadow-zinc-200/60 sm:p-5 md:p-6">
         <div>
           <p className="mobile-section-title mb-2">Panel</p>
           <h1 className="text-[1.85rem] font-black leading-none tracking-tight text-zinc-950 sm:text-3xl">{getGreeting()}</h1>
           <p className="mt-2 text-sm font-medium text-muted-foreground">{selectedChurch.name}</p>
         </div>
 
-        <div className="mt-5 grid grid-cols-1 gap-2 sm:grid-cols-3">
+        <div className="mt-5 grid grid-cols-1 gap-2 sm:grid-cols-3 lg:max-w-2xl">
           <Button className="h-11 rounded-2xl font-bold sm:w-auto" onClick={() => navigate("/app/services")}>
             <Plus className="h-4 w-4" /> Nuevo servicio
           </Button>
@@ -330,9 +330,10 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Mis ministerios */}
-      {pendingAssignments.length > 0 && (
-        <div>
+      <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(280px,0.8fr)]">
+        <section className="min-w-0 space-y-6">
+          {pendingAssignments.length > 0 && (
+            <div>
           <h2 className="mobile-section-title mb-3">Mis asignaciones pendientes</h2>
           <div className="space-y-3">
             {pendingAssignments.map((assignment) => (
@@ -371,22 +372,22 @@ export default function Dashboard() {
               </Card>
             ))}
           </div>
-        </div>
-      )}
+            </div>
+          )}
 
-      {loading ? (
-        <div className="flex items-center justify-center py-8">
-          <div className="animate-spin w-6 h-6 border-2 border-primary border-t-transparent rounded-full" />
-        </div>
-      ) : timeline.length === 0 ? (
-        <Card className="app-card">
-          <CardContent className="p-8 text-center">
-            <CalendarDays className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
-            <p className="text-sm text-muted-foreground">No hay servicios o eventos próximos</p>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="space-y-6">
+          {loading ? (
+            <div className="flex items-center justify-center py-8">
+              <div className="animate-spin w-6 h-6 border-2 border-primary border-t-transparent rounded-full" />
+            </div>
+          ) : timeline.length === 0 ? (
+            <Card className="app-card">
+              <CardContent className="p-8 text-center">
+                <CalendarDays className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
+                <p className="text-sm text-muted-foreground">No hay servicios o eventos próximos</p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-6">
           {thisWeekItems.length > 0 && (
             <div>
               <h2 className="mobile-section-title mb-3">
@@ -464,15 +465,17 @@ export default function Dashboard() {
               </div>
             </div>
           )}
-        </div>
-      )}
+            </div>
+          )}
+        </section>
 
-      {ministries.length > 0 && (
-        <div>
+        <aside className="min-w-0 space-y-6 lg:sticky lg:top-[calc(env(safe-area-inset-top)+1rem)] lg:self-start">
+          {ministries.length > 0 && (
+            <div>
           <h2 className="mobile-section-title mb-3">
             Mis ministerios
           </h2>
-          <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
             {ministries.map((m) => (
               <Card
                 key={m.id}
@@ -496,11 +499,11 @@ export default function Dashboard() {
               </Card>
             ))}
           </div>
-        </div>
-      )}
+            </div>
+          )}
 
-      {announcements.length > 0 && (
-        <div>
+          {announcements.length > 0 && (
+            <div>
           <div className="flex min-w-0 items-center justify-between gap-3 mb-4">
             <h2 className="mobile-section-title">
               Anuncios recientes
@@ -534,15 +537,15 @@ export default function Dashboard() {
               </Card>
             ))}
           </div>
-        </div>
-      )}
+            </div>
+          )}
 
-      {statItems.length > 0 && (
-        <div>
+          {statItems.length > 0 && (
+            <div>
           <h2 className="mobile-section-title mb-3">
             Resumen
           </h2>
-          <div className="grid min-w-0 grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+          <div className="grid min-w-0 grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-2">
             {statItems.map((stat) => (
               <Card
                 key={stat.label}
@@ -557,8 +560,10 @@ export default function Dashboard() {
               </Card>
             ))}
           </div>
+            </div>
+          )}
+        </aside>
         </div>
-      )}
     </div>
   );
 }
