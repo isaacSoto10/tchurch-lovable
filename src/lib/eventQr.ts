@@ -1,39 +1,36 @@
 import QRCode from "qrcode";
 import type { EventQrResponse } from "@/types/events";
 
-export function getEventQrValue(qr: EventQrResponse | null | undefined, fallbackEventId?: string) {
+function isSignedEventQrValue(value: string) {
+  return /^evqr_[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{16,}$/.test(value.trim());
+}
+
+export function getEventQrValue(qr: EventQrResponse | null | undefined) {
   if (!qr) return null;
 
   const value =
     qr.qrPayload ||
     qr.payload ||
+    qr.qrValue ||
     qr.value ||
     qr.token ||
     qr.qrToken ||
     qr.code ||
-    qr.url ||
-    qr.qrUrl ||
     null;
 
-  if (typeof value === "string" && value.trim()) return value.trim();
-
-  if (fallbackEventId && (qr.id || qr.eventId || qr.userId)) {
-    return JSON.stringify({
-      eventId: qr.eventId || fallbackEventId,
-      qrId: qr.id,
-      userId: qr.userId,
-    });
+  if (typeof value === "string" && isSignedEventQrValue(value)) {
+    return value.trim();
   }
 
   return null;
 }
 
-export async function createEventQrDataUrl(qr: EventQrResponse | null | undefined, fallbackEventId?: string) {
+export async function createEventQrDataUrl(qr: EventQrResponse | null | undefined) {
   if (!qr) return null;
   if (typeof qr.dataUrl === "string" && qr.dataUrl.startsWith("data:image/")) return qr.dataUrl;
   if (typeof qr.imageUrl === "string" && qr.imageUrl.trim()) return qr.imageUrl;
 
-  const value = getEventQrValue(qr, fallbackEventId);
+  const value = getEventQrValue(qr);
   if (!value) return null;
 
   return QRCode.toDataURL(value, {

@@ -6,14 +6,9 @@ import { useApi } from "@/hooks/useApi";
 import { useChurch } from "@/providers/ChurchProvider";
 import { useAppAuth } from "@/hooks/useAppAuth";
 import { useNotifications } from "@/providers/NotificationsProvider";
+import { normalizeAppRoute } from "@/lib/navigation";
 
 const REGISTERED_TOKEN_KEY = "tchurch_push_token";
-
-function normalizeRoute(value: unknown): string | null {
-  if (typeof value !== "string" || !value.startsWith("/")) return null;
-  if (value.startsWith("/join-") || value.startsWith("/login")) return value;
-  return value.startsWith("/app") ? value : `/app${value}`;
-}
 
 export function usePushNotifications() {
   const navigate = useNavigate();
@@ -75,7 +70,7 @@ export function usePushNotifications() {
         listeners.push(
           await PushNotifications.addListener("pushNotificationActionPerformed", (event: ActionPerformed) => {
             const data = event.notification.data as Record<string, unknown> | undefined;
-            const route = normalizeRoute(data?.route);
+            const route = normalizeAppRoute(data?.route);
             if (route) navigate(route);
           })
         );

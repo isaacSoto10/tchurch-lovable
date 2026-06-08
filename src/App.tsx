@@ -1,13 +1,15 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { lazy, Suspense, useEffect } from "react";
-import { BrowserRouter, HashRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, HashRouter, Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { Capacitor } from "@capacitor/core";
+import { App as CapacitorApp, type URLOpenListenerEvent } from "@capacitor/app";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ClerkProvider } from "@/providers/ClerkProvider";
 import { ChurchProvider } from "@/providers/ChurchProvider";
 import { RequireAuth } from "@/components/RequireAuth";
+import { routeFromAppUrl } from "@/lib/navigation";
 
 const Landing = lazy(() => import("./pages/Landing"));
 const Login = lazy(() => import("./pages/Login"));
@@ -56,6 +58,37 @@ function PageLoader() {
   );
 }
 
+function NativeDeepLinkHandler() {
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return undefined;
+
+    let mounted = true;
+    const openRoute = (url: unknown) => {
+      const route = routeFromAppUrl(url);
+      if (route) navigate(route);
+    };
+
+    void CapacitorApp.getLaunchUrl()
+      .then((launch) => {
+        if (mounted) openRoute(launch?.url);
+      })
+      .catch((error) => console.warn("[DeepLink] No se pudo leer el launch URL:", error));
+
+    const listener = CapacitorApp.addListener("appUrlOpen", (event: URLOpenListenerEvent) => {
+      openRoute(event.url);
+    });
+
+    return () => {
+      mounted = false;
+      void listener.then((handle) => handle.remove());
+    };
+  }, [navigate]);
+
+  return null;
+}
+
 const App = () => {
   useEffect(() => {
     const savedLanguage = localStorage.getItem("tchurch_language");
@@ -68,6 +101,7 @@ const App = () => {
       <Toaster />
       <Sonner />
       <Router>
+        <NativeDeepLinkHandler />
         <ClerkProvider>
           <ChurchProvider>
             <Suspense fallback={<PageLoader />}>

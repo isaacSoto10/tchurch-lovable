@@ -1,6 +1,0 @@
-import{f as i,r,j as s,h as d,k as l}from"./index-_BqIbFMJ.js";/**
- * @license lucide-react v1.8.0 - ISC
- *
- * This source code is licensed under the ISC license.
- * See the LICENSE file in the root directory of this source tree.
- */const c=[["path",{d:"M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8",key:"v9h5vc"}],["path",{d:"M21 3v5h-5",key:"1q7to0"}],["path",{d:"M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16",key:"3uifl3"}],["path",{d:"M8 16H3v5",key:"1cv678"}]],g=i("refresh-cw",c),n=l("relative w-full rounded-lg border p-4 [&>svg~*]:pl-7 [&>svg+div]:translate-y-[-3px] [&>svg]:absolute [&>svg]:left-4 [&>svg]:top-4 [&>svg]:text-foreground",{variants:{variant:{default:"bg-background text-foreground",destructive:"border-destructive/50 text-destructive dark:border-destructive [&>svg]:text-destructive"}},defaultVariants:{variant:"default"}}),v=r.forwardRef(({className:e,variant:t,...a},o)=>s.jsx("div",{ref:o,role:"alert",className:d(n({variant:t}),e),...a}));v.displayName="Alert";const f=r.forwardRef(({className:e,...t},a)=>s.jsx("h5",{ref:a,className:d("mb-1 font-medium leading-none tracking-tight",e),...t}));f.displayName="AlertTitle";const p=r.forwardRef(({className:e,...t},a)=>s.jsx("div",{ref:a,className:d("text-sm [&_p]:leading-relaxed",e),...t}));p.displayName="AlertDescription";export{v as A,g as R,f as a,p as b};

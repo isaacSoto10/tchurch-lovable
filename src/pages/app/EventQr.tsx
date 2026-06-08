@@ -37,7 +37,7 @@ export default function EventQr() {
     setError(null);
     try {
       const [eventData, qrData] = await Promise.all([fetchEvent(id).catch(() => null), fetchMyEventQr(id)]);
-      const dataUrl = await createEventQrDataUrl(qrData, id);
+      const dataUrl = await createEventQrDataUrl(qrData);
       setEvent(eventData);
       setQr(qrData);
       setQrDataUrl(dataUrl);

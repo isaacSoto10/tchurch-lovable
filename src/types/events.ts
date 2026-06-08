@@ -139,6 +139,9 @@ export interface EventQrResponse {
   userId?: string;
   token?: string;
   qrToken?: string;
+  qrValue?: string;
+  qrSvg?: string;
+  qrPng?: string;
   code?: string;
   qrPayload?: string;
   payload?: string;
@@ -157,14 +160,16 @@ export interface EventCheckInPayload {
   qrCode: string;
   scannedAt?: string;
   source?: "camera" | "manual" | "offline";
+  offlineClientId?: string;
 }
 
 export interface EventManualCheckInPayload {
   userId?: string;
   email?: string;
   name?: string;
-  note?: string;
+  notes?: string;
   checkedInAt?: string;
+  offlineClientId?: string;
 }
 
 export interface EventCheckInResponse {

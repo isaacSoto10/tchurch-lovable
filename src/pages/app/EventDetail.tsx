@@ -204,7 +204,7 @@ export default function EventDetail() {
   const canManage = selectedChurch?.role === "ADMIN" || selectedChurch?.role === "PLANNER";
   const userEmail = user?.primaryEmailAddress?.emailAddress || null;
 
-  const attendees = event?.attendees || [];
+  const attendees = useMemo(() => event?.attendees || [], [event?.attendees]);
   const counts = useMemo(() => {
     const summary = event?.rsvpSummary;
     if (summary) return summary;
@@ -269,7 +269,7 @@ export default function EventDetail() {
 
     try {
       const data = await fetchMyEventQr(id);
-      const dataUrl = await createEventQrDataUrl(data, id);
+      const dataUrl = await createEventQrDataUrl(data);
       setMyQr(data);
       setQrDataUrl(dataUrl);
       if (!dataUrl) setQrError("El servidor no regresó un valor válido para generar el QR.");
@@ -422,7 +422,7 @@ export default function EventDetail() {
         {
           name: name || undefined,
           email: email || undefined,
-          note: note || undefined,
+          notes: note || undefined,
           checkedInAt: new Date().toISOString(),
         },
         token

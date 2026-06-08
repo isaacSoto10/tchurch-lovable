@@ -7,6 +7,7 @@ import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/com
 import { useChurch } from "@/providers/ChurchProvider";
 import { useIsMobile, useResponsiveLayout } from "@/hooks/use-mobile";
 import { usePushNotifications } from "@/hooks/usePushNotifications";
+import { useEventCheckInQueueSync } from "@/hooks/useEventCheckInQueueSync";
 import { NotificationBell } from "@/components/NotificationBell";
 import { NotificationsProvider } from "@/providers/NotificationsProvider";
 
@@ -30,6 +31,7 @@ function AppLayoutInner() {
   const touchStartY = useRef<number | null>(null);
 
   usePushNotifications();
+  useEventCheckInQueueSync();
 
   function handleTouchStart(event: React.TouchEvent<HTMLDivElement>) {
     if (!useCompactNavigation || openMobile) return;

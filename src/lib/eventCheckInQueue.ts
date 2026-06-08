@@ -125,11 +125,16 @@ export async function enqueueEventCheckIn(
   lastError?: string | null
 ): Promise<QueuedEventCheckIn> {
   const db = await openQueueDb();
+  const id = queueId();
+  const payloadWithOfflineClientId = {
+    ...payload,
+    offlineClientId: payload.offlineClientId || id,
+  };
   const item: QueuedEventCheckIn = {
-    id: queueId(),
+    id,
     eventId,
     endpoint,
-    payload,
+    payload: payloadWithOfflineClientId,
     createdAt: new Date().toISOString(),
     attempts: 0,
     lastError: lastError ?? null,

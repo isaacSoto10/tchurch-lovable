@@ -17,6 +17,7 @@
 		}
 	},
 	"packageClassList": [
+		"AppPlugin",
 		"CapacitorBarcodeScannerPlugin",
 		"FilesystemPlugin",
 		"PushNotificationsPlugin",
