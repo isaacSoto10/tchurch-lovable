@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   AlertCircle,
   ArrowLeft,
@@ -60,6 +60,22 @@ import type {
 import { getEventTypeLabel } from "@/types/events";
 
 type TabValue = "details" | "rsvp" | "qr" | "participation" | "admin";
+
+function routeTab(pathname: string): TabValue {
+  if (pathname.endsWith("/rsvp")) return "rsvp";
+  if (pathname.endsWith("/my-qr") || pathname.endsWith("/qr")) return "qr";
+  if (pathname.endsWith("/participation")) return "participation";
+  if (pathname.endsWith("/scanner") || pathname.endsWith("/check-in")) return "admin";
+  return "details";
+}
+
+function tabPath(eventId: string, tab: TabValue) {
+  if (tab === "rsvp") return `/app/events/${eventId}/rsvp`;
+  if (tab === "qr") return `/app/events/${eventId}/my-qr`;
+  if (tab === "participation") return `/app/events/${eventId}/participation`;
+  if (tab === "admin") return `/app/events/${eventId}/check-in`;
+  return `/app/events/${eventId}`;
+}
 
 function getInitials(firstName?: string | null, lastName?: string | null, email?: string | null): string {
   if (firstName || lastName) return `${firstName?.[0] || ""}${lastName?.[0] || ""}`.toUpperCase();
@@ -160,12 +176,13 @@ function StatusBadge({ status }: { status: EventRsvpStatus }) {
 
 export default function EventDetail() {
   const { id } = useParams<{ id: string }>();
+  const location = useLocation();
   const navigate = useNavigate();
   const { selectedChurch } = useChurch();
   const { getToken, user } = useAppAuth();
   const { toast } = useToast();
 
-  const [activeTab, setActiveTab] = useState<TabValue>("details");
+  const [activeTab, setActiveTab] = useState<TabValue>(() => routeTab(location.pathname));
   const [event, setEvent] = useState<ChurchEvent | null>(null);
   const [loading, setLoading] = useState(true);
   const [showDelete, setShowDelete] = useState(false);
@@ -298,6 +315,10 @@ export default function EventDetail() {
   }, [loadEvent, loadQueueCount]);
 
   useEffect(() => {
+    setActiveTab(routeTab(location.pathname));
+  }, [location.pathname]);
+
+  useEffect(() => {
     if (activeTab === "qr" && !qrDataUrl && !qrLoading) {
       loadQr();
     }
@@ -308,6 +329,13 @@ export default function EventDetail() {
     window.addEventListener("online", handleOnline);
     return () => window.removeEventListener("online", handleOnline);
   }, [flushQueue]);
+
+  function handleTabChange(value: string) {
+    const tab = value as TabValue;
+    if (!id) return;
+    setActiveTab(tab);
+    navigate(tabPath(id, tab), { replace: true });
+  }
 
   async function handleRSVP(status: EventRsvpStatus) {
     if (!id) return;
@@ -351,7 +379,7 @@ export default function EventDetail() {
         title: "Confirma tu RSVP primero",
         description: "Marca Sí o Tal vez antes de anotarte en comida o participación.",
       });
-      setActiveTab("rsvp");
+      handleTabChange("rsvp");
       return;
     }
 
@@ -487,7 +515,7 @@ export default function EventDetail() {
           </Alert>
         )}
 
-        <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as TabValue)} className="space-y-4">
+        <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-4">
           <TabsList className="grid h-auto w-full grid-cols-2 gap-1 rounded-lg bg-zinc-200/70 p-1 sm:grid-cols-5">
             <TabsTrigger value="details" className="h-10 whitespace-normal text-xs">Detalles</TabsTrigger>
             <TabsTrigger value="rsvp" className="h-10 whitespace-normal text-xs">RSVP</TabsTrigger>
