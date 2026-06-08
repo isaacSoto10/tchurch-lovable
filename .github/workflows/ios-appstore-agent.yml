@@ -1,0 +1,83 @@
+name: iOS App Store Agent
+
+on:
+  schedule:
+    # 9:00 AM America/Chicago during daylight-saving time.
+    - cron: "0 14 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run without changing App Store Connect"
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      submit_for_review:
+        description: "Attempt App Store review submission after assigning the build"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      beta_review:
+        description: "Submit latest build for TestFlight beta review"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+permissions:
+  contents: read
+
+jobs:
+  ios-appstore-agent:
+    name: Check latest iOS build and deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ASC_APP_ID: ${{ secrets.ASC_APP_ID }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+      ASC_PLATFORM: IOS
+      ASC_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+      ASC_SUBMIT_FOR_REVIEW: ${{ github.event_name == 'workflow_dispatch' && inputs.submit_for_review || 'true' }}
+      ASC_BETA_REVIEW: ${{ github.event_name == 'workflow_dispatch' && inputs.beta_review || 'true' }}
+      ASC_REPLACE_IN_REVIEW: "true"
+      ASC_EXPIRE_SUPERSEDED_BETA_BUILD: "true"
+      ASC_BUILD_LOOKBACK: "20"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Check App Store Connect credentials
+        id: appstore_credentials
+        shell: bash
+        run: |
+          missing=()
+          for name in ASC_APP_ID ASC_KEY_ID ASC_ISSUER_ID ASC_PRIVATE_KEY; do
+            if [ -z "${!name}" ]; then
+              missing+=("$name")
+            fi
+          done
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::warning::Skipping App Store automation because these secrets are missing: ${missing[*]}"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run iOS App Store agent
+        if: steps.appstore_credentials.outputs.ready == 'true'
+        run: node scripts/ios-appstore-agent.mjs
