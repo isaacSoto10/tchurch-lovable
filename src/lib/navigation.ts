@@ -1,3 +1,20 @@
+type UnknownRecord = Record<string, unknown>;
+
+function recordFromUnknown(value: unknown): UnknownRecord | null {
+  if (!value) return null;
+  if (typeof value === "object" && !Array.isArray(value)) return value as UnknownRecord;
+
+  if (typeof value === "string" && value.trim().startsWith("{")) {
+    try {
+      return recordFromUnknown(JSON.parse(value));
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
 export function normalizeAppRoute(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const raw = value.trim();
@@ -42,7 +59,7 @@ export function routeFromAppUrl(value: unknown): string | null {
   return null;
 }
 
-function stringFromRecord(record: Record<string, unknown>, keys: string[]) {
+function stringFromRecord(record: UnknownRecord, keys: string[]) {
   for (const key of keys) {
     const value = record[key];
     if (typeof value === "string" && value.trim()) return value.trim();
@@ -50,10 +67,42 @@ function stringFromRecord(record: Record<string, unknown>, keys: string[]) {
   return null;
 }
 
+function stringFromRecords(records: UnknownRecord[], keys: string[]) {
+  for (const record of records) {
+    const value = stringFromRecord(record, keys);
+    if (value) return value;
+  }
+  return null;
+}
+
+function notificationRecords(record: UnknownRecord) {
+  const records = [record];
+
+  for (const key of ["data", "payload", "metadata", "notificationData"]) {
+    const nested = recordFromUnknown(record[key]);
+    if (nested) records.push(nested);
+  }
+
+  return records;
+}
+
+function eventIdFromRecords(records: UnknownRecord[]) {
+  for (const record of records) {
+    const directId = stringFromRecord(record, ["eventId", "event_id", "eventID"]);
+    if (directId) return directId;
+
+    const nestedEvent = recordFromUnknown(record.event);
+    const nestedId = nestedEvent ? stringFromRecord(nestedEvent, ["id", "eventId", "event_id", "eventID"]) : null;
+    if (nestedId) return nestedId;
+  }
+
+  return null;
+}
+
 function routeSuffixFromHint(value: string | null) {
   const hint = value?.toLowerCase() || "";
   if (hint.includes("scanner") || hint.includes("scan")) return "/scanner";
-  if (hint.includes("check-in") || hint.includes("checkin")) return "/check-in";
+  if (hint.includes("check-in") || hint.includes("check_in") || hint.includes("checkin")) return "/check-in";
   if (hint.includes("admin")) return "/admin";
   if (hint.includes("qr")) return "/qr";
   if (hint.includes("rsvp")) return "/rsvp";
@@ -62,22 +111,17 @@ function routeSuffixFromHint(value: string | null) {
 }
 
 export function routeFromNotificationData(data: unknown): string | null {
-  if (!data || typeof data !== "object") return null;
+  const record = recordFromUnknown(data);
+  if (!record) return null;
 
-  const record = data as Record<string, unknown>;
-  const explicitRoute = stringFromRecord(record, ["route", "url", "deepLink", "deeplink", "link", "href"]);
+  const records = notificationRecords(record);
+  const explicitRoute = stringFromRecords(records, ["route", "url", "deepLink", "deeplink", "link", "href", "path"]);
   const normalizedExplicitRoute = routeFromAppUrl(explicitRoute);
   if (normalizedExplicitRoute) return normalizedExplicitRoute;
 
-  const nestedEvent = record.event && typeof record.event === "object"
-    ? record.event as Record<string, unknown>
-    : null;
-  const eventId =
-    stringFromRecord(record, ["eventId", "event_id"]) ||
-    (nestedEvent ? stringFromRecord(nestedEvent, ["id", "eventId", "event_id"]) : null);
-
+  const eventId = eventIdFromRecords(records);
   if (!eventId) return null;
 
-  const hint = stringFromRecord(record, ["screen", "target", "action", "eventRoute", "tab"]);
+  const hint = stringFromRecords(records, ["screen", "target", "action", "eventRoute", "tab"]);
   return `/app/events/${encodeURIComponent(eventId)}${routeSuffixFromHint(hint)}`;
 }

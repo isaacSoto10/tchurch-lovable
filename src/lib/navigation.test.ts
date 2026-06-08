@@ -20,4 +20,20 @@ describe("mobile app navigation helpers", () => {
     expect(routeFromNotificationData({ event: { id: "event-1" }, tab: "admin" })).toBe("/app/events/event-1/admin");
     expect(routeFromNotificationData({ route: "/events/event-1/qr" })).toBe("/app/events/event-1/qr");
   });
+
+  it("resolves event routes from iOS/APNs-style nested push data", () => {
+    expect(routeFromNotificationData({
+      aps: { alert: { title: "Evento" } },
+      data: { eventId: "event-2", screen: "check-in" },
+    })).toBe("/app/events/event-2/check-in");
+
+    expect(routeFromNotificationData({
+      aps: { alert: "Scanner" },
+      payload: JSON.stringify({ event_id: "event-3", action: "scanner" }),
+    })).toBe("/app/events/event-3/scanner");
+
+    expect(routeFromNotificationData({
+      data: { route: "/events/event-4/qr" },
+    })).toBe("/app/events/event-4/qr");
+  });
 });
