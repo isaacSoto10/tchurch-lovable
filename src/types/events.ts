@@ -61,6 +61,32 @@ export interface EventSignupItem {
   }> | null;
 }
 
+export interface EventQuestion {
+  id: string;
+  label: string;
+  type: "text" | "textarea" | "select" | "checkbox";
+  required?: boolean;
+  options?: string[];
+}
+
+export interface EventRegistrationConfig {
+  questions: EventQuestion[];
+  food?: {
+    enabled?: boolean;
+    label?: string;
+  };
+  participation?: {
+    enabled?: boolean;
+    label?: string;
+  };
+}
+
+export interface EventReminderConfig {
+  enabled: boolean;
+  offsets: number[];
+  channels: Array<"in_app" | "push" | "whatsapp" | "email">;
+}
+
 export interface ChurchEvent {
   id: string;
   title: string;
@@ -77,6 +103,15 @@ export interface ChurchEvent {
   leaderFirstName?: string | null;
   leaderLastName?: string | null;
   leaderEmail?: string | null;
+  visibility?: "private" | "public" | string | null;
+  publicSlug?: string | null;
+  publishedAt?: string | null;
+  registrationEnabled?: boolean;
+  allowGuests?: boolean;
+  requiresCheckIn?: boolean;
+  capacity?: number | null;
+  registrationConfig?: EventRegistrationConfig | null;
+  reminderConfig?: EventReminderConfig | null;
   attendees?: EventAttendee[];
   rsvpSummary?: EventRsvpSummary;
   checkInSummary?: EventCheckInSummary;

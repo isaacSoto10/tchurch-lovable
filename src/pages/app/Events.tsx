@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   AlertDialog,
@@ -52,6 +53,22 @@ const emptyForm = {
   leaderId: "",
   notes: "",
   duration: 90,
+  visibility: "private" as "private" | "public",
+  registrationEnabled: true,
+  allowGuests: false,
+  requiresCheckIn: true,
+  capacity: "",
+  askPhone: false,
+  askFoodNotes: false,
+  askParticipation: false,
+  foodEnabled: false,
+  foodTitle: "",
+  foodQuantity: "8",
+  participationEnabled: false,
+  participationTitle: "",
+  participationQuantity: "4",
+  remindersEnabled: true,
+  reminder30: false,
 };
 
 function toLocalInputValue(date: Date) {
@@ -93,6 +110,38 @@ function formatDate(value: string) {
 
 function formatTime(value: string) {
   return new Date(value).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+}
+
+function advancedQuestions(form: typeof emptyForm) {
+  return [
+    form.askPhone ? { id: "phone", label: "Phone number", type: "text", required: false } : null,
+    form.askFoodNotes ? { id: "food-notes", label: "Food allergies or preferences", type: "textarea", required: false } : null,
+    form.askParticipation ? { id: "participation-interest", label: "Where would you like to participate?", type: "textarea", required: false } : null,
+  ].filter(Boolean);
+}
+
+function initialSignupItems(form: typeof emptyForm) {
+  const items = [];
+  const foodQuantity = Math.max(1, Number(form.foodQuantity) || 1);
+  const participationQuantity = Math.max(1, Number(form.participationQuantity) || 1);
+
+  if (form.foodEnabled && form.foodTitle.trim()) {
+    items.push({
+      type: "food",
+      title: form.foodTitle.trim(),
+      quantityNeeded: foodQuantity,
+      metadata: { createdFrom: "mobile_event_create" },
+    });
+  }
+  if (form.participationEnabled && form.participationTitle.trim()) {
+    items.push({
+      type: "participation",
+      title: form.participationTitle.trim(),
+      quantityNeeded: participationQuantity,
+      metadata: { createdFrom: "mobile_event_create" },
+    });
+  }
+  return items;
 }
 
 export default function Events() {
@@ -176,6 +225,22 @@ export default function Events() {
       leaderId: event.leaderId || "",
       notes: event.notes || "",
       duration: emptyForm.duration,
+      visibility: event.visibility === "public" ? "public" : "private",
+      registrationEnabled: event.registrationEnabled ?? true,
+      allowGuests: event.allowGuests ?? false,
+      requiresCheckIn: event.requiresCheckIn ?? true,
+      capacity: event.capacity ? String(event.capacity) : "",
+      askPhone: Boolean(event.registrationConfig?.questions?.some((question) => question.id === "phone")),
+      askFoodNotes: Boolean(event.registrationConfig?.questions?.some((question) => question.id === "food-notes" || question.id === "dietary")),
+      askParticipation: Boolean(event.registrationConfig?.questions?.some((question) => question.id === "participation-interest")),
+      foodEnabled: Boolean(event.registrationConfig?.food?.enabled),
+      foodTitle: "",
+      foodQuantity: "8",
+      participationEnabled: Boolean(event.registrationConfig?.participation?.enabled),
+      participationTitle: "",
+      participationQuantity: "4",
+      remindersEnabled: event.reminderConfig?.enabled ?? true,
+      reminder30: Boolean(event.reminderConfig?.offsets?.includes(30)),
     });
     setDialogOpen(true);
   }
@@ -222,6 +287,29 @@ export default function Events() {
         ministryId: form.ministryId || null,
         leaderId: form.leaderId || null,
         notes: form.notes || null,
+        advanced: true,
+        visibility: form.visibility,
+        registrationEnabled: form.registrationEnabled,
+        allowGuests: form.allowGuests,
+        requiresCheckIn: form.requiresCheckIn,
+        capacity: form.capacity || null,
+        registrationConfig: {
+          questions: advancedQuestions(form),
+          food: {
+            enabled: form.foodEnabled,
+            label: "Food",
+          },
+          participation: {
+            enabled: form.participationEnabled,
+            label: "Participation",
+          },
+        },
+        reminderConfig: {
+          enabled: form.remindersEnabled,
+          offsets: form.reminder30 ? [1440, 120, 30] : [1440, 120],
+          channels: ["in_app", "push", "whatsapp", "email"],
+        },
+        initialSignupItems: editingEvent ? [] : initialSignupItems(form),
       };
 
       if (editingEvent) {
@@ -467,11 +555,105 @@ export default function Events() {
               className="resize-none rounded-2xl"
             />
 
+            <AdvancedSection title="Registration and visibility">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="space-y-1.5">
+                  <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Visibility</span>
+                  <select
+                    value={form.visibility}
+                    onChange={(event) => setForm((prev) => ({ ...prev, visibility: event.target.value as "private" | "public" }))}
+                    className="w-full min-h-10 rounded-2xl border bg-white px-3 text-sm outline-none"
+                  >
+                    <option value="private">Private app event</option>
+                    <option value="public">Publish on website</option>
+                  </select>
+                </label>
+                <Input
+                  type="number"
+                  min={1}
+                  placeholder="Capacity, optional"
+                  value={form.capacity}
+                  onChange={(event) => setForm((prev) => ({ ...prev, capacity: event.target.value }))}
+                  className="rounded-2xl self-end"
+                />
+              </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                <ToggleRow label="Registration open" checked={form.registrationEnabled} onChange={(value) => setForm((prev) => ({ ...prev, registrationEnabled: value }))} />
+                <ToggleRow label="Allow guests" checked={form.allowGuests} onChange={(value) => setForm((prev) => ({ ...prev, allowGuests: value }))} />
+                <ToggleRow label="QR check-in" checked={form.requiresCheckIn} onChange={(value) => setForm((prev) => ({ ...prev, requiresCheckIn: value }))} />
+              </div>
+            </AdvancedSection>
+
+            <AdvancedSection title="Registration form">
+              <div className="grid gap-2 sm:grid-cols-3">
+                <ToggleRow label="Ask phone" checked={form.askPhone} onChange={(value) => setForm((prev) => ({ ...prev, askPhone: value }))} />
+                <ToggleRow label="Food notes" checked={form.askFoodNotes} onChange={(value) => setForm((prev) => ({ ...prev, askFoodNotes: value }))} />
+                <ToggleRow label="Participation area" checked={form.askParticipation} onChange={(value) => setForm((prev) => ({ ...prev, askParticipation: value }))} />
+              </div>
+            </AdvancedSection>
+
+            <AdvancedSection title="Food and participation">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-2xl border bg-white p-3">
+                  <ToggleRow label="Food sign-up" checked={form.foodEnabled} onChange={(value) => setForm((prev) => ({ ...prev, foodEnabled: value }))} />
+                  {form.foodEnabled && !editingEvent && (
+                    <div className="mt-3 grid gap-2">
+                      <Input
+                        placeholder="Food item, e.g. Drinks"
+                        value={form.foodTitle}
+                        onChange={(event) => setForm((prev) => ({ ...prev, foodTitle: event.target.value }))}
+                        className="rounded-2xl"
+                      />
+                      <Input
+                        type="number"
+                        min={1}
+                        placeholder="Needed"
+                        value={form.foodQuantity}
+                        onChange={(event) => setForm((prev) => ({ ...prev, foodQuantity: event.target.value }))}
+                        className="rounded-2xl"
+                      />
+                    </div>
+                  )}
+                </div>
+                <div className="rounded-2xl border bg-white p-3">
+                  <ToggleRow label="Participation sign-up" checked={form.participationEnabled} onChange={(value) => setForm((prev) => ({ ...prev, participationEnabled: value }))} />
+                  {form.participationEnabled && !editingEvent && (
+                    <div className="mt-3 grid gap-2">
+                      <Input
+                        placeholder="Role, e.g. Greeters"
+                        value={form.participationTitle}
+                        onChange={(event) => setForm((prev) => ({ ...prev, participationTitle: event.target.value }))}
+                        className="rounded-2xl"
+                      />
+                      <Input
+                        type="number"
+                        min={1}
+                        placeholder="Needed"
+                        value={form.participationQuantity}
+                        onChange={(event) => setForm((prev) => ({ ...prev, participationQuantity: event.target.value }))}
+                        className="rounded-2xl"
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+            </AdvancedSection>
+
+            <AdvancedSection title="Reminders">
+              <div className="grid gap-2 sm:grid-cols-2">
+                <ToggleRow label="24h + 2h reminders" checked={form.remindersEnabled} onChange={(value) => setForm((prev) => ({ ...prev, remindersEnabled: value }))} />
+                <ToggleRow label="Add 30m reminder" checked={form.reminder30} onChange={(value) => setForm((prev) => ({ ...prev, reminder30: value }))} />
+              </div>
+            </AdvancedSection>
+
             <div className="rounded-2xl border bg-muted/40 p-4 text-sm">
               <p className="font-semibold">{form.title || "Event preview"}</p>
               <p className="mt-1 text-muted-foreground">{form.start ? `${formatDate(form.start)} · ${formatTime(form.start)}` : "Pick a time"}</p>
               <p className="mt-1 text-muted-foreground">
                 {selectedMinistry?.name || selectedLeader ? [selectedMinistry?.name, selectedLeader ? displayName(selectedLeader) : ""].filter(Boolean).join(" · ") : "Choose a ministry or leader"}
+              </p>
+              <p className="mt-1 text-muted-foreground">
+                {form.visibility === "public" ? "Public website" : "Private app event"} · {form.registrationEnabled ? "RSVP + QR ready" : "RSVP closed"}
               </p>
             </div>
 
@@ -499,6 +681,24 @@ export default function Events() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+function AdvancedSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="rounded-2xl border bg-muted/30 p-4">
+      <h3 className="text-sm font-bold">{title}</h3>
+      <div className="mt-3">{children}</div>
+    </section>
+  );
+}
+
+function ToggleRow({ label, checked, onChange }: { label: string; checked: boolean; onChange: (checked: boolean) => void }) {
+  return (
+    <label className="flex min-h-12 items-center justify-between gap-3 rounded-2xl border bg-white px-3 py-2 text-sm font-semibold">
+      <span>{label}</span>
+      <Switch checked={checked} onCheckedChange={onChange} />
+    </label>
   );
 }
 
