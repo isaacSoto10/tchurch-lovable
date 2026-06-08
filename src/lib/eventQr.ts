@@ -54,10 +54,38 @@ export function getEventQrValue(qr: EventQrResponse | null | undefined) {
   return value;
 }
 
+function getEventQrImageSource(qr: EventQrResponse) {
+  const candidates = [
+    { value: qr.dataUrl, type: null },
+    { value: qr.imageUrl, type: null },
+    { value: qr.qrPng, type: "png" },
+    { value: qr.qrSvg, type: "svg+xml" },
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate.value !== "string") continue;
+
+    const trimmed = candidate.value.trim();
+    if (!trimmed) continue;
+    if (trimmed.startsWith("data:image/") || /^https?:\/\//i.test(trimmed)) return trimmed;
+
+    if (candidate.type === "svg+xml" && (trimmed.startsWith("<svg") || trimmed.includes("<svg"))) {
+      return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(trimmed)}`;
+    }
+
+    if (candidate.type && /^[A-Za-z0-9+/]+={0,2}$/.test(trimmed)) {
+      return `data:image/${candidate.type};base64,${trimmed}`;
+    }
+  }
+
+  return null;
+}
+
 export async function createEventQrDataUrl(qr: EventQrResponse | null | undefined) {
   if (!qr) return null;
-  if (typeof qr.dataUrl === "string" && qr.dataUrl.startsWith("data:image/")) return qr.dataUrl;
-  if (typeof qr.imageUrl === "string" && qr.imageUrl.trim()) return qr.imageUrl;
+
+  const imageSource = getEventQrImageSource(qr);
+  if (imageSource) return imageSource;
 
   const value = getEventQrValue(qr);
   if (!value) return null;
