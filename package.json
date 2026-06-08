@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build && node scripts/copy-clerk-headless-runtime.mjs",
     "build:dev": "vite build --mode development && node scripts/copy-clerk-headless-runtime.mjs",
+    "appstore:ios-agent": "node scripts/ios-appstore-agent.mjs",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
@@ -14,6 +15,7 @@
   },
   "dependencies": {
     "@capacitor/android": "^8.3.0",
+    "@capacitor/barcode-scanner": "^3.0.2",
     "@capacitor/cli": "^8.3.0",
     "@capacitor/core": "^8.3.0",
     "@capacitor/filesystem": "^8.1.2",

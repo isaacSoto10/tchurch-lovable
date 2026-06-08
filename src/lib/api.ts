@@ -1,5 +1,15 @@
 import { API_BASE } from "@/lib/apiConfig";
 import { getMobileAuthSession, isNativeMobileAuth } from "@/lib/mobileAuth";
+import type {
+  ChurchEvent,
+  EventCheckInPayload,
+  EventCheckInResponse,
+  EventManualCheckInPayload,
+  EventQrResponse,
+  EventRsvpResponse,
+  EventRsvpStatus,
+  EventSignupItem,
+} from "@/types/events";
 
 const CHURCH_ID_KEY = "tchurch_church_id";
 
@@ -20,15 +30,13 @@ export class ApiError extends Error {
   }
 }
 
-declare global {
-  interface Window {
-    Clerk?: {
-      session?: {
-        getToken: () => Promise<string | null>;
-      } | null;
-    };
-  }
-}
+type ClerkTokenWindow = Window & {
+  Clerk?: {
+    session?: {
+      getToken?: () => Promise<string | null>;
+    } | null;
+  };
+};
 
 export function getChurchId(): string | null {
   return localStorage.getItem(CHURCH_ID_KEY);
@@ -53,7 +61,7 @@ export async function apiFetch<T = unknown>(
   const resolvedToken =
     token ??
     (isNativeMobileAuth ? getMobileAuthSession()?.token : null) ??
-    (await window.Clerk?.session?.getToken?.()) ??
+    (await (window as ClerkTokenWindow).Clerk?.session?.getToken?.()) ??
     null;
   const headers: Record<string, string> = {
     ...(!isFormData ? { "Content-Type": "application/json" } : {}),
@@ -143,4 +151,57 @@ export async function fetchUserChurches<T = unknown>(token: string): Promise<T[]
 
   const data = await res.json();
   return data.churches || [];
+}
+
+export function fetchEvent(eventId: string, token?: string | null) {
+  return apiFetch<ChurchEvent>(`/events/${eventId}`, {}, token);
+}
+
+export function fetchEventRsvp(eventId: string, token?: string | null) {
+  return apiFetch<EventRsvpResponse>(`/events/${eventId}/rsvp`, {}, token);
+}
+
+export function updateEventRsvp(eventId: string, status: EventRsvpStatus, token?: string | null) {
+  return apiFetch<EventRsvpResponse>(
+    `/events/${eventId}/rsvp`,
+    {
+      method: "POST",
+      body: JSON.stringify({ status }),
+    },
+    token
+  );
+}
+
+export function deleteEventRsvp(eventId: string, token?: string | null) {
+  return apiFetch<{ success?: boolean }>(`/events/${eventId}/rsvp`, { method: "DELETE" }, token);
+}
+
+export function fetchMyEventQr(eventId: string, token?: string | null) {
+  return apiFetch<EventQrResponse>(`/events/${eventId}/my-qr`, {}, token);
+}
+
+export function scanEventCheckIn(eventId: string, payload: EventCheckInPayload, token?: string | null) {
+  return apiFetch<EventCheckInResponse>(
+    `/events/${eventId}/check-ins/scan`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    token
+  );
+}
+
+export function manualEventCheckIn(eventId: string, payload: EventManualCheckInPayload, token?: string | null) {
+  return apiFetch<EventCheckInResponse>(
+    `/events/${eventId}/check-ins/manual`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    token
+  );
+}
+
+export function fetchEventSignupItems(eventId: string, token?: string | null) {
+  return apiFetch<EventSignupItem[]>(`/events/${eventId}/signup-items`, {}, token);
 }

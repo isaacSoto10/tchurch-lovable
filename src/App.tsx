@@ -26,6 +26,8 @@ const Ministries = lazy(() => import("./pages/app/Ministries"));
 const MinistryDetail = lazy(() => import("./pages/app/MinistryDetail"));
 const Events = lazy(() => import("./pages/app/Events"));
 const EventDetail = lazy(() => import("./pages/app/EventDetail"));
+const EventQr = lazy(() => import("./pages/app/EventQr"));
+const EventScanner = lazy(() => import("./pages/app/EventScanner"));
 const Teams = lazy(() => import("./pages/app/Teams"));
 const TeamDetail = lazy(() => import("./pages/app/TeamDetail"));
 const MyAssignments = lazy(() => import("./pages/app/MyAssignments"));
@@ -87,6 +89,8 @@ const App = () => {
                   <Route path="ministries" element={<Ministries />} />
                   <Route path="ministries/:id" element={<MinistryDetail />} />
                   <Route path="events" element={<Events />} />
+                  <Route path="events/:id/qr" element={<EventQr />} />
+                  <Route path="events/:id/scanner" element={<EventScanner />} />
                   <Route path="events/:id" element={<EventDetail />} />
                   <Route path="teams" element={<Teams />} />
                   <Route path="teams/:id" element={<TeamDetail />} />

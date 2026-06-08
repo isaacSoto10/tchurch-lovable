@@ -20,26 +20,11 @@ import { useApi } from "@/hooks/useApi";
 import { useChurch } from "@/providers/ChurchProvider";
 import { useToast } from "@/components/ui/use-toast";
 import { CalendarDays, Clock, Loader2, MapPin, Plus, Trash2, UserRound } from "lucide-react";
+import type { ChurchEvent, KnownEventType } from "@/types/events";
+import { EVENT_TYPE_OPTIONS as EVENT_TYPES, getEventTypeLabel } from "@/types/events";
 
-type EventType = "service" | "bible_study" | "fellowship" | "youth" | "children" | "special_event";
-
-interface EventItem {
-  id: string;
-  title: string;
-  description?: string | null;
-  date: string;
-  endDate?: string | null;
-  location?: string | null;
-  type?: EventType | string | null;
-  notes?: string | null;
-  ministryId?: string | null;
-  leaderId?: string | null;
-  ministryName?: string | null;
-  ministryColor?: string | null;
-  leaderFirstName?: string | null;
-  leaderLastName?: string | null;
-  leaderEmail?: string | null;
-}
+type EventType = KnownEventType;
+type EventItem = ChurchEvent;
 
 interface Ministry {
   id: string;
@@ -53,24 +38,6 @@ interface UserOption {
   lastName: string | null;
   email: string;
 }
-
-const TYPE_LABELS: Record<EventType, string> = {
-  service: "Service",
-  bible_study: "Bible Study",
-  fellowship: "Fellowship",
-  youth: "Youth",
-  children: "Children",
-  special_event: "Special Event",
-};
-
-const EVENT_TYPES: Array<{ value: EventType; title: string; description: string }> = [
-  { value: "service", title: "Special Service", description: "A service for worship, prayer, and church-wide connection." },
-  { value: "bible_study", title: "Bible Study", description: "A focused time to study Scripture and grow together." },
-  { value: "fellowship", title: "Fellowship Gathering", description: "A warm gathering for food, connection, and community." },
-  { value: "youth", title: "Youth Night", description: "A night for students to worship and build friendships." },
-  { value: "children", title: "Children's Event", description: "A safe and joyful event for children and families." },
-  { value: "special_event", title: "Special Event", description: "A church event with clear details for everyone attending." },
-];
 
 const DURATION_OPTIONS = [60, 90, 120, 180];
 
@@ -126,10 +93,6 @@ function formatDate(value: string) {
 
 function formatTime(value: string) {
   return new Date(value).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-}
-
-function typeLabel(type?: string | null) {
-  return type && TYPE_LABELS[type as EventType] ? TYPE_LABELS[type as EventType] : type || "Event";
 }
 
 export default function Events() {
@@ -335,7 +298,7 @@ export default function Events() {
           >
             <option value="">All types</option>
             {EVENT_TYPES.map((eventType) => (
-              <option key={eventType.value} value={eventType.value}>{TYPE_LABELS[eventType.value]}</option>
+              <option key={eventType.value} value={eventType.value}>{getEventTypeLabel(eventType.value)}</option>
             ))}
           </select>
         </CardHeader>
@@ -407,7 +370,7 @@ export default function Events() {
                     form.type === eventType.value ? "border-primary bg-primary/5" : "bg-white hover:bg-muted/40"
                   }`}
                 >
-                  <p className="text-sm font-semibold">{TYPE_LABELS[eventType.value]}</p>
+                  <p className="text-sm font-semibold">{getEventTypeLabel(eventType.value)}</p>
                   <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{eventType.description}</p>
                 </button>
               ))}
@@ -580,7 +543,7 @@ function EventCard({
           <div className="h-12 w-1 rounded-full bg-primary" />
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap gap-2">
-              <Badge variant="secondary">{typeLabel(event.type)}</Badge>
+              <Badge variant="secondary">{getEventTypeLabel(event.type)}</Badge>
               {event.ministryName && (
                 <Badge variant="outline" className="gap-1">
                   <span className="h-2 w-2 rounded-full" style={{ backgroundColor: event.ministryColor || "#6366f1" }} />
