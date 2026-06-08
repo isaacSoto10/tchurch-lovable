@@ -20,6 +20,7 @@ import {
   getQueuedEventCheckInCount,
   submitEventCheckInOnlineFirst,
 } from "@/lib/eventCheckInQueue";
+import { extractSignedEventQrValue } from "@/lib/eventQr";
 import { useChurch } from "@/providers/ChurchProvider";
 import type { ChurchEvent } from "@/types/events";
 
@@ -96,35 +97,50 @@ export default function EventScanner() {
     return () => window.removeEventListener("online", handleOnline);
   }, [flushQueue]);
 
-  async function submitCode(code: string) {
-    if (!id) return;
-    const trimmed = code.trim();
-    if (!trimmed) {
-      toast({ title: "QR vacío", variant: "destructive" });
-      return;
+  async function submitCode(code: string, source: "camera" | "manual") {
+    if (!id) return false;
+    const qrCode = extractSignedEventQrValue(code);
+    if (!qrCode) {
+      toast({
+        title: "QR inválido",
+        description: "Este scanner solo acepta códigos personales firmados de Tchurch.",
+        variant: "destructive",
+      });
+      return false;
     }
 
-    const token = await getToken();
-    const result = await submitEventCheckInOnlineFirst(
-      id,
-      "scan",
-      {
-        qrCode: trimmed,
-        scannedAt: new Date().toISOString(),
-        source: "camera",
-      },
-      token
-    );
+    try {
+      const token = await getToken();
+      const result = await submitEventCheckInOnlineFirst(
+        id,
+        "scan",
+        {
+          qrCode,
+          scannedAt: new Date().toISOString(),
+          source,
+        },
+        token
+      );
 
-    if (result.queued) {
-      setLastMessage("Check-in guardado offline. Se sincronizará automáticamente.");
-      toast({ title: "Guardado offline", description: "Se enviará cuando vuelva la conexión." });
-    } else {
-      setLastMessage(result.response?.message || "Check-in registrado.");
-      toast({ title: "Check-in registrado" });
+      if (result.queued) {
+        setLastMessage("Check-in guardado offline. Se sincronizará automáticamente.");
+        toast({ title: "Guardado offline", description: "Se enviará cuando vuelva la conexión." });
+      } else {
+        setLastMessage(result.response?.message || "Check-in registrado.");
+        toast({ title: "Check-in registrado" });
+      }
+
+      await loadQueueCount();
+      return true;
+    } catch (error) {
+      console.error("Event QR check-in failed:", error);
+      toast({
+        title: "No se pudo registrar el check-in",
+        description: error instanceof Error ? error.message : "Intenta otra vez.",
+        variant: "destructive",
+      });
+      return false;
     }
-
-    await loadQueueCount();
   }
 
   async function startScanner() {
@@ -143,7 +159,7 @@ export default function EventScanner() {
           scannerFPS: 10,
         },
       });
-      await submitCode(result.ScanResult || "");
+      await submitCode(result.ScanResult || "", "camera");
     } catch (error) {
       console.error("QR scan failed:", error);
       toast({ title: "No se pudo escanear", description: "Puedes pegar el código manualmente.", variant: "destructive" });
@@ -156,8 +172,8 @@ export default function EventScanner() {
     formEvent.preventDefault();
     setManualSubmitting(true);
     try {
-      await submitCode(manualCode);
-      setManualCode("");
+      const submitted = await submitCode(manualCode, "manual");
+      if (submitted) setManualCode("");
     } finally {
       setManualSubmitting(false);
     }

@@ -4,11 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useNotifications, type AppNotification } from "@/providers/NotificationsProvider";
-
-function normalizeRoute(value: unknown): string | null {
-  if (typeof value !== "string" || !value.startsWith("/")) return null;
-  return value.startsWith("/app") ? value : `/app${value}`;
-}
+import { routeFromNotificationData } from "@/lib/navigation";
 
 function formatNotificationTime(value?: string | null) {
   if (!value) return "";
@@ -25,7 +21,7 @@ function formatNotificationTime(value?: string | null) {
 }
 
 function notificationRoute(notification: AppNotification) {
-  return normalizeRoute(notification.data?.route);
+  return routeFromNotificationData(notification.data);
 }
 
 export function NotificationBell() {

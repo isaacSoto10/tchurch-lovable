@@ -65,7 +65,7 @@ function routeTab(pathname: string): TabValue {
   if (pathname.endsWith("/rsvp")) return "rsvp";
   if (pathname.endsWith("/my-qr") || pathname.endsWith("/qr")) return "qr";
   if (pathname.endsWith("/participation")) return "participation";
-  if (pathname.endsWith("/scanner") || pathname.endsWith("/check-in")) return "admin";
+  if (pathname.endsWith("/scanner") || pathname.endsWith("/check-in") || pathname.endsWith("/admin")) return "admin";
   return "details";
 }
 

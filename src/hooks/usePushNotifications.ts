@@ -6,7 +6,7 @@ import { useApi } from "@/hooks/useApi";
 import { useChurch } from "@/providers/ChurchProvider";
 import { useAppAuth } from "@/hooks/useAppAuth";
 import { useNotifications } from "@/providers/NotificationsProvider";
-import { normalizeAppRoute } from "@/lib/navigation";
+import { routeFromNotificationData } from "@/lib/navigation";
 
 const REGISTERED_TOKEN_KEY = "tchurch_push_token";
 
@@ -70,7 +70,7 @@ export function usePushNotifications() {
         listeners.push(
           await PushNotifications.addListener("pushNotificationActionPerformed", (event: ActionPerformed) => {
             const data = event.notification.data as Record<string, unknown> | undefined;
-            const route = normalizeAppRoute(data?.route);
+            const route = routeFromNotificationData(data);
             if (route) navigate(route);
           })
         );
