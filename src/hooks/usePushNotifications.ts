@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
-import { Capacitor } from "@capacitor/core";
-import { PushNotifications, type Token, type ActionPerformed, type PluginListenerHandle } from "@capacitor/push-notifications";
+import { Capacitor, type PluginListenerHandle } from "@capacitor/core";
+import { PushNotifications, type Token, type ActionPerformed } from "@capacitor/push-notifications";
 import { useNavigate } from "react-router-dom";
 import { useApi } from "@/hooks/useApi";
 import { useChurch } from "@/providers/ChurchProvider";

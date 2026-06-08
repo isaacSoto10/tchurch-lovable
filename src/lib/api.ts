@@ -205,3 +205,14 @@ export function manualEventCheckIn(eventId: string, payload: EventManualCheckInP
 export function fetchEventSignupItems(eventId: string, token?: string | null) {
   return apiFetch<EventSignupItem[]>(`/events/${eventId}/signup-items`, {}, token);
 }
+
+export function claimEventSignupItem(eventId: string, itemId: string, token?: string | null) {
+  return apiFetch(
+    `/events/${eventId}/signup-items`,
+    {
+      method: "POST",
+      body: JSON.stringify({ action: "claim", itemId, quantity: 1 }),
+    },
+    token
+  );
+}

@@ -34,7 +34,6 @@ export function ClerkProvider({ children }: { children: React.ReactNode }) {
       routerReplace={(to) => navigate(to, { replace: true })}
       signInUrl={clerkRedirects.signInUrl}
       signUpUrl={clerkRedirects.signUpUrl}
-      fallbackRedirectUrl={clerkRedirects.postAuthRedirect}
       signInFallbackRedirectUrl={clerkRedirects.postAuthRedirect}
       signUpFallbackRedirectUrl={clerkRedirects.postAuthRedirect}
       signInForceRedirectUrl={clerkRedirects.postAuthRedirect}

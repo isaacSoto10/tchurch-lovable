@@ -106,7 +106,7 @@ export default function SongDetail() {
     async function load() {
       try {
         const [songData, arrData] = await Promise.all([
-          apiFetch<Song>(`/songs/${id}`),
+          apiFetch<Song & { error?: string }>(`/songs/${id}`),
           apiFetch<Arrangement[]>(`/songs/${id}/arrangements`),
         ]);
         if (songData.error) {

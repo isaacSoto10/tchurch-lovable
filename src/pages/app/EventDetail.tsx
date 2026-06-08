@@ -34,6 +34,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { useAppAuth } from "@/hooks/useAppAuth";
 import {
   apiFetch,
+  claimEventSignupItem,
   deleteEventRsvp,
   fetchEvent,
   fetchEventRsvp,
@@ -115,6 +116,15 @@ function normalizeSignupItems(data: unknown): EventSignupItem[] {
   return [];
 }
 
+function signupItemCounts(item: EventSignupItem) {
+  const claimedFromList = item.claims?.reduce((total, claim) => total + Number(claim.quantity || 1), 0) || 0;
+  const needed = item.quantityNeeded ?? item.needed ?? item.quantity ?? null;
+  const claimed = item.claimedQuantity ?? item.claimed ?? item.filled ?? claimedFromList;
+  const remaining = item.remaining ?? (needed == null ? null : Math.max(needed - claimed, 0));
+
+  return { needed, claimed, remaining };
+}
+
 function findMyRsvp(attendees: EventAttendee[], userId?: string | null, email?: string | null) {
   const normalizedEmail = email?.toLowerCase();
   const match = attendees.find((attendee) => {
@@ -172,6 +182,7 @@ export default function EventDetail() {
   const [manualEmail, setManualEmail] = useState("");
   const [manualNote, setManualNote] = useState("");
   const [manualSubmitting, setManualSubmitting] = useState(false);
+  const [signupClaimingId, setSignupClaimingId] = useState<string | null>(null);
 
   const canManage = selectedChurch?.role === "ADMIN" || selectedChurch?.role === "PLANNER";
   const userEmail = user?.primaryEmailAddress?.emailAddress || null;
@@ -330,6 +341,35 @@ export default function EventDetail() {
       toast({ title: "No se pudo eliminar tu RSVP", variant: "destructive" });
     } finally {
       setRsvpLoading(false);
+    }
+  }
+
+  async function handleClaimSignupItem(item: EventSignupItem) {
+    if (!id) return;
+    if (!myRsvp || myRsvp === "no") {
+      toast({
+        title: "Confirma tu RSVP primero",
+        description: "Marca Sí o Tal vez antes de anotarte en comida o participación.",
+      });
+      setActiveTab("rsvp");
+      return;
+    }
+
+    setSignupClaimingId(item.id);
+    try {
+      await claimEventSignupItem(id, item.id);
+      toast({ title: "Te anotaste", description: item.title || item.name || "Participación actualizada." });
+      const updated = await fetchEventSignupItems(id).catch(() => []);
+      setSignupItems(normalizeSignupItems(updated));
+    } catch (error) {
+      console.error("Failed to claim signup item:", error);
+      toast({
+        title: "No se pudo anotar",
+        description: error instanceof Error ? error.message : "Intenta otra vez.",
+        variant: "destructive",
+      });
+    } finally {
+      setSignupClaimingId(null);
     }
   }
 
@@ -639,14 +679,34 @@ export default function EventDetail() {
                     <div className="space-y-2">
                       {signupItems.map((item) => (
                         <div key={item.id} className="rounded-lg border bg-white p-3">
+                          {(() => {
+                            const counts = signupItemCounts(item);
+                            const isFull = counts.remaining === 0;
+                            const isMine = Boolean(item.mySignup || item.signedUp);
+                            const isClaiming = signupClaimingId === item.id;
+
+                            return (
+                              <>
                           <p className="text-sm font-semibold">{item.title || item.name || "Elemento"}</p>
                           {item.description && <p className="mt-1 text-xs leading-5 text-muted-foreground">{item.description}</p>}
                           <p className="mt-2 text-xs text-muted-foreground">
-                            {item.claimed ?? 0}
-                            {typeof item.needed === "number" || typeof item.quantity === "number"
-                              ? ` / ${item.needed ?? item.quantity} cubiertos`
+                            {counts.claimed}
+                            {typeof counts.needed === "number"
+                              ? ` / ${counts.needed} cubiertos`
                               : " cubiertos"}
                           </p>
+                          <Button
+                            className="mt-3 h-10 w-full"
+                            variant={isMine ? "secondary" : "outline"}
+                            onClick={() => handleClaimSignupItem(item)}
+                            disabled={isClaiming || isFull}
+                          >
+                            {isClaiming ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                            {isFull ? "Completo" : isMine ? "Actualizar mi lugar" : "Anotarme"}
+                          </Button>
+                              </>
+                            );
+                          })()}
                         </div>
                       ))}
                     </div>

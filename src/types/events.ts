@@ -38,12 +38,27 @@ export interface EventSignupItem {
   name?: string | null;
   description?: string | null;
   quantity?: number | null;
+  quantityNeeded?: number | null;
   needed?: number | null;
   claimed?: number | null;
+  claimedQuantity?: number | null;
+  filled?: number | null;
+  remaining?: number | null;
+  mySignup?: boolean | null;
+  signedUp?: boolean | null;
   assignedToUserId?: string | null;
   assignedToName?: string | null;
   assignedToEmail?: string | null;
   user?: EventUser | null;
+  claims?: Array<{
+    id?: string | null;
+    registrationId?: string | null;
+    userId?: string | null;
+    guestName?: string | null;
+    quantity?: number | null;
+    notes?: string | null;
+    contactName?: string | null;
+  }> | null;
 }
 
 export interface ChurchEvent {

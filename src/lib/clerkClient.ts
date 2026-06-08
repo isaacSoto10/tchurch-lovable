@@ -60,7 +60,6 @@ export async function ensureHeadlessClerkLoaded() {
     .load({
       signInUrl: clerkRedirects.signInUrl,
       signUpUrl: clerkRedirects.signUpUrl,
-      fallbackRedirectUrl: clerkRedirects.postAuthRedirect,
       signInFallbackRedirectUrl: clerkRedirects.postAuthRedirect,
       signUpFallbackRedirectUrl: clerkRedirects.postAuthRedirect,
       signInForceRedirectUrl: clerkRedirects.postAuthRedirect,

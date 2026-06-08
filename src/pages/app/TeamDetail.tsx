@@ -58,7 +58,7 @@ export default function TeamDetail() {
     if (!id) return;
     async function load() {
       try {
-        const data = await apiFetch<Team>(`/teams/${id}`);
+        const data = await apiFetch<Team & { error?: string }>(`/teams/${id}`);
         if (data.error) { navigate("/app/teams"); return; }
         setTeam(data);
         setEditForm({
