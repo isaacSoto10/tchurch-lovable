@@ -20,6 +20,7 @@ import {
   getQueuedEventCheckInCount,
   submitEventCheckInOnlineFirst,
 } from "@/lib/eventCheckInQueue";
+import { scannerErrorNotice } from "@/lib/barcodeScannerErrors";
 import { extractSignedEventQrValue } from "@/lib/eventQr";
 import { useChurch } from "@/providers/ChurchProvider";
 import type { ChurchEvent } from "@/types/events";
@@ -162,7 +163,8 @@ export default function EventScanner() {
       await submitCode(result.ScanResult || "", "camera");
     } catch (error) {
       console.error("QR scan failed:", error);
-      toast({ title: "No se pudo escanear", description: "Puedes pegar el código manualmente.", variant: "destructive" });
+      const notice = scannerErrorNotice(error);
+      if (notice) toast(notice);
     } finally {
       setScanning(false);
     }
