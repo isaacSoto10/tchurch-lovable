@@ -107,6 +107,7 @@ const config = {
   submitForReview: bool("ASC_SUBMIT_FOR_REVIEW", true),
   betaReview: bool("ASC_BETA_REVIEW", true),
   expireSupersededBetaBuild: bool("ASC_EXPIRE_SUPERSEDED_BETA_BUILD", true),
+  targetMarketingVersion: env("ASC_TARGET_MARKETING_VERSION", "").trim(),
   force: bool("ASC_FORCE", false),
 };
 
@@ -215,7 +216,9 @@ async function getLatestValidBuild() {
     return (
       summary.processingState === "VALID" &&
       summary.expired === false &&
-      summary.marketingVersion
+      summary.marketingVersion &&
+      (!config.targetMarketingVersion ||
+        summary.marketingVersion === config.targetMarketingVersion)
     );
   });
 
@@ -508,11 +511,17 @@ function log(message) {
 }
 
 async function main() {
-  log(`Starting. dryRun=${config.dryRun}; platform=${config.platform}; app=${config.appId}.`);
+  log(
+    `Starting. dryRun=${config.dryRun}; platform=${config.platform}; app=${config.appId}; targetVersion=${config.targetMarketingVersion || "latest"}.`,
+  );
   const latestBuild = await getLatestValidBuild();
 
   if (!latestBuild) {
-    log("No valid, unexpired iOS build found. Nothing to deploy.");
+    log(
+      config.targetMarketingVersion
+        ? `No valid, unexpired iOS build found for ${config.targetMarketingVersion}. Nothing to deploy.`
+        : "No valid, unexpired iOS build found. Nothing to deploy.",
+    );
     return;
   }
 

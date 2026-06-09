@@ -15,6 +15,25 @@ fi
 
 cd "$REPO_ROOT"
 
+PACKAGE_VERSION="$(awk -F '"' '/^[[:space:]]*"version"[[:space:]]*:/ { print $4; exit }' package.json)"
+RELEASE_VERSION="${TCURCH_RELEASE_VERSION:-${CI_MARKETING_VERSION:-}}"
+if [ -z "$RELEASE_VERSION" ] && [ -n "$PACKAGE_VERSION" ]; then
+  RELEASE_VERSION="$(printf '%s\n' "$PACKAGE_VERSION" | awk -F. '{ print $1 "." $2 }')"
+fi
+
+case "$RELEASE_VERSION" in
+  ""|*[!0-9.]*|.*|*..*|*.)
+    echo "Release marketing version must be numeric, for example 4.0: $RELEASE_VERSION" >&2
+    exit 1
+    ;;
+  *)
+    export RELEASE_VERSION
+    perl -0pi -e 's/MARKETING_VERSION = [0-9]+(?:\.[0-9]+)*;/MARKETING_VERSION = $ENV{RELEASE_VERSION};/g' \
+      ios/App/App.xcodeproj/project.pbxproj \
+      ios/App/Tchurch.xcodeproj/project.pbxproj
+    ;;
+esac
+
 BUILD_NUMBER="${CI_BUILD_NUMBER:-${XCODE_CLOUD_BUILD_NUMBER:-}}"
 if [ -n "$BUILD_NUMBER" ]; then
   case "$BUILD_NUMBER" in
