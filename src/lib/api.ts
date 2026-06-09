@@ -9,6 +9,8 @@ import type {
   EventRsvpResponse,
   EventRsvpStatus,
   EventSignupItem,
+  EventSignupItemPayload,
+  EventSignupItemUpdatePayload,
 } from "@/types/events";
 
 const CHURCH_ID_KEY = "tchurch_church_id";
@@ -204,6 +206,36 @@ export function manualEventCheckIn(eventId: string, payload: EventManualCheckInP
 
 export function fetchEventSignupItems(eventId: string, token?: string | null) {
   return apiFetch<EventSignupItem[]>(`/events/${eventId}/signup-items`, {}, token);
+}
+
+export function createEventSignupItem(eventId: string, payload: EventSignupItemPayload, token?: string | null) {
+  return apiFetch<EventSignupItem>(
+    `/events/${eventId}/signup-items`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    token
+  );
+}
+
+export function updateEventSignupItem(eventId: string, itemId: string, payload: EventSignupItemUpdatePayload, token?: string | null) {
+  return apiFetch<EventSignupItem>(
+    `/events/${eventId}/signup-items/${itemId}`,
+    {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    },
+    token
+  );
+}
+
+export function deleteEventSignupItem(eventId: string, itemId: string, token?: string | null) {
+  return apiFetch<{ success?: boolean }>(
+    `/events/${eventId}/signup-items/${itemId}`,
+    { method: "DELETE" },
+    token
+  );
 }
 
 export function claimEventSignupItem(eventId: string, itemId: string, token?: string | null) {

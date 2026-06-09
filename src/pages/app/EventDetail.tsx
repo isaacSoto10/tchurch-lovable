@@ -10,6 +10,8 @@ import {
   Loader2,
   MapPin,
   MessageCircle,
+  Pencil,
+  Plus,
   QrCode,
   RefreshCw,
   ScanLine,
@@ -35,11 +37,14 @@ import { useAppAuth } from "@/hooks/useAppAuth";
 import {
   apiFetch,
   claimEventSignupItem,
+  createEventSignupItem,
+  deleteEventSignupItem,
   deleteEventRsvp,
   fetchEvent,
   fetchEventRsvp,
   fetchEventSignupItems,
   fetchMyEventQr,
+  updateEventSignupItem,
   updateEventRsvp,
 } from "@/lib/api";
 import { createEventQrDataUrl } from "@/lib/eventQr";
@@ -56,10 +61,25 @@ import type {
   EventRsvpResponse,
   EventRsvpStatus,
   EventSignupItem,
+  EventSignupItemPayload,
+  EventSignupItemType,
 } from "@/types/events";
 import { getEventTypeLabel } from "@/types/events";
 
 type TabValue = "details" | "rsvp" | "qr" | "participation" | "admin";
+type SignupItemFormState = {
+  type: "food" | "participation";
+  title: string;
+  description: string;
+  quantityNeeded: string;
+};
+
+const emptySignupItemForm: SignupItemFormState = {
+  type: "participation",
+  title: "",
+  description: "",
+  quantityNeeded: "1",
+};
 
 function routeTab(pathname: string): TabValue {
   if (pathname.endsWith("/rsvp")) return "rsvp";
@@ -141,6 +161,29 @@ function signupItemCounts(item: EventSignupItem) {
   return { needed, claimed, remaining };
 }
 
+function signupItemTitle(item: EventSignupItem) {
+  return item.title || item.name || "Elemento";
+}
+
+function signupItemTypeLabel(type?: EventSignupItemType | null) {
+  if (type === "food") return "Comida";
+  if (type === "participation") return "Participación";
+  return type || "Item";
+}
+
+function signupItemFormFromItem(item: EventSignupItem): SignupItemFormState {
+  const counts = signupItemCounts(item);
+  const type = item.type === "food" ? "food" : "participation";
+  const fallbackQuantity = Math.max(Number(counts.needed || 0), Number(counts.claimed || 0), 1);
+
+  return {
+    type,
+    title: signupItemTitle(item),
+    description: item.description || "",
+    quantityNeeded: String(fallbackQuantity),
+  };
+}
+
 function findMyRsvp(attendees: EventAttendee[], userId?: string | null, email?: string | null) {
   const normalizedEmail = email?.toLowerCase();
   const match = attendees.find((attendee) => {
@@ -200,6 +243,12 @@ export default function EventDetail() {
   const [manualNote, setManualNote] = useState("");
   const [manualSubmitting, setManualSubmitting] = useState(false);
   const [signupClaimingId, setSignupClaimingId] = useState<string | null>(null);
+  const [signupItemFormOpen, setSignupItemFormOpen] = useState(false);
+  const [signupItemForm, setSignupItemForm] = useState<SignupItemFormState>(emptySignupItemForm);
+  const [editingSignupItem, setEditingSignupItem] = useState<EventSignupItem | null>(null);
+  const [signupItemSaving, setSignupItemSaving] = useState(false);
+  const [signupItemDeleteTarget, setSignupItemDeleteTarget] = useState<EventSignupItem | null>(null);
+  const [signupItemDeletingId, setSignupItemDeletingId] = useState<string | null>(null);
 
   const canManage = selectedChurch?.role === "ADMIN" || selectedChurch?.role === "PLANNER";
   const userEmail = user?.primaryEmailAddress?.emailAddress || null;
@@ -262,6 +311,12 @@ export default function EventDetail() {
     },
     [id, navigate, toast, user?.id, userEmail]
   );
+
+  const reloadSignupItems = useCallback(async () => {
+    if (!id) return;
+    const updated = await fetchEventSignupItems(id).catch(() => []);
+    setSignupItems(normalizeSignupItems(updated));
+  }, [id]);
 
   const loadQr = useCallback(async () => {
     if (!id) return;
@@ -399,8 +454,7 @@ export default function EventDetail() {
     try {
       await claimEventSignupItem(id, item.id);
       toast({ title: "Te anotaste", description: item.title || item.name || "Participación actualizada." });
-      const updated = await fetchEventSignupItems(id).catch(() => []);
-      setSignupItems(normalizeSignupItems(updated));
+      await reloadSignupItems();
     } catch (error) {
       console.error("Failed to claim signup item:", error);
       toast({
@@ -410,6 +464,130 @@ export default function EventDetail() {
       });
     } finally {
       setSignupClaimingId(null);
+    }
+  }
+
+  function openSignupItemCreate(type: SignupItemFormState["type"] = "participation") {
+    setEditingSignupItem(null);
+    setSignupItemForm({ ...emptySignupItemForm, type });
+    setSignupItemFormOpen(true);
+  }
+
+  function openSignupItemEdit(item: EventSignupItem) {
+    setEditingSignupItem(item);
+    setSignupItemForm(signupItemFormFromItem(item));
+    setSignupItemFormOpen(true);
+  }
+
+  function closeSignupItemForm(force = false) {
+    if (signupItemSaving && !force) return;
+    setSignupItemFormOpen(false);
+    setEditingSignupItem(null);
+    setSignupItemForm(emptySignupItemForm);
+  }
+
+  async function handleSaveSignupItem(formEvent: React.FormEvent) {
+    formEvent.preventDefault();
+    if (!id || !canManage) return;
+
+    const title = signupItemForm.title.trim();
+    const description = signupItemForm.description.trim();
+    const rawQuantity = Number(signupItemForm.quantityNeeded);
+    const quantityNeeded = Math.floor(rawQuantity);
+    const claimedQuantity = editingSignupItem ? Number(signupItemCounts(editingSignupItem).claimed || 0) : 0;
+
+    if (!title) {
+      toast({ title: "Agrega un nombre para el item", variant: "destructive" });
+      return;
+    }
+
+    if (!Number.isFinite(rawQuantity) || quantityNeeded < 1) {
+      toast({ title: "Cantidad inválida", description: "La cantidad debe ser al menos 1.", variant: "destructive" });
+      return;
+    }
+
+    if (quantityNeeded < claimedQuantity) {
+      toast({
+        title: "Cantidad menor a los anotados",
+        description: `Ya hay ${claimedQuantity} lugar(es) cubiertos. Sube la cantidad para guardar.`,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const payload: EventSignupItemPayload = {
+      type: signupItemForm.type,
+      title,
+      description: description || null,
+      quantityNeeded,
+    };
+
+    setSignupItemSaving(true);
+    try {
+      if (editingSignupItem) {
+        await updateEventSignupItem(id, editingSignupItem.id, payload);
+        toast({ title: "Item actualizado" });
+      } else {
+        await createEventSignupItem(id, payload);
+        toast({ title: "Item creado" });
+      }
+
+      closeSignupItemForm(true);
+      await reloadSignupItems();
+    } catch (error) {
+      console.error("Failed to save signup item:", error);
+      toast({
+        title: "No se pudo guardar el item",
+        description: error instanceof Error ? error.message : "Intenta otra vez.",
+        variant: "destructive",
+      });
+    } finally {
+      setSignupItemSaving(false);
+    }
+  }
+
+  function requestDeleteSignupItem(item: EventSignupItem) {
+    const claimedQuantity = Number(signupItemCounts(item).claimed || 0);
+    if (claimedQuantity > 0) {
+      toast({
+        title: "No se puede borrar",
+        description: "Este item ya tiene personas anotadas.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setSignupItemDeleteTarget(item);
+  }
+
+  async function handleDeleteSignupItem() {
+    if (!id || !signupItemDeleteTarget || !canManage) return;
+
+    const claimedQuantity = Number(signupItemCounts(signupItemDeleteTarget).claimed || 0);
+    if (claimedQuantity > 0) {
+      setSignupItemDeleteTarget(null);
+      toast({
+        title: "No se puede borrar",
+        description: "Este item ya tiene personas anotadas.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setSignupItemDeletingId(signupItemDeleteTarget.id);
+    try {
+      await deleteEventSignupItem(id, signupItemDeleteTarget.id);
+      toast({ title: "Item eliminado" });
+      setSignupItemDeleteTarget(null);
+      await reloadSignupItems();
+    } catch (error) {
+      console.error("Failed to delete signup item:", error);
+      toast({
+        title: "No se pudo eliminar el item",
+        description: error instanceof Error ? error.message : "Intenta otra vez.",
+        variant: "destructive",
+      });
+    } finally {
+      setSignupItemDeletingId(null);
     }
   }
 
@@ -470,6 +648,119 @@ export default function EventDetail() {
     }
   }
 
+  function renderSignupItemsSection({
+    includeClaimButton,
+    showAdminTools,
+    emptyText,
+  }: {
+    includeClaimButton: boolean;
+    showAdminTools: boolean;
+    emptyText: string;
+  }) {
+    const canEditSignupItems = canManage && showAdminTools;
+
+    return (
+      <section className="space-y-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-semibold">Signup items</p>
+            <Badge variant="outline">{signupItems.length}</Badge>
+          </div>
+          {canEditSignupItems && (
+            <div className="grid grid-cols-2 gap-2 sm:flex">
+              <Button type="button" size="sm" variant="outline" onClick={() => openSignupItemCreate("food")}>
+                <Plus className="h-4 w-4" />
+                Comida
+              </Button>
+              <Button type="button" size="sm" variant="outline" onClick={() => openSignupItemCreate("participation")}>
+                <Plus className="h-4 w-4" />
+                Participación
+              </Button>
+            </div>
+          )}
+        </div>
+
+        {signupItems.length === 0 ? (
+          <EmptyState text={emptyText} />
+        ) : (
+          <div className="space-y-2">
+            {signupItems.map((item) => {
+              const counts = signupItemCounts(item);
+              const isFull = counts.remaining === 0;
+              const isMine = Boolean(item.mySignup || item.signedUp);
+              const isClaiming = signupClaimingId === item.id;
+              const claimedQuantity = Number(counts.claimed || 0);
+              const canDeleteItem = claimedQuantity === 0;
+              const isDeleting = signupItemDeletingId === item.id;
+
+              return (
+                <div key={item.id} className="rounded-lg border bg-white p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="min-w-0 break-words text-sm font-semibold">{signupItemTitle(item)}</p>
+                        <Badge variant="secondary">{signupItemTypeLabel(item.type)}</Badge>
+                      </div>
+                      {item.description && <p className="mt-1 text-xs leading-5 text-muted-foreground">{item.description}</p>}
+                    </div>
+
+                    {canEditSignupItems && (
+                      <div className="flex shrink-0 gap-1">
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8"
+                          aria-label={`Editar ${signupItemTitle(item)}`}
+                          onClick={() => openSignupItemEdit(item)}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8 text-red-600 hover:text-red-700"
+                          aria-label={`Borrar ${signupItemTitle(item)}`}
+                          title={canDeleteItem ? "Borrar item" : "No se puede borrar con personas anotadas"}
+                          disabled={!canDeleteItem || isDeleting}
+                          onClick={() => requestDeleteSignupItem(item)}
+                        >
+                          {isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    <span>
+                      {claimedQuantity}
+                      {typeof counts.needed === "number" ? ` / ${counts.needed} cubiertos` : " cubiertos"}
+                    </span>
+                    {typeof counts.remaining === "number" && <Badge variant="outline">{counts.remaining} disponibles</Badge>}
+                    {canEditSignupItems && !canDeleteItem && <span>No se puede borrar con personas anotadas.</span>}
+                  </div>
+
+                  {includeClaimButton && (
+                    <Button
+                      className="mt-3 h-10 w-full"
+                      variant={isMine ? "secondary" : "outline"}
+                      onClick={() => handleClaimSignupItem(item)}
+                      disabled={isClaiming || isFull}
+                    >
+                      {isClaiming ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                      {isFull ? "Completo" : isMine ? "Actualizar mi lugar" : "Anotarme"}
+                    </Button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+    );
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -490,6 +781,8 @@ export default function EventDetail() {
   }
 
   const eventLeader = leaderName(event);
+  const signupItemFormClaimedQuantity = editingSignupItem ? Number(signupItemCounts(editingSignupItem).claimed || 0) : 0;
+  const signupItemFormMinQuantity = Math.max(signupItemFormClaimedQuantity, 1);
 
   return (
     <div className="min-h-screen bg-zinc-50">
@@ -708,50 +1001,11 @@ export default function EventDetail() {
 
                 <Separator />
 
-                <section className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-semibold">Signup items</p>
-                    <Badge variant="outline">{signupItems.length}</Badge>
-                  </div>
-                  {signupItems.length === 0 ? (
-                    <EmptyState text="No hay elementos para apuntarse todavía." />
-                  ) : (
-                    <div className="space-y-2">
-                      {signupItems.map((item) => (
-                        <div key={item.id} className="rounded-lg border bg-white p-3">
-                          {(() => {
-                            const counts = signupItemCounts(item);
-                            const isFull = counts.remaining === 0;
-                            const isMine = Boolean(item.mySignup || item.signedUp);
-                            const isClaiming = signupClaimingId === item.id;
-
-                            return (
-                              <>
-                          <p className="text-sm font-semibold">{item.title || item.name || "Elemento"}</p>
-                          {item.description && <p className="mt-1 text-xs leading-5 text-muted-foreground">{item.description}</p>}
-                          <p className="mt-2 text-xs text-muted-foreground">
-                            {counts.claimed}
-                            {typeof counts.needed === "number"
-                              ? ` / ${counts.needed} cubiertos`
-                              : " cubiertos"}
-                          </p>
-                          <Button
-                            className="mt-3 h-10 w-full"
-                            variant={isMine ? "secondary" : "outline"}
-                            onClick={() => handleClaimSignupItem(item)}
-                            disabled={isClaiming || isFull}
-                          >
-                            {isClaiming ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-                            {isFull ? "Completo" : isMine ? "Actualizar mi lugar" : "Anotarme"}
-                          </Button>
-                              </>
-                            );
-                          })()}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </section>
+                {renderSignupItemsSection({
+                  includeClaimButton: true,
+                  showAdminTools: true,
+                  emptyText: "No hay elementos para apuntarse todavía.",
+                })}
               </CardContent>
             </Card>
           </TabsContent>
@@ -836,11 +1090,142 @@ export default function EventDetail() {
                     </form>
                   </CardContent>
                 </Card>
+
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="flex items-center gap-2 text-base">
+                      <Users className="h-4 w-4" />
+                      Comida y participación
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {renderSignupItemsSection({
+                      includeClaimButton: false,
+                      showAdminTools: true,
+                      emptyText: "Crea items de comida o participación para este evento.",
+                    })}
+                  </CardContent>
+                </Card>
               </>
             )}
           </TabsContent>
         </Tabs>
       </div>
+
+      <Dialog open={signupItemFormOpen} onOpenChange={(open) => { if (!open) closeSignupItemForm(); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{editingSignupItem ? "Editar item" : "Nuevo item"}</DialogTitle>
+            <DialogDescription>
+              Gestiona los lugares de comida o participación disponibles para este evento.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleSaveSignupItem} className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="signup-item-type">Tipo</Label>
+                <select
+                  id="signup-item-type"
+                  value={signupItemForm.type}
+                  onChange={(inputEvent) =>
+                    setSignupItemForm((current) => ({
+                      ...current,
+                      type: inputEvent.target.value === "food" ? "food" : "participation",
+                    }))
+                  }
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  disabled={signupItemSaving}
+                >
+                  <option value="participation">Participación</option>
+                  <option value="food">Comida</option>
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="signup-item-quantity">Cantidad necesaria</Label>
+                <Input
+                  id="signup-item-quantity"
+                  type="number"
+                  min={signupItemFormMinQuantity}
+                  step={1}
+                  value={signupItemForm.quantityNeeded}
+                  onChange={(inputEvent) =>
+                    setSignupItemForm((current) => ({ ...current, quantityNeeded: inputEvent.target.value }))
+                  }
+                  disabled={signupItemSaving}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="signup-item-title">Nombre</Label>
+              <Input
+                id="signup-item-title"
+                value={signupItemForm.title}
+                onChange={(inputEvent) =>
+                  setSignupItemForm((current) => ({ ...current, title: inputEvent.target.value }))
+                }
+                placeholder="Ej. Bebidas, ujieres, postres"
+                disabled={signupItemSaving}
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="signup-item-description">Descripción</Label>
+              <Textarea
+                id="signup-item-description"
+                value={signupItemForm.description}
+                onChange={(inputEvent) =>
+                  setSignupItemForm((current) => ({ ...current, description: inputEvent.target.value }))
+                }
+                placeholder="Opcional"
+                rows={3}
+                disabled={signupItemSaving}
+              />
+            </div>
+
+            {signupItemFormClaimedQuantity > 0 && (
+              <Alert>
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>{signupItemFormClaimedQuantity} lugar(es) cubiertos</AlertTitle>
+                <AlertDescription>
+                  La cantidad necesaria no puede bajar por debajo de los lugares ya reclamados.
+                </AlertDescription>
+              </Alert>
+            )}
+
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => closeSignupItemForm()} disabled={signupItemSaving}>
+                Cancelar
+              </Button>
+              <Button type="submit" disabled={signupItemSaving}>
+                {signupItemSaving && <Loader2 className="h-4 w-4 animate-spin" />}
+                Guardar
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(signupItemDeleteTarget)} onOpenChange={(open) => { if (!open) setSignupItemDeleteTarget(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Eliminar item</DialogTitle>
+            <DialogDescription>Esta acción no se puede deshacer.</DialogDescription>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            ¿Seguro que quieres eliminar "{signupItemDeleteTarget ? signupItemTitle(signupItemDeleteTarget) : "este item"}"?
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSignupItemDeleteTarget(null)} disabled={Boolean(signupItemDeletingId)}>
+              Cancelar
+            </Button>
+            <Button variant="destructive" onClick={handleDeleteSignupItem} disabled={Boolean(signupItemDeletingId)}>
+              {signupItemDeletingId && <Loader2 className="h-4 w-4 animate-spin" />}
+              Eliminar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={showDelete} onOpenChange={setShowDelete}>
         <DialogContent>

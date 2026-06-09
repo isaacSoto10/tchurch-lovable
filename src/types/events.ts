@@ -31,9 +31,12 @@ export interface EventCheckInSummary {
   pending?: number;
 }
 
+export type EventSignupItemType = "food" | "participation" | (string & {});
+
 export interface EventSignupItem {
   id: string;
   eventId?: string;
+  type?: EventSignupItemType | null;
   title?: string | null;
   name?: string | null;
   description?: string | null;
@@ -50,6 +53,7 @@ export interface EventSignupItem {
   assignedToName?: string | null;
   assignedToEmail?: string | null;
   user?: EventUser | null;
+  metadata?: Record<string, unknown> | null;
   claims?: Array<{
     id?: string | null;
     registrationId?: string | null;
@@ -60,6 +64,15 @@ export interface EventSignupItem {
     contactName?: string | null;
   }> | null;
 }
+
+export interface EventSignupItemPayload {
+  type: EventSignupItemType;
+  title: string;
+  description?: string | null;
+  quantityNeeded: number;
+}
+
+export type EventSignupItemUpdatePayload = Partial<EventSignupItemPayload>;
 
 export interface EventQuestion {
   id: string;
@@ -157,13 +170,18 @@ export interface EventQrResponse {
 }
 
 export interface EventCheckInPayload {
-  qrCode: string;
+  qrCode?: string;
+  qrValue?: string;
+  token?: string;
+  code?: string;
+  scannedValue?: string;
   scannedAt?: string;
   source?: "camera" | "manual" | "offline";
   offlineClientId?: string;
 }
 
 export interface EventManualCheckInPayload {
+  registrationId?: string;
   userId?: string;
   email?: string;
   name?: string;
