@@ -68,7 +68,7 @@ function AppLayoutInner() {
         {useCompactNavigation ? (
           <header
             className="sticky top-0 z-20 border-b border-zinc-200/80 bg-white/95 shadow-sm shadow-zinc-200/30 backdrop-blur"
-            style={{ paddingTop: "max(env(safe-area-inset-top), 0.65rem)" }}
+            style={{ paddingTop: "max(var(--app-safe-area-top), 0.65rem)" }}
           >
             <div className="flex items-center gap-3 px-4 pb-2.5">
               <SidebarTrigger className="h-10 w-10 rounded-2xl border border-zinc-200 bg-white shadow-sm" />
@@ -83,10 +83,12 @@ function AppLayoutInner() {
           </header>
         ) : null}
         <div
-          className="mx-auto flex w-full min-w-0 flex-1 flex-col overflow-x-clip px-3 pb-[calc(env(safe-area-inset-bottom)+5.75rem)] pt-4 sm:px-4 md:max-w-[1120px] md:px-5 md:pb-[calc(env(safe-area-inset-bottom)+1rem)] lg:px-6 xl:max-w-[1320px] xl:px-8"
+          className="mx-auto flex w-full min-w-0 flex-1 flex-col overflow-x-clip px-3 pb-4 pt-4 sm:px-4 md:max-w-[1120px] md:px-5 lg:px-6 xl:max-w-[1320px] xl:px-8"
           style={{
-            paddingTop: useCompactNavigation ? undefined : "max(env(safe-area-inset-top), 1.5rem)",
-            paddingBottom: showShortcutBar ? "calc(env(safe-area-inset-bottom) + 5.75rem)" : undefined,
+            paddingTop: useCompactNavigation ? undefined : "max(var(--app-safe-area-top), 1.5rem)",
+            paddingBottom: showShortcutBar
+              ? "calc(var(--app-mobile-tabbar-height) + var(--app-safe-area-bottom) + 1rem)"
+              : undefined,
           }}
         >
           {!useCompactNavigation ? (
@@ -104,11 +106,14 @@ function AppLayoutInner() {
         </div>
         {showShortcutBar ? (
           <nav
-            className="fixed inset-x-0 bottom-0 z-30 border-t border-zinc-200/80 bg-white/95 px-2 pt-2 shadow-[0_-18px_40px_rgba(15,23,42,0.08)] backdrop-blur"
-            style={{ paddingBottom: "max(env(safe-area-inset-bottom), 0.55rem)" }}
+            className="fixed inset-x-0 bottom-0 z-30 overflow-hidden border-t border-zinc-200/80 bg-white/95 px-2 pt-2 shadow-[0_-18px_40px_rgba(15,23,42,0.08)] backdrop-blur"
+            style={{
+              height: "calc(var(--app-mobile-tabbar-height) + var(--app-safe-area-bottom))",
+              paddingBottom: "var(--app-safe-area-bottom)",
+            }}
             aria-label="Navegación principal"
           >
-            <div className="mx-auto grid max-w-lg grid-cols-6 gap-1 md:max-w-2xl">
+            <div className="mx-auto grid h-full max-w-lg grid-cols-6 gap-1 md:max-w-2xl">
               {mobileNavItems.map((item) => {
                 const Icon = item.icon;
                 return (

@@ -49,6 +49,9 @@
     --ring: 255 60% 52%;
 
     --radius: 0.75rem;
+    --app-safe-area-top: env(safe-area-inset-top, 0px);
+    --app-safe-area-bottom: clamp(0.55rem, env(safe-area-inset-bottom, 0px), 1.25rem);
+    --app-mobile-tabbar-height: 4.75rem;
 
     --sidebar-background: 0 0% 100%;
     --sidebar-foreground: 240 5% 26%;

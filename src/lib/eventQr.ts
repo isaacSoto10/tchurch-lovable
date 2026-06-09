@@ -1,6 +1,14 @@
 import QRCode from "qrcode";
 import type { EventQrResponse } from "@/types/events";
 
+const DEFAULT_EVENT_QR_ORIGIN = "https://tchurchapp.com";
+const EXPLICIT_QR_PROTOCOLS = new Set(["http:", "https:", "tchurchapp:"]);
+
+export type EventQrScanPayloadOptions = {
+  eventId?: string | null;
+  origin?: string;
+};
+
 export function isSignedEventQrValue(value: string) {
   return /^evqr_[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{16,}$/.test(value.trim());
 }
@@ -54,6 +62,53 @@ export function getEventQrValue(qr: EventQrResponse | null | undefined) {
   return value;
 }
 
+function explicitPayloadCandidate(value: unknown, signedValue: string) {
+  if (typeof value !== "string") return null;
+
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === signedValue) return null;
+
+  try {
+    const url = new URL(trimmed);
+    if (!EXPLICIT_QR_PROTOCOLS.has(url.protocol)) return null;
+    return extractSignedEventQrValue(trimmed) === signedValue ? trimmed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function buildEventQrScanPayload(signedValue: string, options: EventQrScanPayloadOptions = {}) {
+  const token = signedValue.trim();
+  const eventId = typeof options.eventId === "string" && options.eventId.trim() ? options.eventId.trim() : null;
+  const url = new URL("/event-check-in", options.origin || DEFAULT_EVENT_QR_ORIGIN);
+  url.searchParams.set("token", token);
+  if (eventId) url.searchParams.set("event", eventId);
+  return url.toString();
+}
+
+export function getEventQrScanPayload(qr: EventQrResponse | null | undefined, options: EventQrScanPayloadOptions = {}) {
+  if (!qr) return null;
+
+  const signedValue = getEventQrValue(qr);
+  if (!signedValue) return null;
+
+  const explicitPayload = [
+    qr.qrPayload,
+    qr.payload,
+    qr.qrValue,
+    qr.value,
+    qr.qrUrl,
+    qr.url,
+  ]
+    .map((candidate) => explicitPayloadCandidate(candidate, signedValue))
+    .find(Boolean);
+
+  return explicitPayload || buildEventQrScanPayload(signedValue, {
+    eventId: options.eventId || qr.eventId,
+    origin: options.origin,
+  });
+}
+
 function getEventQrImageSource(qr: EventQrResponse) {
   const candidates = [
     { value: qr.dataUrl, type: null },
@@ -81,12 +136,12 @@ function getEventQrImageSource(qr: EventQrResponse) {
   return null;
 }
 
-export async function createEventQrDataUrl(qr: EventQrResponse | null | undefined) {
+export async function createEventQrDataUrl(qr: EventQrResponse | null | undefined, options: EventQrScanPayloadOptions = {}) {
   if (!qr) return null;
 
-  const value = getEventQrValue(qr);
-  if (value) {
-    return QRCode.toDataURL(value, {
+  const payload = getEventQrScanPayload(qr, options);
+  if (payload) {
+    return QRCode.toDataURL(payload, {
       margin: 1,
       width: 720,
       color: {

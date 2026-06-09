@@ -395,7 +395,7 @@ export default function EventDetail() {
 
     try {
       const data = await fetchMyEventQr(id);
-      const dataUrl = await createEventQrDataUrl(data);
+      const dataUrl = await createEventQrDataUrl(data, { eventId: id });
       setMyQr(data);
       setQrDataUrl(dataUrl);
       if (!dataUrl) setQrError("El servidor no regresó un valor válido para generar el QR.");

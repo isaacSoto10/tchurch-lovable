@@ -18,7 +18,7 @@ cd "$REPO_ROOT"
 PACKAGE_VERSION="$(awk -F '"' '/^[[:space:]]*"version"[[:space:]]*:/ { print $4; exit }' package.json)"
 RELEASE_VERSION="${TCURCH_RELEASE_VERSION:-${CI_MARKETING_VERSION:-}}"
 if [ -z "$RELEASE_VERSION" ] && [ -n "$PACKAGE_VERSION" ]; then
-  RELEASE_VERSION="$(printf '%s\n' "$PACKAGE_VERSION" | awk -F. '{ print $1 "." $2 }')"
+  RELEASE_VERSION="$PACKAGE_VERSION"
 fi
 
 case "$RELEASE_VERSION" in

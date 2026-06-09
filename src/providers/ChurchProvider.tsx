@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { useAppAuth } from "@/hooks/useAppAuth";
-import { fetchUserChurches, getChurchId, setChurchId } from "@/lib/api";
+import { fetchUserChurchSelection, getChurchId, setChurchId } from "@/lib/api";
 
 interface Church {
   id: string;
@@ -62,16 +62,20 @@ export function ChurchProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        const userChurches = (await fetchUserChurches<Church>(token)).map(normalizeChurch);
+        const churchSelection = await fetchUserChurchSelection<Church>(token);
+        const userChurches = churchSelection.churches.map(normalizeChurch);
 
         setChurches(userChurches);
 
         const savedChurchId = getChurchId();
+        const serverSelectedChurchId = churchSelection.selectedChurchId;
+        const preferredChurchId = serverSelectedChurchId || savedChurchId;
 
-        if (savedChurchId) {
-          const saved = userChurches.find((c: Church) => c.id === savedChurchId);
-          if (saved) {
-            setSelectedChurch(saved);
+        if (preferredChurchId) {
+          const preferred = userChurches.find((c: Church) => c.id === preferredChurchId);
+          if (preferred) {
+            setSelectedChurch(preferred);
+            setChurchId(preferred.id);
           } else if (userChurches.length > 0) {
             setSelectedChurch(userChurches[0]);
             setChurchId(userChurches[0].id);

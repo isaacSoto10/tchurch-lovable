@@ -46,7 +46,7 @@ export default function EventQr() {
       }
 
       const qrData = await fetchMyEventQr(id);
-      const dataUrl = await createEventQrDataUrl(qrData);
+      const dataUrl = await createEventQrDataUrl(qrData, { eventId: id });
       setQr(qrData);
       setQrDataUrl(dataUrl);
       if (!dataUrl) setError("El servidor no regresó un QR válido para mostrar.");
