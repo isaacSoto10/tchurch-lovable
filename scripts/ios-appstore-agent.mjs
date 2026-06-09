@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { createPrivateKey, sign } from "node:crypto";
+import { webcrypto } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { setTimeout as wait } from "node:timers/promises";
 
@@ -72,26 +72,56 @@ function loadPrivateKey() {
 }
 
 function base64url(value) {
-  return Buffer.from(value)
+  let normalized;
+  if (value instanceof ArrayBuffer) {
+    normalized = new Uint8Array(value);
+  } else if (ArrayBuffer.isView(value)) {
+    normalized = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  } else if (typeof value === "string" || Buffer.isBuffer(value)) {
+    normalized = value;
+  } else {
+    normalized = JSON.stringify(value);
+  }
+  return Buffer.from(normalized)
     .toString("base64")
     .replaceAll("+", "-")
     .replaceAll("/", "_")
     .replaceAll("=", "");
 }
 
-function createJwt({ keyId, issuerId, privateKey }) {
-  const now = Math.floor(Date.now() / 1000);
-  const header = { alg: "ES256", kid: keyId, typ: "JWT" };
+function privateKeyDer(privateKey) {
+  return Buffer.from(privateKey.replace(/-----[^-]+-----/g, "").replace(/\s+/g, ""), "base64");
+}
+
+let signingKey;
+
+async function getSigningKey(privateKey) {
+  signingKey ??= await webcrypto.subtle.importKey(
+    "pkcs8",
+    privateKeyDer(privateKey),
+    { name: "ECDSA", namedCurve: "P-256" },
+    false,
+    ["sign"],
+  );
+  return signingKey;
+}
+
+async function createJwt({ keyId, issuerId, privateKey }) {
+  const header = { kid: keyId, typ: "JWT", alg: "ES256" };
   const payload = {
-    iss: issuerId,
-    iat: now,
-    exp: now + 20 * 60,
     aud: "appstoreconnect-v1",
+    iss: issuerId,
+    exp: Date.now() / 1000 + 5 * 60,
   };
   const encoded = `${base64url(JSON.stringify(header))}.${base64url(
     JSON.stringify(payload),
   )}`;
-  const signature = sign("sha256", Buffer.from(encoded), createPrivateKey(privateKey));
+  const key = await getSigningKey(privateKey);
+  const signature = await webcrypto.subtle.sign(
+    { name: "ECDSA", hash: "SHA-256" },
+    key,
+    Buffer.from(encoded),
+  );
   return `${encoded}.${base64url(signature)}`;
 }
 
@@ -111,10 +141,10 @@ const config = {
   force: bool("ASC_FORCE", false),
 };
 
-let token = createJwt(config);
+let token = await createJwt(config);
 
-function refreshToken() {
-  token = createJwt(config);
+async function refreshToken() {
+  token = await createJwt(config);
 }
 
 function params(input) {
@@ -137,7 +167,7 @@ async function request(method, path, body = undefined, options = {}) {
   });
 
   if (response.status === 401 && !options.retried) {
-    refreshToken();
+    await refreshToken();
     return request(method, path, body, { ...options, retried: true });
   }
 
