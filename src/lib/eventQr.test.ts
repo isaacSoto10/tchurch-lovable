@@ -33,4 +33,14 @@ describe("event QR helpers", () => {
       "data:image/png;base64,iVBORw0KGgo="
     );
   });
+
+  it("prefers locally rendered signed QR values over remote image URLs", async () => {
+    const dataUrl = await createEventQrDataUrl({
+      token: SIGNED_QR,
+      imageUrl: "https://api.qrserver.com/v1/create-qr-code/?data=stale",
+    });
+
+    expect(dataUrl).toMatch(/^data:image\/png;base64,/);
+    expect(dataUrl).not.toBe("https://api.qrserver.com/v1/create-qr-code/?data=stale");
+  });
 });

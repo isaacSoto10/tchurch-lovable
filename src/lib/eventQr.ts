@@ -84,18 +84,17 @@ function getEventQrImageSource(qr: EventQrResponse) {
 export async function createEventQrDataUrl(qr: EventQrResponse | null | undefined) {
   if (!qr) return null;
 
-  const imageSource = getEventQrImageSource(qr);
-  if (imageSource) return imageSource;
-
   const value = getEventQrValue(qr);
-  if (!value) return null;
+  if (value) {
+    return QRCode.toDataURL(value, {
+      margin: 1,
+      width: 720,
+      color: {
+        dark: "#111827",
+        light: "#ffffff",
+      },
+    });
+  }
 
-  return QRCode.toDataURL(value, {
-    margin: 1,
-    width: 720,
-    color: {
-      dark: "#111827",
-      light: "#ffffff",
-    },
-  });
+  return getEventQrImageSource(qr);
 }
