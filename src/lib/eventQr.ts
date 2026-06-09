@@ -23,7 +23,7 @@ export function buildEventRegistrationPath(event: EventRegistrationQrSource) {
     return publicUrl;
   }
 
-  return `/events/${encodeURIComponent(event.id)}?tab=registration`;
+  return `/app/events/${encodeURIComponent(event.id)}/rsvp`;
 }
 
 export function buildEventRegistrationUrl(event: EventRegistrationQrSource, origin = DEFAULT_EVENT_QR_ORIGIN) {

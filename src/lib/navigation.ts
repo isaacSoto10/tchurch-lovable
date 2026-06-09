@@ -7,6 +7,14 @@ const NESTED_EVENT_ID_KEYS = [...EVENT_ID_KEYS, "id", "_id"];
 const ACTION_KEYS = ["screen", "target", "action", "eventRoute", "tab", "click_action", "clickAction", "type", "view"];
 const NESTED_PAYLOAD_KEYS = ["data", "payload", "metadata", "notificationData", "notification", "customData"];
 
+function encodeRouteSegment(value: string) {
+  try {
+    return encodeURIComponent(decodeURIComponent(value));
+  } catch {
+    return encodeURIComponent(value);
+  }
+}
+
 function recordFromUnknown(value: unknown): UnknownRecord | null {
   if (!value) return null;
   if (typeof value === "object" && !Array.isArray(value)) return value as UnknownRecord;
@@ -22,6 +30,22 @@ function recordFromUnknown(value: unknown): UnknownRecord | null {
   return null;
 }
 
+function eventRegistrationRouteFromPath(value: string) {
+  let parsed: URL;
+  try {
+    parsed = new URL(value, "https://tchurchapp.com");
+  } catch {
+    return null;
+  }
+
+  const tab = (parsed.searchParams.get("tab") || parsed.searchParams.get("view") || "").trim().toLowerCase();
+  if (!["registration", "rsvp"].includes(tab)) return null;
+
+  const path = parsed.pathname.replace(/\/+$/, "");
+  const match = path.match(/^\/(?:app\/)?events\/([^/]+)$/);
+  return match?.[1] ? `/app/events/${encodeRouteSegment(match[1])}/rsvp` : null;
+}
+
 export function normalizeAppRoute(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const raw = value.trim();
@@ -32,6 +56,8 @@ export function normalizeAppRoute(value: unknown): string | null {
   if ((withoutHash === "/" || withoutHash.startsWith("/?")) && withoutHash.includes("code=")) {
     return `/join-church${withoutHash.slice(1)}`;
   }
+  const registrationRoute = eventRegistrationRouteFromPath(withoutHash);
+  if (registrationRoute) return registrationRoute;
   if (withoutHash.startsWith("/login") || withoutHash.startsWith("/join-") || withoutHash.startsWith("/onboarding")) {
     return withoutHash;
   }

@@ -67,7 +67,7 @@ describe("event QR helpers", () => {
       id: "event-private",
       visibility: "private",
       publicUrl: "/iglesia/grace/eventos/private-slug",
-    })).toBe("https://tchurchapp.com/events/event-private?tab=registration");
+    })).toBe("https://tchurchapp.com/app/events/event-private/rsvp");
   });
 
   it("uses rendered QR image fields from the backend when provided", async () => {

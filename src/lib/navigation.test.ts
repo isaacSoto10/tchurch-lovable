@@ -6,10 +6,13 @@ describe("mobile app navigation helpers", () => {
     expect(normalizeAppRoute("/events/event-1")).toBe("/app/events/event-1");
     expect(normalizeAppRoute("/app/events/event-1/qr")).toBe("/app/events/event-1/qr");
     expect(normalizeAppRoute("#/app/events/event-1")).toBe("/app/events/event-1");
+    expect(normalizeAppRoute("/events/event-1?tab=registration")).toBe("/app/events/event-1/rsvp");
+    expect(normalizeAppRoute("/app/events/event-1?tab=rsvp")).toBe("/app/events/event-1/rsvp");
   });
 
   it("resolves supported deep link URL shapes to event routes", () => {
     expect(routeFromAppUrl("https://tchurchapp.com/app/events/event-1")).toBe("/app/events/event-1");
+    expect(routeFromAppUrl("https://tchurchapp.com/events/event-1?tab=registration")).toBe("/app/events/event-1/rsvp");
     expect(routeFromAppUrl("tchurchapp://app/events/event-1/qr")).toBe("/app/events/event-1/qr");
     expect(routeFromAppUrl("tchurchapp://events/event-1/scanner")).toBe("/app/events/event-1/scanner");
   });
