@@ -17,6 +17,10 @@ cd "$REPO_ROOT"
 test -f ios/App/App/config.xml
 test -f ios/App/App/capacitor.config.json
 test -d ios/App/App/public
+test -f ios/App/CapacitorApp/Package.swift
+test -d ios/App/CapacitorApp/ios/Sources/AppPlugin
+test -f ios/App/CapacitorBarcodeScanner/Package.swift
+test -d ios/App/CapacitorBarcodeScanner/ios/Sources/CapacitorBarcodeScannerPlugin
 test -f ios/App/CapacitorFilesystem/Package.swift
 test -d ios/App/CapacitorFilesystem/ios/Sources/FilesystemPlugin
 test -f ios/App/CapacitorPushNotifications/Package.swift
@@ -25,6 +29,8 @@ test -f ios/App/CapacitorShare/Package.swift
 test -d ios/App/CapacitorShare/ios/Sources/SharePlugin
 
 sed -i '' \
+  -e 's#path: "../../../node_modules/@capacitor/app"#path: "../CapacitorApp"#' \
+  -e 's#path: "../../../node_modules/@capacitor/barcode-scanner"#path: "../CapacitorBarcodeScanner"#' \
   -e 's#path: "../../../node_modules/@capacitor/filesystem"#path: "../CapacitorFilesystem"#' \
   -e 's#path: "../../../node_modules/@capacitor/push-notifications"#path: "../CapacitorPushNotifications"#' \
   -e 's#path: "../../../node_modules/@capacitor/share"#path: "../CapacitorShare"#' \
