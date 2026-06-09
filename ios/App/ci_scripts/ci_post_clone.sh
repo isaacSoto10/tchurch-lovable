@@ -14,6 +14,21 @@ fi
 
 cd "$REPO_ROOT"
 
+BUILD_NUMBER="${CI_BUILD_NUMBER:-${XCODE_CLOUD_BUILD_NUMBER:-}}"
+if [ -n "$BUILD_NUMBER" ]; then
+  case "$BUILD_NUMBER" in
+    *[!0-9]*)
+      echo "Xcode Cloud build number must be numeric: $BUILD_NUMBER" >&2
+      exit 1
+      ;;
+    *)
+      perl -0pi -e "s/CURRENT_PROJECT_VERSION = [0-9]+;/CURRENT_PROJECT_VERSION = $BUILD_NUMBER;/g" \
+        ios/App/App.xcodeproj/project.pbxproj \
+        ios/App/Tchurch.xcodeproj/project.pbxproj
+      ;;
+  esac
+fi
+
 test -f ios/App/App/config.xml
 test -f ios/App/App/capacitor.config.json
 test -d ios/App/App/public
