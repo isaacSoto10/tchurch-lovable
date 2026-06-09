@@ -85,6 +85,31 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
+function payloadText(payload: EventCheckInPayload | EventManualCheckInPayload, keys: string[]) {
+  const record = payload as Record<string, unknown>;
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) return value.trim().replace(/\s+/g, " ").toLowerCase();
+  }
+  return "";
+}
+
+export function getQueuedEventCheckInDedupeKey(
+  endpoint: CheckInEndpoint,
+  payload: EventCheckInPayload | EventManualCheckInPayload
+) {
+  const offlineClientId = payloadText(payload, ["offlineClientId"]);
+  if (offlineClientId) return `${endpoint}:offline:${offlineClientId}`;
+
+  if (endpoint === "scan") {
+    const qrCode = payloadText(payload, ["qrCode"]);
+    if (qrCode) return `scan:${qrCode}`;
+  }
+
+  const manualValue = payloadText(payload, ["userId", "email", "name"]);
+  return manualValue ? `manual:${manualValue}` : "";
+}
+
 function endpointPath(endpoint: CheckInEndpoint) {
   return endpoint === "manual" ? "manual" : "scan";
 }
@@ -124,6 +149,14 @@ export async function enqueueEventCheckIn(
   payload: EventCheckInPayload | EventManualCheckInPayload,
   lastError?: string | null
 ): Promise<QueuedEventCheckIn> {
+  const existingKey = getQueuedEventCheckInDedupeKey(endpoint, payload);
+  if (existingKey) {
+    const existing = (await listQueuedEventCheckIns(eventId)).find(
+      (item) => getQueuedEventCheckInDedupeKey(item.endpoint, item.payload) === existingKey
+    );
+    if (existing) return existing;
+  }
+
   const db = await openQueueDb();
   const id = queueId();
   const payloadWithOfflineClientId = {
