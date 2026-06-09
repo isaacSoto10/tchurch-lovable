@@ -301,6 +301,7 @@ export default function EventDetail() {
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [qrLoading, setQrLoading] = useState(false);
   const [qrError, setQrError] = useState<string | null>(null);
+  const [qrAttempted, setQrAttempted] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const [queueFlushing, setQueueFlushing] = useState(false);
   const [manualName, setManualName] = useState("");
@@ -391,6 +392,7 @@ export default function EventDetail() {
   const loadQr = useCallback(async () => {
     if (!id) return;
     setQrLoading(true);
+    setQrAttempted(true);
     setQrError(null);
 
     try {
@@ -407,6 +409,13 @@ export default function EventDetail() {
     } finally {
       setQrLoading(false);
     }
+  }, [id]);
+
+  useEffect(() => {
+    setMyQr(null);
+    setQrDataUrl(null);
+    setQrError(null);
+    setQrAttempted(false);
   }, [id]);
 
   const flushQueue = useCallback(
@@ -451,10 +460,10 @@ export default function EventDetail() {
   }, [event?.requiresCheckIn, id, location.pathname, navigate]);
 
   useEffect(() => {
-    if (event && checkInEnabled && activeTab === "qr" && !qrDataUrl && !qrLoading) {
+    if (event && checkInEnabled && activeTab === "qr" && !qrDataUrl && !qrLoading && !qrAttempted) {
       loadQr();
     }
-  }, [activeTab, checkInEnabled, event, loadQr, qrDataUrl, qrLoading]);
+  }, [activeTab, checkInEnabled, event, loadQr, qrAttempted, qrDataUrl, qrLoading]);
 
   useEffect(() => {
     const handleOnline = () => flushQueue(true);
@@ -565,6 +574,7 @@ export default function EventDetail() {
       setMyRsvp(null);
       setMyQr(null);
       setQrDataUrl(null);
+      setQrAttempted(false);
       toast({ title: "RSVP eliminado" });
       await loadEvent(false);
     } catch (error) {

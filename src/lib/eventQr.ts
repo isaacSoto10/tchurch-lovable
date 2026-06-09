@@ -2,7 +2,8 @@ import QRCode from "qrcode";
 import type { EventQrResponse } from "@/types/events";
 
 const DEFAULT_EVENT_QR_ORIGIN = "https://tchurchapp.com";
-const EXPLICIT_QR_PROTOCOLS = new Set(["http:", "https:", "tchurchapp:"]);
+const EVENT_QR_TOKEN_PARAMS = ["token", "qr", "code", "qrCode"];
+const EVENT_QR_ROUTE_PREFIX = /^(app|events?|event-check-in)([/?#]|$)/i;
 
 export type EventQrScanPayloadOptions = {
   eventId?: string | null;
@@ -13,6 +14,67 @@ export function isSignedEventQrValue(value: string) {
   return /^evqr_[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{16,}$/.test(value.trim());
 }
 
+function signedValueFromSearchParams(params: URLSearchParams) {
+  for (const key of EVENT_QR_TOKEN_PARAMS) {
+    const value = params.get(key);
+    if (typeof value === "string" && isSignedEventQrValue(value)) return value.trim();
+  }
+
+  return null;
+}
+
+function signedValueFromSearchString(value: string) {
+  const trimmed = value.trim().replace(/^[?#]/, "");
+  if (!trimmed || !/(^|&)(token|qr|code|qrCode)=/.test(trimmed)) return null;
+  return signedValueFromSearchParams(new URLSearchParams(trimmed));
+}
+
+function eventQrUrlFromString(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  try {
+    return new URL(trimmed);
+  } catch {
+    if (trimmed.startsWith("/") || trimmed.startsWith("?") || EVENT_QR_ROUTE_PREFIX.test(trimmed)) {
+      const relativePath = trimmed.startsWith("/") || trimmed.startsWith("?") ? trimmed : `/${trimmed}`;
+      return new URL(relativePath, DEFAULT_EVENT_QR_ORIGIN);
+    }
+  }
+
+  return null;
+}
+
+function eventRoutePath(url: URL) {
+  if (url.protocol !== "tchurchapp:" || !url.hostname) return url.pathname;
+  if (url.hostname === "tchurchapp.com" || url.hostname === "www.tchurchapp.com") return url.pathname;
+  return `/${url.hostname}${url.pathname}`;
+}
+
+function eventIdFromQrUrl(value: unknown) {
+  if (typeof value !== "string") return null;
+
+  const url = eventQrUrlFromString(value);
+  if (!url) return null;
+
+  const eventParam = url.searchParams.get("event") || url.searchParams.get("eventId") || url.searchParams.get("event_id");
+  if (eventParam?.trim()) return eventParam.trim();
+
+  const segments = eventRoutePath(url).split("/").filter(Boolean);
+  const appEventIndex = segments[0] === "app" && segments[1] === "events" ? 2 : -1;
+  const webEventIndex = segments[0] === "events" && segments[1] !== "check-in" ? 1 : -1;
+  const eventIndex = appEventIndex >= 0 ? appEventIndex : webEventIndex;
+  if (eventIndex < 0) return null;
+
+  const eventId = segments[eventIndex];
+  const suffix = segments[eventIndex + 1];
+  if (eventId && (!suffix || suffix === "check-in" || suffix === "qr" || suffix === "my-qr")) {
+    return decodeURIComponent(eventId);
+  }
+
+  return null;
+}
+
 export function extractSignedEventQrValue(value: unknown): string | null {
   if (typeof value !== "string") return null;
 
@@ -20,24 +82,25 @@ export function extractSignedEventQrValue(value: unknown): string | null {
   if (!trimmed) return null;
   if (isSignedEventQrValue(trimmed)) return trimmed;
 
-  try {
-    const url = new URL(trimmed);
-    const candidates = [
-      url.searchParams.get("qr"),
-      url.searchParams.get("qrCode"),
-      url.searchParams.get("token"),
-      url.searchParams.get("code"),
-      url.hash.startsWith("#") ? url.hash.slice(1) : url.hash,
-      url.pathname.split("/").filter(Boolean).at(-1),
-    ];
+  const directSearchValue = signedValueFromSearchString(trimmed);
+  if (directSearchValue) return directSearchValue;
 
-    for (const candidate of candidates) {
-      if (typeof candidate === "string" && isSignedEventQrValue(candidate)) {
-        return candidate.trim();
-      }
-    }
-  } catch {
-    return null;
+  const url = eventQrUrlFromString(trimmed);
+  if (!url) return null;
+
+  const searchValue = signedValueFromSearchParams(url.searchParams);
+  if (searchValue) return searchValue;
+
+  const hash = url.hash.startsWith("#") ? url.hash.slice(1) : url.hash;
+  if (hash) {
+    if (isSignedEventQrValue(hash)) return hash.trim();
+    const hashSearchValue = signedValueFromSearchString(hash);
+    if (hashSearchValue) return hashSearchValue;
+  }
+
+  const pathValue = eventRoutePath(url).split("/").filter(Boolean).at(-1);
+  if (typeof pathValue === "string" && isSignedEventQrValue(pathValue)) {
+    return pathValue.trim();
   }
 
   return null;
@@ -46,35 +109,13 @@ export function extractSignedEventQrValue(value: unknown): string | null {
 export function getEventQrValue(qr: EventQrResponse | null | undefined) {
   if (!qr) return null;
 
-  const value = extractSignedEventQrValue(
-    qr.qrPayload ||
-    qr.payload ||
-    qr.qrValue ||
-    qr.value ||
-    qr.token ||
-    qr.qrToken ||
-    qr.code ||
-    qr.qrUrl ||
-    qr.url ||
-    null
-  );
-
-  return value;
-}
-
-function explicitPayloadCandidate(value: unknown, signedValue: string) {
-  if (typeof value !== "string") return null;
-
-  const trimmed = value.trim();
-  if (!trimmed || trimmed === signedValue) return null;
-
-  try {
-    const url = new URL(trimmed);
-    if (!EXPLICIT_QR_PROTOCOLS.has(url.protocol)) return null;
-    return extractSignedEventQrValue(trimmed) === signedValue ? trimmed : null;
-  } catch {
-    return null;
+  const candidates = [qr.qrPayload, qr.payload, qr.qrValue, qr.value, qr.token, qr.qrToken, qr.code, qr.qrUrl, qr.url];
+  for (const candidate of candidates) {
+    const value = extractSignedEventQrValue(candidate);
+    if (value) return value;
   }
+
+  return null;
 }
 
 export function buildEventQrScanPayload(signedValue: string, options: EventQrScanPayloadOptions = {}) {
@@ -92,19 +133,13 @@ export function getEventQrScanPayload(qr: EventQrResponse | null | undefined, op
   const signedValue = getEventQrValue(qr);
   if (!signedValue) return null;
 
-  const explicitPayload = [
-    qr.qrPayload,
-    qr.payload,
-    qr.qrValue,
-    qr.value,
-    qr.qrUrl,
-    qr.url,
-  ]
-    .map((candidate) => explicitPayloadCandidate(candidate, signedValue))
-    .find(Boolean);
+  const eventId =
+    options.eventId ||
+    qr.eventId ||
+    [qr.qrPayload, qr.payload, qr.qrValue, qr.value, qr.qrUrl, qr.url].map(eventIdFromQrUrl).find(Boolean);
 
-  return explicitPayload || buildEventQrScanPayload(signedValue, {
-    eventId: options.eventId || qr.eventId,
+  return buildEventQrScanPayload(signedValue, {
+    eventId,
     origin: options.origin,
   });
 }

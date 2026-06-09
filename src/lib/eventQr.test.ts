@@ -22,12 +22,17 @@ describe("event QR helpers", () => {
     expect(extractSignedEventQrValue(`https://tchurchapp.com/events/check-in?qr=${SIGNED_QR}`)).toBe(SIGNED_QR);
     expect(extractSignedEventQrValue(`tchurchapp://event-qr/${SIGNED_QR}`)).toBe(SIGNED_QR);
     expect(extractSignedEventQrValue(`https://tchurchapp.com/app/events/event-1/check-in?qr=${SIGNED_QR}`)).toBe(SIGNED_QR);
+    expect(extractSignedEventQrValue(`/app/events/event-1/check-in?token=${SIGNED_QR}`)).toBe(SIGNED_QR);
+    expect(extractSignedEventQrValue(`/app/events/event-1/qr?qr=${SIGNED_QR}`)).toBe(SIGNED_QR);
+    expect(extractSignedEventQrValue(`/events/check-in?code=${SIGNED_QR}`)).toBe(SIGNED_QR);
+    expect(extractSignedEventQrValue(`token=${SIGNED_QR}`)).toBe(SIGNED_QR);
     expect(extractSignedEventQrValue("https://tchurchapp.com/events/check-in?qr=plain-code")).toBeNull();
   });
 
   it("normalizes supported backend QR response shapes", () => {
     expect(getEventQrValue({ qrPayload: SIGNED_QR })).toBe(SIGNED_QR);
     expect(getEventQrValue({ qrUrl: `https://tchurchapp.com/events/check-in?token=${SIGNED_QR}` })).toBe(SIGNED_QR);
+    expect(getEventQrValue({ payload: "/app/events/event-1/qr", token: SIGNED_QR })).toBe(SIGNED_QR);
     expect(getEventQrValue({ qrValue: "legacy-plain-code" })).toBeNull();
   });
 
@@ -39,7 +44,13 @@ describe("event QR helpers", () => {
       `https://tchurchapp.com/event-check-in?token=${SIGNED_QR}&event=event-1`
     );
     expect(getEventQrScanPayload({ qrUrl: `tchurchapp://app/events/event-1/check-in?qr=${SIGNED_QR}` })).toBe(
-      `tchurchapp://app/events/event-1/check-in?qr=${SIGNED_QR}`
+      `https://tchurchapp.com/event-check-in?token=${SIGNED_QR}&event=event-1`
+    );
+    expect(getEventQrScanPayload({ payload: `/app/events/event-2/qr?code=${SIGNED_QR}` })).toBe(
+      `https://tchurchapp.com/event-check-in?token=${SIGNED_QR}&event=event-2`
+    );
+    expect(getEventQrScanPayload({ payload: `/events/check-in?code=${SIGNED_QR}` }, { eventId: "event-3" })).toBe(
+      `https://tchurchapp.com/event-check-in?token=${SIGNED_QR}&event=event-3`
     );
   });
 
