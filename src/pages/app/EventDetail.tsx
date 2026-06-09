@@ -203,6 +203,7 @@ export default function EventDetail() {
 
   const canManage = selectedChurch?.role === "ADMIN" || selectedChurch?.role === "PLANNER";
   const userEmail = user?.primaryEmailAddress?.emailAddress || null;
+  const checkInEnabled = event?.requiresCheckIn !== false;
 
   const attendees = useMemo(() => event?.attendees || [], [event?.attendees]);
   const counts = useMemo(() => {
@@ -315,14 +316,20 @@ export default function EventDetail() {
   }, [loadEvent, loadQueueCount]);
 
   useEffect(() => {
-    setActiveTab(routeTab(location.pathname));
-  }, [location.pathname]);
+    const nextTab = routeTab(location.pathname);
+    if (event?.requiresCheckIn === false && (nextTab === "qr" || nextTab === "admin")) {
+      setActiveTab("details");
+      if (id) navigate(tabPath(id, "details"), { replace: true });
+      return;
+    }
+    setActiveTab(nextTab);
+  }, [event?.requiresCheckIn, id, location.pathname, navigate]);
 
   useEffect(() => {
-    if (activeTab === "qr" && !qrDataUrl && !qrLoading) {
+    if (event && checkInEnabled && activeTab === "qr" && !qrDataUrl && !qrLoading) {
       loadQr();
     }
-  }, [activeTab, loadQr, qrDataUrl, qrLoading]);
+  }, [activeTab, checkInEnabled, event, loadQr, qrDataUrl, qrLoading]);
 
   useEffect(() => {
     const handleOnline = () => flushQueue(true);
@@ -333,6 +340,11 @@ export default function EventDetail() {
   function handleTabChange(value: string) {
     const tab = value as TabValue;
     if (!id) return;
+    if (!checkInEnabled && (tab === "qr" || tab === "admin")) {
+      setActiveTab("details");
+      navigate(tabPath(id, "details"), { replace: true });
+      return;
+    }
     setActiveTab(tab);
     navigate(tabPath(id, tab), { replace: true });
   }
@@ -499,7 +511,7 @@ export default function EventDetail() {
       </div>
 
       <div className="space-y-4 p-4">
-        {pendingCount > 0 && (
+        {checkInEnabled && pendingCount > 0 && (
           <Alert className="border-amber-200 bg-amber-50 text-amber-900">
             <WifiOff className="h-4 w-4" />
             <AlertTitle>Check-ins pendientes</AlertTitle>
@@ -516,12 +528,12 @@ export default function EventDetail() {
         )}
 
         <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-4">
-          <TabsList className="grid h-auto w-full grid-cols-2 gap-1 rounded-lg bg-zinc-200/70 p-1 sm:grid-cols-5">
+          <TabsList className={`grid h-auto w-full grid-cols-2 gap-1 rounded-lg bg-zinc-200/70 p-1 ${checkInEnabled ? "sm:grid-cols-5" : "sm:grid-cols-3"}`}>
             <TabsTrigger value="details" className="h-10 whitespace-normal text-xs">Detalles</TabsTrigger>
             <TabsTrigger value="rsvp" className="h-10 whitespace-normal text-xs">RSVP</TabsTrigger>
-            <TabsTrigger value="qr" className="h-10 whitespace-normal text-xs">Mi QR</TabsTrigger>
+            {checkInEnabled && <TabsTrigger value="qr" className="h-10 whitespace-normal text-xs">Mi QR</TabsTrigger>}
             <TabsTrigger value="participation" className="h-10 whitespace-normal text-xs">Participación</TabsTrigger>
-            <TabsTrigger value="admin" className="h-10 whitespace-normal text-xs">Check-in/Admin</TabsTrigger>
+            {checkInEnabled && <TabsTrigger value="admin" className="h-10 whitespace-normal text-xs">Check-in/Admin</TabsTrigger>}
           </TabsList>
 
           <TabsContent value="details" className="space-y-4">

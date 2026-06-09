@@ -36,9 +36,17 @@ export default function EventQr() {
     setLoading(true);
     setError(null);
     try {
-      const [eventData, qrData] = await Promise.all([fetchEvent(id).catch(() => null), fetchMyEventQr(id)]);
-      const dataUrl = await createEventQrDataUrl(qrData);
+      const eventData = await fetchEvent(id).catch(() => null);
       setEvent(eventData);
+      if (eventData?.requiresCheckIn === false) {
+        setQr(null);
+        setQrDataUrl(null);
+        setError("Este evento no requiere check-in con QR.");
+        return;
+      }
+
+      const qrData = await fetchMyEventQr(id);
+      const dataUrl = await createEventQrDataUrl(qrData);
       setQr(qrData);
       setQrDataUrl(dataUrl);
       if (!dataUrl) setError("El servidor no regresó un QR válido para mostrar.");
