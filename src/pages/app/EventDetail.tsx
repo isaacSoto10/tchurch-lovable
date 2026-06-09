@@ -39,16 +39,16 @@ import {
   apiFetch,
   claimEventSignupItem,
   createEventSignupItem,
+  deleteEvent,
   deleteEventSignupItem,
   deleteEventRsvp,
   fetchEvent,
   fetchEventRsvp,
   fetchEventSignupItems,
-  fetchMyEventQr,
   updateEventSignupItem,
   updateEventRsvp,
 } from "@/lib/api";
-import { createEventQrDataUrl } from "@/lib/eventQr";
+import { createEventRegistrationQrDataUrl } from "@/lib/eventQr";
 import {
   flushQueuedEventCheckIns,
   getQueuedEventCheckInCount,
@@ -59,7 +59,6 @@ import type {
   ChurchEvent,
   EventAttendee,
   EventQuestion,
-  EventQrResponse,
   EventRsvpAnswers,
   EventRsvpPayload,
   EventRsvpResponse,
@@ -106,7 +105,7 @@ function routeTab(pathname: string): TabValue {
 
 function tabPath(eventId: string, tab: TabValue) {
   if (tab === "rsvp") return `/app/events/${eventId}/rsvp`;
-  if (tab === "qr") return `/app/events/${eventId}/my-qr`;
+  if (tab === "qr") return `/app/events/${eventId}/qr`;
   if (tab === "participation") return `/app/events/${eventId}/participation`;
   if (tab === "admin") return `/app/events/${eventId}/check-in`;
   return `/app/events/${eventId}`;
@@ -297,7 +296,6 @@ export default function EventDetail() {
   const [myRsvp, setMyRsvp] = useState<EventRsvpStatus | null>(null);
   const [rsvpForm, setRsvpForm] = useState<RsvpFormState>(emptyRsvpForm);
   const [signupItems, setSignupItems] = useState<EventSignupItem[]>([]);
-  const [myQr, setMyQr] = useState<EventQrResponse | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [qrLoading, setQrLoading] = useState(false);
   const [qrError, setQrError] = useState<string | null>(null);
@@ -390,29 +388,25 @@ export default function EventDetail() {
   }, [id]);
 
   const loadQr = useCallback(async () => {
-    if (!id) return;
+    if (!event) return;
     setQrLoading(true);
     setQrAttempted(true);
     setQrError(null);
 
     try {
-      const data = await fetchMyEventQr(id);
-      const dataUrl = await createEventQrDataUrl(data, { eventId: id });
-      setMyQr(data);
+      const dataUrl = await createEventRegistrationQrDataUrl(event);
       setQrDataUrl(dataUrl);
-      if (!dataUrl) setQrError("El servidor no regresó un valor válido para generar el QR.");
+      if (!dataUrl) setQrError("No se pudo generar el QR de registro.");
     } catch (error) {
-      console.error("Failed to load personal QR:", error);
-      setMyQr(null);
+      console.error("Failed to create registration QR:", error);
       setQrDataUrl(null);
-      setQrError("El QR personal de check-in todavía no está disponible para este evento.");
+      setQrError("No se pudo generar el QR de registro para este evento.");
     } finally {
       setQrLoading(false);
     }
-  }, [id]);
+  }, [event]);
 
   useEffect(() => {
-    setMyQr(null);
     setQrDataUrl(null);
     setQrError(null);
     setQrAttempted(false);
@@ -451,7 +445,7 @@ export default function EventDetail() {
 
   useEffect(() => {
     const nextTab = routeTab(location.pathname);
-    if (event?.requiresCheckIn === false && (nextTab === "qr" || nextTab === "admin")) {
+    if (event?.requiresCheckIn === false && nextTab === "admin") {
       setActiveTab("details");
       if (id) navigate(tabPath(id, "details"), { replace: true });
       return;
@@ -460,10 +454,10 @@ export default function EventDetail() {
   }, [event?.requiresCheckIn, id, location.pathname, navigate]);
 
   useEffect(() => {
-    if (event && checkInEnabled && activeTab === "qr" && !qrDataUrl && !qrLoading && !qrAttempted) {
+    if (event && activeTab === "qr" && !qrDataUrl && !qrLoading && !qrAttempted) {
       loadQr();
     }
-  }, [activeTab, checkInEnabled, event, loadQr, qrAttempted, qrDataUrl, qrLoading]);
+  }, [activeTab, event, loadQr, qrAttempted, qrDataUrl, qrLoading]);
 
   useEffect(() => {
     const handleOnline = () => flushQueue(true);
@@ -474,7 +468,7 @@ export default function EventDetail() {
   function handleTabChange(value: string) {
     const tab = value as TabValue;
     if (!id) return;
-    if (!checkInEnabled && (tab === "qr" || tab === "admin")) {
+    if (!checkInEnabled && tab === "admin") {
       setActiveTab("details");
       navigate(tabPath(id, "details"), { replace: true });
       return;
@@ -786,11 +780,11 @@ export default function EventDetail() {
   async function handleDelete() {
     if (!id) return;
     try {
-      await apiFetch(`/events/${id}`, { method: "DELETE" });
+      await deleteEvent(id);
       navigate("/app/events");
     } catch (error) {
       console.error("Failed to delete event:", error);
-      toast({ title: "No se pudo eliminar el evento", variant: "destructive" });
+      toast({ title: "No se pudo eliminar el evento", description: error instanceof Error ? error.message : undefined, variant: "destructive" });
     }
   }
 
@@ -1047,10 +1041,10 @@ export default function EventDetail() {
         )}
 
         <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-4">
-          <TabsList className={`grid h-auto w-full grid-cols-2 gap-1 rounded-lg bg-zinc-200/70 p-1 ${checkInEnabled ? "sm:grid-cols-5" : "sm:grid-cols-3"}`}>
+          <TabsList className={`grid h-auto w-full grid-cols-2 gap-1 rounded-lg bg-zinc-200/70 p-1 ${checkInEnabled ? "sm:grid-cols-5" : "sm:grid-cols-4"}`}>
             <TabsTrigger value="details" className="h-10 whitespace-normal text-xs">Detalles</TabsTrigger>
             <TabsTrigger value="rsvp" className="h-10 whitespace-normal text-xs">RSVP</TabsTrigger>
-            {checkInEnabled && <TabsTrigger value="qr" className="h-10 whitespace-normal text-xs">Check-in QR</TabsTrigger>}
+            <TabsTrigger value="qr" className="h-10 whitespace-normal text-xs">QR registro</TabsTrigger>
             <TabsTrigger value="participation" className="h-10 whitespace-normal text-xs">Participación</TabsTrigger>
             {checkInEnabled && <TabsTrigger value="admin" className="h-10 whitespace-normal text-xs">Check-in/Admin</TabsTrigger>}
           </TabsList>
@@ -1200,7 +1194,7 @@ export default function EventDetail() {
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-base">
                   <QrCode className="h-4 w-4" />
-                  QR personal de check-in
+                  QR de registro
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -1216,7 +1210,7 @@ export default function EventDetail() {
                   {qrLoading ? (
                     <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
                   ) : qrDataUrl ? (
-                    <img src={qrDataUrl} alt="QR personal para check-in del evento" className="h-full w-full object-contain" />
+                    <img src={qrDataUrl} alt="QR para registrarse al evento" className="h-full w-full object-contain" />
                   ) : (
                     <QrCode className="h-16 w-16 text-muted-foreground" />
                   )}
@@ -1233,11 +1227,9 @@ export default function EventDetail() {
                   </Button>
                 </div>
 
-                {myQr?.expiresAt && (
-                  <p className="text-center text-xs text-muted-foreground">
-                    Expira {new Date(myQr.expiresAt).toLocaleString("es-US")}
-                  </p>
-                )}
+                <p className="text-center text-xs text-muted-foreground">
+                  Este QR abre la página de RSVP/registro del evento.
+                </p>
               </CardContent>
             </Card>
           </TabsContent>

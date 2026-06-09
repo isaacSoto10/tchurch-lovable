@@ -21,6 +21,7 @@ import { useApi } from "@/hooks/useApi";
 import { useChurch } from "@/providers/ChurchProvider";
 import { useToast } from "@/components/ui/use-toast";
 import { CalendarDays, Clock, Loader2, MapPin, Plus, Trash2, UserRound } from "lucide-react";
+import { eventCollectionPath, eventCrudRequest } from "@/lib/api";
 import type { ChurchEvent, KnownEventType } from "@/types/events";
 import { EVENT_TYPE_OPTIONS as EVENT_TYPES, getEventTypeLabel } from "@/types/events";
 
@@ -180,7 +181,7 @@ export default function Events() {
     setLoading(true);
     try {
       const [eventData, ministryData, userData] = await Promise.all([
-        fetchApi<EventItem[]>("/events?limit=200"),
+        fetchApi<EventItem[]>(eventCollectionPath("limit=200")),
         fetchApi<Ministry[]>("/ministries"),
         fetchApi<UserOption[]>("/users"),
       ]);
@@ -313,16 +314,12 @@ export default function Events() {
       };
 
       if (editingEvent) {
-        await fetchApi(`/events/${editingEvent.id}`, {
-          method: "PUT",
-          body: JSON.stringify(payload),
-        });
+        const request = eventCrudRequest("update", editingEvent.id, payload);
+        await fetchApi(request.path, request.options);
         toast({ title: "Event updated" });
       } else {
-        await fetchApi("/events", {
-          method: "POST",
-          body: JSON.stringify(payload),
-        });
+        const request = eventCrudRequest("create", payload);
+        await fetchApi(request.path, request.options);
         toast({ title: "Event created" });
       }
       setDialogOpen(false);
@@ -339,13 +336,14 @@ export default function Events() {
   async function handleDelete() {
     if (!deleteId) return;
     try {
-      await fetchApi(`/events/${deleteId}`, { method: "DELETE" });
+      const request = eventCrudRequest("delete", deleteId);
+      await fetchApi(request.path, request.options);
       toast({ title: "Event deleted" });
       setDeleteId(null);
       await loadPage();
     } catch (error) {
       console.error("Failed to delete event:", error);
-      toast({ title: "Failed to delete event", variant: "destructive" });
+      toast({ title: "Failed to delete event", description: error instanceof Error ? error.message : undefined, variant: "destructive" });
     }
   }
 

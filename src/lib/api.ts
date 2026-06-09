@@ -166,19 +166,75 @@ export async function fetchUserChurches<T = unknown>(token: string): Promise<T[]
   return (await fetchUserChurchSelection<T>(token)).churches;
 }
 
+export function eventCollectionPath(search?: string) {
+  const query = search?.trim().replace(/^\?/, "");
+  return query ? `/events?${query}` : "/events";
+}
+
+export function eventDetailPath(eventId: string) {
+  return `/events/${encodeURIComponent(eventId)}`;
+}
+
+export type EventCrudOperation = "create" | "read" | "update" | "delete";
+
+export function eventCrudRequest(
+  operation: EventCrudOperation,
+  eventIdOrPayload?: string | Record<string, unknown>,
+  payload?: Record<string, unknown>,
+): { path: string; options: RequestInit } {
+  if (operation === "create") {
+    return {
+      path: eventCollectionPath(),
+      options: { method: "POST", body: JSON.stringify(eventIdOrPayload ?? {}) },
+    };
+  }
+
+  const eventId = String(eventIdOrPayload || "");
+  if (!eventId) throw new Error(`Missing event id for ${operation}`);
+
+  if (operation === "read") {
+    return { path: eventDetailPath(eventId), options: {} };
+  }
+
+  if (operation === "update") {
+    return {
+      path: eventDetailPath(eventId),
+      options: { method: "PUT", body: JSON.stringify(payload ?? {}) },
+    };
+  }
+
+  return { path: eventDetailPath(eventId), options: { method: "DELETE" } };
+}
+
+export function createEvent(payload: Record<string, unknown>, token?: string | null) {
+  const request = eventCrudRequest("create", payload);
+  return apiFetch<ChurchEvent>(request.path, request.options, token);
+}
+
 export function fetchEvent(eventId: string, token?: string | null) {
-  return apiFetch<ChurchEvent>(`/events/${eventId}`, {}, token);
+  const request = eventCrudRequest("read", eventId);
+  return apiFetch<ChurchEvent>(request.path, request.options, token);
+}
+
+export function updateEvent(eventId: string, payload: Record<string, unknown>, token?: string | null) {
+  const request = eventCrudRequest("update", eventId, payload);
+  return apiFetch<ChurchEvent>(request.path, request.options, token);
+}
+
+export function deleteEvent(eventId: string, token?: string | null) {
+  const request = eventCrudRequest("delete", eventId);
+  return apiFetch<{ success?: boolean }>(request.path, request.options, token);
 }
 
 export function fetchEventRsvp(eventId: string, token?: string | null) {
-  return apiFetch<EventRsvpResponse>(`/events/${eventId}/rsvp`, {}, token);
+  return apiFetch<EventRsvpResponse>(`${eventDetailPath(eventId)}/rsvp`, {}, token);
 }
 
 export function updateEventRsvp(eventId: string, payload: EventRsvpStatus | EventRsvpPayload, token?: string | null) {
   const body = typeof payload === "string" ? { status: payload } : payload;
 
   return apiFetch<EventRsvpResponse>(
-    `/events/${eventId}/rsvp`,
+    `${eventDetailPath(eventId)}/rsvp`,
     {
       method: "POST",
       body: JSON.stringify(body),
@@ -188,11 +244,11 @@ export function updateEventRsvp(eventId: string, payload: EventRsvpStatus | Even
 }
 
 export function deleteEventRsvp(eventId: string, token?: string | null) {
-  return apiFetch<{ success?: boolean }>(`/events/${eventId}/rsvp`, { method: "DELETE" }, token);
+  return apiFetch<{ success?: boolean }>(`${eventDetailPath(eventId)}/rsvp`, { method: "DELETE" }, token);
 }
 
 export function fetchMyEventQr(eventId: string, token?: string | null) {
-  return apiFetch<EventQrResponse>(`/events/${eventId}/my-qr`, {}, token);
+  return apiFetch<EventQrResponse>(`${eventDetailPath(eventId)}/my-qr`, {}, token);
 }
 
 export function scanEventCheckIn(eventId: string, payload: EventCheckInPayload, token?: string | null) {
