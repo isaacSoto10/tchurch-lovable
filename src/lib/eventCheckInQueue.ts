@@ -102,11 +102,11 @@ export function getQueuedEventCheckInDedupeKey(
   if (offlineClientId) return `${endpoint}:offline:${offlineClientId}`;
 
   if (endpoint === "scan") {
-    const qrCode = payloadText(payload, ["qrCode"]);
-    if (qrCode) return `scan:${qrCode}`;
+    const scanValue = payloadText(payload, ["token", "qrValue", "code", "qrCode", "scannedValue"]);
+    if (scanValue) return `scan:${scanValue}`;
   }
 
-  const manualValue = payloadText(payload, ["userId", "email", "name"]);
+  const manualValue = payloadText(payload, ["registrationId", "userId", "email", "name"]);
   return manualValue ? `manual:${manualValue}` : "";
 }
 
