@@ -26,6 +26,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -57,7 +58,10 @@ import { useChurch } from "@/providers/ChurchProvider";
 import type {
   ChurchEvent,
   EventAttendee,
+  EventQuestion,
   EventQrResponse,
+  EventRsvpAnswers,
+  EventRsvpPayload,
   EventRsvpResponse,
   EventRsvpStatus,
   EventSignupItem,
@@ -67,6 +71,11 @@ import type {
 import { getEventTypeLabel } from "@/types/events";
 
 type TabValue = "details" | "rsvp" | "qr" | "participation" | "admin";
+type RsvpFormState = {
+  partySize: string;
+  answers: EventRsvpAnswers;
+  reminderOptIn: boolean;
+};
 type SignupItemFormState = {
   type: "food" | "participation";
   title: string;
@@ -79,6 +88,12 @@ const emptySignupItemForm: SignupItemFormState = {
   title: "",
   description: "",
   quantityNeeded: "1",
+};
+
+const emptyRsvpForm: RsvpFormState = {
+  partySize: "1",
+  answers: {},
+  reminderOptIn: true,
 };
 
 function routeTab(pathname: string): TabValue {
@@ -140,8 +155,58 @@ function whatsappEventShare(event: ChurchEvent) {
 }
 
 function extractRsvpStatus(response: EventRsvpResponse | null): EventRsvpStatus | null {
-  const status = response?.status || response?.rsvp?.status || null;
+  const status = response?.status || response?.rsvp?.status || response?.registration?.status || null;
   return status === "yes" || status === "no" || status === "maybe" ? status : null;
+}
+
+function defaultAnswerForQuestion(question: EventQuestion) {
+  return question.type === "checkbox" ? false : "";
+}
+
+function normalizeRsvpAnswers(value: unknown): EventRsvpAnswers {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+  return Object.entries(value as Record<string, unknown>).reduce<EventRsvpAnswers>((answers, [key, answer]) => {
+    if (typeof answer === "boolean" || typeof answer === "string") {
+      answers[key] = answer;
+    } else if (answer != null) {
+      answers[key] = String(answer);
+    }
+    return answers;
+  }, {});
+}
+
+function rsvpPartySizeLimit(event?: Pick<ChurchEvent, "allowGuests" | "capacity"> | null) {
+  if (!event?.allowGuests) return 1;
+  return Math.max(1, Math.min(50, event.capacity && event.capacity > 0 ? event.capacity : 50));
+}
+
+function normalizeRsvpPartySize(value: unknown, event?: Pick<ChurchEvent, "allowGuests" | "capacity"> | null) {
+  const parsed = typeof value === "number" ? value : Number.parseInt(String(value || ""), 10);
+  return Math.min(Math.max(Number.isFinite(parsed) ? parsed : 1, 1), rsvpPartySizeLimit(event));
+}
+
+function rsvpFormFromEvent(event: ChurchEvent, response: EventRsvpResponse | null): RsvpFormState {
+  const details = response?.rsvp || response?.registration || response || null;
+  const questions = event.registrationConfig?.questions || [];
+  const existingAnswers = normalizeRsvpAnswers(details?.answers);
+  const answers = questions.reduce<EventRsvpAnswers>(
+    (current, question) => ({
+      ...current,
+      [question.id]:
+        question.type === "checkbox"
+          ? current[question.id] === true || current[question.id] === "true"
+          : current[question.id] ?? defaultAnswerForQuestion(question),
+    }),
+    { ...existingAnswers }
+  );
+  const partySize = normalizeRsvpPartySize(details?.partySize, event);
+
+  return {
+    partySize: String(partySize),
+    answers,
+    reminderOptIn: Boolean(details?.reminderOptIn ?? true),
+  };
 }
 
 function normalizeSignupItems(data: unknown): EventSignupItem[] {
@@ -184,16 +249,15 @@ function signupItemFormFromItem(item: EventSignupItem): SignupItemFormState {
   };
 }
 
-function findMyRsvp(attendees: EventAttendee[], userId?: string | null, email?: string | null) {
+function findMyAttendee(attendees: EventAttendee[], userId?: string | null, email?: string | null) {
   const normalizedEmail = email?.toLowerCase();
-  const match = attendees.find((attendee) => {
+  return attendees.find((attendee) => {
     const attendeeEmail = attendee.user?.email?.toLowerCase();
     return (
       (userId && (attendee.userId === userId || attendee.user?.id === userId || attendee.user?.clerkId === userId)) ||
       (normalizedEmail && attendeeEmail === normalizedEmail)
     );
   });
-  return match?.status || null;
 }
 
 function statusLabel(status: EventRsvpStatus) {
@@ -231,6 +295,7 @@ export default function EventDetail() {
   const [showDelete, setShowDelete] = useState(false);
   const [rsvpLoading, setRsvpLoading] = useState(false);
   const [myRsvp, setMyRsvp] = useState<EventRsvpStatus | null>(null);
+  const [rsvpForm, setRsvpForm] = useState<RsvpFormState>(emptyRsvpForm);
   const [signupItems, setSignupItems] = useState<EventSignupItem[]>([]);
   const [myQr, setMyQr] = useState<EventQrResponse | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
@@ -253,6 +318,8 @@ export default function EventDetail() {
   const canManage = selectedChurch?.role === "ADMIN" || selectedChurch?.role === "PLANNER";
   const userEmail = user?.primaryEmailAddress?.emailAddress || null;
   const checkInEnabled = event?.requiresCheckIn !== false;
+  const rsvpQuestions = useMemo(() => event?.registrationConfig?.questions || [], [event?.registrationConfig?.questions]);
+  const reminderOptInEnabled = Boolean(event?.reminderConfig?.enabled);
 
   const attendees = useMemo(() => event?.attendees || [], [event?.attendees]);
   const counts = useMemo(() => {
@@ -299,9 +366,12 @@ export default function EventDetail() {
           : Array.isArray(attendeeData)
             ? attendeeData
             : [];
+        const ownAttendee = findMyAttendee(normalizedAttendees, user?.id, userEmail);
+        const rsvpDetails = rsvpData || (ownAttendee ? ({ rsvp: ownAttendee } satisfies EventRsvpResponse) : null);
         setEvent({ ...eventData, attendees: normalizedAttendees });
         setSignupItems(normalizeSignupItems(signupData));
-        setMyRsvp(extractRsvpStatus(rsvpData) || findMyRsvp(normalizedAttendees, user?.id, userEmail));
+        setMyRsvp(extractRsvpStatus(rsvpDetails) || ownAttendee?.status || null);
+        setRsvpForm(rsvpFormFromEvent(eventData, rsvpDetails));
       } catch (error) {
         console.error("Failed to load event:", error);
         toast({ title: "No se pudo cargar el evento", variant: "destructive" });
@@ -404,14 +474,80 @@ export default function EventDetail() {
     navigate(tabPath(id, tab), { replace: true });
   }
 
+  function updateRsvpAnswer(question: EventQuestion, value: string | boolean) {
+    setRsvpForm((current) => ({
+      ...current,
+      answers: {
+        ...current.answers,
+        [question.id]: question.type === "checkbox" ? Boolean(value) : String(value),
+      },
+    }));
+  }
+
+  function buildRsvpPayload(status: EventRsvpStatus): EventRsvpPayload | null {
+    if (!event) return null;
+
+    const attending = status !== "no";
+    const rawPartySize = Number(rsvpForm.partySize);
+    const partySize = event.allowGuests && attending ? normalizeRsvpPartySize(rawPartySize, event) : 1;
+
+    if (event.allowGuests && attending && (!Number.isFinite(rawPartySize) || partySize < 1)) {
+      toast({ title: "Cantidad de invitados inválida", description: "Indica al menos 1 persona.", variant: "destructive" });
+      return null;
+    }
+
+    for (const question of rsvpQuestions) {
+      const answer = rsvpForm.answers[question.id] ?? defaultAnswerForQuestion(question);
+      const missingText = typeof answer !== "boolean" && String(answer).trim().length === 0;
+      const missingCheckbox = question.type === "checkbox" && answer !== true;
+
+      if (attending && question.required && (missingText || missingCheckbox)) {
+        toast({ title: "Respuesta requerida", description: question.label, variant: "destructive" });
+        return null;
+      }
+    }
+
+    const answers = rsvpQuestions.reduce<EventRsvpAnswers>((current, question) => {
+      const answer = rsvpForm.answers[question.id] ?? defaultAnswerForQuestion(question);
+      if (question.type === "checkbox") {
+        current[question.id] = answer === true || answer === "true";
+        return current;
+      }
+
+      const normalizedAnswer = String(answer).trim();
+      if (question.type === "select" && question.options?.length && !question.options.includes(normalizedAnswer)) {
+        return current;
+      }
+
+      current[question.id] = normalizedAnswer;
+      return current;
+    }, {});
+
+    return {
+      status,
+      partySize,
+      answers,
+      reminderOptIn: reminderOptInEnabled ? rsvpForm.reminderOptIn : false,
+    };
+  }
+
   async function handleRSVP(status: EventRsvpStatus) {
     if (!id) return;
+    const payload = buildRsvpPayload(status);
+    if (!payload) return;
+
     setRsvpLoading(true);
     try {
-      await updateEventRsvp(id, status);
+      await updateEventRsvp(id, payload);
       setMyRsvp(status);
       toast({ title: "RSVP actualizado" });
       await loadEvent(false);
+      setRsvpForm((current) => ({
+        ...current,
+        partySize: String(payload.partySize),
+        answers: payload.answers,
+        reminderOptIn: payload.reminderOptIn,
+      }));
       if (status === "yes") loadQr();
     } catch (error) {
       console.error("Failed to update RSVP:", error);
@@ -646,6 +782,86 @@ export default function EventDetail() {
       console.error("Failed to delete event:", error);
       toast({ title: "No se pudo eliminar el evento", variant: "destructive" });
     }
+  }
+
+  function renderRsvpQuestion(question: EventQuestion) {
+    const answer = rsvpForm.answers[question.id] ?? defaultAnswerForQuestion(question);
+    const label = (
+      <>
+        {question.label}
+        {question.required && <span className="text-red-500"> *</span>}
+      </>
+    );
+
+    if (question.type === "textarea") {
+      return (
+        <div key={question.id} className="space-y-2">
+          <Label htmlFor={`rsvp-${question.id}`} className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+            {label}
+          </Label>
+          <Textarea
+            id={`rsvp-${question.id}`}
+            value={typeof answer === "boolean" ? "" : answer}
+            onChange={(event) => updateRsvpAnswer(question, event.target.value)}
+            disabled={rsvpLoading}
+            rows={3}
+            className="resize-none bg-white"
+          />
+        </div>
+      );
+    }
+
+    if (question.type === "select") {
+      return (
+        <div key={question.id} className="space-y-2">
+          <Label htmlFor={`rsvp-${question.id}`} className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+            {label}
+          </Label>
+          <select
+            id={`rsvp-${question.id}`}
+            value={typeof answer === "boolean" ? "" : answer}
+            onChange={(event) => updateRsvpAnswer(question, event.target.value)}
+            disabled={rsvpLoading}
+            className="flex h-10 w-full rounded-md border border-input bg-white px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <option value="">Selecciona una opción</option>
+            {(question.options || []).map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </div>
+      );
+    }
+
+    if (question.type === "checkbox") {
+      return (
+        <label key={question.id} className="flex min-h-11 items-center gap-3 rounded-xl border bg-white px-3 py-2 text-sm">
+          <Checkbox
+            checked={answer === true}
+            onCheckedChange={(checked) => updateRsvpAnswer(question, checked === true)}
+            disabled={rsvpLoading}
+          />
+          <span className="font-medium text-zinc-700">{label}</span>
+        </label>
+      );
+    }
+
+    return (
+      <div key={question.id} className="space-y-2">
+        <Label htmlFor={`rsvp-${question.id}`} className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+          {label}
+        </Label>
+        <Input
+          id={`rsvp-${question.id}`}
+          value={typeof answer === "boolean" ? "" : answer}
+          onChange={(event) => updateRsvpAnswer(question, event.target.value)}
+          disabled={rsvpLoading}
+          className="bg-white"
+        />
+      </div>
+    );
   }
 
   function renderSignupItemsSection({
@@ -891,6 +1107,48 @@ export default function EventDetail() {
                   <Stat label="Tal vez" value={counts.maybe} />
                   <Stat label="No" value={counts.no} />
                 </div>
+
+                {(event.allowGuests || rsvpQuestions.length > 0 || reminderOptInEnabled) && (
+                  <div className="space-y-3 rounded-lg border bg-zinc-50/70 p-3">
+                    {event.allowGuests && (
+                      <div className="space-y-2">
+                        <Label htmlFor="rsvp-party-size" className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+                          Personas en tu grupo
+                        </Label>
+                        <Input
+                          id="rsvp-party-size"
+                          type="number"
+                          min={1}
+                          max={rsvpPartySizeLimit(event)}
+                          inputMode="numeric"
+                          value={rsvpForm.partySize}
+                          onChange={(event) => setRsvpForm((current) => ({ ...current, partySize: event.target.value }))}
+                          onBlur={(inputEvent) =>
+                            setRsvpForm((current) => ({
+                              ...current,
+                              partySize: String(normalizeRsvpPartySize(inputEvent.target.value, event)),
+                            }))
+                          }
+                          disabled={rsvpLoading}
+                          className="bg-white"
+                        />
+                      </div>
+                    )}
+
+                    {rsvpQuestions.length > 0 && <div className="space-y-3">{rsvpQuestions.map((question) => renderRsvpQuestion(question))}</div>}
+
+                    {reminderOptInEnabled && (
+                      <label className="flex min-h-11 items-center gap-3 rounded-xl border bg-white px-3 py-2 text-sm">
+                        <Checkbox
+                          checked={rsvpForm.reminderOptIn}
+                          onCheckedChange={(checked) => setRsvpForm((current) => ({ ...current, reminderOptIn: checked === true }))}
+                          disabled={rsvpLoading}
+                        />
+                        <span className="font-medium text-zinc-700">Recibir recordatorios de este evento</span>
+                      </label>
+                    )}
+                  </div>
+                )}
 
                 <div className="grid gap-2 sm:grid-cols-3">
                   <Button

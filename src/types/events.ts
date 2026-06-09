@@ -2,6 +2,8 @@ export type KnownEventType = "service" | "bible_study" | "fellowship" | "youth" 
 export type EventType = KnownEventType | (string & {});
 
 export type EventRsvpStatus = "yes" | "no" | "maybe";
+export type EventRsvpAnswerValue = string | boolean;
+export type EventRsvpAnswers = Record<string, EventRsvpAnswerValue>;
 
 export interface EventUser {
   id?: string;
@@ -15,6 +17,9 @@ export interface EventAttendee {
   id: string;
   userId?: string | null;
   status: EventRsvpStatus;
+  partySize?: number | null;
+  answers?: EventRsvpAnswers | null;
+  reminderOptIn?: boolean | null;
   checkedInAt?: string | null;
   user?: EventUser | null;
 }
@@ -142,8 +147,19 @@ export interface EventRsvpResponse {
   eventId?: string;
   userId?: string;
   status?: EventRsvpStatus | null;
+  partySize?: number | null;
+  answers?: EventRsvpAnswers | null;
+  reminderOptIn?: boolean | null;
   rsvp?: EventAttendee | null;
+  registration?: EventAttendee | null;
   summary?: EventRsvpSummary;
+}
+
+export interface EventRsvpPayload {
+  status: EventRsvpStatus;
+  partySize: number;
+  answers: EventRsvpAnswers;
+  reminderOptIn: boolean;
 }
 
 export interface EventQrResponse {

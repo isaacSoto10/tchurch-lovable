@@ -6,6 +6,7 @@ import type {
   EventCheckInResponse,
   EventManualCheckInPayload,
   EventQrResponse,
+  EventRsvpPayload,
   EventRsvpResponse,
   EventRsvpStatus,
   EventSignupItem,
@@ -163,12 +164,14 @@ export function fetchEventRsvp(eventId: string, token?: string | null) {
   return apiFetch<EventRsvpResponse>(`/events/${eventId}/rsvp`, {}, token);
 }
 
-export function updateEventRsvp(eventId: string, status: EventRsvpStatus, token?: string | null) {
+export function updateEventRsvp(eventId: string, payload: EventRsvpStatus | EventRsvpPayload, token?: string | null) {
+  const body = typeof payload === "string" ? { status: payload } : payload;
+
   return apiFetch<EventRsvpResponse>(
     `/events/${eventId}/rsvp`,
     {
       method: "POST",
-      body: JSON.stringify({ status }),
+      body: JSON.stringify(body),
     },
     token
   );
