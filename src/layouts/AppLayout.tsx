@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { BookOpen, Heart, Home, ListChecks, Megaphone, Users } from "lucide-react";
 import { AppSidebar } from "../components/AppSidebar";
@@ -20,6 +20,29 @@ const mobileNavItems = [
   { label: "Anuncios", href: "/app/announcements", icon: Megaphone },
 ];
 
+const SAFE_BOTTOM_VAR = "--tchurch-mobile-safe-bottom";
+const NAV_HEIGHT_VAR = "--tchurch-mobile-nav-height";
+
+function readSafeAreaBottom() {
+  if (typeof document === "undefined") return 0;
+
+  const probe = document.createElement("div");
+  probe.style.position = "fixed";
+  probe.style.left = "0";
+  probe.style.bottom = "0";
+  probe.style.width = "0";
+  probe.style.height = "0";
+  probe.style.visibility = "hidden";
+  probe.style.pointerEvents = "none";
+  probe.style.paddingBottom = "env(safe-area-inset-bottom)";
+  document.body.appendChild(probe);
+
+  const measured = Number.parseFloat(window.getComputedStyle(probe).paddingBottom);
+  probe.remove();
+
+  return Number.isFinite(measured) ? Math.min(Math.max(measured, 0), 32) : 0;
+}
+
 function AppLayoutInner() {
   const { selectedChurch } = useChurch();
   const isMobile = useIsMobile();
@@ -27,11 +50,48 @@ function AppLayoutInner() {
   const useCompactNavigation = isMobile;
   const showShortcutBar = useCompactNavigation;
   const { openMobile, setOpenMobile } = useSidebar();
+  const mobileNavRef = useRef<HTMLElement | null>(null);
   const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);
 
   usePushNotifications();
   useEventCheckInQueueSync();
+
+  useEffect(() => {
+    if (!showShortcutBar || typeof document === "undefined") return;
+
+    const root = document.documentElement;
+    const viewport = window.visualViewport;
+    let frame = 0;
+
+    const syncMobileInsets = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        root.style.setProperty(SAFE_BOTTOM_VAR, `${readSafeAreaBottom()}px`);
+
+        const navHeight = mobileNavRef.current?.getBoundingClientRect().height || 0;
+        if (navHeight > 0) {
+          root.style.setProperty(NAV_HEIGHT_VAR, `${Math.ceil(navHeight)}px`);
+        }
+      });
+    };
+
+    syncMobileInsets();
+    window.addEventListener("resize", syncMobileInsets);
+    window.addEventListener("orientationchange", syncMobileInsets);
+    viewport?.addEventListener("resize", syncMobileInsets);
+    viewport?.addEventListener("scroll", syncMobileInsets);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", syncMobileInsets);
+      window.removeEventListener("orientationchange", syncMobileInsets);
+      viewport?.removeEventListener("resize", syncMobileInsets);
+      viewport?.removeEventListener("scroll", syncMobileInsets);
+      root.style.removeProperty(SAFE_BOTTOM_VAR);
+      root.style.removeProperty(NAV_HEIGHT_VAR);
+    };
+  }, [showShortcutBar]);
 
   function handleTouchStart(event: React.TouchEvent<HTMLDivElement>) {
     if (!useCompactNavigation || openMobile) return;
@@ -87,7 +147,7 @@ function AppLayoutInner() {
           style={{
             paddingTop: useCompactNavigation ? undefined : "max(var(--app-safe-area-top), 1.5rem)",
             paddingBottom: showShortcutBar
-              ? "calc(var(--app-mobile-tabbar-height) + var(--app-safe-area-bottom) + 1rem)"
+              ? "calc(var(--tchurch-mobile-nav-height, 5.75rem) + 1rem)"
               : undefined,
           }}
         >
@@ -106,14 +166,12 @@ function AppLayoutInner() {
         </div>
         {showShortcutBar ? (
           <nav
-            className="fixed inset-x-0 bottom-0 z-30 overflow-hidden border-t border-zinc-200/80 bg-white/95 px-2 pt-2 shadow-[0_-18px_40px_rgba(15,23,42,0.08)] backdrop-blur"
-            style={{
-              height: "calc(var(--app-mobile-tabbar-height) + var(--app-safe-area-bottom))",
-              paddingBottom: "var(--app-safe-area-bottom)",
-            }}
+            ref={mobileNavRef}
+            className="fixed inset-x-0 bottom-0 z-30 border-t border-zinc-200/80 bg-white/95 px-2 pt-2 shadow-[0_-18px_40px_rgba(15,23,42,0.08)] backdrop-blur"
+            style={{ paddingBottom: "max(var(--tchurch-mobile-safe-bottom, 0px), 0.55rem)" }}
             aria-label="Navegación principal"
           >
-            <div className="mx-auto grid h-full max-w-lg grid-cols-6 gap-1 md:max-w-2xl">
+            <div className="mx-auto grid max-w-lg grid-cols-6 gap-1 md:max-w-2xl">
               {mobileNavItems.map((item) => {
                 const Icon = item.icon;
                 return (
