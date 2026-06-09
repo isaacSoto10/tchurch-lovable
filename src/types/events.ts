@@ -123,6 +123,7 @@ export interface ChurchEvent {
   leaderEmail?: string | null;
   visibility?: "private" | "public" | string | null;
   publicSlug?: string | null;
+  publicUrl?: string | null;
   publishedAt?: string | null;
   registrationEnabled?: boolean;
   allowGuests?: boolean;

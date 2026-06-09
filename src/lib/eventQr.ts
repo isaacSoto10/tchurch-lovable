@@ -5,10 +5,45 @@ const DEFAULT_EVENT_QR_ORIGIN = "https://tchurchapp.com";
 const EVENT_QR_TOKEN_PARAMS = ["token", "qr", "code", "qrCode"];
 const EVENT_QR_ROUTE_PREFIX = /^(app|events?|event-check-in)([/?#]|$)/i;
 
+type EventRegistrationQrSource = {
+  id: string;
+  visibility?: string | null;
+  publicUrl?: string | null;
+};
+
 export type EventQrScanPayloadOptions = {
   eventId?: string | null;
   origin?: string;
 };
+
+export function buildEventRegistrationPath(event: EventRegistrationQrSource) {
+  const publicUrl = typeof event.publicUrl === "string" ? event.publicUrl.trim() : "";
+
+  if (event.visibility === "public" && publicUrl) {
+    return publicUrl;
+  }
+
+  return `/events/${encodeURIComponent(event.id)}?tab=registration`;
+}
+
+export function buildEventRegistrationUrl(event: EventRegistrationQrSource, origin = DEFAULT_EVENT_QR_ORIGIN) {
+  const path = buildEventRegistrationPath(event);
+  if (/^https?:\/\//i.test(path)) return path;
+
+  const root = origin.replace(/\/$/, "") || DEFAULT_EVENT_QR_ORIGIN;
+  return new URL(path, root).toString();
+}
+
+export async function createEventRegistrationQrDataUrl(event: EventRegistrationQrSource, origin = DEFAULT_EVENT_QR_ORIGIN) {
+  return QRCode.toDataURL(buildEventRegistrationUrl(event, origin), {
+    margin: 1,
+    width: 720,
+    color: {
+      dark: "#111827",
+      light: "#ffffff",
+    },
+  });
+}
 
 export function isSignedEventQrValue(value: string) {
   return /^evqr_[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{16,}$/.test(value.trim());

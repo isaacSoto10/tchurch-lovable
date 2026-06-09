@@ -1,6 +1,8 @@
 import QRCode from "qrcode";
 import { describe, expect, it, vi } from "vitest";
 import {
+  buildEventRegistrationPath,
+  buildEventRegistrationUrl,
   buildEventQrScanPayload,
   createEventQrDataUrl,
   extractSignedEventQrValue,
@@ -52,6 +54,20 @@ describe("event QR helpers", () => {
     expect(getEventQrScanPayload({ payload: `/events/check-in?code=${SIGNED_QR}` }, { eventId: "event-3" })).toBe(
       `https://tchurchapp.com/event-check-in?token=${SIGNED_QR}&event=event-3`
     );
+  });
+
+  it("builds shared event QR URLs for registration instead of check-in", () => {
+    expect(buildEventRegistrationPath({
+      id: "event-public",
+      visibility: "public",
+      publicUrl: "/iglesia/grace/eventos/dia-de-parque",
+    })).toBe("/iglesia/grace/eventos/dia-de-parque");
+
+    expect(buildEventRegistrationUrl({
+      id: "event-private",
+      visibility: "private",
+      publicUrl: "/iglesia/grace/eventos/private-slug",
+    })).toBe("https://tchurchapp.com/events/event-private?tab=registration");
   });
 
   it("uses rendered QR image fields from the backend when provided", async () => {

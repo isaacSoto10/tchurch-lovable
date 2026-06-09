@@ -5,9 +5,9 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { fetchEvent, fetchMyEventQr } from "@/lib/api";
-import { createEventQrDataUrl } from "@/lib/eventQr";
-import type { ChurchEvent, EventQrResponse } from "@/types/events";
+import { fetchEvent } from "@/lib/api";
+import { buildEventRegistrationUrl, createEventRegistrationQrDataUrl } from "@/lib/eventQr";
+import type { ChurchEvent } from "@/types/events";
 import { getEventTypeLabel } from "@/types/events";
 
 function formatDate(value: string) {
@@ -26,8 +26,8 @@ export default function EventQr() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [event, setEvent] = useState<ChurchEvent | null>(null);
-  const [qr, setQr] = useState<EventQrResponse | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [registrationUrl, setRegistrationUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,25 +36,25 @@ export default function EventQr() {
     setLoading(true);
     setError(null);
     try {
-      const eventData = await fetchEvent(id).catch(() => null);
+      const eventData = await fetchEvent(id);
       setEvent(eventData);
-      if (eventData?.requiresCheckIn === false) {
-        setQr(null);
+      if (eventData.registrationEnabled === false) {
         setQrDataUrl(null);
-        setError("Este evento no requiere check-in con QR.");
+        setRegistrationUrl(null);
+        setError("El registro está apagado para este evento.");
         return;
       }
 
-      const qrData = await fetchMyEventQr(id);
-      const dataUrl = await createEventQrDataUrl(qrData, { eventId: id });
-      setQr(qrData);
+      const url = buildEventRegistrationUrl(eventData);
+      const dataUrl = await createEventRegistrationQrDataUrl(eventData);
+      setRegistrationUrl(url);
       setQrDataUrl(dataUrl);
-      if (!dataUrl) setError("El servidor no regresó un QR válido para mostrar.");
+      if (!dataUrl) setError("No se pudo generar un QR de registro válido.");
     } catch (loadError) {
-      console.error("Failed to load event QR:", loadError);
-      setError("No se pudo cargar tu QR personal para este evento.");
-      setQr(null);
+      console.error("Failed to load event registration QR:", loadError);
+      setError("No se pudo cargar el QR de registro para este evento.");
       setQrDataUrl(null);
+      setRegistrationUrl(null);
     } finally {
       setLoading(false);
     }
@@ -72,8 +72,8 @@ export default function EventQr() {
             <ArrowLeft className="h-5 w-5" />
           </button>
           <div className="min-w-0 flex-1">
-            <h1 className="truncate font-semibold">Mi QR</h1>
-            <p className="truncate text-xs text-white/60">{event?.title || "Check-in del evento"}</p>
+            <h1 className="truncate font-semibold">QR de registro</h1>
+            <p className="truncate text-xs text-white/60">{event?.title || "Registro del evento"}</p>
           </div>
           <Button variant="secondary" size="icon" onClick={loadPage} disabled={loading}>
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
@@ -105,7 +105,7 @@ export default function EventQr() {
               {loading ? (
                 <Loader2 className="h-10 w-10 animate-spin text-zinc-400" />
               ) : qrDataUrl ? (
-                <img src={qrDataUrl} alt="QR personal para check-in" className="h-full w-full object-contain" />
+                <img src={qrDataUrl} alt="QR de registro del evento" className="h-full w-full object-contain" />
               ) : (
                 <QrCode className="h-20 w-20 text-zinc-300" />
               )}
@@ -115,13 +115,13 @@ export default function EventQr() {
 
         {error && (
           <Alert className="border-red-400/30 bg-red-500/10 text-red-50">
-            <AlertTitle>QR no disponible</AlertTitle>
+            <AlertTitle>QR de registro no disponible</AlertTitle>
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
 
-        {qr?.expiresAt && (
-          <p className="text-center text-xs text-white/60">Expira {new Date(qr.expiresAt).toLocaleString("es-US")}</p>
+        {registrationUrl && (
+          <p className="break-all text-center text-xs text-white/60">{registrationUrl}</p>
         )}
       </main>
     </div>

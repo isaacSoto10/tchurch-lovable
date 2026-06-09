@@ -405,7 +405,7 @@ export default function EventDetail() {
       console.error("Failed to load personal QR:", error);
       setMyQr(null);
       setQrDataUrl(null);
-      setQrError("El QR personal todavía no está disponible para este evento.");
+      setQrError("El QR personal de check-in todavía no está disponible para este evento.");
     } finally {
       setQrLoading(false);
     }
@@ -1050,7 +1050,7 @@ export default function EventDetail() {
           <TabsList className={`grid h-auto w-full grid-cols-2 gap-1 rounded-lg bg-zinc-200/70 p-1 ${checkInEnabled ? "sm:grid-cols-5" : "sm:grid-cols-3"}`}>
             <TabsTrigger value="details" className="h-10 whitespace-normal text-xs">Detalles</TabsTrigger>
             <TabsTrigger value="rsvp" className="h-10 whitespace-normal text-xs">RSVP</TabsTrigger>
-            {checkInEnabled && <TabsTrigger value="qr" className="h-10 whitespace-normal text-xs">Mi QR</TabsTrigger>}
+            {checkInEnabled && <TabsTrigger value="qr" className="h-10 whitespace-normal text-xs">Check-in QR</TabsTrigger>}
             <TabsTrigger value="participation" className="h-10 whitespace-normal text-xs">Participación</TabsTrigger>
             {checkInEnabled && <TabsTrigger value="admin" className="h-10 whitespace-normal text-xs">Check-in/Admin</TabsTrigger>}
           </TabsList>
@@ -1200,7 +1200,7 @@ export default function EventDetail() {
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-base">
                   <QrCode className="h-4 w-4" />
-                  QR personal
+                  QR personal de check-in
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -1229,7 +1229,7 @@ export default function EventDetail() {
                   </Button>
                   <Button variant="outline" onClick={() => navigate(`/app/events/${event.id}/qr`)}>
                     <QrCode className="h-4 w-4" />
-                    Abrir pantalla QR
+                    Abrir QR de registro
                   </Button>
                 </div>
 
