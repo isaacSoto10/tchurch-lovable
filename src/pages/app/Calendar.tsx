@@ -6,6 +6,7 @@ import { useApi } from "@/hooks/useApi";
 import { useNavigate } from "react-router-dom";
 import { formatServiceDate, formatServiceTime, getServiceDateKey } from "@/lib/serviceDates";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { getEventTypeLabel } from "@/types/events";
 
 interface CalendarEvent {
   id: string;
@@ -71,7 +72,7 @@ export default function Calendar() {
               title: e.title,
               date: e.date,
               type: "event",
-              typeLabel: e.type,
+              typeLabel: getEventTypeLabel(e.type),
               location: e.location,
               status: null,
             });

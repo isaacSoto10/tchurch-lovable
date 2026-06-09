@@ -7,6 +7,7 @@ import { useChurch } from "@/providers/ChurchProvider";
 import { useNavigate } from "react-router-dom";
 import { formatServiceDate, formatServiceTime, parseServiceDate } from "@/lib/serviceDates";
 import { isNativeMobileAuth } from "@/lib/mobileAuth";
+import { getEventTypeLabel } from "@/types/events";
 
 interface TimelineItem {
   id: string;
@@ -181,7 +182,7 @@ export default function Dashboard() {
             _type: "event" as const,
             title: e.title as string,
             date: e.date as string,
-            type: e.type as string,
+            type: getEventTypeLabel(e.type as string | null),
             location: e.location as string | null,
           }));
 
