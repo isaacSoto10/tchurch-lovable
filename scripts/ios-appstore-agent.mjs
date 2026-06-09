@@ -138,6 +138,7 @@ const config = {
   betaReview: bool("ASC_BETA_REVIEW", true),
   expireSupersededBetaBuild: bool("ASC_EXPIRE_SUPERSEDED_BETA_BUILD", true),
   targetMarketingVersion: env("ASC_TARGET_MARKETING_VERSION", "").trim(),
+  targetBuildNumber: env("ASC_TARGET_BUILD_NUMBER", "").trim(),
   force: bool("ASC_FORCE", false),
 };
 
@@ -226,6 +227,22 @@ function shortBuild(build, included = new Map()) {
   };
 }
 
+function numericBuildNumber(build) {
+  const value = Number(build?.buildNumber);
+  return Number.isFinite(value) ? value : null;
+}
+
+function compareBuildsForRelease(a, b) {
+  const aNumber = numericBuildNumber(a);
+  const bNumber = numericBuildNumber(b);
+
+  if (aNumber !== null && bNumber !== null && aNumber !== bNumber) {
+    return bNumber - aNumber;
+  }
+
+  return String(b.uploadedDate ?? "").localeCompare(String(a.uploadedDate ?? ""));
+}
+
 async function getLatestValidBuild() {
   const query = params({
     "filter[app]": config.appId,
@@ -241,19 +258,24 @@ async function getLatestValidBuild() {
   });
   const payload = await request("GET", `/builds?${query}`);
   const included = includeIndex(payload);
-  const build = payload.data?.find((candidate) => {
-    const summary = shortBuild(candidate, included);
-    return (
-      summary.processingState === "VALID" &&
-      summary.expired === false &&
-      summary.marketingVersion &&
-      (!config.targetMarketingVersion ||
-        summary.marketingVersion === config.targetMarketingVersion)
-    );
-  });
+  const candidates = (payload.data ?? [])
+    .map((candidate) => ({ raw: candidate, ...shortBuild(candidate, included) }))
+    .filter((summary) => {
+      return (
+        summary.processingState === "VALID" &&
+        summary.expired === false &&
+        summary.marketingVersion &&
+        (!config.targetMarketingVersion ||
+          summary.marketingVersion === config.targetMarketingVersion) &&
+        (!config.targetBuildNumber || summary.buildNumber === config.targetBuildNumber)
+      );
+    })
+    .sort(compareBuildsForRelease);
+
+  const build = candidates[0];
 
   if (!build) return null;
-  return { raw: build, ...shortBuild(build, included) };
+  return build;
 }
 
 async function getVersionByString(versionString) {
@@ -542,7 +564,7 @@ function log(message) {
 
 async function main() {
   log(
-    `Starting. dryRun=${config.dryRun}; platform=${config.platform}; app=${config.appId}; targetVersion=${config.targetMarketingVersion || "latest"}.`,
+    `Starting. dryRun=${config.dryRun}; platform=${config.platform}; app=${config.appId}; targetVersion=${config.targetMarketingVersion || "latest"}; targetBuild=${config.targetBuildNumber || "latest"}.`,
   );
   const latestBuild = await getLatestValidBuild();
 
