@@ -100,6 +100,10 @@ function statusLabel(status: string) {
   return "confirmado";
 }
 
+function getTimelineItemHref(item: TimelineItem) {
+  return item._type === "service" ? `/app/services/${item.id}` : `/app/events/${item.id}`;
+}
+
 export default function Dashboard() {
   const { fetchApi } = useApi();
   const { selectedChurch, loading: churchLoading } = useChurch();
@@ -398,7 +402,7 @@ export default function Dashboard() {
                   <Card
                     key={`${item._type}-${item.id}`}
                     className="app-card min-w-0 cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-md"
-                    onClick={() => navigate(item._type === "service" ? `/app/services/${item.id}` : "/app/events")}
+                    onClick={() => navigate(getTimelineItemHref(item))}
                   >
                     <CardContent className="flex items-center gap-3 p-3.5">
                       <div className={`h-12 w-1.5 rounded-full ${item._type === "service" ? "bg-primary" : "bg-amber-400"}`} />
@@ -437,7 +441,7 @@ export default function Dashboard() {
                   <Card
                     key={`${item._type}-${item.id}`}
                     className="app-card min-w-0 cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-md"
-                    onClick={() => navigate(item._type === "service" ? `/app/services/${item.id}` : "/app/events")}
+                    onClick={() => navigate(getTimelineItemHref(item))}
                   >
                     <CardContent className="flex items-center gap-3 p-3.5">
                       <div className={`h-12 w-1.5 rounded-full ${item._type === "service" ? "bg-primary" : "bg-amber-400"}`} />

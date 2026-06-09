@@ -32,6 +32,10 @@ interface CalendarItem {
   status: string | null;
 }
 
+function getCalendarItemHref(item: CalendarItem) {
+  return item.type === "event" ? `/app/events/${item.id}` : "/app/services";
+}
+
 export default function Calendar() {
   const { fetchApi } = useApi();
   const navigate = useNavigate();
@@ -224,7 +228,7 @@ export default function Calendar() {
                         {getItemsForDay(day).slice(0, 3).map((item) => (
                           <button
                             key={item.id}
-                            onClick={() => navigate(item.type === "service" ? "/app/services" : "/app/events")}
+                            onClick={() => navigate(getCalendarItemHref(item))}
                             className={`w-full text-left text-xs px-1 py-0.5 rounded truncate text-white ${item.type === "service" ? getStatusColor(item.status) : "bg-indigo-500"}`}
                           >
                             {item.title}
@@ -264,7 +268,7 @@ export default function Calendar() {
               <Card
                 key={`${item.type}-${item.id}`}
                 className="cursor-pointer hover:shadow-md transition-shadow"
-                onClick={() => navigate(item.type === "service" ? "/app/services" : "/app/events")}
+                onClick={() => navigate(getCalendarItemHref(item))}
               >
                 <CardContent className="p-3 flex items-center gap-3">
                   <div className={`w-1 h-10 rounded ${item.type === "service" ? "bg-primary" : "bg-indigo-500"}`} />
@@ -351,7 +355,7 @@ export default function Calendar() {
                           {dayItems.slice(0, 3).map((item) => (
                             <button
                               key={item.id}
-                              onClick={() => navigate(item.type === "service" ? "/app/services" : "/app/events")}
+                              onClick={() => navigate(getCalendarItemHref(item))}
                               className={`min-h-7 w-full truncate rounded-lg px-1.5 py-1 text-left text-[11px] font-semibold leading-tight text-white ${item.type === "service" ? getStatusColor(item.status) : "bg-indigo-500"}`}
                             >
                               {item.title}
@@ -391,7 +395,7 @@ export default function Calendar() {
                 <Card
                   key={`${item.type}-${item.id}`}
                   className="app-card cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-md"
-                  onClick={() => navigate(item.type === "service" ? "/app/services" : "/app/events")}
+                  onClick={() => navigate(getCalendarItemHref(item))}
                 >
                   <CardContent className="flex min-w-0 items-center gap-3 p-3">
                     <div className={`h-11 w-1.5 shrink-0 rounded ${item.type === "service" ? "bg-primary" : "bg-indigo-500"}`} />
