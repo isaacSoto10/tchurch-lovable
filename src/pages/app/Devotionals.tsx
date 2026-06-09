@@ -17,6 +17,8 @@ interface Devotional {
   scriptureRef?: string | null;
   bibleText?: string | null;
   body: string;
+  ministryId?: string | null;
+  ministryName?: string | null;
   videoUrl?: string | null;
   videoTitle?: string | null;
   publishDate: string;
@@ -34,11 +36,22 @@ interface DevotionalsResponse {
   };
 }
 
+interface Ministry {
+  id: string;
+  name: string;
+  color?: string | null;
+}
+
+interface MyMinistriesResponse {
+  ministries?: Ministry[];
+}
+
 const emptyForm = {
   title: "",
   scriptureRef: "",
   bibleText: "",
   body: "",
+  ministryId: "",
   videoUrl: "",
   videoTitle: "",
   publishDate: new Date().toISOString().slice(0, 10),
@@ -63,6 +76,7 @@ export default function Devotionals() {
   const { fetchApi } = useApi();
   const { toast } = useToast();
   const [devotionals, setDevotionals] = useState<Devotional[]>([]);
+  const [ministries, setMinistries] = useState<Ministry[]>([]);
   const [canManage, setCanManage] = useState(false);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -78,9 +92,21 @@ export default function Devotionals() {
   const loadDevotionals = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await fetchApi<DevotionalsResponse>("/devotionals?includeDrafts=1");
-      setDevotionals(Array.isArray(data.devotionals) ? data.devotionals : []);
-      setCanManage(Boolean(data.permissions?.canManage));
+      const [devotionalsResult, ministriesResult] = await Promise.allSettled([
+        fetchApi<DevotionalsResponse>("/devotionals?includeDrafts=1"),
+        fetchApi<MyMinistriesResponse>("/my-ministries"),
+      ]);
+
+      if (devotionalsResult.status === "rejected") throw devotionalsResult.reason;
+
+      setDevotionals(Array.isArray(devotionalsResult.value.devotionals) ? devotionalsResult.value.devotionals : []);
+      setCanManage(Boolean(devotionalsResult.value.permissions?.canManage));
+
+      if (ministriesResult.status === "fulfilled") {
+        setMinistries(Array.isArray(ministriesResult.value.ministries) ? ministriesResult.value.ministries : []);
+      } else {
+        setMinistries([]);
+      }
     } catch (error) {
       toast({
         title: error instanceof Error ? error.message : "No se pudieron cargar los devocionales",
@@ -117,6 +143,7 @@ export default function Devotionals() {
       scriptureRef: devotional.scriptureRef || "",
       bibleText: devotional.bibleText || "",
       body: devotional.body,
+      ministryId: devotional.ministryId || "",
       videoUrl: devotional.videoUrl || "",
       videoTitle: devotional.videoTitle || "",
       publishDate: devotional.publishDate.slice(0, 10),
@@ -214,6 +241,11 @@ export default function Devotionals() {
                 Borrador
               </Badge>
             )}
+            {devotional.ministryName && (
+              <Badge variant="outline" className="rounded-full">
+                {devotional.ministryName}
+              </Badge>
+            )}
             {devotional.readAt && (
               <Badge className="rounded-full bg-emerald-100 text-emerald-800 hover:bg-emerald-100">
                 <CheckCircle className="mr-1 h-3 w-3" />
@@ -304,6 +336,22 @@ export default function Devotionals() {
                 <Input value={form.scriptureRef} onChange={(event) => setForm((current) => ({ ...current, scriptureRef: event.target.value }))} placeholder="Juan 14:27" />
                 <Input type="date" value={form.publishDate} onChange={(event) => setForm((current) => ({ ...current, publishDate: event.target.value }))} />
               </div>
+              <label className="block space-y-1.5 text-sm font-semibold text-zinc-700">
+                <span>Asignar a ministerio</span>
+                <select
+                  value={form.ministryId}
+                  onChange={(event) => setForm((current) => ({ ...current, ministryId: event.target.value }))}
+                  className="h-12 w-full rounded-2xl border border-input bg-background px-3 text-sm text-zinc-950"
+                >
+                  <option value="">General / sin ministerio</option>
+                  {ministries.map((ministry) => (
+                    <option key={ministry.id} value={ministry.id}>{ministry.name}</option>
+                  ))}
+                  {ministries.length === 0 && (
+                    <option value="__no_ministries" disabled>No hay ministerios disponibles</option>
+                  )}
+                </select>
+              </label>
               <Textarea value={form.bibleText} onChange={(event) => setForm((current) => ({ ...current, bibleText: event.target.value }))} placeholder="Texto bíblico" rows={3} />
               <Textarea value={form.body} onChange={(event) => setForm((current) => ({ ...current, body: event.target.value }))} placeholder="Reflexión pastoral del día" rows={5} />
               <Input value={form.videoUrl} onChange={(event) => setForm((current) => ({ ...current, videoUrl: event.target.value }))} placeholder="Link de YouTube opcional" />
