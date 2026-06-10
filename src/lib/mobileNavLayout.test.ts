@@ -1,23 +1,30 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
-  MAX_MOBILE_SAFE_BOTTOM,
   MOBILE_NAV_BASE_HEIGHT,
+  MOBILE_NAV_RESERVED_SPACE,
   MOBILE_NAV_RESERVE_GAP,
-  clampMobileSafeAreaBottom,
+  MOBILE_NAV_SAFE_BOTTOM,
+  getMobileNavSafeBottom,
   getMobileNavReservedSpace,
 } from "./mobileNavLayout";
 
 describe("mobile nav layout", () => {
-  it("caps the bottom safe area so the tab bar cannot grow over page controls", () => {
-    expect(clampMobileSafeAreaBottom(-8)).toBe(0);
-    expect(clampMobileSafeAreaBottom(Number.NaN)).toBe(0);
-    expect(clampMobileSafeAreaBottom(8)).toBe(8);
-    expect(clampMobileSafeAreaBottom(44)).toBe(MAX_MOBILE_SAFE_BOTTOM);
+  it("uses a stable bottom inset so browser chrome scroll cannot resize the tab bar", () => {
+    expect(getMobileNavSafeBottom()).toBe(MOBILE_NAV_SAFE_BOTTOM);
   });
 
-  it("uses a fixed reserve instead of measuring the rendered bar", () => {
-    expect(getMobileNavReservedSpace(44)).toBe(
-      MOBILE_NAV_BASE_HEIGHT + MAX_MOBILE_SAFE_BOTTOM + MOBILE_NAV_RESERVE_GAP,
-    );
+  it("reserves enough fixed space below every mobile page for the nav and tap clearance", () => {
+    expect(getMobileNavReservedSpace()).toBe(MOBILE_NAV_RESERVED_SPACE);
+    expect(MOBILE_NAV_RESERVED_SPACE).toBe(MOBILE_NAV_BASE_HEIGHT + MOBILE_NAV_RESERVE_GAP);
+    expect(MOBILE_NAV_RESERVED_SPACE).toBeGreaterThanOrEqual(100);
+  });
+
+  it("keeps AppLayout nav geometry independent from viewport scroll changes", () => {
+    const source = readFileSync(`${process.cwd()}/src/layouts/AppLayout.tsx`, "utf8");
+
+    expect(source).toContain("mobileNavGeometryStyle");
+    expect(source).not.toContain("visualViewport");
+    expect(source).not.toContain('addEventListener("scroll"');
   });
 });

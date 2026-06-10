@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useRef, type CSSProperties } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { BookOpen, Heart, Home, ListChecks, Megaphone, Users } from "lucide-react";
 import { AppSidebar } from "../components/AppSidebar";
@@ -10,7 +10,7 @@ import { usePushNotifications } from "@/hooks/usePushNotifications";
 import { useEventCheckInQueueSync } from "@/hooks/useEventCheckInQueueSync";
 import { NotificationBell } from "@/components/NotificationBell";
 import { NotificationsProvider } from "@/providers/NotificationsProvider";
-import { clampMobileSafeAreaBottom, getMobileNavReservedSpace } from "@/lib/mobileNavLayout";
+import { getMobileNavReservedSpace, getMobileNavSafeBottom } from "@/lib/mobileNavLayout";
 
 const mobileNavItems = [
   { label: "Inicio", href: "/app", icon: Home, end: true },
@@ -24,25 +24,10 @@ const mobileNavItems = [
 const SAFE_BOTTOM_VAR = "--tchurch-mobile-safe-bottom";
 const NAV_RESERVED_SPACE_VAR = "--tchurch-mobile-nav-reserved";
 
-function readSafeAreaBottom() {
-  if (typeof document === "undefined") return 0;
-
-  const probe = document.createElement("div");
-  probe.style.position = "fixed";
-  probe.style.left = "0";
-  probe.style.bottom = "0";
-  probe.style.width = "0";
-  probe.style.height = "0";
-  probe.style.visibility = "hidden";
-  probe.style.pointerEvents = "none";
-  probe.style.paddingBottom = "env(safe-area-inset-bottom)";
-  document.body.appendChild(probe);
-
-  const measured = Number.parseFloat(window.getComputedStyle(probe).paddingBottom);
-  probe.remove();
-
-  return clampMobileSafeAreaBottom(measured);
-}
+const mobileNavGeometryStyle = {
+  [SAFE_BOTTOM_VAR]: `${getMobileNavSafeBottom()}px`,
+  [NAV_RESERVED_SPACE_VAR]: `${getMobileNavReservedSpace()}px`,
+} as CSSProperties;
 
 function AppLayoutInner() {
   const { selectedChurch } = useChurch();
@@ -56,39 +41,6 @@ function AppLayoutInner() {
 
   usePushNotifications();
   useEventCheckInQueueSync();
-
-  useEffect(() => {
-    if (!showShortcutBar || typeof document === "undefined") return;
-
-    const root = document.documentElement;
-    const viewport = window.visualViewport;
-    let frame = 0;
-
-    const syncMobileInsets = () => {
-      window.cancelAnimationFrame(frame);
-      frame = window.requestAnimationFrame(() => {
-        const safeBottom = readSafeAreaBottom();
-        root.style.setProperty(SAFE_BOTTOM_VAR, `${safeBottom}px`);
-        root.style.setProperty(NAV_RESERVED_SPACE_VAR, `${getMobileNavReservedSpace(safeBottom)}px`);
-      });
-    };
-
-    syncMobileInsets();
-    window.addEventListener("resize", syncMobileInsets);
-    window.addEventListener("orientationchange", syncMobileInsets);
-    viewport?.addEventListener("resize", syncMobileInsets);
-    viewport?.addEventListener("scroll", syncMobileInsets);
-
-    return () => {
-      window.cancelAnimationFrame(frame);
-      window.removeEventListener("resize", syncMobileInsets);
-      window.removeEventListener("orientationchange", syncMobileInsets);
-      viewport?.removeEventListener("resize", syncMobileInsets);
-      viewport?.removeEventListener("scroll", syncMobileInsets);
-      root.style.removeProperty(SAFE_BOTTOM_VAR);
-      root.style.removeProperty(NAV_RESERVED_SPACE_VAR);
-    };
-  }, [showShortcutBar]);
 
   function handleTouchStart(event: React.TouchEvent<HTMLDivElement>) {
     if (!useCompactNavigation || openMobile) return;
@@ -117,6 +69,7 @@ function AppLayoutInner() {
     <div
       data-device-class={responsive.isPhone ? "phone" : responsive.isTablet ? "tablet" : "wide"}
       className="flex min-h-svh w-full flex-1 overflow-x-clip bg-zinc-50"
+      style={showShortcutBar ? mobileNavGeometryStyle : undefined}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
@@ -144,7 +97,7 @@ function AppLayoutInner() {
           style={{
             paddingTop: useCompactNavigation ? undefined : "max(var(--app-safe-area-top), 1.5rem)",
             paddingBottom: showShortcutBar
-              ? "var(--tchurch-mobile-nav-reserved, 5.25rem)"
+              ? "var(--tchurch-mobile-nav-reserved, 6.4rem)"
               : undefined,
           }}
         >
@@ -167,8 +120,8 @@ function AppLayoutInner() {
             aria-label="Navegación principal"
           >
             <div
-              className="border-t border-zinc-200/80 bg-white/95 px-2 pt-1.5 shadow-[0_-14px_30px_rgba(15,23,42,0.07)] backdrop-blur"
-              style={{ paddingBottom: "max(var(--tchurch-mobile-safe-bottom, 0px), 0.4rem)" }}
+              className="border-t border-zinc-200/80 bg-white/95 px-2 pt-2 shadow-[0_-14px_30px_rgba(15,23,42,0.07)] backdrop-blur"
+              style={{ paddingBottom: "var(--tchurch-mobile-safe-bottom, 14px)" }}
             >
               <div className="mx-auto grid max-w-lg grid-cols-6 gap-0.5 md:max-w-2xl">
                 {mobileNavItems.map((item) => {
@@ -180,12 +133,12 @@ function AppLayoutInner() {
                       end={item.end}
                       className={({ isActive }) =>
                         [
-                          "pointer-events-auto flex h-12 min-w-0 flex-col items-center justify-center gap-0.5 rounded-xl px-0.5 text-[0.62rem] font-bold leading-tight transition",
+                          "pointer-events-auto flex h-14 min-w-0 flex-col items-center justify-center gap-1 rounded-2xl px-0.5 text-[0.64rem] font-bold leading-tight transition",
                           isActive ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-zinc-100 hover:text-zinc-950",
                         ].join(" ")
                       }
                     >
-                      <Icon className="h-[1.15rem] w-[1.15rem]" />
+                      <Icon className="h-5 w-5" />
                       <span className="max-w-full truncate">{item.label}</span>
                     </NavLink>
                   );

@@ -1,11 +1,16 @@
-export const MOBILE_NAV_BASE_HEIGHT = 62;
-export const MOBILE_NAV_RESERVE_GAP = 10;
-export const MAX_MOBILE_SAFE_BOTTOM = 14;
+export const MOBILE_NAV_SAFE_BOTTOM = 14;
+export const MOBILE_NAV_ITEM_HEIGHT = 56;
+export const MOBILE_NAV_TOP_PADDING = 8;
+export const MOBILE_NAV_BORDER_HEIGHT = 1;
+export const MOBILE_NAV_BASE_HEIGHT =
+  MOBILE_NAV_TOP_PADDING + MOBILE_NAV_ITEM_HEIGHT + MOBILE_NAV_SAFE_BOTTOM + MOBILE_NAV_BORDER_HEIGHT;
+export const MOBILE_NAV_RESERVE_GAP = 24;
+export const MOBILE_NAV_RESERVED_SPACE = MOBILE_NAV_BASE_HEIGHT + MOBILE_NAV_RESERVE_GAP;
 
-export function clampMobileSafeAreaBottom(value: number) {
-  return Number.isFinite(value) ? Math.min(Math.max(value, 0), MAX_MOBILE_SAFE_BOTTOM) : 0;
+export function getMobileNavSafeBottom() {
+  return MOBILE_NAV_SAFE_BOTTOM;
 }
 
-export function getMobileNavReservedSpace(safeBottom: number) {
-  return MOBILE_NAV_BASE_HEIGHT + clampMobileSafeAreaBottom(safeBottom) + MOBILE_NAV_RESERVE_GAP;
+export function getMobileNavReservedSpace() {
+  return MOBILE_NAV_RESERVED_SPACE;
 }
