@@ -326,7 +326,7 @@ export default function ServiceDetail() {
       return () => clearTimeout(timeout);
     }
     setSongResults([]);
-  }, [apiFetch, showAddItem, songSearch, itemType]);
+  }, [showAddItem, songSearch, itemType]);
 
   async function addSongsToService(songs: SongOption[], options: { keepDialogOpen?: boolean } = {}) {
     if (!id || songs.length === 0) return;
