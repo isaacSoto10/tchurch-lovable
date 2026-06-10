@@ -10,6 +10,7 @@ import { usePushNotifications } from "@/hooks/usePushNotifications";
 import { useEventCheckInQueueSync } from "@/hooks/useEventCheckInQueueSync";
 import { NotificationBell } from "@/components/NotificationBell";
 import { NotificationsProvider } from "@/providers/NotificationsProvider";
+import { clampMobileSafeAreaBottom, getMobileNavReservedSpace } from "@/lib/mobileNavLayout";
 
 const mobileNavItems = [
   { label: "Inicio", href: "/app", icon: Home, end: true },
@@ -21,7 +22,7 @@ const mobileNavItems = [
 ];
 
 const SAFE_BOTTOM_VAR = "--tchurch-mobile-safe-bottom";
-const NAV_HEIGHT_VAR = "--tchurch-mobile-nav-height";
+const NAV_RESERVED_SPACE_VAR = "--tchurch-mobile-nav-reserved";
 
 function readSafeAreaBottom() {
   if (typeof document === "undefined") return 0;
@@ -40,7 +41,7 @@ function readSafeAreaBottom() {
   const measured = Number.parseFloat(window.getComputedStyle(probe).paddingBottom);
   probe.remove();
 
-  return Number.isFinite(measured) ? Math.min(Math.max(measured, 0), 32) : 0;
+  return clampMobileSafeAreaBottom(measured);
 }
 
 function AppLayoutInner() {
@@ -50,7 +51,6 @@ function AppLayoutInner() {
   const useCompactNavigation = isMobile;
   const showShortcutBar = useCompactNavigation;
   const { openMobile, setOpenMobile } = useSidebar();
-  const mobileNavRef = useRef<HTMLElement | null>(null);
   const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);
 
@@ -67,12 +67,9 @@ function AppLayoutInner() {
     const syncMobileInsets = () => {
       window.cancelAnimationFrame(frame);
       frame = window.requestAnimationFrame(() => {
-        root.style.setProperty(SAFE_BOTTOM_VAR, `${readSafeAreaBottom()}px`);
-
-        const navHeight = mobileNavRef.current?.getBoundingClientRect().height || 0;
-        if (navHeight > 0) {
-          root.style.setProperty(NAV_HEIGHT_VAR, `${Math.ceil(navHeight)}px`);
-        }
+        const safeBottom = readSafeAreaBottom();
+        root.style.setProperty(SAFE_BOTTOM_VAR, `${safeBottom}px`);
+        root.style.setProperty(NAV_RESERVED_SPACE_VAR, `${getMobileNavReservedSpace(safeBottom)}px`);
       });
     };
 
@@ -89,7 +86,7 @@ function AppLayoutInner() {
       viewport?.removeEventListener("resize", syncMobileInsets);
       viewport?.removeEventListener("scroll", syncMobileInsets);
       root.style.removeProperty(SAFE_BOTTOM_VAR);
-      root.style.removeProperty(NAV_HEIGHT_VAR);
+      root.style.removeProperty(NAV_RESERVED_SPACE_VAR);
     };
   }, [showShortcutBar]);
 
@@ -147,7 +144,7 @@ function AppLayoutInner() {
           style={{
             paddingTop: useCompactNavigation ? undefined : "max(var(--app-safe-area-top), 1.5rem)",
             paddingBottom: showShortcutBar
-              ? "calc(var(--tchurch-mobile-nav-height, 5.75rem) + 1rem)"
+              ? "var(--tchurch-mobile-nav-reserved, 5.25rem)"
               : undefined,
           }}
         >
@@ -166,31 +163,34 @@ function AppLayoutInner() {
         </div>
         {showShortcutBar ? (
           <nav
-            ref={mobileNavRef}
-            className="fixed inset-x-0 bottom-0 z-30 border-t border-zinc-200/80 bg-white/95 px-2 pt-2 shadow-[0_-18px_40px_rgba(15,23,42,0.08)] backdrop-blur"
-            style={{ paddingBottom: "max(var(--tchurch-mobile-safe-bottom, 0px), 0.55rem)" }}
+            className="pointer-events-none fixed inset-x-0 bottom-0 z-30"
             aria-label="Navegación principal"
           >
-            <div className="mx-auto grid max-w-lg grid-cols-6 gap-1 md:max-w-2xl">
-              {mobileNavItems.map((item) => {
-                const Icon = item.icon;
-                return (
-                  <NavLink
-                    key={item.href}
-                    to={item.href}
-                    end={item.end}
-                    className={({ isActive }) =>
-                      [
-                        "flex min-w-0 flex-col items-center justify-center gap-1 rounded-2xl px-1 py-2 text-[0.68rem] font-bold transition",
-                        isActive ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-zinc-100 hover:text-zinc-950",
-                      ].join(" ")
-                    }
-                  >
-                    <Icon className="h-5 w-5" />
-                    <span className="truncate">{item.label}</span>
-                  </NavLink>
-                );
-              })}
+            <div
+              className="border-t border-zinc-200/80 bg-white/95 px-2 pt-1.5 shadow-[0_-14px_30px_rgba(15,23,42,0.07)] backdrop-blur"
+              style={{ paddingBottom: "max(var(--tchurch-mobile-safe-bottom, 0px), 0.4rem)" }}
+            >
+              <div className="mx-auto grid max-w-lg grid-cols-6 gap-0.5 md:max-w-2xl">
+                {mobileNavItems.map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <NavLink
+                      key={item.href}
+                      to={item.href}
+                      end={item.end}
+                      className={({ isActive }) =>
+                        [
+                          "pointer-events-auto flex h-12 min-w-0 flex-col items-center justify-center gap-0.5 rounded-xl px-0.5 text-[0.62rem] font-bold leading-tight transition",
+                          isActive ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-zinc-100 hover:text-zinc-950",
+                        ].join(" ")
+                      }
+                    >
+                      <Icon className="h-[1.15rem] w-[1.15rem]" />
+                      <span className="max-w-full truncate">{item.label}</span>
+                    </NavLink>
+                  );
+                })}
+              </div>
             </div>
           </nav>
         ) : null}
