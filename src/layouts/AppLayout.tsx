@@ -10,7 +10,7 @@ import { usePushNotifications } from "@/hooks/usePushNotifications";
 import { useEventCheckInQueueSync } from "@/hooks/useEventCheckInQueueSync";
 import { NotificationBell } from "@/components/NotificationBell";
 import { NotificationsProvider } from "@/providers/NotificationsProvider";
-import { getMobileNavReservedSpace, getMobileNavSafeBottom } from "@/lib/mobileNavLayout";
+import { getMobileNavReservedSpace, getMobileNavSafeBottom, getMobilePageBottomBuffer } from "@/lib/mobileNavLayout";
 
 const mobileNavItems = [
   { label: "Inicio", href: "/app", icon: Home, end: true },
@@ -23,10 +23,12 @@ const mobileNavItems = [
 
 const SAFE_BOTTOM_VAR = "--tchurch-mobile-safe-bottom";
 const NAV_RESERVED_SPACE_VAR = "--tchurch-mobile-nav-reserved";
+const PAGE_BOTTOM_BUFFER_VAR = "--tchurch-mobile-page-bottom-buffer";
 
 const mobileNavGeometryStyle = {
   [SAFE_BOTTOM_VAR]: `${getMobileNavSafeBottom()}px`,
   [NAV_RESERVED_SPACE_VAR]: `${getMobileNavReservedSpace()}px`,
+  [PAGE_BOTTOM_BUFFER_VAR]: `${getMobilePageBottomBuffer()}px`,
 } as CSSProperties;
 
 function AppLayoutInner() {
@@ -67,6 +69,7 @@ function AppLayoutInner() {
 
   return (
     <div
+      data-mobile-shell={showShortcutBar ? "true" : undefined}
       data-device-class={responsive.isPhone ? "phone" : responsive.isTablet ? "tablet" : "wide"}
       className="flex min-h-svh w-full flex-1 overflow-x-clip bg-zinc-50"
       style={showShortcutBar ? mobileNavGeometryStyle : undefined}
@@ -74,7 +77,10 @@ function AppLayoutInner() {
       onTouchEnd={handleTouchEnd}
     >
       <AppSidebar />
-      <SidebarInset className="min-w-0 w-full max-w-full overflow-x-clip overflow-y-auto">
+      <SidebarInset
+        className="min-w-0 w-full max-w-full overflow-x-clip overflow-y-auto overscroll-y-contain"
+        style={showShortcutBar ? { scrollPaddingBottom: "var(--tchurch-mobile-nav-reserved, 8rem)" } : undefined}
+      >
         {useCompactNavigation ? (
           <header
             className="sticky top-0 z-20 border-b border-zinc-200/80 bg-white/95 shadow-sm shadow-zinc-200/30 backdrop-blur"
@@ -97,7 +103,7 @@ function AppLayoutInner() {
           style={{
             paddingTop: useCompactNavigation ? undefined : "max(var(--app-safe-area-top), 1.5rem)",
             paddingBottom: showShortcutBar
-              ? "var(--tchurch-mobile-nav-reserved, 6.4rem)"
+              ? "var(--tchurch-mobile-nav-reserved, 8rem)"
               : undefined,
           }}
         >
@@ -116,12 +122,14 @@ function AppLayoutInner() {
         </div>
         {showShortcutBar ? (
           <nav
-            className="pointer-events-none fixed inset-x-0 bottom-0 z-30"
+            data-testid="mobile-bottom-nav"
+            className="pointer-events-none fixed inset-x-0 bottom-0 z-30 translate-y-0"
             aria-label="Navegación principal"
+            style={{ transform: "translate3d(0, 0, 0)" }}
           >
             <div
-              className="border-t border-zinc-200/80 bg-white/95 px-2 pt-2 shadow-[0_-14px_30px_rgba(15,23,42,0.07)] backdrop-blur"
-              style={{ paddingBottom: "var(--tchurch-mobile-safe-bottom, 14px)" }}
+              className="border-t border-zinc-200/80 bg-white/95 px-2 pt-2.5 shadow-[0_-14px_30px_rgba(15,23,42,0.07)] backdrop-blur"
+              style={{ paddingBottom: "var(--tchurch-mobile-safe-bottom, 22px)" }}
             >
               <div className="mx-auto grid max-w-lg grid-cols-6 gap-0.5 md:max-w-2xl">
                 {mobileNavItems.map((item) => {
@@ -133,7 +141,7 @@ function AppLayoutInner() {
                       end={item.end}
                       className={({ isActive }) =>
                         [
-                          "pointer-events-auto flex h-14 min-w-0 flex-col items-center justify-center gap-1 rounded-2xl px-0.5 text-[0.64rem] font-bold leading-tight transition",
+                          "pointer-events-auto flex h-[3.75rem] min-w-0 flex-col items-center justify-center gap-1 rounded-2xl px-0.5 text-[0.64rem] font-bold leading-tight transition",
                           isActive ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-zinc-100 hover:text-zinc-950",
                         ].join(" ")
                       }
