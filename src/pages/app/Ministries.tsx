@@ -646,7 +646,7 @@ export default function Ministries() {
   }
 
   return (
-    <div>
+    <div className="mobile-page">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">Ministries</h1>
         {isAdmin && <Button size="sm" onClick={openNewDialog}>

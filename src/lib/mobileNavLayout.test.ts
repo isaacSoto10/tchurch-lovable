@@ -43,4 +43,13 @@ describe("mobile nav layout", () => {
     expect(css).toContain("scroll-margin-bottom");
     expect(css).not.toContain("env(safe-area-inset-bottom");
   });
+
+  it("applies mobile page clearance to every primary bottom-tab screen", () => {
+    const primaryScreens = ["Dashboard", "Services", "Giving", "Ministries", "Devotionals", "Announcements"];
+
+    for (const screen of primaryScreens) {
+      const source = readFileSync(`${process.cwd()}/src/pages/app/${screen}.tsx`, "utf8");
+      expect(source).toContain("mobile-page");
+    }
+  });
 });
