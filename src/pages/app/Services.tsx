@@ -21,6 +21,7 @@ import {
 } from "@/lib/songDisplay";
 import { normalizeKey, transposeChordPro } from "@/lib/musicUtils";
 import { formatServiceDate, formatServiceTime, toServiceDatetimeLocalValue } from "@/lib/serviceDates";
+import { sortSongsByLastUsedDesc } from "@/lib/songUsage";
 import {
   Dialog,
   DialogClose,
@@ -575,18 +576,34 @@ export default function Services() {
     setAddItemDialogOpen(true);
   };
 
-  const searchSongs = async (query: string) => {
-    if (query.trim().length < 2) {
+  const searchSongs = useCallback(async (query: string) => {
+    const trimmedQuery = query.trim();
+    try {
+      const params = new URLSearchParams({
+        limit: trimmedQuery.length >= 2 ? "30" : "20",
+        sort: "lastUsed",
+      });
+      if (trimmedQuery.length >= 2) params.set("q", trimmedQuery);
+      const data = await fetchApi(`/songs?${params.toString()}`);
+      setSongs(Array.isArray(data) ? sortSongsByLastUsedDesc(data as SongLike[]).slice(0, 12) : []);
+    } catch (e) {
+      console.error("No se pudieron buscar canciones:", e);
+      setSongs([]);
+    }
+  }, [fetchApi]);
+
+  useEffect(() => {
+    if (!addItemDialogOpen || newItemType !== "song") {
       setSongs([]);
       return;
     }
-    try {
-      const data = await fetchApi(`/songs?q=${encodeURIComponent(query)}&limit=30`);
-      setSongs(Array.isArray(data) ? data.slice(0, 12) : []);
-    } catch (e) {
-      console.error("No se pudieron buscar canciones:", e);
-    }
-  };
+
+    const timer = window.setTimeout(() => {
+      void searchSongs(songSearch);
+    }, songSearch.trim().length >= 2 ? 250 : 0);
+
+    return () => window.clearTimeout(timer);
+  }, [addItemDialogOpen, newItemType, songSearch, searchSongs]);
 
   const handleAddItem = async () => {
     if (!selectedServiceId) return;
@@ -1201,7 +1218,6 @@ export default function Services() {
                 selectedSongs={selectedSongs}
                 onSearchChange={(value) => {
                   setSongSearch(value);
-                  searchSongs(value);
                 }}
                 onToggleSong={toggleSelectedSong}
               />

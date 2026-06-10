@@ -32,6 +32,7 @@ import {
 import { normalizeKey, transposeChordPro } from "@/lib/musicUtils";
 import { canUseServicePresentation } from "@/lib/servicePresentation";
 import { formatServiceDate } from "@/lib/serviceDates";
+import { sortSongsByLastUsedDesc } from "@/lib/songUsage";
 
 type ServiceItem = {
   id: string;
@@ -77,6 +78,7 @@ type SongOption = {
   meter?: string | null;
   notes?: string | null;
   lyrics?: string | null;
+  lastUsedAt?: string | null;
   arrangements?: SongArrangement[] | null;
 };
 
@@ -308,17 +310,23 @@ export default function ServiceDetail() {
   }, [showAssign]);
 
   useEffect(() => {
-    if (isSongItemType(itemType) && songSearch.length >= 2) {
+    if (showAddItem && isSongItemType(itemType)) {
       const timeout = setTimeout(async () => {
         try {
-          const data = await apiFetch<SongOption[]>(`/songs?q=${encodeURIComponent(songSearch)}&limit=30`);
-          setSongResults(Array.isArray(data) ? data.slice(0, 12) : []);
+          const trimmedSearch = songSearch.trim();
+          const params = new URLSearchParams({
+            limit: trimmedSearch.length >= 2 ? "30" : "20",
+            sort: "lastUsed",
+          });
+          if (trimmedSearch.length >= 2) params.set("q", trimmedSearch);
+          const data = await apiFetch<SongOption[]>(`/songs?${params.toString()}`);
+          setSongResults(Array.isArray(data) ? sortSongsByLastUsedDesc(data).slice(0, 12) : []);
         } catch { setSongResults([]); }
-      }, 300);
+      }, songSearch.trim().length >= 2 ? 300 : 0);
       return () => clearTimeout(timeout);
     }
     setSongResults([]);
-  }, [songSearch, itemType]);
+  }, [apiFetch, showAddItem, songSearch, itemType]);
 
   async function addSongsToService(songs: SongOption[], options: { keepDialogOpen?: boolean } = {}) {
     if (!id || songs.length === 0) return;

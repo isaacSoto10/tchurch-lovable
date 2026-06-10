@@ -12,6 +12,7 @@ import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
 import { useChurch } from "@/providers/ChurchProvider";
 import { getSongDisplayKey, type SongArrangement } from "@/lib/songDisplay";
+import { compareSongsByLastUsedDesc, formatSongLastUsedLabel } from "@/lib/songUsage";
 
 interface Song {
   id: string;
@@ -58,6 +59,7 @@ export default function Songs() {
     const params = new URLSearchParams();
     const trimmedSearch = nextSearch.trim();
     params.set("limit", trimmedSearch ? "150" : "400");
+    params.set("sort", "lastUsed");
     if (trimmedSearch) params.set("q", trimmedSearch);
 
     setLoading(true);
@@ -170,7 +172,7 @@ export default function Songs() {
         );
       })
       .sort((a, b) => {
-        if (sortBy === "lastUsed") return getTime(b.lastUsedAt) - getTime(a.lastUsedAt) || getTitle(a).localeCompare(getTitle(b));
+        if (sortBy === "lastUsed") return compareSongsByLastUsedDesc(a, b);
         if (sortBy === "recent") return getTime(b.createdAt) - getTime(a.createdAt) || getTitle(a).localeCompare(getTitle(b));
         if (sortBy === "artist") return (a.author || "").localeCompare(b.author || "") || getTitle(a).localeCompare(getTitle(b));
         if (sortBy === "key") return getEffectiveKey(a).localeCompare(getEffectiveKey(b)) || getTitle(a).localeCompare(getTitle(b));
@@ -326,9 +328,7 @@ export default function Songs() {
                 <div className="min-w-0">
                   <div className="truncate font-bold text-zinc-950">{getTitle(s)}</div>
                   {s.author && <div className="text-sm text-muted-foreground">{s.author}</div>}
-                  {s.lastUsedAt && (
-                    <div className="text-xs text-muted-foreground">Última vez {new Date(s.lastUsedAt).toLocaleDateString("es-US")}</div>
-                  )}
+                  <div className="text-xs text-muted-foreground">{formatSongLastUsedLabel(s.lastUsedAt)}</div>
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-1" onClick={(e) => e.stopPropagation()}>

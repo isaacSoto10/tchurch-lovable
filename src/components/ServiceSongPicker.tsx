@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { formatSongLastUsedLabel } from "@/lib/songUsage";
 import { cn } from "@/lib/utils";
 
 export type SongPickerSong = {
@@ -13,6 +14,7 @@ export type SongPickerSong = {
   key?: string | null;
   bpm?: number | null;
   meter?: string | null;
+  lastUsedAt?: string | null;
 };
 
 type ServiceSongPickerProps<TSong extends SongPickerSong> = {
@@ -31,6 +33,7 @@ function getSongMeta(song: SongPickerSong) {
     song.key ? `Tono ${song.key}` : null,
     song.bpm ? `${song.bpm} BPM` : null,
     song.meter || null,
+    formatSongLastUsedLabel(song.lastUsedAt),
   ].filter(Boolean).join(" · ");
 }
 

@@ -21,6 +21,7 @@ export type SongLike = {
   notes?: string | null;
   lyrics?: string | null;
   youtubeUrl?: string | null;
+  lastUsedAt?: string | null;
   arrangements?: SongArrangement[] | null;
 };
 
