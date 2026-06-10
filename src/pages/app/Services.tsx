@@ -11,6 +11,7 @@ import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
 import { useChurch } from "@/providers/ChurchProvider";
 import { ChordProPreview } from "@/components/ChordProPreview";
+import { ServiceSongPicker } from "@/components/ServiceSongPicker";
 import {
   getSongDisplayKey,
   getSongChordPro,
@@ -575,7 +576,7 @@ export default function Services() {
   };
 
   const searchSongs = async (query: string) => {
-    if (!query.trim()) {
+    if (query.trim().length < 2) {
       setSongs([]);
       return;
     }
@@ -1129,11 +1130,11 @@ export default function Services() {
       </AlertDialog>
 
       <Dialog open={addItemDialogOpen} onOpenChange={setAddItemDialogOpen}>
-        <DialogContent className="sm:max-w-xl md:max-w-2xl">
-          <DialogHeader>
+        <DialogContent className="top-auto bottom-0 max-w-none translate-y-0 gap-0 rounded-t-3xl p-0 sm:bottom-auto sm:top-[50%] sm:max-w-xl sm:translate-y-[-50%] sm:rounded-2xl md:max-w-2xl">
+          <DialogHeader className="border-b border-zinc-100 px-5 pb-4 pt-5 text-left">
             <DialogTitle>Agregar elemento al servicio</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4">
+          <div className="space-y-4 p-4 sm:p-5">
             <div className="flex gap-2">
               <Button
                 variant={newItemType === "template" ? "default" : "outline"}
@@ -1194,57 +1195,19 @@ export default function Services() {
                 )}
               </div>
             ) : (
-              <div className="space-y-2">
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Buscar y seleccionar varias canciones..."
-                    className="pl-9"
-                    value={songSearch}
-                    onChange={(e) => {
-                      setSongSearch(e.target.value);
-                      searchSongs(e.target.value);
-                    }}
-                  />
-                </div>
-                {selectedSongs.length > 0 && (
-                  <div className="flex flex-wrap gap-2">
-                    {selectedSongs.map((song) => (
-                      <button
-                        key={song.id}
-                        type="button"
-                        className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary"
-                        onClick={() => toggleSelectedSong(song)}
-                      >
-                        {song.title}
-                        <X className="h-3 w-3" />
-                      </button>
-                    ))}
-                  </div>
-                )}
-                <div className="max-h-60 overflow-y-auto space-y-1">
-                  {songs.map((song) => {
-                    const selected = selectedSongs.some((selectedSong) => selectedSong.id === song.id);
-                    return (
-                      <Button
-                        key={song.id}
-                        variant={selected ? "default" : "ghost"}
-                        size="sm"
-                        className="w-full justify-start"
-                        onClick={() => toggleSelectedSong(song)}
-                      >
-                        {selected ? <Check className="w-4 h-4 mr-2" /> : <Music className="w-4 h-4 mr-2" />}
-                        <span>{song.title}</span>
-                        {song.author && <span className={`ml-2 text-xs ${selected ? "text-primary-foreground/80" : "text-muted-foreground"}`}>por {song.author}</span>}
-                        {song.key && <span className={`ml-2 text-xs ${selected ? "text-primary-foreground/80" : "text-muted-foreground"}`}>Tono: {song.key}</span>}
-                      </Button>
-                    );
-                  })}
-                </div>
-              </div>
+              <ServiceSongPicker
+                search={songSearch}
+                songs={songs}
+                selectedSongs={selectedSongs}
+                onSearchChange={(value) => {
+                  setSongSearch(value);
+                  searchSongs(value);
+                }}
+                onToggleSong={toggleSelectedSong}
+              />
             )}
 
-            <div className="flex gap-2 justify-end">
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               <Button variant="outline" onClick={() => setAddItemDialogOpen(false)}>
                 Cancelar
               </Button>

@@ -19,6 +19,7 @@ import { ApiError, apiFetch } from "@/lib/api";
 import { useChurch } from "@/providers/ChurchProvider";
 import { useToast } from "@/components/ui/use-toast";
 import { ChordProPreview } from "@/components/ChordProPreview";
+import { ServiceSongPicker } from "@/components/ServiceSongPicker";
 import {
   getSongDisplayKey,
   getSongChordPro,
@@ -1748,11 +1749,11 @@ export default function ServiceDetail() {
 
       {/* ADD ITEM DIALOG */}
       <Dialog open={showAddItem} onOpenChange={(open) => { setShowAddItem(open); if (!open) resetItemForm(); }}>
-        <DialogContent>
-          <DialogHeader>
+        <DialogContent className="top-auto bottom-0 max-w-none translate-y-0 gap-0 rounded-t-3xl p-0 sm:bottom-auto sm:top-[50%] sm:max-w-2xl sm:translate-y-[-50%] sm:rounded-2xl">
+          <DialogHeader className="border-b border-zinc-100 px-5 pb-4 pt-5 text-left">
             <DialogTitle>Agregar elemento</DialogTitle>
           </DialogHeader>
-          <form onSubmit={handleAddItem} className="space-y-4">
+          <form onSubmit={handleAddItem} className="space-y-4 p-4 sm:p-5">
             <div className="space-y-2">
               <Label>Tipo</Label>
               <Select value={itemType} onValueChange={setItemType}>
@@ -1763,108 +1764,71 @@ export default function ServiceDetail() {
               </Select>
             </div>
             {isSongItemType(itemType) ? (
-              <div className="space-y-2">
-                <Label>Canción</Label>
-                <Input
-                  value={songSearch}
-                  onChange={(e) => setSongSearch(e.target.value)}
-                  placeholder="Buscar y seleccionar varias canciones..."
-                />
-                {selectedSongs.length > 0 && (
-                  <div className="flex flex-wrap gap-2">
-                    {selectedSongs.map((song) => (
-                      <button
-                        key={song.id}
-                        type="button"
-                        className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary"
-                        onClick={() => toggleSelectedSong(song)}
-                      >
-                        {song.title}
-                        <X className="h-3 w-3" />
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {songResults.length > 0 && (
-                  <div className="border rounded-lg overflow-hidden">
-                    {songResults.map((s) => {
-                      const selected = selectedSongs.some((song) => song.id === s.id);
-                      return (
-                        <button
-                          key={s.id}
-                          type="button"
-                          className={`flex w-full items-start gap-2 border-b px-3 py-2 text-left text-sm last:border-b-0 ${selected ? "bg-primary/10" : "hover:bg-zinc-50"}`}
-                          onClick={() => toggleSelectedSong(s)}
-                        >
-                          <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${selected ? "border-primary bg-primary text-primary-foreground" : "border-zinc-300 bg-white"}`}>
-                            {selected && <Check className="h-3 w-3" />}
-                          </span>
-                          <span className="min-w-0">
-                            <p className="font-medium">{s.title}</p>
-                            {s.author && <p className="text-xs text-zinc-500">{s.author}</p>}
-                            <p className="text-xs text-zinc-400">
-                              {[s.key, s.bpm ? `${s.bpm} BPM` : null].filter(Boolean).join(" · ") || "Biblioteca de canciones"}
-                            </p>
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-                {canQuickCreateSong && (
-                  <div className="space-y-3 rounded-2xl border border-dashed border-primary/25 bg-primary/5 p-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-sm font-bold text-zinc-950">Crear "{trimmedSongSearch}"</p>
-                        <p className="mt-0.5 text-xs leading-5 text-zinc-500">No hay una canción exacta con ese título.</p>
+              <ServiceSongPicker
+                search={songSearch}
+                songs={songResults}
+                selectedSongs={selectedSongs}
+                onSearchChange={setSongSearch}
+                onToggleSong={toggleSelectedSong}
+                disabled={submitting}
+                footer={(canQuickCreateSong || (quickLookupCandidates.length > 0 && quickLookupSong) || quickLookupError) ? (
+                  <>
+                    {canQuickCreateSong && (
+                      <div className="space-y-3 rounded-2xl border border-dashed border-primary/25 bg-primary/5 p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="break-words text-sm font-bold text-zinc-950">Crear "{trimmedSongSearch}"</p>
+                            <p className="mt-0.5 text-xs leading-5 text-zinc-500">No hay una canción exacta con ese título.</p>
+                          </div>
+                          <Button type="button" size="sm" className="shrink-0 rounded-xl" onClick={handleCreateQuickSong} disabled={submitting}>
+                            {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Crear"}
+                          </Button>
+                        </div>
+                        <label className="flex items-center gap-2 text-xs font-semibold text-zinc-700">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-zinc-300 text-primary"
+                            checked={quickLookupOnCreate}
+                            onChange={(event) => setQuickLookupOnCreate(event.target.checked)}
+                          />
+                          Buscar acordes en La Cuerda al crear
+                        </label>
                       </div>
-                      <Button type="button" size="sm" className="shrink-0 rounded-xl" onClick={handleCreateQuickSong} disabled={submitting}>
-                        {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Crear"}
-                      </Button>
-                    </div>
-                    <label className="flex items-center gap-2 text-xs font-semibold text-zinc-700">
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4 rounded border-zinc-300 text-primary"
-                        checked={quickLookupOnCreate}
-                        onChange={(event) => setQuickLookupOnCreate(event.target.checked)}
-                      />
-                      Buscar acordes en La Cuerda al crear
-                    </label>
-                  </div>
-                )}
-                {quickLookupCandidates.length > 0 && quickLookupSong && (
-                  <div className="space-y-2 rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm">
-                    <div>
-                      <p className="text-sm font-bold text-zinc-950">Elige una versión para "{quickLookupSong.title}"</p>
-                      <p className="text-xs text-zinc-500">Si ninguna es correcta, puedes agregarla sin acordes.</p>
-                    </div>
-                    <div className="space-y-1">
-                      {quickLookupCandidates.map((candidate) => (
-                        <button
-                          key={candidate.id}
-                          type="button"
-                          className="flex w-full items-center justify-between gap-3 rounded-xl bg-zinc-50 px-3 py-2 text-left transition hover:bg-primary/5"
-                          disabled={Boolean(quickSelectingId)}
-                          onClick={() => handleSelectQuickCandidate(candidate)}
-                        >
-                          <span className="min-w-0">
-                            <span className="block truncate text-sm font-bold text-zinc-950">{candidate.title}</span>
-                            <span className="block truncate text-xs text-zinc-500">{candidate.artist || "Autor desconocido"}</span>
-                          </span>
-                          <span className="shrink-0 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-bold text-primary">
-                            {quickSelectingId === candidate.id ? "Importando..." : "Usar"}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                    <Button type="button" variant="outline" className="w-full rounded-xl" onClick={handleAddQuickSongWithoutChords} disabled={submitting}>
-                      Agregar sin acordes
-                    </Button>
-                  </div>
-                )}
-                {quickLookupError && <p className="text-xs font-medium leading-5 text-red-600">{quickLookupError}</p>}
-              </div>
+                    )}
+                    {quickLookupCandidates.length > 0 && quickLookupSong && (
+                      <div className="mt-3 space-y-2 rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm">
+                        <div>
+                          <p className="text-sm font-bold text-zinc-950">Elige una versión para "{quickLookupSong.title}"</p>
+                          <p className="text-xs text-zinc-500">Si ninguna es correcta, puedes agregarla sin acordes.</p>
+                        </div>
+                        <div className="space-y-1">
+                          {quickLookupCandidates.map((candidate) => (
+                            <button
+                              key={candidate.id}
+                              type="button"
+                              className="flex w-full items-center justify-between gap-3 rounded-xl bg-zinc-50 px-3 py-2 text-left transition hover:bg-primary/5"
+                              disabled={Boolean(quickSelectingId)}
+                              onClick={() => handleSelectQuickCandidate(candidate)}
+                            >
+                              <span className="min-w-0">
+                                <span className="block truncate text-sm font-bold text-zinc-950">{candidate.title}</span>
+                                <span className="block truncate text-xs text-zinc-500">{candidate.artist || "Autor desconocido"}</span>
+                              </span>
+                              <span className="shrink-0 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-bold text-primary">
+                                {quickSelectingId === candidate.id ? "Importando..." : "Usar"}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                        <Button type="button" variant="outline" className="w-full rounded-xl" onClick={handleAddQuickSongWithoutChords} disabled={submitting}>
+                          Agregar sin acordes
+                        </Button>
+                      </div>
+                    )}
+                    {quickLookupError && <p className="mt-3 text-xs font-medium leading-5 text-red-600">{quickLookupError}</p>}
+                  </>
+                ) : null}
+              />
             ) : (
               <div className="space-y-2">
                 <Label>Título</Label>
@@ -1875,7 +1839,7 @@ export default function ServiceDetail() {
               <Label>Duración (minutos)</Label>
               <Input type="number" value={itemDuration} onChange={(e) => setItemDuration(e.target.value)} placeholder="5" />
             </div>
-            <DialogFooter>
+            <DialogFooter className="gap-2 sm:gap-0">
               <Button type="button" variant="outline" onClick={() => setShowAddItem(false)}>Cancelar</Button>
               <Button type="submit" disabled={submitting || (isSongItemType(itemType) ? selectedSongs.length === 0 : !itemTitle.trim())}>
                 {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : isSongItemType(itemType) && selectedSongs.length > 1 ? `Agregar ${selectedSongs.length} canciones` : "Agregar"}
