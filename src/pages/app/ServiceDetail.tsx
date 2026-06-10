@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, useEffect, type DragEvent, type PointerEvent, type SyntheticEvent } from "react";
+import { useCallback, useMemo, useRef, useState, useEffect, type DragEvent, type PointerEvent, type SyntheticEvent } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -33,6 +33,14 @@ import { normalizeKey, transposeChordPro } from "@/lib/musicUtils";
 import { canUseServicePresentation } from "@/lib/servicePresentation";
 import { formatServiceDate } from "@/lib/serviceDates";
 import { sortSongsByLastUsedDesc } from "@/lib/songUsage";
+import {
+  assignmentNeedsResponse,
+  DEFAULT_SERVICE_POSITION_GROUPS,
+  getAssignmentPositionOptions,
+  getAssignmentResponseStatus,
+  getCustomAssignmentPositions,
+  servicePositionsMatch,
+} from "@/lib/serviceAssignments";
 
 type ServiceItem = {
   id: string;
@@ -131,12 +139,6 @@ const TIMING_LABELS: Record<string, string> = {
   post_service: "Después del servicio",
 };
 
-const TEAM_MATRIX_GROUPS = [
-  { title: "Liderazgo", positions: ["Preacher", "Service Director", "Worship Leader"] },
-  { title: "Banda", positions: ["Vocals", "Acoustic Guitar", "Electric Guitar", "Bass", "Keys", "Drums"] },
-  { title: "Audio / Visual", positions: ["Sound Tech", "Visuals Tech", "Camera", "Lyrics"] },
-] as const;
-
 function getInitials(firstName?: string | null, lastName?: string | null, email?: string): string {
   if (firstName || lastName) return `${firstName?.[0] || ""}${lastName?.[0] || ""}`.toUpperCase();
   return (email?.[0] || "?").toUpperCase();
@@ -189,16 +191,13 @@ function getPersonName(user: Assignment["user"]) {
 }
 
 function getPositionAssignments(assignments: Assignment[], position: string) {
-  const normalizedPosition = position.toLowerCase();
-  return assignments.filter((assignment) => {
-    const normalizedAssignment = assignment.position.toLowerCase();
-    return normalizedAssignment === normalizedPosition || normalizedAssignment.includes(normalizedPosition);
-  });
+  return assignments.filter((assignment) => servicePositionsMatch(assignment.position, position));
 }
 
 function getAssignmentStatusLabel(assignment: Assignment) {
-  if (assignment.responseStatus === "accepted" || (!assignment.responseStatus && assignment.confirmed)) return "Aceptada";
-  if (assignment.responseStatus === "declined") return "Declinada";
+  const status = getAssignmentResponseStatus(assignment);
+  if (status === "accepted") return "Aceptada";
+  if (status === "declined") return "Declinada";
   return "Pendiente";
 }
 
@@ -259,6 +258,7 @@ export default function ServiceDetail() {
   // Assign form
   const [assignUserId, setAssignUserId] = useState("");
   const [assignPosition, setAssignPosition] = useState("");
+  const [addingCustomPosition, setAddingCustomPosition] = useState(false);
   const [availableUsers, setAvailableUsers] = useState<UserOption[]>([]);
 
   const isAdmin = selectedChurch?.role === "ADMIN";
@@ -269,6 +269,41 @@ export default function ServiceDetail() {
   const selectedUserAssignments = assignUserId && service
     ? service.assignments.filter((assignment) => assignment.userId === assignUserId)
     : [];
+  const assignmentPositionOptions = useMemo(
+    () => getAssignmentPositionOptions(service?.assignments),
+    [service?.assignments],
+  );
+  const customAssignmentPositions = useMemo(
+    () => getCustomAssignmentPositions(service?.assignments),
+    [service?.assignments],
+  );
+
+  function resetAssignForm() {
+    setAssignUserId("");
+    setAssignPosition("");
+    setAddingCustomPosition(false);
+  }
+
+  function openAssignDialog() {
+    resetAssignForm();
+    setShowAssign(true);
+  }
+
+  function handleAssignDialogOpenChange(open: boolean) {
+    setShowAssign(open);
+    if (!open) resetAssignForm();
+  }
+
+  function selectAssignPosition(position: string) {
+    setAssignPosition(position);
+    setAddingCustomPosition(false);
+  }
+
+  function startCustomPosition() {
+    setAssignPosition("");
+    setAddingCustomPosition(true);
+  }
+
   const loadService = useCallback(async (options: { showLoading?: boolean } = {}) => {
     if (!id) return;
     if (options.showLoading) setLoading(true);
@@ -731,18 +766,21 @@ export default function ServiceDetail() {
 
   async function handleAssignMember(e: React.FormEvent) {
     e.preventDefault();
-    if (!assignUserId || !id) return;
+    const position = assignPosition.trim();
+    if (!assignUserId || !id || !position) {
+      toast({ title: "Selecciona o agrega una posición", variant: "destructive" });
+      return;
+    }
     setSubmitting(true);
     try {
       await apiFetch(`/service-assignments`, {
         method: "POST",
-        body: JSON.stringify({ userId: assignUserId, serviceId: id, position: assignPosition || "Member" }),
+        body: JSON.stringify({ userId: assignUserId, serviceId: id, position }),
       });
       const data = await apiFetch<Service>(`/services/${id}`);
       setService(data);
       setShowAssign(false);
-      setAssignUserId("");
-      setAssignPosition("");
+      resetAssignForm();
     } catch (e) {
       console.error(e);
       toast({
@@ -770,7 +808,9 @@ export default function ServiceDetail() {
       });
       setService((prev) => prev ? {
         ...prev,
-        assignments: prev.assignments.map((a) => a.id === assignmentId ? { ...a, confirmed } : a),
+        assignments: prev.assignments.map((a) => a.id === assignmentId
+          ? { ...a, confirmed, responseStatus: confirmed ? "accepted" : "pending", respondedAt: confirmed ? new Date().toISOString() : null }
+          : a),
       } : prev);
     } catch (e) { console.error(e); }
   }
@@ -778,15 +818,17 @@ export default function ServiceDetail() {
   async function handleAssignmentResponse(assignmentId: string, action: "accept" | "decline") {
     setRespondingId(assignmentId);
     try {
-      const result = await apiFetch<{ confirmed: boolean; responseStatus: "accepted" | "declined" }>(`/service-assignments/${assignmentId}/respond`, {
+      const result = await apiFetch<{ confirmed?: boolean; responseStatus?: "pending" | "accepted" | "declined"; respondedAt?: string }>(`/service-assignments/${assignmentId}/respond`, {
         method: "PUT",
         body: JSON.stringify({ action }),
       });
+      const responseStatus = result.responseStatus || (action === "accept" ? "accepted" : "declined");
+      const confirmed = typeof result.confirmed === "boolean" ? result.confirmed : responseStatus === "accepted";
       setService((prev) => prev ? {
         ...prev,
         assignments: prev.assignments.map((assignment) =>
           assignment.id === assignmentId
-            ? { ...assignment, confirmed: result.confirmed, responseStatus: result.responseStatus, respondedAt: new Date().toISOString() }
+            ? { ...assignment, confirmed, responseStatus, respondedAt: result.respondedAt || new Date().toISOString() }
             : assignment
         ),
       } : prev);
@@ -1387,7 +1429,7 @@ export default function ServiceDetail() {
           <div className="space-y-3">
             {isPlanner && (
               <div className="flex justify-end">
-                <Button size="sm" className="h-10 rounded-2xl" onClick={() => setShowAssign(true)}>
+                <Button size="sm" className="h-10 rounded-2xl" onClick={openAssignDialog}>
                   <Plus className="w-4 h-4 mr-1" /> Asignar
                 </Button>
               </div>
@@ -1398,7 +1440,7 @@ export default function ServiceDetail() {
                 <CardTitle className="text-base">Matriz de equipo</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                {TEAM_MATRIX_GROUPS.map((group) => (
+                {DEFAULT_SERVICE_POSITION_GROUPS.map((group) => (
                   <div key={group.title} className="space-y-2">
                     <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-zinc-500">{group.title}</p>
                     {group.positions.map((position) => {
@@ -1422,6 +1464,26 @@ export default function ServiceDetail() {
                     })}
                   </div>
                 ))}
+                {customAssignmentPositions.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-zinc-500">Otras posiciones</p>
+                    {customAssignmentPositions.map((position) => {
+                      const assigned = getPositionAssignments(service.assignments, position);
+                      return (
+                        <div key={position} className="flex items-center justify-between gap-3 rounded-2xl bg-zinc-50 px-3 py-2">
+                          <span className="text-sm font-semibold text-zinc-900">{position}</span>
+                          <div className="flex flex-wrap justify-end gap-1.5">
+                            {assigned.map((assignment) => (
+                              <Badge key={assignment.id} variant="secondary" className="rounded-full">
+                                {getPersonName(assignment.user)} · {getAssignmentStatusLabel(assignment)}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </CardContent>
             </Card>
 
@@ -1437,6 +1499,8 @@ export default function ServiceDetail() {
                 {service.assignments.map((a) => {
                   const assignmentEmail = a.user?.email?.trim().toLowerCase() || null;
                   const isCurrentUserAssigned = a.userId === currentUserId || Boolean(currentUserEmail && assignmentEmail === currentUserEmail);
+                  const responseStatus = getAssignmentResponseStatus(a);
+                  const canRespond = isCurrentUserAssigned && assignmentNeedsResponse(a);
 
                   return (
                   <Card key={a.id} className="app-card">
@@ -1453,14 +1517,14 @@ export default function ServiceDetail() {
                         <p className="text-xs text-zinc-500">{a.position}</p>
                       </div>
                       <div className="flex items-center gap-2">
-                        {(a.responseStatus === "accepted" || (!a.responseStatus && a.confirmed)) ? (
+                        {responseStatus === "accepted" ? (
                           <Badge variant="default" className="text-xs bg-emerald-100 text-emerald-700">Confirmado</Badge>
-                        ) : a.responseStatus === "declined" ? (
+                        ) : responseStatus === "declined" ? (
                           <Badge variant="secondary" className="text-xs bg-red-50 text-red-700">Declinado</Badge>
                         ) : (
                           <Badge variant="secondary" className="text-xs">Pendiente</Badge>
                         )}
-                        {isCurrentUserAssigned && (
+                        {canRespond && (
                           <div className="flex gap-1">
                             <Button
                               size="sm"
@@ -1858,7 +1922,7 @@ export default function ServiceDetail() {
       </Dialog>
 
       {/* ASSIGN MEMBER DIALOG */}
-      <Dialog open={showAssign} onOpenChange={setShowAssign}>
+      <Dialog open={showAssign} onOpenChange={handleAssignDialogOpenChange}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Asignar miembro</DialogTitle>
@@ -1888,11 +1952,44 @@ export default function ServiceDetail() {
             </div>
             <div className="space-y-2">
               <Label>Posición</Label>
-              <Input value={assignPosition} onChange={(e) => setAssignPosition(e.target.value)} placeholder="Ej. Voz, guitarra, director de alabanza" />
+              <div className="grid grid-cols-2 gap-2">
+                {assignmentPositionOptions.map((position) => (
+                  <button
+                    key={position}
+                    type="button"
+                    onClick={() => selectAssignPosition(position)}
+                    className={`min-h-11 rounded-xl border px-3 py-2 text-left text-sm font-semibold transition-colors ${
+                      !addingCustomPosition && assignPosition === position
+                        ? "border-primary bg-primary text-primary-foreground shadow-sm"
+                        : "border-zinc-200 bg-white text-zinc-700 hover:border-primary/40 hover:bg-primary/5"
+                    }`}
+                  >
+                    {position}
+                  </button>
+                ))}
+                <Button
+                  type="button"
+                  variant={addingCustomPosition ? "default" : "outline"}
+                  className="min-h-11 rounded-xl"
+                  onClick={startCustomPosition}
+                  aria-label="Agregar una posición personalizada"
+                  title="Agregar una posición personalizada"
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </div>
+              {addingCustomPosition && (
+                <Input
+                  value={assignPosition}
+                  onChange={(e) => setAssignPosition(e.target.value)}
+                  placeholder="Nombre de la posición"
+                  autoFocus
+                />
+              )}
             </div>
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setShowAssign(false)}>Cancelar</Button>
-              <Button type="submit" disabled={submitting}>{submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Asignar"}</Button>
+              <Button type="button" variant="outline" onClick={() => handleAssignDialogOpenChange(false)}>Cancelar</Button>
+              <Button type="submit" disabled={submitting || !assignUserId || !assignPosition.trim()}>{submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Asignar"}</Button>
             </DialogFooter>
           </form>
         </DialogContent>

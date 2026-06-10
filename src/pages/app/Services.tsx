@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback, type PointerEvent, type SyntheticEvent } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback, type PointerEvent, type SyntheticEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -22,6 +22,7 @@ import {
 import { normalizeKey, transposeChordPro } from "@/lib/musicUtils";
 import { formatServiceDate, formatServiceTime, toServiceDatetimeLocalValue } from "@/lib/serviceDates";
 import { sortSongsByLastUsedDesc } from "@/lib/songUsage";
+import { getAssignmentPositionOptions } from "@/lib/serviceAssignments";
 import {
   Dialog,
   DialogClose,
@@ -134,24 +135,6 @@ const ITEM_TYPES = [
   { label: "Anuncio", value: "announcement", icon: Bell },
 ];
 
-const POSITIONS = [
-  "Vocals",
-  "Lead Vocal",
-  "Backing Vocal",
-  "Acoustic Guitar",
-  "Electric Guitar",
-  "Bass",
-  "Keys",
-  "Drums",
-  "Percussion",
-  "Strings",
-  "Sound Tech",
-  "Visuals Tech",
-  "Camera",
-  "Director",
-  "Other",
-];
-
 const TEMPLATE_ITEMS = [
   { title: "Bienvenida", type: "header" },
   { title: "Llamado a la adoración", type: "header" },
@@ -253,7 +236,13 @@ export default function Services() {
   const [memberSearch, setMemberSearch] = useState("");
   const [members, setMembers] = useState<Member[]>([]);
   const [selectedMember, setSelectedMember] = useState<Member | null>(null);
-  const [selectedPosition, setSelectedPosition] = useState("Vocals");
+  const [selectedPosition, setSelectedPosition] = useState("");
+  const [addingCustomPosition, setAddingCustomPosition] = useState(false);
+  const selectedServiceAssignments = selectedServiceId ? serviceAssignments[selectedServiceId] || [] : [];
+  const assignmentPositionOptions = useMemo(
+    () => getAssignmentPositionOptions(selectedServiceAssignments),
+    [selectedServiceAssignments],
+  );
 
   const loadServices = useCallback(() => {
     setLoading(true);
@@ -826,7 +815,8 @@ export default function Services() {
     setMemberSearch("");
     setMembers([]);
     setSelectedMember(null);
-    setSelectedPosition("Vocals");
+    setSelectedPosition("");
+    setAddingCustomPosition(false);
     setAssignDialogOpen(true);
   };
 
@@ -844,8 +834,9 @@ export default function Services() {
   };
 
   const handleAssignMember = async () => {
-    if (!selectedServiceId || !selectedMember) {
-      toast({ title: "Selecciona un miembro", variant: "destructive" });
+    const position = selectedPosition.trim();
+    if (!selectedServiceId || !selectedMember || !position) {
+      toast({ title: !selectedMember ? "Selecciona un miembro" : "Selecciona o agrega una posición", variant: "destructive" });
       return;
     }
 
@@ -855,11 +846,13 @@ export default function Services() {
         body: JSON.stringify({
           serviceId: selectedServiceId,
           userId: selectedMember.id,
-          position: selectedPosition,
+          position,
         }),
       });
       toast({ title: "Miembro asignado" });
       setAssignDialogOpen(false);
+      setSelectedPosition("");
+      setAddingCustomPosition(false);
 
       const serviceRes = await fetchApi(`/services/${selectedServiceId}`);
       if (serviceRes && typeof serviceRes === 'object') {
@@ -1235,7 +1228,16 @@ export default function Services() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={assignDialogOpen} onOpenChange={setAssignDialogOpen}>
+      <Dialog
+        open={assignDialogOpen}
+        onOpenChange={(open) => {
+          setAssignDialogOpen(open);
+          if (!open) {
+            setSelectedPosition("");
+            setAddingCustomPosition(false);
+          }
+        }}
+      >
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Asignar miembro del equipo</DialogTitle>
@@ -1268,21 +1270,61 @@ export default function Services() {
                 </Button>
               ))}
             </div>
-            <Select value={selectedPosition} onValueChange={setSelectedPosition}>
-              <SelectTrigger>
-                <SelectValue placeholder="Selecciona una posición" />
-              </SelectTrigger>
-              <SelectContent>
-                {POSITIONS.map((p) => (
-                  <SelectItem key={p} value={p}>{p}</SelectItem>
+            <div className="space-y-2">
+              <Label>Posición</Label>
+              <div className="grid grid-cols-2 gap-2">
+                {assignmentPositionOptions.map((position) => (
+                  <button
+                    key={position}
+                    type="button"
+                    onClick={() => {
+                      setSelectedPosition(position);
+                      setAddingCustomPosition(false);
+                    }}
+                    className={`min-h-11 rounded-xl border px-3 py-2 text-left text-sm font-semibold transition-colors ${
+                      !addingCustomPosition && selectedPosition === position
+                        ? "border-primary bg-primary text-primary-foreground shadow-sm"
+                        : "border-zinc-200 bg-white text-zinc-700 hover:border-primary/40 hover:bg-primary/5"
+                    }`}
+                  >
+                    {position}
+                  </button>
                 ))}
-              </SelectContent>
-            </Select>
+                <Button
+                  type="button"
+                  variant={addingCustomPosition ? "default" : "outline"}
+                  className="min-h-11 rounded-xl"
+                  onClick={() => {
+                    setSelectedPosition("");
+                    setAddingCustomPosition(true);
+                  }}
+                  aria-label="Agregar una posición personalizada"
+                  title="Agregar una posición personalizada"
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </div>
+              {addingCustomPosition && (
+                <Input
+                  value={selectedPosition}
+                  onChange={(e) => setSelectedPosition(e.target.value)}
+                  placeholder="Nombre de la posición"
+                  autoFocus
+                />
+              )}
+            </div>
             <div className="flex gap-2 justify-end">
-              <Button variant="outline" onClick={() => setAssignDialogOpen(false)}>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setAssignDialogOpen(false);
+                  setSelectedPosition("");
+                  setAddingCustomPosition(false);
+                }}
+              >
                 Cancelar
               </Button>
-              <Button onClick={handleAssignMember} disabled={!selectedMember}>
+              <Button onClick={handleAssignMember} disabled={!selectedMember || !selectedPosition.trim()}>
                 Asignar
               </Button>
             </div>
