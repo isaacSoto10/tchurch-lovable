@@ -1,5 +1,7 @@
 export type ServiceAssignmentStatus = "pending" | "accepted" | "declined" | null | undefined;
 
+export type NormalizedServiceAssignmentStatus = "pending" | "accepted" | "declined";
+
 export type ServiceAssignmentUserLike = {
   firstName?: string | null;
   lastName?: string | null;
@@ -13,6 +15,14 @@ export type ServiceAssignmentLike = {
   responseStatus?: ServiceAssignmentStatus;
   user?: ServiceAssignmentUserLike | null;
 };
+
+export const DEFAULT_SERVICE_POSITION_GROUPS = [
+  { title: "Liderazgo", positions: ["Preacher", "Service Director", "Worship Leader", "Director"] },
+  { title: "Banda", positions: ["Vocals", "Lead Vocal", "Backing Vocal", "Acoustic Guitar", "Electric Guitar", "Bass", "Keys", "Drums", "Percussion", "Strings"] },
+  { title: "Audio / Visual", positions: ["Sound Tech", "Visuals Tech", "Camera", "Lyrics"] },
+] as const;
+
+export const DEFAULT_SERVICE_POSITIONS = DEFAULT_SERVICE_POSITION_GROUPS.flatMap((group) => group.positions);
 
 const MUSIC_ROLE_KEYWORDS = [
   "worship",
@@ -74,6 +84,60 @@ const ROLE_LABELS: Array<[string, string]> = [
 
 const ROLE_PRIORITY = ["voz", "lidera", "alabanza", "piano", "teclado", "guitarra", "bajo", "batería", "percusión", "audio", "letras", "visuales"];
 
+function normalizeServicePosition(position: string | null | undefined) {
+  return position?.trim().toLowerCase() || "";
+}
+
+function addUniquePosition(options: string[], position: string | null | undefined) {
+  const trimmed = position?.trim();
+  if (!trimmed) return;
+  const normalized = normalizeServicePosition(trimmed);
+  if (!options.some((option) => normalizeServicePosition(option) === normalized)) {
+    options.push(trimmed);
+  }
+}
+
+export function getAssignmentResponseStatus(assignment: Pick<ServiceAssignmentLike, "confirmed" | "responseStatus">): NormalizedServiceAssignmentStatus {
+  if (assignment.responseStatus === "accepted" || assignment.responseStatus === "declined" || assignment.responseStatus === "pending") {
+    return assignment.responseStatus;
+  }
+
+  return assignment.confirmed ? "accepted" : "pending";
+}
+
+export function assignmentNeedsResponse(assignment: Pick<ServiceAssignmentLike, "confirmed" | "responseStatus">) {
+  return getAssignmentResponseStatus(assignment) === "pending";
+}
+
+export function servicePositionsMatch(position: string | null | undefined, targetPosition: string | null | undefined) {
+  const normalizedPosition = normalizeServicePosition(position);
+  const normalizedTarget = normalizeServicePosition(targetPosition);
+  return Boolean(normalizedPosition && normalizedTarget && (
+    normalizedPosition === normalizedTarget || normalizedPosition.includes(normalizedTarget)
+  ));
+}
+
+export function matchesDefaultServicePosition(position: string | null | undefined) {
+  return DEFAULT_SERVICE_POSITIONS.some((defaultPosition) => servicePositionsMatch(position, defaultPosition));
+}
+
+export function getAssignmentPositionOptions(assignments: ServiceAssignmentLike[] | null | undefined) {
+  const options: string[] = [];
+  DEFAULT_SERVICE_POSITIONS.forEach((position) => addUniquePosition(options, position));
+  (assignments || []).forEach((assignment) => addUniquePosition(options, assignment.position));
+  return options;
+}
+
+export function getCustomAssignmentPositions(assignments: ServiceAssignmentLike[] | null | undefined) {
+  const positions: string[] = [];
+  (assignments || []).forEach((assignment) => {
+    if (!matchesDefaultServicePosition(assignment.position)) {
+      addUniquePosition(positions, assignment.position);
+    }
+  });
+  return positions;
+}
+
 export function getAssignmentPersonName(user: ServiceAssignmentUserLike | null | undefined) {
   return [user?.firstName, user?.lastName].filter(Boolean).join(" ").trim() || user?.email || "Sin nombre";
 }
@@ -91,8 +155,9 @@ function getAssignmentSortWeight(assignment: ServiceAssignmentLike) {
 }
 
 export function getAssignmentStatusText(assignment: ServiceAssignmentLike) {
-  if (assignment.responseStatus === "accepted" || (!assignment.responseStatus && assignment.confirmed)) return "Aceptada";
-  if (assignment.responseStatus === "declined") return "Declinada";
+  const status = getAssignmentResponseStatus(assignment);
+  if (status === "accepted") return "Aceptada";
+  if (status === "declined") return "Declinada";
   return "Pendiente";
 }
 
