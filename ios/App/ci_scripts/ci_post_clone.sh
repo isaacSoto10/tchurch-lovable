@@ -62,12 +62,13 @@ test -d ios/App/CapacitorPushNotifications/ios/Sources/PushNotificationsPlugin
 test -f ios/App/CapacitorShare/Package.swift
 test -d ios/App/CapacitorShare/ios/Sources/SharePlugin
 
-sed -i '' \
-  -e 's#path: "../../../node_modules/@capacitor/app"#path: "../CapacitorApp"#' \
-  -e 's#path: "../../../node_modules/@capacitor/barcode-scanner"#path: "../CapacitorBarcodeScanner"#' \
-  -e 's#path: "../../../node_modules/@capacitor/filesystem"#path: "../CapacitorFilesystem"#' \
-  -e 's#path: "../../../node_modules/@capacitor/push-notifications"#path: "../CapacitorPushNotifications"#' \
-  -e 's#path: "../../../node_modules/@capacitor/share"#path: "../CapacitorShare"#' \
+perl -0pi -e '
+  s#path: "[^"]*node_modules/@capacitor/app"#path: "../CapacitorApp"#g;
+  s#path: "[^"]*node_modules/@capacitor/barcode-scanner"#path: "../CapacitorBarcodeScanner"#g;
+  s#path: "[^"]*node_modules/@capacitor/filesystem"#path: "../CapacitorFilesystem"#g;
+  s#path: "[^"]*node_modules/@capacitor/push-notifications"#path: "../CapacitorPushNotifications"#g;
+  s#path: "[^"]*node_modules/@capacitor/share"#path: "../CapacitorShare"#g;
+' \
   ios/App/CapApp-SPM/Package.swift
 
 if grep -q "node_modules/@capacitor" ios/App/CapApp-SPM/Package.swift; then
