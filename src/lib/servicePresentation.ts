@@ -65,6 +65,12 @@ export type PresentationSlide =
       nextTitle?: string;
     };
 
+export type PresentationLayout = "phone" | "tablet";
+
+type BuildServicePresentationSlidesOptions = {
+  layout?: PresentationLayout;
+};
+
 type PlanningNoteKey = "vocals" | "band" | "audioVisual" | "person";
 
 const NOTE_LABELS: Record<PlanningNoteKey, string> = {
@@ -90,6 +96,7 @@ const ITEM_TYPE_LABELS: Record<string, string> = {
 };
 
 const CHART_WRAP_COLUMNS = 34;
+const TABLET_CHART_WRAP_COLUMNS = 64;
 const MAX_RENDERED_ROWS_PER_SONG_SLIDE = 23;
 
 function getPlanningDetails(item: PresentationServiceItem) {
@@ -281,15 +288,16 @@ function getCueNotes(item: PresentationServiceItem) {
   return cueNotes;
 }
 
-function buildSongSlides(item: PresentationServiceItem, itemIndex: number): PresentationSlide[] {
+function buildSongSlides(item: PresentationServiceItem, itemIndex: number, layout: PresentationLayout): PresentationSlide[] {
   const arrangement = getPrimaryArrangement(item.song);
   const chordPro = getDisplayChordPro(item);
-  const displayLines = chordProToDisplayLines(chordPro, 500).flatMap((line) => splitWideDisplayLine(line));
-  const chunks = splitSongLines(displayLines);
+  const displayLines = chordProToDisplayLines(chordPro, 500);
+  const chartLines = displayLines.flatMap((line) => splitWideDisplayLine(line, layout === "tablet" ? TABLET_CHART_WRAP_COLUMNS : CHART_WRAP_COLUMNS));
+  const chunks = layout === "tablet" ? [chartLines] : splitSongLines(chartLines);
   const key = getServiceItemKey(item);
 
   return chunks.map((lines, chunkIndex) => ({
-    id: `${item.id}-song-${chunkIndex}`,
+    id: layout === "tablet" ? `${item.id}-song` : `${item.id}-song-${chunkIndex}`,
     kind: "song" as const,
     itemId: item.id,
     itemIndex,
@@ -319,10 +327,14 @@ function buildCueSlide(item: PresentationServiceItem, itemIndex: number): Presen
   };
 }
 
-export function buildServicePresentationSlides(service: PresentationService): PresentationSlide[] {
+export function buildServicePresentationSlides(
+  service: PresentationService,
+  options: BuildServicePresentationSlidesOptions = {}
+): PresentationSlide[] {
+  const layout = options.layout || "phone";
   const sortedItems = [...(service.items || [])].sort((a, b) => a.position - b.position);
   const slides = sortedItems.flatMap((item, index) => {
-    if (isSongItemType(item.type) && item.song) return buildSongSlides(item, index + 1);
+    if (isSongItemType(item.type) && item.song) return buildSongSlides(item, index + 1, layout);
     return [buildCueSlide(item, index + 1)];
   });
 

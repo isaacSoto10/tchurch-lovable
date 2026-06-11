@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildServicePresentationSlides, type PresentationService } from "./servicePresentation";
 
 const PRESENTATION_WRAP_COLUMNS = 34;
+const TABLET_PRESENTATION_WRAP_COLUMNS = 64;
 
 function buildService(chordPro: string): PresentationService {
   return {
@@ -76,5 +77,22 @@ describe("buildServicePresentationSlides", () => {
       expect(line?.lyrics).toContain(lyric);
       expect(line!.chords.indexOf(chord)).toBeLessThanOrEqual(line!.lyrics.indexOf(lyric));
     }
+  });
+
+  it("keeps tablet songs as one scrollable slide with wider chart lines", () => {
+    const slides = buildServicePresentationSlides(
+      buildService(
+        "[Bm]Originalmente comienza un [A]solo de batería y luego [G]entran los demás [F#]instrumentos.\n" +
+        "[Bm]////Al Rey"
+      ),
+      { layout: "tablet" }
+    );
+    const songSlides = slides.filter((slide) => slide.kind === "song");
+    const lines = songSlides.flatMap((slide) => slide.lines).filter((line) => line.kind === "line");
+
+    expect(songSlides).toHaveLength(1);
+    expect(songSlides[0]).toMatchObject({ part: 1, totalParts: 1 });
+    expect(lines.some((line) => Math.max(line.chords.length, line.lyrics.length) > PRESENTATION_WRAP_COLUMNS)).toBe(true);
+    expect(lines.every((line) => Math.max(line.chords.length, line.lyrics.length) <= TABLET_PRESENTATION_WRAP_COLUMNS)).toBe(true);
   });
 });

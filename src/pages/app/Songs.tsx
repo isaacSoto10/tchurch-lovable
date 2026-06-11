@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -29,6 +29,8 @@ interface Song {
 }
 
 const MUSICAL_KEYS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B", "Cm", "C#m", "Dm", "D#m", "Em", "Fm", "F#m", "Gm", "G#m", "Am", "A#m", "Bm"];
+const SONG_SEARCH_DEBOUNCE_MS = 650;
+const SONG_SEARCH_MIN_LENGTH = 2;
 
 export default function Songs() {
   const navigate = useNavigate();
@@ -38,10 +40,12 @@ export default function Songs() {
   const isAdmin = selectedChurch?.role === "ADMIN";
   const [songs, setSongs] = useState<Song[]>([]);
   const [search, setSearch] = useState("");
+  const [appliedSearch, setAppliedSearch] = useState("");
   const [artistFilter, setArtistFilter] = useState("all");
   const [keyFilter, setKeyFilter] = useState("all");
   const [sortBy, setSortBy] = useState("lastUsed");
   const [loading, setLoading] = useState(true);
+  const songRequestIdRef = useRef(0);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingSong, setEditingSong] = useState<Song | null>(null);
@@ -55,7 +59,9 @@ export default function Songs() {
     notes: "",
   });
 
-  const loadSongs = useCallback((nextSearch = search) => {
+  const loadSongs = useCallback((nextSearch: string) => {
+    const requestId = songRequestIdRef.current + 1;
+    songRequestIdRef.current = requestId;
     const params = new URLSearchParams();
     const trimmedSearch = nextSearch.trim();
     params.set("limit", trimmedSearch ? "150" : "400");
@@ -64,15 +70,32 @@ export default function Songs() {
 
     setLoading(true);
     fetchApi(`/songs?${params.toString()}`)
-      .then((data) => setSongs(Array.isArray(data) ? data : []))
-      .catch((e) => console.error("No se pudieron cargar las canciones:", e))
-      .finally(() => setLoading(false));
-  }, [fetchApi, search]);
+      .then((data) => {
+        if (songRequestIdRef.current !== requestId) return;
+        setSongs(Array.isArray(data) ? data : []);
+      })
+      .catch((e) => {
+        if (songRequestIdRef.current === requestId) console.error("No se pudieron cargar las canciones:", e);
+      })
+      .finally(() => {
+        if (songRequestIdRef.current === requestId) setLoading(false);
+      });
+  }, [fetchApi]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => loadSongs(search), search.trim() ? 250 : 0);
+    const trimmedSearch = search.trim();
+    if (trimmedSearch.length < SONG_SEARCH_MIN_LENGTH) {
+      setAppliedSearch("");
+      return;
+    }
+
+    const timer = window.setTimeout(() => setAppliedSearch(trimmedSearch), SONG_SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
-  }, [loadSongs, search]);
+  }, [search]);
+
+  useEffect(() => {
+    loadSongs(appliedSearch);
+  }, [appliedSearch, loadSongs]);
 
   const openNewDialog = () => {
     setEditingSong(null);
@@ -121,7 +144,7 @@ export default function Songs() {
         toast({ title: "Canción creada" });
       }
       setDialogOpen(false);
-      loadSongs();
+      loadSongs(appliedSearch);
     } catch (e) {
       toast({ title: editingSong ? "No se pudo actualizar la canción" : "No se pudo crear la canción", variant: "destructive" });
     }
@@ -133,7 +156,7 @@ export default function Songs() {
       await fetchApi(`/songs/${deleteId}`, { method: "DELETE" });
       toast({ title: "Canción eliminada" });
       setDeleteId(null);
-      loadSongs();
+      loadSongs(appliedSearch);
     } catch (e) {
       toast({ title: "No se pudo eliminar la canción", variant: "destructive" });
     }
@@ -154,7 +177,7 @@ export default function Songs() {
   );
 
   const filtered = useMemo(() => {
-    const normalizedSearch = search.trim().toLowerCase();
+    const normalizedSearch = appliedSearch.trim().toLowerCase();
 
     return [...songs]
       .filter((song) => {
@@ -178,7 +201,7 @@ export default function Songs() {
         if (sortBy === "key") return getEffectiveKey(a).localeCompare(getEffectiveKey(b)) || getTitle(a).localeCompare(getTitle(b));
         return getTitle(a).localeCompare(getTitle(b));
       });
-  }, [artistFilter, keyFilter, search, songs, sortBy]);
+  }, [appliedSearch, artistFilter, keyFilter, songs, sortBy]);
 
   if (loading) {
     return <div className="flex items-center justify-center py-20"><div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full" /></div>;

@@ -134,8 +134,8 @@ const navItems: NavItem[] = [
 ];
 
 export function AppSidebar() {
-  const { state } = useSidebar();
-  const collapsed = state === "collapsed";
+  const { isMobile, state } = useSidebar();
+  const collapsed = !isMobile && state === "collapsed";
   const { signOut, user } = useAppAuth();
   const { selectedChurch } = useChurch();
   const { fetchApi } = useApi();

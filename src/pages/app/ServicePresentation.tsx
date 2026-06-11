@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent, type TouchEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type TouchEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, ChevronLeft, ChevronRight, Eye, EyeOff, ListMusic, Loader2, Music, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { useChurch } from "@/providers/ChurchProvider";
 import {
   buildServicePresentationSlides,
   canUseServicePresentation,
+  type PresentationLayout,
   type PresentationService,
   type PresentationSlide,
 } from "@/lib/servicePresentation";
@@ -21,6 +22,20 @@ type UserMe = {
 type WakeLockHandle = {
   release: () => Promise<void>;
 };
+
+const TABLET_PRESENTATION_MIN_SIDE = 768;
+
+function getViewportSize() {
+  if (typeof window === "undefined") return { width: 0, height: 0 };
+  return {
+    width: window.visualViewport?.width || window.innerWidth,
+    height: window.visualViewport?.height || window.innerHeight,
+  };
+}
+
+function isTabletPresentationViewport(width: number, height: number) {
+  return Math.min(width || 0, height || 0) >= TABLET_PRESENTATION_MIN_SIDE;
+}
 
 function useWakeLock() {
   const wakeLockRef = useRef<WakeLockHandle | null>(null);
@@ -58,6 +73,33 @@ function useWakeLock() {
   }, []);
 }
 
+function useTabletPresentationLayout() {
+  const [isTablet, setIsTablet] = useState(() => {
+    const { width, height } = getViewportSize();
+    return isTabletPresentationViewport(width, height);
+  });
+
+  useEffect(() => {
+    function updateLayout() {
+      const { width, height } = getViewportSize();
+      setIsTablet(isTabletPresentationViewport(width, height));
+    }
+
+    updateLayout();
+    window.addEventListener("resize", updateLayout);
+    window.addEventListener("orientationchange", updateLayout);
+    window.visualViewport?.addEventListener("resize", updateLayout);
+
+    return () => {
+      window.removeEventListener("resize", updateLayout);
+      window.removeEventListener("orientationchange", updateLayout);
+      window.visualViewport?.removeEventListener("resize", updateLayout);
+    };
+  }, []);
+
+  return isTablet;
+}
+
 function useMeasuredElement<T extends HTMLElement>() {
   const ref = useRef<T | null>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -93,6 +135,22 @@ function getChordTokens(chords: string) {
   }));
 }
 
+function firstContentColumn(value: string) {
+  const index = value.search(/\S/);
+  return index === -1 ? Number.POSITIVE_INFINITY : index;
+}
+
+function trimSharedChartIndent(chords: string, lyrics: string) {
+  const sharedColumns = Math.min(firstContentColumn(chords), firstContentColumn(lyrics));
+
+  if (!Number.isFinite(sharedColumns)) {
+    return { chords: chords.trimStart(), lyrics: lyrics.trimStart() };
+  }
+
+  if (sharedColumns <= 0) return { chords, lyrics };
+  return { chords: chords.slice(sharedColumns), lyrics: lyrics.slice(sharedColumns) };
+}
+
 function normalizeSectionLabel(value: string) {
   return value
     .normalize("NFD")
@@ -121,7 +179,8 @@ function getChordTokenLeft(column: number, columns: number) {
   return Math.min(92, Math.max(0, (column / columns) * 100));
 }
 
-function SongSlide({ slide, showChords }: { slide: Extract<PresentationSlide, { kind: "song" }>; showChords: boolean }) {
+function SongSlide({ slide, showChords, layout }: { slide: Extract<PresentationSlide, { kind: "song" }>; showChords: boolean; layout: PresentationLayout }) {
+  const isTabletLayout = layout === "tablet";
   const [chartBodyRef, chartSize] = useMeasuredElement<HTMLDivElement>();
   const chartMetrics = useMemo(() => {
     return slide.lines.reduce(
@@ -158,6 +217,8 @@ function SongSlide({ slide, showChords }: { slide: Extract<PresentationSlide, { 
   const chordFontSizePx = Math.round(
     Math.max(isCompactStage ? 18 : 22, Math.min(lyricFontSizePx - 1, isCompactStage ? 22 : 34))
   );
+  const lyricFontSize = isTabletLayout ? "clamp(1rem, 2.35vw, 1.75rem)" : `${lyricFontSizePx}px`;
+  const chordFontSize = isTabletLayout ? "clamp(0.86rem, 1.85vw, 1.35rem)" : `${chordFontSizePx}px`;
 
   return (
     <div className="mx-auto flex h-full w-full max-w-none flex-col px-3 pb-3 pt-0 sm:max-w-6xl sm:px-8 sm:pb-4 sm:pt-1">
@@ -186,7 +247,11 @@ function SongSlide({ slide, showChords }: { slide: Extract<PresentationSlide, { 
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden rounded-2xl border border-white/[0.15] bg-black/25 p-5 shadow-2xl shadow-black/[0.35] sm:rounded-[1.75rem] sm:p-7">
-        <div ref={chartBodyRef} className="h-full w-full min-w-0 overflow-hidden">
+        <div
+          ref={chartBodyRef}
+          className={`h-full w-full min-w-0 ${isTabletLayout ? "touch-pan-y overflow-y-auto overscroll-contain pr-1" : "overflow-hidden"}`}
+          style={isTabletLayout ? { WebkitOverflowScrolling: "touch" } : undefined}
+        >
           {slide.lines.map((line, index) => {
             if (line.kind === "blank") return <div key={index} className="h-2" />;
             if (line.kind === "section" || line.kind === "meta") {
@@ -205,6 +270,35 @@ function SongSlide({ slide, showChords }: { slide: Extract<PresentationSlide, { 
 
             if (!showChords && !line.lyrics.trim()) return null;
 
+            if (isTabletLayout) {
+              const chartLine = trimSharedChartIndent(line.chords, line.lyrics);
+
+              return (
+                <div
+                  key={index}
+                  className="min-w-0 overflow-x-auto pb-3 leading-none last:pb-0"
+                  style={{ fontVariantLigatures: "none" }}
+                >
+                  {showChords && chartLine.chords.trim().length > 0 && (
+                    <pre
+                      className="w-max min-w-full whitespace-pre font-mono font-black leading-none text-violet-300"
+                      style={{ fontSize: chordFontSize, textShadow: "0 0 18px rgba(196,181,253,0.24)" }}
+                    >
+                      {chartLine.chords}
+                    </pre>
+                  )}
+                  {chartLine.lyrics.trim().length > 0 && (
+                    <pre
+                      className="w-max min-w-full whitespace-pre font-mono font-black leading-[1.12] text-white"
+                      style={{ fontSize: lyricFontSize, textShadow: "0 2px 18px rgba(0,0,0,0.34)" }}
+                    >
+                      {chartLine.lyrics}
+                    </pre>
+                  )}
+                </div>
+              );
+            }
+
             const chordTokens = getChordTokens(line.chords);
             const lineColumns = Math.max(18, chartMetrics.maxColumns, line.chords.length, line.lyrics.length);
             const hasLyrics = line.lyrics.trim().length > 0;
@@ -216,7 +310,7 @@ function SongSlide({ slide, showChords }: { slide: Extract<PresentationSlide, { 
                 style={{ fontVariantLigatures: "none" }}
               >
                 {showChords && chordTokens.length > 0 && (
-                  <div className="relative h-[1.12em] min-w-0 overflow-visible" style={{ fontSize: `${chordFontSizePx}px` }}>
+                  <div className="relative h-[1.12em] min-w-0 overflow-visible" style={{ fontSize: chordFontSize }}>
                     {chordTokens.map((token, tokenIndex) => (
                       <span
                         key={`${token.chord}-${token.column}-${tokenIndex}`}
@@ -235,7 +329,7 @@ function SongSlide({ slide, showChords }: { slide: Extract<PresentationSlide, { 
                   <p
                     className="min-w-0 whitespace-pre-wrap break-words font-sans font-black leading-[1.12] text-white"
                     style={{
-                      fontSize: `${lyricFontSizePx}px`,
+                      fontSize: lyricFontSize,
                       textShadow: "0 2px 18px rgba(0,0,0,0.34)",
                     }}
                   >
@@ -289,8 +383,11 @@ export default function ServicePresentation() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [slideIndex, setSlideIndex] = useState(0);
   const [showChords, setShowChords] = useState(true);
+  const isTabletPresentation = useTabletPresentationLayout();
   const touchStartXRef = useRef<number | null>(null);
   const swipeHandledRef = useRef(false);
+  const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
+  const suppressClickRef = useRef(false);
 
   useWakeLock();
 
@@ -330,9 +427,14 @@ export default function ServicePresentation() {
     };
   }, [id]);
 
-  const slides = useMemo(() => service ? buildServicePresentationSlides(service) : [], [service]);
+  const presentationLayout: PresentationLayout = isTabletPresentation ? "tablet" : "phone";
+  const slides = useMemo(
+    () => service ? buildServicePresentationSlides(service, { layout: presentationLayout }) : [],
+    [presentationLayout, service]
+  );
   const canPresent = canUseServicePresentation(service, selectedChurch?.role, currentUserId, currentUserEmail);
-  const currentSlide = slides[slideIndex];
+  const activeSlideIndex = slides.length ? Math.min(slideIndex, slides.length - 1) : 0;
+  const currentSlide = slides[activeSlideIndex];
 
   useEffect(() => {
     if (slides.length === 0) {
@@ -369,7 +471,7 @@ export default function ServicePresentation() {
     setSlideIndex((current) => Math.max(current - 1, 0));
   }
 
-  function handleStageClick(event: MouseEvent<HTMLDivElement>) {
+  function handlePhoneStageClick(event: MouseEvent<HTMLDivElement>) {
     if (swipeHandledRef.current) {
       swipeHandledRef.current = false;
       return;
@@ -380,11 +482,56 @@ export default function ServicePresentation() {
     else goPrevious();
   }
 
+  function suppressNextTabletClick() {
+    suppressClickRef.current = true;
+    window.setTimeout(() => {
+      suppressClickRef.current = false;
+    }, 350);
+  }
+
+  function handleTabletPointerDown(event: PointerEvent<HTMLDivElement>) {
+    pointerStartRef.current = { x: event.clientX, y: event.clientY };
+  }
+
+  function handleTabletPointerUp(event: PointerEvent<HTMLDivElement>) {
+    const start = pointerStartRef.current;
+    pointerStartRef.current = null;
+    if (!start) return;
+
+    const distance = Math.hypot(event.clientX - start.x, event.clientY - start.y);
+    if (distance > 12) suppressNextTabletClick();
+  }
+
+  function handleTabletPointerCancel() {
+    pointerStartRef.current = null;
+    suppressNextTabletClick();
+  }
+
+  function handleTabletStageClick() {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
+      return;
+    }
+
+    goNext();
+  }
+
+  function handleStageClick(event: MouseEvent<HTMLDivElement>) {
+    if (isTabletPresentation) {
+      handleTabletStageClick();
+      return;
+    }
+
+    handlePhoneStageClick(event);
+  }
+
   function handleTouchStart(event: TouchEvent<HTMLDivElement>) {
+    if (isTabletPresentation) return;
     touchStartXRef.current = event.touches[0]?.clientX ?? null;
   }
 
   function handleTouchEnd(event: TouchEvent<HTMLDivElement>) {
+    if (isTabletPresentation) return;
     const startX = touchStartXRef.current;
     const endX = event.changedTouches[0]?.clientX ?? null;
     touchStartXRef.current = null;
@@ -403,6 +550,10 @@ export default function ServicePresentation() {
   }
 
   const exitToService = () => navigate(`/app/services/${id}`);
+  const stageClassName = `fixed inset-0 z-50 min-h-svh overflow-hidden bg-[radial-gradient(circle_at_top_left,#2f1e6a_0%,#090912_34%,#020204_100%)] text-white ${isTabletPresentation ? "flex flex-col" : ""}`;
+  const stageMainClassName = isTabletPresentation
+    ? "relative z-10 min-h-0 flex-1 overflow-hidden"
+    : "relative z-10 h-[calc(100svh-4rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] min-h-0 sm:h-[calc(100svh-7.5rem)]";
 
   if (loading) {
     return (
@@ -445,15 +596,18 @@ export default function ServicePresentation() {
 
   return (
     <div
-      className="fixed inset-0 z-50 min-h-svh overflow-hidden bg-[radial-gradient(circle_at_top_left,#2f1e6a_0%,#090912_34%,#020204_100%)] text-white"
+      className={stageClassName}
       style={{ paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}
       onClick={handleStageClick}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
+      onPointerDown={isTabletPresentation ? handleTabletPointerDown : undefined}
+      onPointerUp={isTabletPresentation ? handleTabletPointerUp : undefined}
+      onPointerCancel={isTabletPresentation ? handleTabletPointerCancel : undefined}
     >
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(120deg,rgba(255,255,255,0.08),transparent_35%,rgba(124,58,237,0.12))]" />
 
-      <header className="relative z-10 flex h-16 items-center justify-between gap-2 px-4 py-2 sm:h-auto sm:px-6 sm:py-2.5" onClick={stopStageEvent}>
+      <header className={`relative z-10 flex h-16 items-center justify-between gap-2 px-4 py-2 sm:h-auto sm:px-6 sm:py-2.5 ${isTabletPresentation ? "shrink-0" : ""}`} onClick={stopStageEvent}>
         <Button variant="ghost" className="h-10 shrink-0 rounded-2xl border border-white/10 bg-white/10 px-3 text-sm font-bold text-white shadow-lg shadow-black/20 hover:bg-white/[0.15] hover:text-white sm:h-10 sm:px-4" onClick={exitToService}>
           <ArrowLeft className="h-4 w-4" />
           Salir
@@ -479,12 +633,12 @@ export default function ServicePresentation() {
             </Button>
           )}
           <div className="flex h-10 items-center rounded-2xl border border-white/10 bg-white/10 px-3 text-sm font-black text-white shadow-lg shadow-black/20 sm:px-4">
-            {slides.length ? slideIndex + 1 : 0} / {slides.length}
+            {slides.length ? activeSlideIndex + 1 : 0} / {slides.length}
           </div>
         </div>
       </header>
 
-      <main className="relative z-10 h-[calc(100svh-4rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] min-h-0 sm:h-[calc(100svh-7.5rem)]">
+      <main className={stageMainClassName}>
         {slides.length === 0 ? (
           <div className="flex h-full items-center justify-center px-6 text-center">
             <div>
@@ -494,18 +648,18 @@ export default function ServicePresentation() {
             </div>
           </div>
         ) : currentSlide?.kind === "song" ? (
-          <SongSlide slide={currentSlide} showChords={showChords} />
+          <SongSlide slide={currentSlide} showChords={showChords} layout={presentationLayout} />
         ) : currentSlide ? (
           <CueSlide slide={currentSlide} />
         ) : null}
       </main>
 
-      <footer className="relative z-10 hidden items-center gap-3 px-4 py-2 sm:flex sm:px-6" onClick={stopStageEvent}>
+      <footer className={`relative z-10 hidden items-center gap-3 px-4 py-2 sm:flex sm:px-6 ${isTabletPresentation ? "shrink-0" : ""}`} onClick={stopStageEvent}>
         <Button
           variant="ghost"
           className="h-12 w-12 rounded-full bg-white/10 text-white hover:bg-white/15 hover:text-white"
           onClick={goPrevious}
-          disabled={slideIndex === 0}
+          disabled={activeSlideIndex === 0}
         >
           <ChevronLeft className="h-5 w-5" />
         </Button>
@@ -517,7 +671,7 @@ export default function ServicePresentation() {
           variant="ghost"
           className="h-12 w-12 rounded-full bg-white/10 text-white hover:bg-white/15 hover:text-white"
           onClick={goNext}
-          disabled={slideIndex >= slides.length - 1}
+          disabled={activeSlideIndex >= slides.length - 1}
         >
           <ChevronRight className="h-5 w-5" />
         </Button>
