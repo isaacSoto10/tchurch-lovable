@@ -21,6 +21,11 @@ import { useToast } from "@/components/ui/use-toast";
 import { ChordProPreview } from "@/components/ChordProPreview";
 import { ServiceSongPicker } from "@/components/ServiceSongPicker";
 import {
+  filterExistingSongRecommendations,
+  getExistingServiceSongIds,
+  normalizeSongRecommendationResponse,
+} from "@/lib/songRecommendations";
+import {
   getSongDisplayKey,
   getSongChordPro,
   getSongYoutubeUrl,
@@ -345,23 +350,43 @@ export default function ServiceDetail() {
   }, [showAssign]);
 
   useEffect(() => {
-    if (showAddItem && isSongItemType(itemType)) {
+    if (showAddItem && isSongItemType(itemType) && id) {
       const timeout = setTimeout(async () => {
         try {
           const trimmedSearch = songSearch.trim();
+          const existingSongIds = getExistingServiceSongIds(service?.items);
+
+          if (trimmedSearch.length < 2) {
+            try {
+              const recommended = await apiFetch(
+                `/songs/recommendations?serviceId=${encodeURIComponent(id)}&limit=12`,
+              );
+              setSongResults(
+                filterExistingSongRecommendations(
+                  normalizeSongRecommendationResponse<SongOption>(recommended),
+                  existingSongIds,
+                ).slice(0, 12),
+              );
+              return;
+            } catch (error) {
+              console.warn("No se pudieron cargar recomendaciones de canciones:", error);
+            }
+          }
+
           const params = new URLSearchParams({
             limit: trimmedSearch.length >= 2 ? "30" : "20",
             sort: "lastUsed",
           });
           if (trimmedSearch.length >= 2) params.set("q", trimmedSearch);
-          const data = await apiFetch<SongOption[]>(`/songs?${params.toString()}`);
-          setSongResults(Array.isArray(data) ? sortSongsByLastUsedDesc(data).slice(0, 12) : []);
+          const data = await apiFetch(`/songs?${params.toString()}`);
+          const candidates = normalizeSongRecommendationResponse<SongOption>(data);
+          setSongResults(filterExistingSongRecommendations(sortSongsByLastUsedDesc(candidates), existingSongIds).slice(0, 12));
         } catch { setSongResults([]); }
       }, songSearch.trim().length >= 2 ? 300 : 0);
       return () => clearTimeout(timeout);
     }
     setSongResults([]);
-  }, [showAddItem, songSearch, itemType]);
+  }, [showAddItem, songSearch, itemType, id, service?.items]);
 
   async function addSongsToService(songs: SongOption[], options: { keepDialogOpen?: boolean } = {}) {
     if (!id || songs.length === 0) return;

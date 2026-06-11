@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { getSongRecommendationBadges, type SongRecommendationFields } from "@/lib/songRecommendations";
 import { formatSongLastUsedLabel } from "@/lib/songUsage";
 import { cn } from "@/lib/utils";
 
@@ -15,7 +16,7 @@ export type SongPickerSong = {
   bpm?: number | null;
   meter?: string | null;
   lastUsedAt?: string | null;
-};
+} & SongRecommendationFields;
 
 type ServiceSongPickerProps<TSong extends SongPickerSong> = {
   search: string;
@@ -93,11 +94,17 @@ export function ServiceSongPicker<TSong extends SongPickerSong>({
       </div>
 
       <div className="max-h-[min(46svh,26rem)] overflow-y-auto p-2">
+        {!hasSearch && songs.length > 0 && (
+          <div className="mb-2 flex items-center justify-between px-1">
+            <p className="text-xs font-bold uppercase tracking-wide text-zinc-500">Recomendadas</p>
+          </div>
+        )}
+
         {!hasSearch && songs.length === 0 ? (
           <div className="flex min-h-44 flex-col items-center justify-center rounded-xl border border-dashed border-zinc-200 bg-zinc-50/70 px-5 text-center">
             <Music className="mb-3 h-8 w-8 text-zinc-300" />
-            <p className="text-sm font-semibold text-zinc-900">Busca en la biblioteca</p>
-            <p className="mt-1 max-w-64 text-xs leading-5 text-zinc-500">Escribe al menos 2 letras para encontrar cantos rápido.</p>
+            <p className="text-sm font-semibold text-zinc-900">Sin recomendaciones todavía</p>
+            <p className="mt-1 max-w-64 text-xs leading-5 text-zinc-500">Busca en la biblioteca para agregar canciones a este servicio.</p>
           </div>
         ) : songs.length === 0 ? (
           <div className="flex min-h-36 flex-col items-center justify-center rounded-xl bg-zinc-50 px-5 text-center">
@@ -109,6 +116,7 @@ export function ServiceSongPicker<TSong extends SongPickerSong>({
             {songs.map((song) => {
               const selected = selectedSongs.some((selectedSong) => selectedSong.id === song.id);
               const meta = getSongMeta(song);
+              const recommendationBadges = getSongRecommendationBadges(song);
 
               return (
                 <button
@@ -137,6 +145,18 @@ export function ServiceSongPicker<TSong extends SongPickerSong>({
                     <span className="mt-0.5 block truncate text-xs leading-5 text-zinc-500">
                       {meta || "Biblioteca de canciones"}
                     </span>
+                    {recommendationBadges.length > 0 && (
+                      <span className="mt-1.5 flex flex-wrap gap-1">
+                        {recommendationBadges.map((badge) => (
+                          <span
+                            key={badge}
+                            className="rounded-full border border-primary/15 bg-primary/5 px-2 py-0.5 text-[11px] font-semibold leading-4 text-primary"
+                          >
+                            {badge}
+                          </span>
+                        ))}
+                      </span>
+                    )}
                   </span>
                 </button>
               );

@@ -13,6 +13,11 @@ import { useChurch } from "@/providers/ChurchProvider";
 import { ChordProPreview } from "@/components/ChordProPreview";
 import { ServiceSongPicker } from "@/components/ServiceSongPicker";
 import {
+  filterExistingSongRecommendations,
+  getExistingServiceSongIds,
+  normalizeSongRecommendationResponse,
+} from "@/lib/songRecommendations";
+import {
   getSongDisplayKey,
   getSongChordPro,
   getSongYoutubeUrl,
@@ -242,6 +247,10 @@ export default function Services() {
   const assignmentPositionOptions = useMemo(
     () => getAssignmentPositionOptions(selectedServiceAssignments),
     [selectedServiceAssignments],
+  );
+  const selectedServiceSongIds = useMemo(
+    () => selectedServiceId ? getExistingServiceSongIds(serviceItems[selectedServiceId]) : new Set<string>(),
+    [selectedServiceId, serviceItems],
   );
 
   const loadServices = useCallback(() => {
@@ -567,19 +576,42 @@ export default function Services() {
 
   const searchSongs = useCallback(async (query: string) => {
     const trimmedQuery = query.trim();
+    if (!selectedServiceId) {
+      setSongs([]);
+      return;
+    }
+
     try {
+      if (trimmedQuery.length < 2) {
+        try {
+          const recommended = await fetchApi(
+            `/songs/recommendations?serviceId=${encodeURIComponent(selectedServiceId)}&limit=12`,
+          );
+          setSongs(
+            filterExistingSongRecommendations(
+              normalizeSongRecommendationResponse<SongLike>(recommended),
+              selectedServiceSongIds,
+            ).slice(0, 12),
+          );
+          return;
+        } catch (error) {
+          console.warn("No se pudieron cargar recomendaciones de canciones:", error);
+        }
+      }
+
       const params = new URLSearchParams({
         limit: trimmedQuery.length >= 2 ? "30" : "20",
         sort: "lastUsed",
       });
       if (trimmedQuery.length >= 2) params.set("q", trimmedQuery);
       const data = await fetchApi(`/songs?${params.toString()}`);
-      setSongs(Array.isArray(data) ? sortSongsByLastUsedDesc(data as SongLike[]).slice(0, 12) : []);
+      const candidates = normalizeSongRecommendationResponse<SongLike>(data);
+      setSongs(filterExistingSongRecommendations(sortSongsByLastUsedDesc(candidates), selectedServiceSongIds).slice(0, 12));
     } catch (e) {
       console.error("No se pudieron buscar canciones:", e);
       setSongs([]);
     }
-  }, [fetchApi]);
+  }, [fetchApi, selectedServiceId, selectedServiceSongIds]);
 
   useEffect(() => {
     if (!addItemDialogOpen || newItemType !== "song") {
