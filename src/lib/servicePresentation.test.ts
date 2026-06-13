@@ -38,6 +38,28 @@ function getSongLines(chordPro: string) {
   return songSlides.flatMap((slide) => slide.lines).filter((line) => line.kind === "line");
 }
 
+function makeLongSong(lineCount = 32) {
+  return Array.from({ length: lineCount }, (_value, index) => {
+    const chord = index % 2 === 0 ? "C" : "Am";
+    return `[${chord}]Linea ${index + 1} con letra para llenar espacio y probar el modo de presentacion`;
+  }).join("\n");
+}
+
+function estimateRenderedRows(slide: ReturnType<typeof buildServicePresentationSlides>[number]) {
+  if (slide.kind !== "song") return 0;
+
+  return slide.lines.reduce((rows, line) => {
+    if (line.kind === "blank") return rows + 0.5;
+    if (line.kind === "section" || line.kind === "meta") return rows + 0.85;
+
+    const hasChords = Boolean(line.chords.trim());
+    const hasLyrics = Boolean(line.lyrics.trim());
+    if (hasChords && hasLyrics) return rows + 2.1;
+    if (hasChords || hasLyrics) return rows + 1.1;
+    return rows + 0.5;
+  }, 0);
+}
+
 describe("buildServicePresentationSlides", () => {
   it("wraps long mobile chord lines without exceeding the presentation column budget", () => {
     const lines = getSongLines(
@@ -94,5 +116,76 @@ describe("buildServicePresentationSlides", () => {
     expect(songSlides[0]).toMatchObject({ part: 1, totalParts: 1 });
     expect(lines.some((line) => Math.max(line.chords.length, line.lyrics.length) > PRESENTATION_WRAP_COLUMNS)).toBe(true);
     expect(lines.every((line) => Math.max(line.chords.length, line.lyrics.length) <= TABLET_PRESENTATION_WRAP_COLUMNS)).toBe(true);
+  });
+
+  it("can render a full song as one scrollable phone slide", () => {
+    const slides = buildServicePresentationSlides(buildService(makeLongSong()), {
+      layout: "phone",
+      songMode: "scroll",
+    });
+    const songSlides = slides.filter((slide) => slide.kind === "song");
+    const lines = songSlides.flatMap((slide) => slide.lines).filter((line) => line.kind === "line");
+
+    expect(songSlides).toHaveLength(1);
+    expect(songSlides[0]).toMatchObject({ part: 1, totalParts: 1 });
+    expect(lines.length).toBeGreaterThan(25);
+    expect(lines.every((line) => Math.max(line.chords.length, line.lyrics.length) <= PRESENTATION_WRAP_COLUMNS)).toBe(true);
+  });
+
+  it("can split tablet songs into horizontal slides when requested", () => {
+    const slides = buildServicePresentationSlides(buildService(makeLongSong(42)), {
+      layout: "tablet",
+      songMode: "paged",
+    });
+    const songSlides = slides.filter((slide) => slide.kind === "song");
+
+    expect(songSlides.length).toBeGreaterThan(1);
+    expect(songSlides.every((slide) => slide.totalParts === songSlides.length)).toBe(true);
+  });
+
+  it("uses stable song-wide columns across split slides so chord placement does not shift", () => {
+    const slides = buildServicePresentationSlides(
+      buildService(
+        "[Bm]Originalmente comienza un [A]solo de batería y luego [G]entran los demás [F#]instrumentos.\n" +
+        makeLongSong(34)
+      ),
+      { layout: "phone", songMode: "paged" }
+    );
+    const songSlides = slides.filter((slide) => slide.kind === "song");
+    const maxColumns = songSlides[0]?.maxColumns;
+    const perSlideColumns = songSlides.map((slide) => Math.max(
+      18,
+      ...slide.lines.map((line) => line.kind === "line" ? Math.max(line.chords.length, line.lyrics.length) : 0)
+    ));
+
+    expect(songSlides.length).toBeGreaterThan(1);
+    expect(maxColumns).toBeGreaterThan(0);
+    expect(songSlides.every((slide) => slide.maxColumns === maxColumns)).toBe(true);
+    expect(perSlideColumns.some((columns) => columns < maxColumns!)).toBe(true);
+  });
+
+  it("keeps phone paged song slides compact enough for presentation controls", () => {
+    const slides = buildServicePresentationSlides(
+      buildService(
+        "{start_of_section: Intro}\n" +
+        "F# | F# | F# | F# (x2)\n" +
+        "{start_of_section: Verso}\n" +
+        "[F#]Digno es el Cordero\n" +
+        "[C#m7]inmolado en la cruz\n" +
+        "[E]Quien pago nuestra [B]redencion [F#]\n" +
+        "[F#]El Verbo se hizo carne,\n" +
+        "[C#m7]nuestra deuda cancelo\n" +
+        "[E]Y propicio la ira [B]del Senor [F#]\n" +
+        "{start_of_section: Pre-Coro}\n" +
+        "[E]A la muerte derroto,\n" +
+        "[B/D#]Su victoria reclamo"
+      ),
+      { layout: "phone", songMode: "paged" }
+    );
+    const songSlides = slides.filter((slide) => slide.kind === "song");
+
+    expect(songSlides.length).toBeGreaterThan(1);
+    expect(songSlides.every((slide) => estimateRenderedRows(slide) <= 15)).toBe(true);
+    expect(songSlides[0].lines.some((line) => (line.kind === "section" || line.kind === "meta") && /pre-coro/i.test(line.label))).toBe(false);
   });
 });

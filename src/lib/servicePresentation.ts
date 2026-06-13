@@ -48,6 +48,7 @@ export type PresentationSlide =
       bpm?: number | null;
       meter?: string | null;
       lines: ChordProDisplayLine[];
+      maxColumns: number;
       part: number;
       totalParts: number;
       nextTitle?: string;
@@ -66,9 +67,11 @@ export type PresentationSlide =
     };
 
 export type PresentationLayout = "phone" | "tablet";
+export type PresentationSongMode = "paged" | "scroll";
 
 type BuildServicePresentationSlidesOptions = {
   layout?: PresentationLayout;
+  songMode?: PresentationSongMode;
 };
 
 type PlanningNoteKey = "vocals" | "band" | "audioVisual" | "person";
@@ -97,7 +100,12 @@ const ITEM_TYPE_LABELS: Record<string, string> = {
 
 const CHART_WRAP_COLUMNS = 34;
 const TABLET_CHART_WRAP_COLUMNS = 64;
-const MAX_RENDERED_ROWS_PER_SONG_SLIDE = 23;
+const MAX_PHONE_RENDERED_ROWS_PER_SONG_SLIDE = 15;
+const MAX_TABLET_RENDERED_ROWS_PER_SONG_SLIDE = 23;
+
+export function getDefaultPresentationSongMode(layout: PresentationLayout): PresentationSongMode {
+  return layout === "tablet" ? "scroll" : "paged";
+}
 
 function getPlanningDetails(item: PresentationServiceItem) {
   return (item.details || {}) as Record<string, unknown>;
@@ -135,10 +143,12 @@ function getDisplayChordPro(item: PresentationServiceItem) {
   return transposeChordPro(chordPro, originalKey, selectedKey);
 }
 
-function splitSongLines(lines: ChordProDisplayLine[]) {
+function splitSongLines(lines: ChordProDisplayLine[], layout: PresentationLayout) {
   const chunks: ChordProDisplayLine[][] = [];
   let current: ChordProDisplayLine[] = [];
   let currentRows = 0;
+  const maxRows = layout === "phone" ? MAX_PHONE_RENDERED_ROWS_PER_SONG_SLIDE : MAX_TABLET_RENDERED_ROWS_PER_SONG_SLIDE;
+  const sectionBreakThreshold = layout === "phone" ? 0.55 : 0.68;
 
   function lineRows(line: ChordProDisplayLine) {
     if (line.kind === "blank") return 0.5;
@@ -172,8 +182,8 @@ function splitSongLines(lines: ChordProDisplayLine[]) {
     const startsNewSection = line.kind === "section" || line.kind === "meta";
 
     if (
-      (startsNewSection && hasMusicLine(current) && currentRows >= MAX_RENDERED_ROWS_PER_SONG_SLIDE * 0.68) ||
-      (hasMusicLine(current) && currentRows + rows > MAX_RENDERED_ROWS_PER_SONG_SLIDE)
+      (startsNewSection && hasMusicLine(current) && currentRows >= maxRows * sectionBreakThreshold) ||
+      (hasMusicLine(current) && currentRows + rows > maxRows)
     ) {
       pushCurrent();
     }
@@ -288,16 +298,25 @@ function getCueNotes(item: PresentationServiceItem) {
   return cueNotes;
 }
 
-function buildSongSlides(item: PresentationServiceItem, itemIndex: number, layout: PresentationLayout): PresentationSlide[] {
+function buildSongSlides(
+  item: PresentationServiceItem,
+  itemIndex: number,
+  layout: PresentationLayout,
+  songMode: PresentationSongMode
+): PresentationSlide[] {
   const arrangement = getPrimaryArrangement(item.song);
   const chordPro = getDisplayChordPro(item);
   const displayLines = chordProToDisplayLines(chordPro, 500);
   const chartLines = displayLines.flatMap((line) => splitWideDisplayLine(line, layout === "tablet" ? TABLET_CHART_WRAP_COLUMNS : CHART_WRAP_COLUMNS));
-  const chunks = layout === "tablet" ? [chartLines] : splitSongLines(chartLines);
+  const maxColumns = Math.max(
+    18,
+    ...chartLines.map((line) => line.kind === "line" ? Math.max(line.chords.length, line.lyrics.length) : 0)
+  );
+  const chunks = songMode === "scroll" ? [chartLines] : splitSongLines(chartLines, layout);
   const key = getServiceItemKey(item);
 
   return chunks.map((lines, chunkIndex) => ({
-    id: layout === "tablet" ? `${item.id}-song` : `${item.id}-song-${chunkIndex}`,
+    id: songMode === "scroll" ? `${item.id}-song-scroll` : `${item.id}-song-${chunkIndex}`,
     kind: "song" as const,
     itemId: item.id,
     itemIndex,
@@ -307,6 +326,7 @@ function buildSongSlides(item: PresentationServiceItem, itemIndex: number, layou
     bpm: arrangement?.bpm || item.song?.bpm || null,
     meter: arrangement?.meter || item.song?.meter || null,
     lines,
+    maxColumns,
     part: chunkIndex + 1,
     totalParts: chunks.length,
   }));
@@ -332,9 +352,10 @@ export function buildServicePresentationSlides(
   options: BuildServicePresentationSlidesOptions = {}
 ): PresentationSlide[] {
   const layout = options.layout || "phone";
+  const songMode = options.songMode || getDefaultPresentationSongMode(layout);
   const sortedItems = [...(service.items || [])].sort((a, b) => a.position - b.position);
   const slides = sortedItems.flatMap((item, index) => {
-    if (isSongItemType(item.type) && item.song) return buildSongSlides(item, index + 1, layout);
+    if (isSongItemType(item.type) && item.song) return buildSongSlides(item, index + 1, layout, songMode);
     return [buildCueSlide(item, index + 1)];
   });
 

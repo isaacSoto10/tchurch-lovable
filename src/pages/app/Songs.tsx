@@ -29,7 +29,7 @@ interface Song {
 }
 
 const MUSICAL_KEYS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B", "Cm", "C#m", "Dm", "D#m", "Em", "Fm", "F#m", "Gm", "G#m", "Am", "A#m", "Bm"];
-const SONG_SEARCH_DEBOUNCE_MS = 650;
+const SONG_SEARCH_DEBOUNCE_MS = 900;
 const SONG_SEARCH_MIN_LENGTH = 2;
 
 export default function Songs() {
@@ -84,10 +84,11 @@ export default function Songs() {
 
   useEffect(() => {
     const trimmedSearch = search.trim();
-    if (trimmedSearch.length < SONG_SEARCH_MIN_LENGTH) {
+    if (!trimmedSearch) {
       setAppliedSearch("");
       return;
     }
+    if (trimmedSearch.length < SONG_SEARCH_MIN_LENGTH) return;
 
     const timer = window.setTimeout(() => setAppliedSearch(trimmedSearch), SONG_SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);

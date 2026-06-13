@@ -63,13 +63,13 @@ describe("Songs", () => {
     const input = screen.getByPlaceholderText("Buscar por título, artista o tonalidad...");
     fireEvent.change(input, { target: { value: "R" } });
 
-    await flushTimers(700);
+    await flushTimers(950);
     expect(fetchApiMock).toHaveBeenCalledTimes(1);
     expect(screen.getByText("Al Rey")).toBeInTheDocument();
     expect(screen.getByText("Santo")).toBeInTheDocument();
 
     fireEvent.change(input, { target: { value: "Re" } });
-    await flushTimers(649);
+    await flushTimers(899);
     expect(fetchApiMock).toHaveBeenCalledTimes(1);
     expect(screen.getByText("Santo")).toBeInTheDocument();
 
@@ -77,5 +77,18 @@ describe("Songs", () => {
     expect(fetchApiMock).toHaveBeenCalledTimes(2);
     expect(lastSongRequest()).toContain("limit=150");
     expect(lastSongRequest()).toContain("q=Re");
+
+    fireEvent.change(screen.getByPlaceholderText("Buscar por título, artista o tonalidad..."), { target: { value: "R" } });
+    await flushTimers(950);
+    expect(fetchApiMock).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("Al Rey")).toBeInTheDocument();
+    expect(screen.queryByText("Santo")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText("Buscar por título, artista o tonalidad..."), { target: { value: "" } });
+    await flushTimers();
+    await flushTimers();
+    expect(fetchApiMock).toHaveBeenCalledTimes(3);
+    expect(lastSongRequest()).toContain("limit=400");
+    expect(lastSongRequest()).not.toContain("q=");
   });
 });
