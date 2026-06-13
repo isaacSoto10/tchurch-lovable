@@ -16,14 +16,16 @@ fi
 cd "$REPO_ROOT"
 
 PACKAGE_VERSION="$(awk -F '"' '/^[[:space:]]*"version"[[:space:]]*:/ { print $4; exit }' package.json)"
-RELEASE_VERSION="${TCURCH_RELEASE_VERSION:-${CI_MARKETING_VERSION:-}}"
+RELEASE_VERSION="${TCURCH_RELEASE_VERSION:-}"
 if [ -z "$RELEASE_VERSION" ] && [ -n "$PACKAGE_VERSION" ]; then
   RELEASE_VERSION="$PACKAGE_VERSION"
+elif [ -z "$RELEASE_VERSION" ]; then
+  RELEASE_VERSION="${CI_MARKETING_VERSION:-}"
 fi
 
 case "$RELEASE_VERSION" in
   ""|*[!0-9.]*|.*|*..*|*.)
-    echo "Release marketing version must be numeric, for example 4.0: $RELEASE_VERSION" >&2
+    echo "Release marketing version must be numeric, for example 4.0.1: $RELEASE_VERSION" >&2
     exit 1
     ;;
   *)
