@@ -50,7 +50,7 @@
 
     --radius: 0.75rem;
     --app-safe-area-top: env(safe-area-inset-top, 0px);
-    --app-safe-area-bottom: 22px;
+    --app-safe-area-bottom: max(env(safe-area-inset-bottom, 0px), 22px);
     --app-mobile-tabbar-height: 8rem;
 
     --sidebar-background: 0 0% 100%;
@@ -118,6 +118,7 @@
   html,
   body,
   #root {
+    height: 100%;
     min-height: 100%;
     width: 100%;
     margin: 0;
@@ -191,7 +192,13 @@
 
 @media (max-width: 767px) {
   [data-mobile-shell="true"] {
-    --app-safe-area-bottom: var(--tchurch-mobile-safe-bottom, 22px);
+    --app-safe-area-top: max(env(safe-area-inset-top, 0px), 0px);
+    --app-safe-area-bottom: max(var(--tchurch-mobile-safe-bottom, 22px), env(safe-area-inset-bottom, 0px));
+    height: 100svh;
+    max-height: 100svh;
+    min-height: 0;
+    overflow: hidden;
+    overscroll-behavior: none;
   }
 
   [data-mobile-shell="true"] .mobile-page {

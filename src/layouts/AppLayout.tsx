@@ -10,7 +10,13 @@ import { usePushNotifications } from "@/hooks/usePushNotifications";
 import { useEventCheckInQueueSync } from "@/hooks/useEventCheckInQueueSync";
 import { NotificationBell } from "@/components/NotificationBell";
 import { NotificationsProvider } from "@/providers/NotificationsProvider";
-import { getMobileNavReservedSpace, getMobileNavSafeBottom, getMobilePageBottomBuffer } from "@/lib/mobileNavLayout";
+import {
+  getMobileNavContentClearanceCss,
+  getMobileNavHeightCss,
+  getMobileNavReservedSpace,
+  getMobileNavSafeBottom,
+  getMobilePageBottomBuffer,
+} from "@/lib/mobileNavLayout";
 
 const mobileNavItems = [
   { label: "Inicio", href: "/app", icon: Home, end: true },
@@ -24,11 +30,16 @@ const mobileNavItems = [
 const SAFE_BOTTOM_VAR = "--tchurch-mobile-safe-bottom";
 const NAV_RESERVED_SPACE_VAR = "--tchurch-mobile-nav-reserved";
 const PAGE_BOTTOM_BUFFER_VAR = "--tchurch-mobile-page-bottom-buffer";
+const NAV_HEIGHT_VAR = "--tchurch-mobile-nav-height";
+const CONTENT_CLEARANCE_VAR = "--tchurch-mobile-content-clearance";
+const MOBILE_CONTENT_CLEARANCE = "var(--tchurch-mobile-content-clearance, var(--tchurch-mobile-nav-reserved, 8rem))";
 
 const mobileNavGeometryStyle = {
   [SAFE_BOTTOM_VAR]: `${getMobileNavSafeBottom()}px`,
   [NAV_RESERVED_SPACE_VAR]: `${getMobileNavReservedSpace()}px`,
   [PAGE_BOTTOM_BUFFER_VAR]: `${getMobilePageBottomBuffer()}px`,
+  [NAV_HEIGHT_VAR]: getMobileNavHeightCss(),
+  [CONTENT_CLEARANCE_VAR]: getMobileNavContentClearanceCss(),
 } as CSSProperties;
 
 function AppLayoutInner() {
@@ -71,15 +82,20 @@ function AppLayoutInner() {
     <div
       data-mobile-shell={showShortcutBar ? "true" : undefined}
       data-device-class={responsive.isPhone ? "phone" : responsive.isTablet ? "tablet" : "wide"}
-      className="flex min-h-svh w-full flex-1 overflow-x-clip bg-zinc-50"
+      className={[
+        "flex w-full flex-1 overflow-x-clip bg-zinc-50",
+        showShortcutBar ? "h-svh max-h-svh min-h-0 overflow-hidden overscroll-none" : "min-h-svh",
+      ].join(" ")}
       style={showShortcutBar ? mobileNavGeometryStyle : undefined}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
       <AppSidebar />
       <SidebarInset
-        className="min-w-0 w-full max-w-full overflow-x-clip overflow-y-auto overscroll-y-contain"
-        style={showShortcutBar ? { scrollPaddingBottom: "var(--tchurch-mobile-nav-reserved, 8rem)" } : undefined}
+        className={[
+          "min-w-0 w-full max-w-full overflow-x-clip",
+          showShortcutBar ? "h-svh max-h-svh min-h-0 overflow-hidden" : "overflow-y-auto overscroll-y-contain",
+        ].join(" ")}
       >
         {useCompactNavigation ? (
           <header
@@ -99,12 +115,15 @@ function AppLayoutInner() {
           </header>
         ) : null}
         <div
-          className="mx-auto flex w-full min-w-0 flex-1 flex-col overflow-x-clip px-3 pb-4 pt-4 sm:px-4 md:max-w-[1120px] md:px-5 lg:px-6 xl:max-w-[1320px] xl:px-8"
+          data-testid={showShortcutBar ? "mobile-content-scrollport" : undefined}
+          className={[
+            "mx-auto flex w-full min-w-0 flex-1 flex-col overflow-x-clip px-3 pb-4 pt-4 sm:px-4 md:max-w-[1120px] md:px-5 lg:px-6 xl:max-w-[1320px] xl:px-8",
+            showShortcutBar ? "min-h-0 overflow-y-auto overscroll-y-contain" : "",
+          ].join(" ")}
           style={{
             paddingTop: useCompactNavigation ? undefined : "max(var(--app-safe-area-top), 1.5rem)",
-            paddingBottom: showShortcutBar
-              ? "var(--tchurch-mobile-nav-reserved, 8rem)"
-              : undefined,
+            paddingBottom: showShortcutBar ? MOBILE_CONTENT_CLEARANCE : undefined,
+            scrollPaddingBottom: showShortcutBar ? MOBILE_CONTENT_CLEARANCE : undefined,
           }}
         >
           {!useCompactNavigation ? (
@@ -120,42 +139,42 @@ function AppLayoutInner() {
           ) : null}
           <Outlet />
         </div>
-        {showShortcutBar ? (
-          <nav
-            data-testid="mobile-bottom-nav"
-            className="pointer-events-none fixed inset-x-0 bottom-0 z-30 translate-y-0"
-            aria-label="Navegación principal"
-            style={{ transform: "translate3d(0, 0, 0)" }}
-          >
-            <div
-              className="border-t border-zinc-200/80 bg-white/95 px-2 pt-2.5 shadow-[0_-14px_30px_rgba(15,23,42,0.07)] backdrop-blur"
-              style={{ paddingBottom: "var(--tchurch-mobile-safe-bottom, 22px)" }}
-            >
-              <div className="mx-auto grid max-w-lg grid-cols-6 gap-0.5 md:max-w-2xl">
-                {mobileNavItems.map((item) => {
-                  const Icon = item.icon;
-                  return (
-                    <NavLink
-                      key={item.href}
-                      to={item.href}
-                      end={item.end}
-                      className={({ isActive }) =>
-                        [
-                          "pointer-events-auto flex h-[3.75rem] min-w-0 flex-col items-center justify-center gap-1 rounded-2xl px-0.5 text-[0.64rem] font-bold leading-tight transition",
-                          isActive ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-zinc-100 hover:text-zinc-950",
-                        ].join(" ")
-                      }
-                    >
-                      <Icon className="h-5 w-5" />
-                      <span className="max-w-full truncate">{item.label}</span>
-                    </NavLink>
-                  );
-                })}
-              </div>
-            </div>
-          </nav>
-        ) : null}
       </SidebarInset>
+      {showShortcutBar ? (
+        <nav
+          data-testid="mobile-bottom-nav"
+          className="pointer-events-none fixed inset-x-0 bottom-0 z-30 translate-y-0"
+          aria-label="Navegación principal"
+          style={{ transform: "translate3d(0, 0, 0)" }}
+        >
+          <div
+            className="border-t border-zinc-200/80 bg-white/95 px-2 pt-2.5 shadow-[0_-14px_30px_rgba(15,23,42,0.07)] backdrop-blur"
+            style={{ paddingBottom: "var(--app-safe-area-bottom, var(--tchurch-mobile-safe-bottom, 22px))" }}
+          >
+            <div className="mx-auto grid max-w-lg grid-cols-6 gap-0.5 md:max-w-2xl">
+              {mobileNavItems.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <NavLink
+                    key={item.href}
+                    to={item.href}
+                    end={item.end}
+                    className={({ isActive }) =>
+                      [
+                        "pointer-events-auto flex h-[3.75rem] min-w-0 flex-col items-center justify-center gap-1 rounded-2xl px-0.5 text-[0.64rem] font-bold leading-tight transition",
+                        isActive ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-zinc-100 hover:text-zinc-950",
+                      ].join(" ")
+                    }
+                  >
+                    <Icon className="h-5 w-5" />
+                    <span className="max-w-full truncate">{item.label}</span>
+                  </NavLink>
+                );
+              })}
+            </div>
+          </div>
+        </nav>
+      ) : null}
     </div>
   );
 }
