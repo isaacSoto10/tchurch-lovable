@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
-import { Plus, Pencil, Trash2, Search, ChevronUp, ChevronDown, Music, FileText, Bell, X, Check, Clock, Users, GripVertical, FileDown, Maximize2, PlayCircle, Loader2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Search, ChevronUp, ChevronDown, Music, FileText, Bell, X, Check, Clock, Users, GripVertical, FileDown, Maximize2, PlayCircle, Loader2, Link2 } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
 import { useChurch } from "@/providers/ChurchProvider";
@@ -27,6 +27,12 @@ import {
 import { normalizeKey, transposeChordPro } from "@/lib/musicUtils";
 import { formatServiceDate, formatServiceTime, toServiceDatetimeLocalValue } from "@/lib/serviceDates";
 import { sortSongsByLastUsedDesc } from "@/lib/songUsage";
+import {
+  buildSongNotesWithYoutubeUrl,
+  getSongYoutubeDraft,
+  normalizeYouTubeUrlInput,
+  updateSongYoutubeUrlInServiceItems,
+} from "@/lib/songYoutube";
 import { getAssignmentPositionOptions } from "@/lib/serviceAssignments";
 import {
   Dialog,
@@ -207,6 +213,9 @@ export default function Services() {
   const [expandedService, setExpandedService] = useState<string | null>(null);
   const [expandedSongItems, setExpandedSongItems] = useState<Record<string, boolean>>({});
   const [chartSelection, setChartSelection] = useState<{ serviceId: string; itemId: string } | null>(null);
+  const [youtubeEditing, setYoutubeEditing] = useState<{ serviceId: string; itemId: string } | null>(null);
+  const [youtubeDraft, setYoutubeDraft] = useState("");
+  const [savingYoutube, setSavingYoutube] = useState(false);
   const [detailsEditing, setDetailsEditing] = useState<{ serviceId: string; itemId: string } | null>(null);
   const [detailDuration, setDetailDuration] = useState("");
   const [detailTiming, setDetailTiming] = useState("during");
@@ -226,6 +235,9 @@ export default function Services() {
   const suppressNextCardClickRef = useRef(false);
   const chartItem = chartSelection
     ? (serviceItems[chartSelection.serviceId] || []).find((item) => item.id === chartSelection.itemId) || null
+    : null;
+  const youtubeEditingItem = youtubeEditing
+    ? (serviceItems[youtubeEditing.serviceId] || []).find((item) => item.id === youtubeEditing.itemId) || null
     : null;
   const [addItemDialogOpen, setAddItemDialogOpen] = useState(false);
   const [assignDialogOpen, setAssignDialogOpen] = useState(false);
@@ -306,6 +318,57 @@ export default function Services() {
   const stopInteractiveTap = (event: SyntheticEvent) => {
     event.stopPropagation();
   };
+
+  function openYoutubeEditor(serviceId: string, item: ServiceItem) {
+    if (!item.song) return;
+    setYoutubeEditing({ serviceId, itemId: item.id });
+    setYoutubeDraft(getSongYoutubeDraft(item.song));
+  }
+
+  function handleYoutubeDialogOpenChange(open: boolean) {
+    if (!open) {
+      setYoutubeEditing(null);
+      setYoutubeDraft("");
+    }
+  }
+
+  async function handleSaveSongYoutube(event?: React.FormEvent) {
+    event?.preventDefault();
+    if (!youtubeEditingItem?.song) return;
+
+    const normalized = normalizeYouTubeUrlInput(youtubeDraft);
+    if (normalized.error) {
+      toast({ title: normalized.error, variant: "destructive" });
+      return;
+    }
+
+    const songId = youtubeEditingItem.song.id;
+    const notes = buildSongNotesWithYoutubeUrl(youtubeEditingItem.song, normalized.url);
+
+    setSavingYoutube(true);
+    try {
+      await fetchApi(`/songs/${songId}`, {
+        method: "PUT",
+        body: JSON.stringify({ notes }),
+      });
+
+      setServiceItems((prev) => {
+        const next: Record<string, ServiceItem[]> = {};
+        for (const [serviceId, items] of Object.entries(prev)) {
+          next[serviceId] = updateSongYoutubeUrlInServiceItems(items, songId, normalized.url);
+        }
+        return next;
+      });
+      setYoutubeEditing(null);
+      setYoutubeDraft("");
+      toast({ title: normalized.url ? "Link de YouTube guardado" : "Link de YouTube quitado" });
+    } catch (error) {
+      console.error("No se pudo guardar el link de YouTube:", error);
+      toast({ title: "No se pudo guardar el link de YouTube", variant: "destructive" });
+    } finally {
+      setSavingYoutube(false);
+    }
+  }
 
   const getItemOriginalKey = (item: ServiceItem) => item.song ? getSongDisplayKey(item.song) : null;
 
@@ -1049,6 +1112,66 @@ export default function Services() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={Boolean(youtubeEditingItem)} onOpenChange={handleYoutubeDialogOpenChange}>
+        <DialogContent className="top-auto bottom-0 max-w-none translate-y-0 gap-0 rounded-t-3xl p-0 sm:bottom-auto sm:top-[50%] sm:max-w-md sm:translate-y-[-50%] sm:rounded-2xl">
+          {youtubeEditingItem?.song && (
+            <>
+              <DialogHeader className="border-b border-zinc-100 px-5 pb-4 pt-5 text-left">
+                <DialogTitle>{getSongYoutubeUrl(youtubeEditingItem.song) ? "Editar YouTube" : "Agregar YouTube"}</DialogTitle>
+              </DialogHeader>
+              <form onSubmit={handleSaveSongYoutube} className="space-y-4 p-4 sm:p-5">
+                <div className="rounded-2xl bg-zinc-50 px-3 py-2">
+                  <p className="line-clamp-1 text-sm font-bold text-zinc-950">{youtubeEditingItem.song.title}</p>
+                  {youtubeEditingItem.song.author && (
+                    <p className="line-clamp-1 text-xs text-zinc-500">{youtubeEditingItem.song.author}</p>
+                  )}
+                </div>
+
+                {getSongYoutubeUrl(youtubeEditingItem.song) && (
+                  <Button asChild type="button" variant="outline" className="h-11 w-full rounded-2xl">
+                    <a href={getSongYoutubeUrl(youtubeEditingItem.song) || "#"} target="_blank" rel="noreferrer">
+                      <PlayCircle className="h-4 w-4" />
+                      Abrir link actual
+                    </a>
+                  </Button>
+                )}
+
+                <div className="space-y-2">
+                  <Label htmlFor="services-song-youtube-url">Link de YouTube</Label>
+                  <Input
+                    id="services-song-youtube-url"
+                    type="url"
+                    inputMode="url"
+                    autoFocus
+                    value={youtubeDraft}
+                    onChange={(event) => setYoutubeDraft(event.target.value)}
+                    placeholder="https://youtube.com/watch?v=..."
+                    className="h-11 rounded-2xl"
+                    disabled={savingYoutube}
+                  />
+                  <p className="text-xs leading-5 text-zinc-500">Déjalo vacío para quitar el link guardado.</p>
+                </div>
+
+                <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-11 rounded-2xl"
+                    onClick={() => handleYoutubeDialogOpenChange(false)}
+                    disabled={savingYoutube}
+                  >
+                    Cancelar
+                  </Button>
+                  <Button type="submit" className="h-11 rounded-2xl" disabled={savingYoutube}>
+                    {savingYoutube ? <Loader2 className="h-4 w-4 animate-spin" /> : "Guardar"}
+                  </Button>
+                </div>
+              </form>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogTrigger />
         <DialogContent className="max-h-[calc(100svh-2rem)] overflow-y-auto sm:max-w-xl md:max-w-2xl">
@@ -1625,6 +1748,21 @@ export default function Services() {
                                         >
                                           <PlayCircle className="w-3 h-3" />
                                           YouTube
+                                        </Button>
+                                      )}
+                                      {isPlanner && (
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          size="sm"
+                                          className="rounded-xl"
+                                          onClick={(event) => {
+                                            event.stopPropagation();
+                                            openYoutubeEditor(svc.id, item);
+                                          }}
+                                        >
+                                          <Link2 className="w-3 h-3" />
+                                          {youtubeUrl ? "Editar YouTube" : "Agregar YouTube"}
                                         </Button>
                                       )}
                                       <Button

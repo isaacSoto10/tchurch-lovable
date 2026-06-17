@@ -2,6 +2,7 @@ export type SongUsageLike = {
   title?: string | null;
   name?: string | null;
   lastUsedAt?: string | null;
+  createdAt?: string | null;
 };
 
 const DAY_MS = 86_400_000;
@@ -28,6 +29,16 @@ export function compareSongsByLastUsedDesc<TSong extends SongUsageLike>(a: TSong
 
 export function sortSongsByLastUsedDesc<TSong extends SongUsageLike>(songs: TSong[]) {
   return [...songs].sort(compareSongsByLastUsedDesc);
+}
+
+export function compareSongsByDateAddedDesc<TSong extends SongUsageLike>(a: TSong, b: TSong) {
+  const createdDiff = getSongUsageTime(b.createdAt) - getSongUsageTime(a.createdAt);
+  if (createdDiff !== 0) return createdDiff;
+  return getSongUsageTitle(a).localeCompare(getSongUsageTitle(b));
+}
+
+export function sortSongsByDateAddedDesc<TSong extends SongUsageLike>(songs: TSong[]) {
+  return [...songs].sort(compareSongsByDateAddedDesc);
 }
 
 export function formatSongLastUsedLabel(value?: string | null, now = new Date()) {

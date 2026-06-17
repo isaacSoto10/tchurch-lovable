@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatSongLastUsedLabel, sortSongsByLastUsedDesc } from "./songUsage";
+import { formatSongLastUsedLabel, sortSongsByDateAddedDesc, sortSongsByLastUsedDesc } from "./songUsage";
 
 describe("song usage helpers", () => {
   const now = new Date("2026-06-10T12:00:00.000Z");
@@ -20,5 +20,17 @@ describe("song usage helpers", () => {
     ]);
 
     expect(sorted.map((song) => song.title)).toEqual(["Reciente", "Antigua", "Nunca"]);
+  });
+
+  it("sorts newly added songs before older and undated songs", () => {
+    const sorted = sortSongsByDateAddedDesc([
+      { title: "Sin fecha", createdAt: null },
+      { title: "Antigua", createdAt: "2026-04-01T00:00:00.000Z" },
+      { title: "Nueva", createdAt: "2026-06-01T00:00:00.000Z" },
+      { title: "Alfa", createdAt: "bad-date" },
+      { title: "Beta", createdAt: "bad-date" },
+    ]);
+
+    expect(sorted.map((song) => song.title)).toEqual(["Nueva", "Antigua", "Alfa", "Beta", "Sin fecha"]);
   });
 });

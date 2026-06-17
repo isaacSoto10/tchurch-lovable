@@ -566,7 +566,6 @@ export default function EventDetail() {
     try {
       await deleteEventRsvp(id);
       setMyRsvp(null);
-      setMyQr(null);
       setQrDataUrl(null);
       setQrAttempted(false);
       toast({ title: "RSVP eliminado" });

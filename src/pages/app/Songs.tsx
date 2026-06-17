@@ -12,7 +12,7 @@ import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
 import { useChurch } from "@/providers/ChurchProvider";
 import { getSongDisplayKey, type SongArrangement } from "@/lib/songDisplay";
-import { compareSongsByLastUsedDesc, formatSongLastUsedLabel } from "@/lib/songUsage";
+import { compareSongsByDateAddedDesc, compareSongsByLastUsedDesc, formatSongLastUsedLabel } from "@/lib/songUsage";
 
 interface Song {
   id: string;
@@ -27,6 +27,8 @@ interface Song {
   lastUsedAt?: string | null;
   arrangements?: SongArrangement[] | null;
 }
+
+type SongSort = "lastUsed" | "createdAt" | "title" | "artist" | "key";
 
 const MUSICAL_KEYS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B", "Cm", "C#m", "Dm", "D#m", "Em", "Fm", "F#m", "Gm", "G#m", "Am", "A#m", "Bm"];
 const SONG_SEARCH_DEBOUNCE_MS = 900;
@@ -43,7 +45,7 @@ export default function Songs() {
   const [appliedSearch, setAppliedSearch] = useState("");
   const [artistFilter, setArtistFilter] = useState("all");
   const [keyFilter, setKeyFilter] = useState("all");
-  const [sortBy, setSortBy] = useState("lastUsed");
+  const [sortBy, setSortBy] = useState<SongSort>("lastUsed");
   const [loading, setLoading] = useState(true);
   const songRequestIdRef = useRef(0);
 
@@ -65,7 +67,7 @@ export default function Songs() {
     const params = new URLSearchParams();
     const trimmedSearch = nextSearch.trim();
     params.set("limit", trimmedSearch ? "150" : "400");
-    params.set("sort", "lastUsed");
+    params.set("sort", sortBy);
     if (trimmedSearch) params.set("q", trimmedSearch);
 
     setLoading(true);
@@ -80,7 +82,7 @@ export default function Songs() {
       .finally(() => {
         if (songRequestIdRef.current === requestId) setLoading(false);
       });
-  }, [fetchApi]);
+  }, [fetchApi, sortBy]);
 
   useEffect(() => {
     const trimmedSearch = search.trim();
@@ -165,7 +167,6 @@ export default function Songs() {
 
   const getTitle = (song: Song) => song.title || song.name || "";
   const getEffectiveKey = (song: Song) => getSongDisplayKey(song) || "";
-  const getTime = (value?: string | null) => (value ? new Date(value).getTime() || 0 : 0);
 
   const artists = useMemo(
     () => Array.from(new Set(songs.map((song) => song.author).filter(Boolean) as string[])).sort(),
@@ -197,7 +198,7 @@ export default function Songs() {
       })
       .sort((a, b) => {
         if (sortBy === "lastUsed") return compareSongsByLastUsedDesc(a, b);
-        if (sortBy === "recent") return getTime(b.createdAt) - getTime(a.createdAt) || getTitle(a).localeCompare(getTitle(b));
+        if (sortBy === "createdAt") return compareSongsByDateAddedDesc(a, b);
         if (sortBy === "artist") return (a.author || "").localeCompare(b.author || "") || getTitle(a).localeCompare(getTitle(b));
         if (sortBy === "key") return getEffectiveKey(a).localeCompare(getEffectiveKey(b)) || getTitle(a).localeCompare(getTitle(b));
         return getTitle(a).localeCompare(getTitle(b));
@@ -252,13 +253,13 @@ export default function Songs() {
             ))}
           </SelectContent>
         </Select>
-        <Select value={sortBy} onValueChange={setSortBy}>
-          <SelectTrigger className="h-12 rounded-2xl border-zinc-200 bg-white shadow-sm">
+        <Select value={sortBy} onValueChange={(value) => setSortBy(value as SongSort)}>
+          <SelectTrigger aria-label="Ordenar canciones" className="h-12 rounded-2xl border-zinc-200 bg-white shadow-sm">
             <SelectValue placeholder="Ordenar" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="lastUsed">Últimas usadas</SelectItem>
-            <SelectItem value="recent">Más recientes</SelectItem>
+            <SelectItem value="createdAt">Fecha agregada</SelectItem>
             <SelectItem value="title">Título</SelectItem>
             <SelectItem value="artist">Artista</SelectItem>
             <SelectItem value="key">Tonalidad</SelectItem>

@@ -93,7 +93,7 @@ describe("event QR helpers", () => {
   });
 
   it("renders explicit scan payloads instead of raw signed tokens", async () => {
-    const toDataURL = vi.spyOn(QRCode, "toDataURL").mockResolvedValueOnce("data:image/png;base64,mock");
+    const toDataURL = vi.spyOn(QRCode, "toDataURL").mockResolvedValueOnce("data:image/png;base64,mock" as never);
 
     await expect(createEventQrDataUrl({ token: SIGNED_QR }, { eventId: "event-1" })).resolves.toBe(
       "data:image/png;base64,mock"
