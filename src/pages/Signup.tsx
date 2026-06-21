@@ -9,6 +9,7 @@ import { useAppAuth } from "@/hooks/useAppAuth";
 import { ensureHeadlessClerkLoaded } from "@/lib/clerkClient";
 import { getClerkErrorMessage } from "@/lib/clerkErrors";
 import { isNativeMobileAuth, requestMobileAuthCode, verifyMobileAuthCode } from "@/lib/mobileAuth";
+import { logUserAction } from "@/lib/userActionLogger";
 
 type Step = "email" | "code";
 
@@ -57,6 +58,7 @@ function SignupInner() {
         const result = await requestMobileAuthCode(email.trim());
         setEmail(result.email);
         setStep("code");
+        logUserAction("auth.code_requested", { flow: "sign_up", provider: "mobile_auth" });
         return;
       }
 
@@ -71,7 +73,12 @@ function SignupInner() {
       await signUp.create({ emailAddress: email.trim(), password });
       await signUp.prepareVerification({ strategy: "email_code" });
       setStep("code");
+      logUserAction("auth.code_requested", { flow: "sign_up", provider: "clerk_email_code" });
     } catch (err) {
+      logUserAction("auth.code_request_failed", {
+        flow: "sign_up",
+        provider: isNativeMobileAuth ? "mobile_auth" : "clerk_email_code",
+      });
       setError(isNativeMobileAuth && err instanceof Error ? err.message : getClerkErrorMessage(err, "No pudimos iniciar el registro. Intenta de nuevo."));
     } finally {
       setLoading(false);
@@ -88,6 +95,7 @@ function SignupInner() {
     try {
       if (isNativeMobileAuth) {
         await verifyMobileAuthCode(email, code.trim());
+        logUserAction("auth.sign_up_completed", { provider: "mobile_auth" }, { immediate: true });
         navigate("/app", { replace: true });
         return;
       }
@@ -107,12 +115,17 @@ function SignupInner() {
 
       if (result.status === "complete" && result.createdSessionId) {
         await clerk.setActive({ session: result.createdSessionId });
+        logUserAction("auth.sign_up_completed", { provider: "clerk_email_code" }, { immediate: true });
         navigate("/app", { replace: true });
         return;
       }
 
       setError("Tu registro todavía no está completo. Intenta de nuevo.");
     } catch (err) {
+      logUserAction("auth.verification_failed", {
+        flow: "sign_up",
+        provider: isNativeMobileAuth ? "mobile_auth" : "clerk_email_code",
+      });
       setError(isNativeMobileAuth && err instanceof Error ? err.message : getClerkErrorMessage(err, "Ese código no funcionó. Intenta de nuevo."));
     } finally {
       setLoading(false);
@@ -126,6 +139,7 @@ function SignupInner() {
     try {
       if (isNativeMobileAuth) {
         await requestMobileAuthCode(email.trim());
+        logUserAction("auth.code_resent", { flow: "sign_up", provider: "mobile_auth" });
         return;
       }
 
@@ -138,7 +152,12 @@ function SignupInner() {
       }
 
       await signUp.prepareVerification({ strategy: "email_code" });
+      logUserAction("auth.code_resent", { flow: "sign_up", provider: "clerk_email_code" });
     } catch (err) {
+      logUserAction("auth.code_resend_failed", {
+        flow: "sign_up",
+        provider: isNativeMobileAuth ? "mobile_auth" : "clerk_email_code",
+      });
       setError(isNativeMobileAuth && err instanceof Error ? err.message : getClerkErrorMessage(err, "No pudimos reenviar el código. Intenta de nuevo."));
     } finally {
       setLoading(false);

@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { useAppAuth } from "@/hooks/useAppAuth";
 import { ensureHeadlessClerkLoaded } from "@/lib/clerkClient";
 import { getClerkErrorMessage } from "@/lib/clerkErrors";
+import { logUserAction } from "@/lib/userActionLogger";
 import {
   isNativeMobileAuth,
   MobileAuthApiError,
@@ -28,6 +29,14 @@ function getNativeMobileAuthError(err: unknown) {
   }
 
   return err instanceof Error ? err.message : "No pudimos enviar el código. Intenta de nuevo.";
+}
+
+function authFailureMetadata(err: unknown) {
+  if (err instanceof MobileAuthApiError) {
+    return { status: err.status, code: err.code || null };
+  }
+
+  return { status: "unknown" };
 }
 
 function LoginInner() {
@@ -62,6 +71,7 @@ function LoginInner() {
         setEmail(result.email);
         setEmailAddressId("mobile");
         setStep("code");
+        logUserAction("auth.code_requested", { flow: "sign_in", provider: "mobile_auth" });
         return;
       }
 
@@ -93,7 +103,13 @@ function LoginInner() {
         emailAddressId: emailCodeFactor.emailAddressId,
       });
       setStep("code");
+      logUserAction("auth.code_requested", { flow: "sign_in", provider: "clerk_email_code" });
     } catch (err) {
+      logUserAction("auth.code_request_failed", {
+        flow: "sign_in",
+        provider: isNativeMobileAuth ? "mobile_auth" : "clerk_email_code",
+        ...authFailureMetadata(err),
+      });
       setError(isNativeMobileAuth ? getNativeMobileAuthError(err) : getClerkErrorMessage(err, "No pudimos enviar el código. Intenta de nuevo."));
     } finally {
       setLoading(false);
@@ -115,6 +131,7 @@ function LoginInner() {
     try {
       if (isNativeMobileAuth) {
         await verifyMobileAuthCode(email, code.trim());
+        logUserAction("auth.sign_in_completed", { provider: "mobile_auth" }, { immediate: true });
         navigate("/app", { replace: true });
         return;
       }
@@ -134,12 +151,18 @@ function LoginInner() {
 
       if (result.status === "complete" && result.createdSessionId) {
         await clerk.setActive({ session: result.createdSessionId });
+        logUserAction("auth.sign_in_completed", { provider: "clerk_email_code" }, { immediate: true });
         navigate("/app", { replace: true });
         return;
       }
 
       setError("Tu inicio de sesión todavía no está completo. Intenta de nuevo.");
     } catch (err) {
+      logUserAction("auth.verification_failed", {
+        flow: "sign_in",
+        provider: isNativeMobileAuth ? "mobile_auth" : "clerk_email_code",
+        ...authFailureMetadata(err),
+      });
       setError(isNativeMobileAuth ? getNativeMobileAuthError(err) : getClerkErrorMessage(err, "Ese código no funcionó. Intenta de nuevo."));
     } finally {
       setLoading(false);
@@ -158,6 +181,7 @@ function LoginInner() {
     try {
       if (isNativeMobileAuth) {
         await requestMobileAuthCode(email.trim());
+        logUserAction("auth.code_resent", { flow: "sign_in", provider: "mobile_auth" });
         return;
       }
 
@@ -173,7 +197,13 @@ function LoginInner() {
         strategy: "email_code",
         emailAddressId,
       });
+      logUserAction("auth.code_resent", { flow: "sign_in", provider: "clerk_email_code" });
     } catch (err) {
+      logUserAction("auth.code_resend_failed", {
+        flow: "sign_in",
+        provider: isNativeMobileAuth ? "mobile_auth" : "clerk_email_code",
+        ...authFailureMetadata(err),
+      });
       setError(isNativeMobileAuth ? getNativeMobileAuthError(err) : getClerkErrorMessage(err, "No pudimos reenviar el código. Intenta de nuevo."));
     } finally {
       setLoading(false);

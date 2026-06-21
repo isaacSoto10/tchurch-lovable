@@ -8,6 +8,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ClerkProvider } from "@/providers/ClerkProvider";
 import { ChurchProvider } from "@/providers/ChurchProvider";
+import { UserActionLoggingProvider } from "@/providers/UserActionLoggingProvider";
 import { RequireAuth } from "@/components/RequireAuth";
 import { routeFromAppUrl } from "@/lib/navigation";
 
@@ -103,53 +104,55 @@ const App = () => {
       <Router>
         <NativeDeepLinkHandler />
         <ClerkProvider>
-          <ChurchProvider>
-            <Suspense fallback={<PageLoader />}>
-              <Routes>
-                <Route path="/" element={<Landing />} />
-                <Route path="/pricing" element={<Navigate to="/" replace />} />
-                <Route path="/login/*" element={<Login />} />
-                <Route path="/signup/*" element={<Signup />} />
-                <Route path="/app/services/:id/presentation" element={<RequireAuth><ServicePresentation /></RequireAuth>} />
-                <Route path="/app" element={<RequireAuth><AppLayout /></RequireAuth>}>
-                  <Route index element={<Dashboard />} />
-                  <Route path="songs" element={<Songs />} />
-                  <Route path="songs/:id" element={<SongDetail />} />
-                  <Route path="services" element={<Services />} />
-                  <Route path="services/:id" element={<ServiceDetail />} />
-                  <Route path="announcements" element={<Announcements />} />
-                  <Route path="devotionals" element={<Devotionals />} />
-                  <Route path="giving" element={<Giving />} />
-                  <Route path="ministries" element={<Ministries />} />
-                  <Route path="ministries/:id" element={<MinistryDetail />} />
-                  <Route path="events" element={<Events />} />
-                  <Route path="events/:id/rsvp" element={<EventDetail />} />
-                  <Route path="events/:id/my-qr" element={<EventDetail />} />
-                  <Route path="events/:id/participation" element={<EventDetail />} />
-                  <Route path="events/:id/check-in" element={<EventDetail />} />
-                  <Route path="events/:id/admin" element={<EventDetail />} />
-                  <Route path="events/:id/qr" element={<EventQr />} />
-                  <Route path="events/:id/scanner" element={<EventScanner />} />
-                  <Route path="events/:id" element={<EventDetail />} />
-                  <Route path="teams" element={<Teams />} />
-                  <Route path="teams/:id" element={<TeamDetail />} />
-                  <Route path="my-assignments" element={<MyAssignments />} />
-                  <Route path="settings" element={<Settings />} />
-                  <Route path="messages" element={<Messages />} />
-                  <Route path="prayer" element={<Prayer />} />
-                  <Route path="training" element={<Training />} />
-                  <Route path="calendar" element={<Calendar />} />
-                  <Route path="users" element={<Users />} />
-                  <Route path="blockouts" element={<Blockouts />} />
-                </Route>
-                <Route path="/onboarding" element={<RequireAuth><Onboarding /></RequireAuth>} />
-                <Route path="/join-church" element={<JoinChurch />} />
-                <Route path="/create-church" element={<RequireAuth><CreateChurchForm /></RequireAuth>} />
-                <Route path="/app/presets" element={<RequireAuth><Presets /></RequireAuth>} />
-                <Route path="*" element={<NotFound />} />
-              </Routes>
-            </Suspense>
-          </ChurchProvider>
+          <UserActionLoggingProvider>
+            <ChurchProvider>
+              <Suspense fallback={<PageLoader />}>
+                <Routes>
+                  <Route path="/" element={<Landing />} />
+                  <Route path="/pricing" element={<Navigate to="/" replace />} />
+                  <Route path="/login/*" element={<Login />} />
+                  <Route path="/signup/*" element={<Signup />} />
+                  <Route path="/app/services/:id/presentation" element={<RequireAuth><ServicePresentation /></RequireAuth>} />
+                  <Route path="/app" element={<RequireAuth><AppLayout /></RequireAuth>}>
+                    <Route index element={<Dashboard />} />
+                    <Route path="songs" element={<Songs />} />
+                    <Route path="songs/:id" element={<SongDetail />} />
+                    <Route path="services" element={<Services />} />
+                    <Route path="services/:id" element={<ServiceDetail />} />
+                    <Route path="announcements" element={<Announcements />} />
+                    <Route path="devotionals" element={<Devotionals />} />
+                    <Route path="giving" element={<Giving />} />
+                    <Route path="ministries" element={<Ministries />} />
+                    <Route path="ministries/:id" element={<MinistryDetail />} />
+                    <Route path="events" element={<Events />} />
+                    <Route path="events/:id/rsvp" element={<EventDetail />} />
+                    <Route path="events/:id/my-qr" element={<EventDetail />} />
+                    <Route path="events/:id/participation" element={<EventDetail />} />
+                    <Route path="events/:id/check-in" element={<EventDetail />} />
+                    <Route path="events/:id/admin" element={<EventDetail />} />
+                    <Route path="events/:id/qr" element={<EventQr />} />
+                    <Route path="events/:id/scanner" element={<EventScanner />} />
+                    <Route path="events/:id" element={<EventDetail />} />
+                    <Route path="teams" element={<Teams />} />
+                    <Route path="teams/:id" element={<TeamDetail />} />
+                    <Route path="my-assignments" element={<MyAssignments />} />
+                    <Route path="settings" element={<Settings />} />
+                    <Route path="messages" element={<Messages />} />
+                    <Route path="prayer" element={<Prayer />} />
+                    <Route path="training" element={<Training />} />
+                    <Route path="calendar" element={<Calendar />} />
+                    <Route path="users" element={<Users />} />
+                    <Route path="blockouts" element={<Blockouts />} />
+                  </Route>
+                  <Route path="/onboarding" element={<RequireAuth><Onboarding /></RequireAuth>} />
+                  <Route path="/join-church" element={<JoinChurch />} />
+                  <Route path="/create-church" element={<RequireAuth><CreateChurchForm /></RequireAuth>} />
+                  <Route path="/app/presets" element={<RequireAuth><Presets /></RequireAuth>} />
+                  <Route path="*" element={<NotFound />} />
+                </Routes>
+              </Suspense>
+            </ChurchProvider>
+          </UserActionLoggingProvider>
         </ClerkProvider>
       </Router>
     </TooltipProvider>

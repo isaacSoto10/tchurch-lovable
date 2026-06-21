@@ -1,5 +1,6 @@
 import { Capacitor } from "@capacitor/core";
 import { API_BASE } from "@/lib/apiConfig";
+import { actionNow, logApiRequestSummary } from "@/lib/userActionLogger";
 
 const STORAGE_KEY = "tchurch_mobile_auth_session";
 const CHANGE_EVENT = "tchurch-mobile-auth-change";
@@ -60,6 +61,7 @@ function emitChange() {
 
 async function postJson<T>(path: string, body: Record<string, unknown>): Promise<T> {
   let response: Response;
+  const startedAt = actionNow();
 
   try {
     response = await fetch(`${API_BASE}${path}`, {
@@ -68,9 +70,28 @@ async function postJson<T>(path: string, body: Record<string, unknown>): Promise
       body: JSON.stringify(body),
     });
   } catch (error) {
+    logApiRequestSummary({
+      path,
+      method: "POST",
+      status: 0,
+      ok: false,
+      durationMs: actionNow() - startedAt,
+      body: JSON.stringify(body),
+      source: "mobile-auth",
+    });
     console.error("[mobileAuth] Network request failed", { path, error });
     throw new Error("The app could not reach the Tchurch sign-in server. Please check your connection and try again.");
   }
+
+  logApiRequestSummary({
+    path,
+    method: "POST",
+    status: response.status,
+    ok: response.ok,
+    durationMs: actionNow() - startedAt,
+    body: JSON.stringify(body),
+    source: "mobile-auth",
+  });
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {

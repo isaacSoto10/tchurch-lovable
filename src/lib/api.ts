@@ -1,5 +1,6 @@
 import { API_BASE } from "@/lib/apiConfig";
 import { getMobileAuthSession, isNativeMobileAuth } from "@/lib/mobileAuth";
+import { actionNow, logApiRequestSummary } from "@/lib/userActionLogger";
 import type {
   ChurchEvent,
   EventCheckInPayload,
@@ -81,6 +82,7 @@ export async function apiFetch<T = unknown>(
   }
 
   const url = `${API_BASE}${path}`;
+  const startedAt = actionNow();
   let res: Response;
   try {
     res = await fetch(url, {
@@ -89,6 +91,15 @@ export async function apiFetch<T = unknown>(
       headers,
     });
   } catch (error) {
+    logApiRequestSummary({
+      path,
+      method,
+      status: 0,
+      ok: false,
+      durationMs: actionNow() - startedAt,
+      body: options.body,
+      source: "apiFetch",
+    });
     console.error("API request failed before receiving a response", { path, url, error });
     throw new ApiError(
       "No se pudo conectar con Tchurch. Revisa tu conexión e intenta otra vez.",
@@ -96,6 +107,16 @@ export async function apiFetch<T = unknown>(
       { error: error instanceof Error ? error.message : String(error), path }
     );
   }
+
+  logApiRequestSummary({
+    path,
+    method,
+    status: res.status,
+    ok: res.ok,
+    durationMs: actionNow() - startedAt,
+    body: options.body,
+    source: "apiFetch",
+  });
 
   if (!res.ok) {
     const text = await res.text();
@@ -135,7 +156,8 @@ export async function fetchUserChurchSelection<T = unknown>(token: string): Prom
   churches: T[];
   selectedChurchId: string | null;
 }> {
-  const url = `${API_BASE}/churches/mine`;
+  const path = "/churches/mine";
+  const url = `${API_BASE}${path}`;
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
@@ -146,9 +168,32 @@ export async function fetchUserChurchSelection<T = unknown>(token: string): Prom
     headers["x-church-id"] = churchId;
   }
 
-  const res = await fetch(url, {
-    cache: "no-store",
-    headers,
+  const startedAt = actionNow();
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      cache: "no-store",
+      headers,
+    });
+  } catch (error) {
+    logApiRequestSummary({
+      path,
+      method: "GET",
+      status: 0,
+      ok: false,
+      durationMs: actionNow() - startedAt,
+      source: "church-selection",
+    });
+    throw error;
+  }
+
+  logApiRequestSummary({
+    path,
+    method: "GET",
+    status: res.status,
+    ok: res.ok,
+    durationMs: actionNow() - startedAt,
+    source: "church-selection",
   });
 
   if (!res.ok) {

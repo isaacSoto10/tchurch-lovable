@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { useAppAuth } from "@/hooks/useAppAuth";
 import { fetchUserChurchSelection, getChurchId, setChurchId } from "@/lib/api";
+import { logUserAction } from "@/lib/userActionLogger";
 
 interface Church {
   id: string;
@@ -31,6 +32,14 @@ function normalizeChurch(church: Church): Church {
     ...church,
     role: String(church.role || "MEMBER").toUpperCase(),
   };
+}
+
+function recordChurchSelection(church: Church, source: string) {
+  logUserAction("church.selected", {
+    churchId: church.id,
+    role: church.role,
+    source,
+  });
 }
 
 export function useChurch() {
@@ -76,13 +85,16 @@ export function ChurchProvider({ children }: { children: ReactNode }) {
           if (preferred) {
             setSelectedChurch(preferred);
             setChurchId(preferred.id);
+            recordChurchSelection(preferred, serverSelectedChurchId ? "server_preference" : "saved_preference");
           } else if (userChurches.length > 0) {
             setSelectedChurch(userChurches[0]);
             setChurchId(userChurches[0].id);
+            recordChurchSelection(userChurches[0], "fallback_first_available");
           }
         } else if (userChurches.length > 0) {
           setSelectedChurch(userChurches[0]);
           setChurchId(userChurches[0].id);
+          recordChurchSelection(userChurches[0], "first_available");
         }
       } catch (e) {
         console.error("[ChurchProvider] Error loading churches:", e);
@@ -99,6 +111,9 @@ export function ChurchProvider({ children }: { children: ReactNode }) {
     const normalizedChurch = normalizeChurch(church);
     setSelectedChurch(normalizedChurch);
     setChurchId(normalizedChurch.id);
+    if (selectedChurch?.id !== normalizedChurch.id) {
+      recordChurchSelection(normalizedChurch, "manual");
+    }
   };
 
   return (
