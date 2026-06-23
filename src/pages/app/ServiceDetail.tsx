@@ -37,6 +37,7 @@ import {
 import { normalizeKey, transposeChordPro } from "@/lib/musicUtils";
 import { canUseServicePresentation } from "@/lib/servicePresentation";
 import { formatServiceDate } from "@/lib/serviceDates";
+import { hasLocalServiceBlockoutConflict, type ServiceBlockoutLike } from "@/lib/serviceBlockouts";
 import { sortSongsByLastUsedDesc } from "@/lib/songUsage";
 import {
   buildSongNotesWithYoutubeUrl,
@@ -807,19 +808,45 @@ export default function ServiceDetail() {
       return;
     }
     setSubmitting(true);
-    try {
-      await apiFetch(`/service-assignments`, {
-        method: "POST",
-        body: JSON.stringify({ userId: assignUserId, serviceId: id, position }),
-      });
+    const assignmentPayload = { userId: assignUserId, serviceId: id, position };
+    const submitAssignment = (overrideBlock = false) => apiFetch(`/service-assignments`, {
+      method: "POST",
+      body: JSON.stringify({
+        ...assignmentPayload,
+        ...(overrideBlock ? { overrideBlock: true } : {}),
+      }),
+    });
+    const finishAssignment = async () => {
       const data = await apiFetch<Service>(`/services/${id}`);
       setService(data);
       setShowAssign(false);
       resetAssignForm();
+    };
+
+    try {
+      await submitAssignment();
+      await finishAssignment();
     } catch (e) {
-      console.error(e);
+      let error = e as { blocked?: boolean; message?: string };
+      if (error?.blocked && service?.date) {
+        const blockouts = await apiFetch<ServiceBlockoutLike[]>(`/blockouts?userId=${assignUserId}`).catch(() => null);
+
+        if (Array.isArray(blockouts) && !hasLocalServiceBlockoutConflict(service.date, blockouts)) {
+          try {
+            await submitAssignment(true);
+            await finishAssignment();
+            return;
+          } catch (retryError: unknown) {
+            error = retryError as { blocked?: boolean; message?: string };
+          }
+        }
+      }
+
+      console.error(error);
       toast({
-        title: e instanceof Error ? e.message : "No se pudo asignar el miembro",
+        title: error?.blocked
+          ? "El miembro no está disponible en esa fecha"
+          : error?.message || "No se pudo asignar el miembro",
         variant: "destructive",
       });
     }

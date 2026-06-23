@@ -1,4 +1,5 @@
 const DATE_ONLY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+const DATE_TIME_LOCAL_RE = /^(\d{4})-(\d{2})-(\d{2})T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?$/;
 const UTC_MIDNIGHT_RE = /^(\d{4})-(\d{2})-(\d{2})T00:00(?::00(?:\.000)?)?(?:Z|\+00:00)$/;
 
 function fromParts(year: string, month: string, day: string, hours = 0, minutes = 0) {
@@ -47,6 +48,32 @@ export function formatServiceTime(
 export function getServiceDateKey(value?: string | null) {
   const date = parseServiceDate(value);
   if (!date) return "";
+
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+export function getServiceDateInputValue(value?: string | null) {
+  return getServiceDateKey(value);
+}
+
+export function toServiceApiDateValue(value?: string | null) {
+  if (!value) return "";
+
+  const dateOnly = value.match(DATE_ONLY_RE);
+  if (dateOnly) return `${dateOnly[1]}-${dateOnly[2]}-${dateOnly[3]}`;
+
+  const localDateTime = value.match(DATE_TIME_LOCAL_RE);
+  if (localDateTime) return `${localDateTime[1]}-${localDateTime[2]}-${localDateTime[3]}`;
+
+  return getServiceDateKey(value);
+}
+
+export function addWeeksToServiceDateValue(value: string, weeks: number) {
+  const dateOnly = toServiceApiDateValue(value).match(DATE_ONLY_RE);
+  if (!dateOnly) return "";
+
+  const date = fromParts(dateOnly[1], dateOnly[2], dateOnly[3]);
+  date.setDate(date.getDate() + weeks * 7);
 
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }

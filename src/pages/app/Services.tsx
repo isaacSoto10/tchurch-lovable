@@ -25,7 +25,14 @@ import {
   type SongLike,
 } from "@/lib/songDisplay";
 import { normalizeKey, transposeChordPro } from "@/lib/musicUtils";
-import { formatServiceDate, formatServiceTime, toServiceDatetimeLocalValue } from "@/lib/serviceDates";
+import {
+  addWeeksToServiceDateValue,
+  formatServiceDate,
+  formatServiceTime,
+  getServiceDateInputValue,
+  toServiceApiDateValue,
+} from "@/lib/serviceDates";
+import { hasLocalServiceBlockoutConflict, type ServiceBlockoutLike } from "@/lib/serviceBlockouts";
 import { sortSongsByLastUsedDesc } from "@/lib/songUsage";
 import {
   buildSongNotesWithYoutubeUrl,
@@ -177,12 +184,6 @@ function getServiceWeeksToCreate(value: string) {
   const parsed = Number.parseInt(value, 10);
   if (Number.isNaN(parsed)) return 1;
   return Math.min(Math.max(parsed, 1), MAX_SERVICE_WEEKS);
-}
-
-function addWeeks(date: Date, weeks: number) {
-  const nextDate = new Date(date);
-  nextDate.setDate(nextDate.getDate() + weeks * 7);
-  return nextDate;
 }
 
 export default function Services() {
@@ -556,7 +557,7 @@ export default function Services() {
     setEditingService(service);
     setFormData({
       title: service.title,
-      date: toServiceDatetimeLocalValue(service.date),
+      date: getServiceDateInputValue(service.date),
       type: service.type,
       status: service.status === "completed" ? "completed" : "confirmed",
       notes: service.notes || "",
@@ -570,15 +571,15 @@ export default function Services() {
 
     setSubmitting(true);
     try {
-      const baseDate = new Date(formData.date);
-      if (Number.isNaN(baseDate.getTime())) {
+      const baseDate = toServiceApiDateValue(formData.date);
+      if (!baseDate) {
         toast({ title: "Selecciona una fecha válida", variant: "destructive" });
         return;
       }
 
-      const buildPayload = (serviceDate: Date) => ({
+      const buildPayload = (serviceDate: string) => ({
         title: formData.title.trim(),
-        date: serviceDate.toISOString(),
+        date: serviceDate,
         type: formData.type,
         status: formData.status === "completed" ? "completed" : "confirmed",
         notes: formData.notes || null,
@@ -592,7 +593,14 @@ export default function Services() {
         toast({ title: "Servicio actualizado" });
       } else {
         const serviceWeeks = getServiceWeeksToCreate(weeksToCreate);
-        const serviceDates = Array.from({ length: serviceWeeks }, (_, index) => addWeeks(baseDate, index));
+        const serviceDates = Array.from({ length: serviceWeeks }, (_, index) =>
+          addWeeksToServiceDateValue(baseDate, index)
+        );
+
+        if (serviceDates.some((serviceDate) => !serviceDate)) {
+          toast({ title: "Selecciona una fecha válida", variant: "destructive" });
+          return;
+        }
 
         for (const serviceDate of serviceDates) {
           await fetchApi("/services", {
@@ -935,32 +943,61 @@ export default function Services() {
       return;
     }
 
-    try {
-      await fetchApi("/service-assignments", {
+    const assignmentPayload = {
+      serviceId: selectedServiceId,
+      userId: selectedMember.id,
+      position,
+    };
+    const submitAssignment = (overrideBlock = false) => fetchApi("/service-assignments", {
         method: "POST",
         body: JSON.stringify({
-          serviceId: selectedServiceId,
-          userId: selectedMember.id,
-          position,
+          ...assignmentPayload,
+          ...(overrideBlock ? { overrideBlock: true } : {}),
         }),
       });
-      toast({ title: "Miembro asignado" });
-      setAssignDialogOpen(false);
-      setSelectedPosition("");
-      setAddingCustomPosition(false);
-
+    const refreshSelectedServiceAssignments = async () => {
       const serviceRes = await fetchApi(`/services/${selectedServiceId}`);
       if (serviceRes && typeof serviceRes === 'object') {
         const assignments = (serviceRes as Record<string, unknown>).assignments || [];
         setServiceAssignments((prev) => ({ ...prev, [selectedServiceId]: Array.isArray(assignments) ? assignments as ServiceAssignment[] : [] }));
       }
+    };
+    const finishAssignment = async () => {
+      toast({ title: "Miembro asignado" });
+      setAssignDialogOpen(false);
+      setSelectedPosition("");
+      setAddingCustomPosition(false);
+      await refreshSelectedServiceAssignments();
+    };
+
+    try {
+      await submitAssignment();
+      await finishAssignment();
     } catch (e: unknown) {
-      const error = e as { blocked?: boolean; message?: string };
+      let error = e as { blocked?: boolean; message?: string };
       if (error?.blocked) {
-        toast({ title: "El miembro no está disponible en esa fecha", variant: "destructive" });
-      } else {
-        toast({ title: error?.message || "No se pudo asignar el miembro", variant: "destructive" });
+        const serviceDate = services.find((service) => service.id === selectedServiceId)?.date;
+        const blockouts = serviceDate
+          ? await fetchApi<ServiceBlockoutLike[]>(`/blockouts?userId=${selectedMember.id}`).catch(() => null)
+          : null;
+
+        if (serviceDate && Array.isArray(blockouts) && !hasLocalServiceBlockoutConflict(serviceDate, blockouts)) {
+          try {
+            await submitAssignment(true);
+            await finishAssignment();
+            return;
+          } catch (retryError: unknown) {
+            error = retryError as { blocked?: boolean; message?: string };
+          }
+        }
+
+        if (error?.blocked) {
+          toast({ title: "El miembro no está disponible en esa fecha", variant: "destructive" });
+          return;
+        }
       }
+
+      toast({ title: error?.message || "No se pudo asignar el miembro", variant: "destructive" });
     }
   };
 
@@ -1005,9 +1042,7 @@ export default function Services() {
   const submittingLabel = editingService ? "Guardando..." : serviceWeeks === 1 ? "Creando..." : "Creando servicios...";
   const servicePreviewDates =
     !editingService && formData.date && serviceWeeks > 1
-      ? Array.from({ length: serviceWeeks }, (_, index) => addWeeks(new Date(formData.date), index)).filter(
-          (date) => !Number.isNaN(date.getTime())
-        )
+      ? Array.from({ length: serviceWeeks }, (_, index) => addWeeksToServiceDateValue(formData.date, index)).filter(Boolean)
       : [];
 
   return (
@@ -1193,10 +1228,10 @@ export default function Services() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="service-date">Fecha y hora</Label>
+              <Label htmlFor="service-date">Fecha</Label>
               <Input
                 id="service-date"
-                type="datetime-local"
+                type="date"
                 value={formData.date}
                 onChange={(e) =>
                   setFormData({ ...formData, date: e.target.value })
@@ -1220,7 +1255,7 @@ export default function Services() {
                   <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-600">
                     <span className="font-medium text-zinc-900">Primeras fechas:</span>{" "}
                     {servicePreviewDates.slice(0, 3).map((date) =>
-                      date.toLocaleDateString("es-US", { month: "short", day: "numeric" })
+                      formatServiceDate(date, "es-US", { month: "short", day: "numeric" })
                     ).join(", ")}
                     {servicePreviewDates.length > 3 && ` y ${servicePreviewDates.length - 3} más`}
                   </div>
@@ -1500,23 +1535,27 @@ export default function Services() {
           </div>
         )}
         {!loading &&
-          filteredServices.map((svc) => (
-            <Card
-              key={svc.id}
-              className="app-card cursor-pointer border-zinc-200/80 transition-all hover:-translate-y-0.5 hover:shadow-md"
-              onClick={() => {
-                if (suppressNextCardClickRef.current) return;
-                toggleExpand(svc.id);
-              }}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
+          filteredServices.map((svc) => {
+            const serviceTime = formatServiceTime(svc.date);
+            const showServiceTime = Boolean(serviceTime && serviceTime !== "12:00 AM");
+
+            return (
+              <Card
+                key={svc.id}
+                className="app-card cursor-pointer border-zinc-200/80 transition-all hover:-translate-y-0.5 hover:shadow-md"
+                onClick={() => {
+                  if (suppressNextCardClickRef.current) return;
                   toggleExpand(svc.id);
-                }
-              }}
-            >
+                }}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    toggleExpand(svc.id);
+                  }
+                }}
+              >
               <CardContent className="p-4">
                 <div className="flex items-center gap-3">
                   <div className="h-12 w-1.5 rounded-full bg-primary shadow-sm shadow-primary/30" />
@@ -1539,9 +1578,7 @@ export default function Services() {
                             day: "numeric",
                           })
                         : ""}
-                      {svc.date
-                        ? ` · ${formatServiceTime(svc.date)}`
-                        : ""}
+                      {showServiceTime ? ` · ${serviceTime}` : ""}
                     </p>
                   </div>
                   <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
@@ -1918,8 +1955,9 @@ export default function Services() {
                   </div>
                 )}
               </CardContent>
-            </Card>
-          ))}
+              </Card>
+            );
+          })}
       </div>
     </div>
   );
