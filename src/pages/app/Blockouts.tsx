@@ -1,11 +1,13 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Plus, X, Calendar, User, AlertCircle } from "lucide-react";
+import { Plus, Calendar, User, AlertCircle, Loader2, Trash2 } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
+import { useAppAuth } from "@/hooks/useAppAuth";
+import { useChurch } from "@/providers/ChurchProvider";
 import {
   Dialog,
   DialogContent,
@@ -13,6 +15,17 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import {
   Select,
   SelectContent,
@@ -44,8 +57,12 @@ interface User {
 export default function Blockouts() {
   const { fetchApi } = useApi();
   const { toast } = useToast();
+  const { userId: authUserId } = useAppAuth();
+  const { selectedChurch } = useChurch();
+  const isAdmin = selectedChurch?.role === "ADMIN";
   const [blockouts, setBlockouts] = useState<Blockout[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
@@ -53,15 +70,21 @@ export default function Blockouts() {
   const [endDate, setEndDate] = useState("");
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadData();
-  }, [fetchApi]);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [usersData] = await Promise.all([fetchApi("/users")]);
+      const [currentUser, usersData] = await Promise.all([
+        fetchApi<{ id: string }>("/users/me").catch((e) => {
+          console.error("Failed to load current user:", e);
+          return null;
+        }),
+        fetchApi<User[]>("/users"),
+      ]);
+      setCurrentUserId(currentUser?.id || null);
+
       const usersList = Array.isArray(usersData) ? usersData : [];
       setUsers(usersList);
 
@@ -95,7 +118,12 @@ export default function Blockouts() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [fetchApi]);
+
+  useEffect(() => {
+    setCurrentUserId(null);
+    loadData();
+  }, [authUserId, loadData]);
 
   const handleSubmit = async () => {
     if (!selectedUser || !startDate || !endDate) {
@@ -130,6 +158,27 @@ export default function Blockouts() {
     setStartDate("");
     setEndDate("");
     setReason("");
+  };
+
+  const canDeleteBlockout = (blockout: Blockout) => {
+    return isAdmin || (!!currentUserId && blockout.userId === currentUserId);
+  };
+
+  const handleDelete = async () => {
+    if (!deleteId) return;
+
+    setDeletingId(deleteId);
+    try {
+      await fetchApi(`/blockouts/${deleteId}`, { method: "DELETE" });
+      setBlockouts((current) => current.filter((blockout) => blockout.id !== deleteId));
+      toast({ title: "Blockout date deleted" });
+      setDeleteId(null);
+    } catch (e) {
+      console.error("Failed to delete blockout date:", e);
+      toast({ title: "Failed to delete blockout date", variant: "destructive" });
+    } finally {
+      setDeletingId(null);
+    }
   };
 
   const formatDate = (dateStr: string) => {
@@ -244,32 +293,79 @@ export default function Blockouts() {
           </Card>
         )}
         {!loading &&
-          blockouts.map((blockout) => (
-            <Card key={blockout.id} className={isPastBlockout(blockout.endDate) ? "opacity-60" : ""}>
-              <CardContent className="p-4 flex items-start gap-3">
-                <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center shrink-0">
-                  <User className="w-5 h-5 text-muted-foreground" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium">
-                    {blockout.user?.firstName} {blockout.user?.lastName}
-                  </p>
-                  <p className="text-sm text-muted-foreground flex items-center gap-1">
-                    <Calendar className="w-3 h-3" />
-                    {formatDate(blockout.startDate)} — {formatDate(blockout.endDate)}
-                  </p>
-                  {blockout.reason && (
-                    <p className="text-xs text-muted-foreground mt-1">{blockout.reason}</p>
-                  )}
-                </div>
-                {isPastBlockout(blockout.endDate) && (
-                  <span className="text-xs text-muted-foreground flex items-center gap-1">
-                    <AlertCircle className="w-3 h-3" /> Past
-                  </span>
-                )}
-              </CardContent>
-            </Card>
-          ))}
+          blockouts.map((blockout) => {
+            const isPast = isPastBlockout(blockout.endDate);
+            const canDelete = canDeleteBlockout(blockout);
+
+            return (
+              <Card key={blockout.id} className={isPast ? "opacity-60" : ""}>
+                <CardContent className="p-4 flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center shrink-0">
+                    <User className="w-5 h-5 text-muted-foreground" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium">
+                      {blockout.user?.firstName} {blockout.user?.lastName}
+                    </p>
+                    <p className="text-sm text-muted-foreground flex items-center gap-1">
+                      <Calendar className="w-3 h-3" />
+                      {formatDate(blockout.startDate)} — {formatDate(blockout.endDate)}
+                    </p>
+                    {blockout.reason && (
+                      <p className="text-xs text-muted-foreground mt-1">{blockout.reason}</p>
+                    )}
+                  </div>
+                  <div className="flex shrink-0 items-start gap-1">
+                    {isPast && (
+                      <span className="flex min-h-11 items-center gap-1 text-xs text-muted-foreground">
+                        <AlertCircle className="w-3 h-3" /> Past
+                      </span>
+                    )}
+                    {canDelete && (
+                      <AlertDialog open={deleteId === blockout.id} onOpenChange={(open) => !open && setDeleteId(null)}>
+                        <AlertDialogTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-11 w-11 shrink-0 rounded-xl"
+                            aria-label="Delete blockout date"
+                            title="Delete blockout date"
+                            disabled={deletingId === blockout.id}
+                            onClick={() => setDeleteId(blockout.id)}
+                          >
+                            {deletingId === blockout.id ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="w-4 h-4 text-destructive" />
+                            )}
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Delete blockout date</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              Are you sure you want to delete this blockout date? This action cannot be undone.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction
+                              onClick={handleDelete}
+                              disabled={deletingId === blockout.id}
+                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                            >
+                              {deletingId === blockout.id ? "Deleting..." : "Delete"}
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
       </div>
     </div>
   );
