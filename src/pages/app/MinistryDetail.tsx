@@ -12,7 +12,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Loader2, ArrowLeft, Plus, Check, X, UserMinus, Users, Clock, MessageCircle, FileText, UserPlus, ShieldCheck } from "lucide-react";
 import { ApiError, apiFetch } from "@/lib/api";
 import { useChurch } from "@/providers/ChurchProvider";
@@ -430,9 +430,17 @@ export default function MinistryDetail() {
     activeMembers.filter((member) => ["ADMIN", "LEADER", "CO_LEADER"].includes(normalizeRole(member.role))).length;
   const resourceCount = ministry.stats?.resourceCount ?? 0;
   const requestBadgeCount = joinRequests.length || pendingCount;
+  const tabTriggerClass =
+    "group min-h-[4.25rem] w-full justify-start whitespace-normal rounded-2xl border border-zinc-200 bg-white px-3 py-3 text-left shadow-sm transition data-[state=active]:border-primary/70 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-md";
+  const tabIconClass = "mt-0.5 h-4 w-4 shrink-0 text-zinc-500 group-data-[state=active]:text-primary";
+  const tabMetaClass = "mt-1 block text-[11px] font-medium leading-tight text-zinc-500";
 
   return (
-    <div className="mobile-page min-h-full bg-zinc-50">
+    <Tabs
+      value={activeTab}
+      onValueChange={(value) => setActiveTab(value as Tab)}
+      className="mobile-page min-h-full bg-zinc-50"
+    >
       {/* Header */}
       <div className="bg-white border-b border-zinc-200 sticky top-0 z-10">
         <div className="flex items-center gap-3 px-4 py-3">
@@ -463,25 +471,89 @@ export default function MinistryDetail() {
         </div>
 
         {/* Tabs */}
-        <div className="px-4">
-          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as Tab)} className="w-full">
-            <TabsList className="flex h-auto w-full justify-start overflow-x-auto rounded-lg bg-zinc-100/60 p-1">
-              <TabsTrigger value="members" className="shrink-0 text-xs">Members ({memberCount})</TabsTrigger>
-              {canManage && (
-                <TabsTrigger value="join-requests" className="relative shrink-0 text-xs">
-                  Requests
-                  {requestBadgeCount > 0 && (
-                    <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[10px] rounded-full flex items-center justify-center">
-                      {requestBadgeCount}
+        <div className="px-4 pb-3">
+          <TabsList
+            aria-label="Ministry sections"
+            className="grid h-auto w-full grid-cols-2 gap-2 rounded-none bg-transparent p-0 text-zinc-600"
+          >
+            <TabsTrigger
+              value="members"
+              className={tabTriggerClass}
+              aria-label={`Members, ${memberCount} active`}
+            >
+              <span className="flex w-full items-start gap-2">
+                <Users className={tabIconClass} aria-hidden="true" />
+                <span className="min-w-0">
+                  <span className="block text-sm font-semibold leading-tight">Members</span>
+                  <span className={tabMetaClass}>{memberCount} active</span>
+                </span>
+              </span>
+            </TabsTrigger>
+            {canManage && (
+              <TabsTrigger
+                value="join-requests"
+                className={tabTriggerClass}
+                aria-label={`Requests, ${requestBadgeCount} pending`}
+              >
+                <span className="flex w-full items-start gap-2">
+                  <UserPlus className={tabIconClass} aria-hidden="true" />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-2">
+                      <span className="block text-sm font-semibold leading-tight">Requests</span>
+                      {requestBadgeCount > 0 && (
+                        <span
+                          aria-label={`${requestBadgeCount} pending requests`}
+                          className="inline-flex h-6 min-w-6 shrink-0 items-center justify-center rounded-full bg-red-500 px-1.5 text-xs font-bold text-white"
+                        >
+                          {requestBadgeCount}
+                        </span>
+                      )}
                     </span>
-                  )}
-                </TabsTrigger>
-              )}
-              <TabsTrigger value="announcements" className="shrink-0 text-xs">Announcements</TabsTrigger>
-              <TabsTrigger value="resources" className="shrink-0 text-xs">Resources ({resourceCount})</TabsTrigger>
-              <TabsTrigger value="finance" className="shrink-0 text-xs">Finanzas</TabsTrigger>
-            </TabsList>
-          </Tabs>
+                    <span className={tabMetaClass}>{requestBadgeCount > 0 ? "Needs review" : "No pending"}</span>
+                  </span>
+                </span>
+              </TabsTrigger>
+            )}
+            <TabsTrigger
+              value="announcements"
+              className={tabTriggerClass}
+              aria-label="Announcements"
+            >
+              <span className="flex w-full items-start gap-2">
+                <MessageCircle className={tabIconClass} aria-hidden="true" />
+                <span className="min-w-0">
+                  <span className="block text-sm font-semibold leading-tight">Announcements</span>
+                  <span className={tabMetaClass}>Updates</span>
+                </span>
+              </span>
+            </TabsTrigger>
+            <TabsTrigger
+              value="resources"
+              className={tabTriggerClass}
+              aria-label={`Resources, ${resourceCount} items`}
+            >
+              <span className="flex w-full items-start gap-2">
+                <FileText className={tabIconClass} aria-hidden="true" />
+                <span className="min-w-0">
+                  <span className="block text-sm font-semibold leading-tight">Resources</span>
+                  <span className={tabMetaClass}>{resourceCount} items</span>
+                </span>
+              </span>
+            </TabsTrigger>
+            <TabsTrigger
+              value="finance"
+              className={tabTriggerClass}
+              aria-label="Finanzas"
+            >
+              <span className="flex w-full items-start gap-2">
+                <ShieldCheck className={tabIconClass} aria-hidden="true" />
+                <span className="min-w-0">
+                  <span className="block text-sm font-semibold leading-tight">Finanzas</span>
+                  <span className={tabMetaClass}>Donations</span>
+                </span>
+              </span>
+            </TabsTrigger>
+          </TabsList>
         </div>
         <div className="h-px bg-zinc-200" />
       </div>
@@ -520,146 +592,144 @@ export default function MinistryDetail() {
         </Card>
 
         {/* MEMBERS TAB */}
-        {activeTab === "members" && (
-          <div className="space-y-3">
-            {canManage && (
-              <div className="flex justify-end gap-2">
-                {ministry.whatsappGroupUrl && (
-                  <Button size="sm" variant="outline" asChild>
-                    <a href={ministry.whatsappGroupUrl} target="_blank" rel="noreferrer">
-                      <MessageCircle className="w-4 h-4 mr-1" /> WhatsApp
-                    </a>
-                  </Button>
-                )}
-                <Button size="sm" onClick={() => setShowAddMember(true)}>
-                  <Plus className="w-4 h-4 mr-1" /> Add Member
+        <TabsContent value="members" className="m-0 space-y-3">
+          {canManage && (
+            <div className="flex justify-end gap-2">
+              {ministry.whatsappGroupUrl && (
+                <Button size="sm" variant="outline" asChild>
+                  <a href={ministry.whatsappGroupUrl} target="_blank" rel="noreferrer">
+                    <MessageCircle className="w-4 h-4 mr-1" /> WhatsApp
+                  </a>
                 </Button>
-              </div>
-            )}
-            {!canManage && ministry.whatsappGroupUrl && (
-              <Card className="border-emerald-100 bg-emerald-50">
-                <CardContent className="p-4">
-                  <Button asChild className="w-full bg-emerald-600 hover:bg-emerald-700">
-                    <a href={ministry.whatsappGroupUrl} target="_blank" rel="noreferrer">
-                      <MessageCircle className="w-4 h-4 mr-2" /> Open ministry WhatsApp group
-                    </a>
-                  </Button>
-                </CardContent>
-              </Card>
-            )}
+              )}
+              <Button size="sm" onClick={() => setShowAddMember(true)}>
+                <Plus className="w-4 h-4 mr-1" /> Add Member
+              </Button>
+            </div>
+          )}
+          {!canManage && ministry.whatsappGroupUrl && (
+            <Card className="border-emerald-100 bg-emerald-50">
+              <CardContent className="p-4">
+                <Button asChild className="w-full bg-emerald-600 hover:bg-emerald-700">
+                  <a href={ministry.whatsappGroupUrl} target="_blank" rel="noreferrer">
+                    <MessageCircle className="w-4 h-4 mr-2" /> Open ministry WhatsApp group
+                  </a>
+                </Button>
+              </CardContent>
+            </Card>
+          )}
 
-            {!isMember && !isPending && (
-              <Card className="border-primary/30 bg-primary/5">
-                <CardContent className="space-y-3 p-4">
-                  <div className="flex items-start gap-3">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                      <UserPlus className="h-5 w-5" />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="font-semibold text-zinc-950">Join this ministry</p>
-                      <p className="mt-1 text-sm leading-5 text-zinc-600">
-                        Send a request to the ministry leaders. Once approved, resources and member updates will appear here.
-                      </p>
-                    </div>
+          {!isMember && !isPending && (
+            <Card className="border-primary/30 bg-primary/5">
+              <CardContent className="space-y-3 p-4">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                    <UserPlus className="h-5 w-5" />
                   </div>
-                  {joinError && (
-                    <p className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-                      {joinError}
-                    </p>
-                  )}
-                  <Button className="h-11 w-full" onClick={handleJoinRequest} disabled={joinSubmitting}>
-                    {joinSubmitting ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Sending request...
-                      </>
-                    ) : (
-                      <>
-                        <UserPlus className="h-4 w-4" />
-                        Join this ministry
-                      </>
-                    )}
-                  </Button>
-                </CardContent>
-              </Card>
-            )}
-
-            {isPending && (
-              <Card className="border-amber-200 bg-amber-50">
-                <CardContent className="p-4 flex items-center gap-3">
-                  <Clock className="w-5 h-5 text-amber-600 shrink-0" />
-                  <div>
-                    <p className="font-medium text-amber-800 text-sm">Request sent to leaders</p>
-                    <p className="text-xs text-amber-600">Waiting for a ministry leader to approve it.</p>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
-            {isMember && (
-              <Card>
-                <CardContent className="flex items-center gap-3 p-3">
-                  <ShieldCheck className="h-5 w-5 text-emerald-600" />
                   <div className="min-w-0">
-                    <p className="text-sm font-medium text-zinc-950">You're in this ministry</p>
-                    <p className="text-xs text-muted-foreground">Role: {formatRole(myRole)}</p>
+                    <p className="font-semibold text-zinc-950">Join this ministry</p>
+                    <p className="mt-1 text-sm leading-5 text-zinc-600">
+                      Send a request to the ministry leaders. Once approved, resources and member updates will appear here.
+                    </p>
                   </div>
-                </CardContent>
-              </Card>
-            )}
+                </div>
+                {joinError && (
+                  <p className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                    {joinError}
+                  </p>
+                )}
+                <Button className="h-11 w-full" onClick={handleJoinRequest} disabled={joinSubmitting}>
+                  {joinSubmitting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Sending request...
+                    </>
+                  ) : (
+                    <>
+                      <UserPlus className="h-4 w-4" />
+                      Join this ministry
+                    </>
+                  )}
+                </Button>
+              </CardContent>
+            </Card>
+          )}
 
-            {activeMembers.length === 0 ? (
-              <Card>
-                <CardContent className="p-8 text-center">
-                  <Users className="w-8 h-8 mx-auto text-zinc-300 mb-2" />
-                  <p className="text-sm text-muted-foreground">No members yet</p>
-                </CardContent>
-              </Card>
-            ) : (
-              <div className="space-y-2">
-                {activeMembers.map((member) => (
-                  <Card key={member.id}>
-                    <CardContent className="p-3 flex items-center gap-3">
-                      <Avatar className="h-10 w-10 shrink-0">
-                        <AvatarFallback className="bg-primary/10 text-primary text-sm font-semibold">
-                          {getInitials(member.user?.firstName, member.user?.lastName, member.user?.email)}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium text-sm truncate">
-                          {getDisplayName(member.user)}
-                        </p>
-                        <p className="text-xs text-zinc-500 truncate">{member.user?.email}</p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Badge
-                          variant={normalizeRole(member.role) === "ADMIN" || normalizeRole(member.role) === "LEADER" || normalizeRole(member.role) === "CO_LEADER" ? "default" : "secondary"}
-                          className="text-xs"
+          {isPending && (
+            <Card className="border-amber-200 bg-amber-50">
+              <CardContent className="p-4 flex items-center gap-3">
+                <Clock className="w-5 h-5 text-amber-600 shrink-0" />
+                <div>
+                  <p className="font-medium text-amber-800 text-sm">Request sent to leaders</p>
+                  <p className="text-xs text-amber-600">Waiting for a ministry leader to approve it.</p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {isMember && (
+            <Card>
+              <CardContent className="flex items-center gap-3 p-3">
+                <ShieldCheck className="h-5 w-5 text-emerald-600" />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-zinc-950">You're in this ministry</p>
+                  <p className="text-xs text-muted-foreground">Role: {formatRole(myRole)}</p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {activeMembers.length === 0 ? (
+            <Card>
+              <CardContent className="p-8 text-center">
+                <Users className="w-8 h-8 mx-auto text-zinc-300 mb-2" />
+                <p className="text-sm text-muted-foreground">No members yet</p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-2">
+              {activeMembers.map((member) => (
+                <Card key={member.id}>
+                  <CardContent className="p-3 flex items-center gap-3">
+                    <Avatar className="h-10 w-10 shrink-0">
+                      <AvatarFallback className="bg-primary/10 text-primary text-sm font-semibold">
+                        {getInitials(member.user?.firstName, member.user?.lastName, member.user?.email)}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-sm truncate">
+                        {getDisplayName(member.user)}
+                      </p>
+                      <p className="text-xs text-zinc-500 truncate">{member.user?.email}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge
+                        variant={normalizeRole(member.role) === "ADMIN" || normalizeRole(member.role) === "LEADER" || normalizeRole(member.role) === "CO_LEADER" ? "default" : "secondary"}
+                        className="text-xs"
+                      >
+                        {formatRole(member.role)}
+                      </Badge>
+                      {canManage && normalizeRole(member.role) !== "ADMIN" && (
+                        <button
+                          type="button"
+                          aria-label={`Remove ${getDisplayName(member.user)}`}
+                          onClick={() => handleRemoveMember(member.userId)}
+                          className="p-1.5 rounded-lg hover:bg-red-50 text-zinc-400 hover:text-red-500 transition-colors"
                         >
-                          {formatRole(member.role)}
-                        </Badge>
-                        {canManage && normalizeRole(member.role) !== "ADMIN" && (
-                          <button
-                            type="button"
-                            aria-label={`Remove ${getDisplayName(member.user)}`}
-                            onClick={() => handleRemoveMember(member.userId)}
-                            className="p-1.5 rounded-lg hover:bg-red-50 text-zinc-400 hover:text-red-500 transition-colors"
-                          >
-                            <UserMinus className="w-4 h-4" />
-                          </button>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+                          <UserMinus className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </TabsContent>
 
         {/* JOIN REQUESTS TAB */}
-        {activeTab === "join-requests" && canManage && (
-          <div className="space-y-3">
+        {canManage && (
+          <TabsContent value="join-requests" className="m-0 space-y-3">
             <p className="text-sm text-muted-foreground">
               Requests from the Join this ministry button appear here for leaders to approve or deny.
             </p>
@@ -713,42 +783,40 @@ export default function MinistryDetail() {
                 </Card>
               ))
             )}
-          </div>
+          </TabsContent>
         )}
 
         {/* ANNOUNCEMENTS TAB */}
-        {activeTab === "announcements" && (
-          <div className="space-y-3">
-            {announcements.length === 0 ? (
-              <Card>
-                <CardContent className="p-8 text-center">
-                  <p className="text-sm text-muted-foreground">No announcements yet</p>
+        <TabsContent value="announcements" className="m-0 space-y-3">
+          {announcements.length === 0 ? (
+            <Card>
+              <CardContent className="p-8 text-center">
+                <p className="text-sm text-muted-foreground">No announcements yet</p>
+              </CardContent>
+            </Card>
+          ) : (
+            announcements.map((ann) => (
+              <Card key={ann.id}>
+                <CardContent className="p-4">
+                  {ann.imageUrl && (
+                    <img src={ann.imageUrl} alt={ann.title} className="w-full h-40 object-cover rounded-lg mb-3" />
+                  )}
+                  <h3 className="font-semibold text-zinc-900">{ann.title}</h3>
+                  {ann.content && (
+                    <p className="text-sm text-zinc-500 mt-1 line-clamp-3">{ann.content}</p>
+                  )}
+                  <p className="text-xs text-zinc-400 mt-2">
+                    {new Date(ann.createdAt).toLocaleDateString()}
+                  </p>
                 </CardContent>
               </Card>
-            ) : (
-              announcements.map((ann) => (
-                <Card key={ann.id}>
-                  <CardContent className="p-4">
-                    {ann.imageUrl && (
-                      <img src={ann.imageUrl} alt={ann.title} className="w-full h-40 object-cover rounded-lg mb-3" />
-                    )}
-                    <h3 className="font-semibold text-zinc-900">{ann.title}</h3>
-                    {ann.content && (
-                      <p className="text-sm text-zinc-500 mt-1 line-clamp-3">{ann.content}</p>
-                    )}
-                    <p className="text-xs text-zinc-400 mt-2">
-                      {new Date(ann.createdAt).toLocaleDateString()}
-                    </p>
-                  </CardContent>
-                </Card>
-              ))
-            )}
-          </div>
-        )}
+            ))
+          )}
+        </TabsContent>
 
         {/* RESOURCES TAB */}
-        {activeTab === "resources" && (
-          canManage || isMember ? (
+        <TabsContent value="resources" className="m-0">
+          {canManage || isMember ? (
             <MinistryResources ministryId={id!} canManage={canManage} />
           ) : (
             <Card>
@@ -760,13 +828,13 @@ export default function MinistryDetail() {
                 </p>
               </CardContent>
             </Card>
-          )
-        )}
+          )}
+        </TabsContent>
 
         {/* FINANCE TAB */}
-        {activeTab === "finance" && (
+        <TabsContent value="finance" className="m-0">
           <MinistryFinance ministryId={id!} ministryName={ministry.name} canManage={canManage} />
-        )}
+        </TabsContent>
       </div>
 
       {/* ADD MEMBER DIALOG */}
@@ -868,6 +936,6 @@ export default function MinistryDetail() {
           </form>
         </DialogContent>
       </Dialog>
-    </div>
+    </Tabs>
   );
 }

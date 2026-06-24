@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { normalizeAppRoute, routeFromAppUrl, routeFromNotificationData } from "@/lib/navigation";
+import {
+  areAppRoutesEquivalent,
+  normalizeAppRoute,
+  routeFromAppUrl,
+  routeFromNotificationData,
+  shouldApplyNativeLaunchRoute,
+} from "@/lib/navigation";
 
 describe("mobile app navigation helpers", () => {
   it("normalizes app-relative routes", () => {
@@ -15,6 +21,12 @@ describe("mobile app navigation helpers", () => {
     expect(routeFromAppUrl("https://tchurchapp.com/events/event-1?tab=registration")).toBe("/app/events/event-1/rsvp");
     expect(routeFromAppUrl("tchurchapp://app/events/event-1/qr")).toBe("/app/events/event-1/qr");
     expect(routeFromAppUrl("tchurchapp://events/event-1/scanner")).toBe("/app/events/event-1/scanner");
+  });
+
+  it("resolves supported ministry deep links", () => {
+    expect(routeFromAppUrl("https://tchurchapp.com/app/ministries/ministry-1")).toBe("/app/ministries/ministry-1");
+    expect(routeFromAppUrl("tchurchapp://app/ministries/ministry-1")).toBe("/app/ministries/ministry-1");
+    expect(routeFromAppUrl("tchurchapp://ministries/ministry-1")).toBe("/app/ministries/ministry-1");
   });
 
   it("preserves church invite query deep links", () => {
@@ -52,5 +64,12 @@ describe("mobile app navigation helpers", () => {
     expect(routeFromNotificationData({ metadata: { targetUrl: "events/event-7/scanner" } })).toBe("/app/events/event-7/scanner");
     expect(routeFromNotificationData({ notification: { event_id: "event-8", view: "signup_items" } })).toBe("/app/events/event-8/participation");
     expect(routeFromNotificationData({ customData: JSON.stringify({ event_id: "event-9", type: "event_qr" }) })).toBe("/app/events/event-9/qr");
+  });
+
+  it("guards native launch routes from overriding in-app navigation", () => {
+    expect(areAppRoutesEquivalent("/app", "/app/")).toBe(true);
+    expect(shouldApplyNativeLaunchRoute("/app/ministries", "/app", "/app")).toBe(true);
+    expect(shouldApplyNativeLaunchRoute("/app/ministries", "/app/ministries", "/app/ministries/ministry-1")).toBe(false);
+    expect(shouldApplyNativeLaunchRoute("/app/ministries", "/app/ministries", "/app/ministries")).toBe(false);
   });
 });

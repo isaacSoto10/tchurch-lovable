@@ -108,6 +108,35 @@ export function routeFromAppUrl(value: unknown): string | null {
   return null;
 }
 
+function routeComparisonKey(route: string) {
+  const trimmed = route.trim();
+  if (!trimmed || trimmed === "/") return trimmed || "/";
+
+  const hashIndex = trimmed.indexOf("#");
+  const searchIndex = trimmed.indexOf("?");
+  const suffixIndex =
+    hashIndex === -1
+      ? searchIndex
+      : searchIndex === -1
+        ? hashIndex
+        : Math.min(hashIndex, searchIndex);
+  const path = suffixIndex === -1 ? trimmed : trimmed.slice(0, suffixIndex);
+  const suffix = suffixIndex === -1 ? "" : trimmed.slice(suffixIndex);
+  const normalizedPath = path.length > 1 ? path.replace(/\/+$/, "") : path;
+
+  return `${normalizedPath}${suffix}`;
+}
+
+export function areAppRoutesEquivalent(left: string, right: string) {
+  return routeComparisonKey(left) === routeComparisonKey(right);
+}
+
+export function shouldApplyNativeLaunchRoute(route: string | null, initialRoute: string, currentRoute: string) {
+  return Boolean(route) &&
+    areAppRoutesEquivalent(initialRoute, currentRoute) &&
+    !areAppRoutesEquivalent(route!, currentRoute);
+}
+
 function stringFromRecord(record: UnknownRecord, keys: string[]) {
   for (const key of keys) {
     const value = record[key];
