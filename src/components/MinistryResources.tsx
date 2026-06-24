@@ -635,7 +635,7 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
   }
 
   return (
-    <div className="space-y-3 pb-[calc(var(--tchurch-mobile-content-clearance,var(--tchurch-mobile-nav-reserved,0px))+1rem)]">
+    <div className="space-y-3">
       {canManage && (
         <Card className="border-dashed">
           <CardContent className="space-y-4 p-4">

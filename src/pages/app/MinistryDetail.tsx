@@ -558,7 +558,7 @@ export default function MinistryDetail() {
         <div className="h-px bg-zinc-200" />
       </div>
 
-      <div className="space-y-4 p-4">
+      <div className="space-y-4 p-4 pb-[calc(var(--tchurch-mobile-content-clearance,var(--tchurch-mobile-nav-reserved,0px))+1rem)]">
         <Card className="border-zinc-200 bg-white">
           <CardContent className="space-y-4 p-4">
             <div className="flex items-start justify-between gap-3">

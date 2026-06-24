@@ -75,11 +75,15 @@ describe("mobile nav layout", () => {
     }
   });
 
-  it("keeps long ministry resource lists scrollable above the bottom nav", () => {
-    const source = readFileSync(`${process.cwd()}/src/components/MinistryResources.tsx`, "utf8");
+  it("keeps every ministry detail section scrollable above the bottom nav", () => {
+    const detailSource = readFileSync(`${process.cwd()}/src/pages/app/MinistryDetail.tsx`, "utf8");
+    const resourceSource = readFileSync(`${process.cwd()}/src/components/MinistryResources.tsx`, "utf8");
 
-    expect(source).toContain("--tchurch-mobile-content-clearance");
-    expect(source).toContain("--tchurch-mobile-nav-reserved");
-    expect(source).not.toContain("md:pb-0");
+    expect(detailSource).toContain("pb-[calc(var(--tchurch-mobile-content-clearance");
+    expect(detailSource).toContain("--tchurch-mobile-nav-reserved");
+    expect(detailSource).toContain('value="finance"');
+    expect(detailSource).toContain('value="announcements"');
+    expect(resourceSource).not.toContain("pb-[calc(var(--tchurch-mobile-content-clearance");
+    expect(resourceSource).not.toContain("md:pb-0");
   });
 });
