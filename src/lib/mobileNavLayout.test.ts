@@ -74,4 +74,12 @@ describe("mobile nav layout", () => {
       expect(source).toContain("mobile-page");
     }
   });
+
+  it("keeps long ministry resource lists scrollable above the bottom nav", () => {
+    const source = readFileSync(`${process.cwd()}/src/components/MinistryResources.tsx`, "utf8");
+
+    expect(source).toContain("--tchurch-mobile-content-clearance");
+    expect(source).toContain("--tchurch-mobile-nav-reserved");
+    expect(source).not.toContain("md:pb-0");
+  });
 });
