@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Search, Pencil, Trash2, ArrowLeft, Users, Megaphone, FolderOpen, UserPlus, X, Calendar } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Plus, Search, Pencil, Trash2, ArrowLeft, Users, Megaphone, FolderOpen, UserPlus, X, Calendar, Clock, ShieldCheck } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
 import { useChurch } from "@/providers/ChurchProvider";
@@ -35,6 +36,8 @@ interface Ministry {
   color?: string;
   members?: MinistryMember[];
   groups?: Group[];
+  memberCount?: number;
+  leaderCount?: number;
 }
 
 interface MinistryMember {
@@ -74,7 +77,26 @@ interface MemberSearchResult {
   email?: string | null;
 }
 
+type MyMinistriesResponse = {
+  role?: string | null;
+  myMinistryIds?: string[];
+  pendingMinistryIds?: string[];
+  ministryRoles?: Record<string, string>;
+};
+
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+function normalizeRole(role?: string | null) {
+  return String(role || "").toUpperCase();
+}
+
+function formatRole(role?: string | null) {
+  const normalized = normalizeRole(role);
+  if (normalized === "ADMIN") return "Admin";
+  if (normalized === "LEADER") return "Leader";
+  if (normalized === "CO_LEADER") return "Co-leader";
+  return "Member";
+}
 
 export default function Ministries() {
   const navigate = useNavigate();
@@ -84,6 +106,9 @@ export default function Ministries() {
   const { toast } = useToast();
   const [ministries, setMinistries] = useState<Ministry[]>([]);
   const [allGroups, setAllGroups] = useState<Group[]>([]);
+  const [myMinistryIds, setMyMinistryIds] = useState<string[]>([]);
+  const [pendingMinistryIds, setPendingMinistryIds] = useState<string[]>([]);
+  const [ministryRoles, setMinistryRoles] = useState<Record<string, string>>({});
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -112,7 +137,7 @@ export default function Ministries() {
     try {
       const [ministriesData, myMinistriesData, groupsData] = await Promise.allSettled([
         fetchApi<Ministry[]>("/ministries"),
-        fetchApi<unknown>("/my-ministries"),
+        fetchApi<MyMinistriesResponse>("/my-ministries"),
         fetchApi<Group[]>("/groups"),
       ]);
       
@@ -120,7 +145,10 @@ export default function Ministries() {
         setMinistries(Array.isArray(ministriesData.value) ? ministriesData.value : []);
       }
       if (myMinistriesData.status === "fulfilled") {
-        // role is now available via useChurch() instead
+        const data = myMinistriesData.value || {};
+        setMyMinistryIds(Array.isArray(data.myMinistryIds) ? data.myMinistryIds : []);
+        setPendingMinistryIds(Array.isArray(data.pendingMinistryIds) ? data.pendingMinistryIds : []);
+        setMinistryRoles(data.ministryRoles || {});
       }
       if (groupsData.status === "fulfilled") {
         setAllGroups(Array.isArray(groupsData.value) ? groupsData.value : []);
@@ -164,9 +192,15 @@ export default function Ministries() {
     setAnnouncements([]);
   };
 
-  const filtered = ministries.filter((m) =>
-    (m.name || "").toLowerCase().includes(search.toLowerCase())
-  );
+  const query = search.trim().toLowerCase();
+  const filtered = ministries.filter((m) => {
+    if (!query) return true;
+    return [m.name, m.description].some((value) => (value || "").toLowerCase().includes(query));
+  });
+  const myMinistries = filtered.filter((m) => myMinistryIds.includes(m.id));
+  const exploreMinistries = filtered.filter((m) => !myMinistryIds.includes(m.id));
+  const totalMembers = ministries.reduce((sum, ministry) => sum + (ministry.memberCount ?? ministry.members?.length ?? 0), 0);
+  const totalLeaders = ministries.reduce((sum, ministry) => sum + (ministry.leaderCount ?? 0), 0);
 
   const ministryGroups = allGroups.filter((g) => g.ministryId === selectedMinistry?.id);
   const canManageSelectedMinistry =
@@ -645,72 +679,155 @@ export default function Ministries() {
     );
   }
 
+  function renderMinistryCard(m: Ministry) {
+    const memberCount = m.memberCount ?? m.members?.length ?? 0;
+    const leaderCount = m.leaderCount ?? 0;
+    const isMine = myMinistryIds.includes(m.id);
+    const isPending = pendingMinistryIds.includes(m.id);
+    const role = formatRole(ministryRoles[m.id]);
+
+    return (
+      <Card key={m.id} className="cursor-pointer transition-shadow hover:shadow-md" onClick={() => navigate(`/app/ministries/${m.id}`)}>
+        <CardContent className="flex items-start gap-4 p-4 sm:p-5">
+          <div
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl"
+            style={{ backgroundColor: m.color ? `${m.color}18` : "#f1f5f9" }}
+          >
+            {m.color ? (
+              <div className="h-5 w-5 rounded-full" style={{ backgroundColor: m.color }} />
+            ) : (
+              <Users className="h-5 w-5 text-muted-foreground" />
+            )}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="font-semibold leading-tight text-zinc-950">{m.name}</h3>
+              {isMine && <Badge variant="secondary">{role}</Badge>}
+              {isPending && <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">Pending</Badge>}
+            </div>
+            <p className="mt-1 line-clamp-2 text-sm leading-5 text-muted-foreground">
+              {m.description || "Open this ministry to see members, announcements, resources, and how to join."}
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
+              <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2.5 py-1">
+                <Users className="h-3.5 w-3.5" />
+                {memberCount} {memberCount === 1 ? "member" : "members"}
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2.5 py-1">
+                <ShieldCheck className="h-3.5 w-3.5" />
+                {leaderCount} {leaderCount === 1 ? "leader" : "leaders"}
+              </span>
+              {isPending && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1 text-amber-700">
+                  <Clock className="h-3.5 w-3.5" />
+                  Waiting approval
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="flex shrink-0 gap-1" onClick={(e) => e.stopPropagation()}>
+            {isAdmin && (
+              <Button variant="ghost" size="sm" aria-label={`Edit ${m.name}`} onClick={() => openEditDialog(m)}>
+                <Pencil className="h-4 w-4" />
+              </Button>
+            )}
+            {isAdmin && (
+              <AlertDialog open={deleteId === m.id} onOpenChange={(open) => !open && setDeleteId(null)}>
+                <AlertDialogTrigger asChild>
+                  <Button variant="ghost" size="sm" aria-label={`Delete ${m.name}`} onClick={() => setDeleteId(m.id)}>
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Delete Ministry</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Are you sure you want to delete "{m.name}"? This action cannot be undone.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction onClick={() => handleDelete(m.id)}>Delete</AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
     <div className="mobile-page">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">Ministries</h1>
-        {isAdmin && <Button size="sm" onClick={openNewDialog}>
-          <Plus className="w-4 h-4 mr-1" /> New Ministry
-        </Button>}
+      <div className="mb-5 space-y-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-2xl font-bold text-zinc-950">Ministries</h1>
+            <p className="mt-1 text-sm leading-6 text-muted-foreground">
+              Find teams in your church, view their leaders and resources, and request to join when you are ready.
+            </p>
+          </div>
+          {isAdmin && (
+            <Button size="sm" onClick={openNewDialog} className="shrink-0">
+              <Plus className="h-4 w-4" /> New
+            </Button>
+          )}
+        </div>
+
+        <div className="grid grid-cols-3 gap-2 text-center">
+          <div className="rounded-xl border border-zinc-200 bg-white px-2 py-3">
+            <p className="text-lg font-semibold text-zinc-950">{ministries.length}</p>
+            <p className="text-[0.7rem] font-medium text-muted-foreground">Ministries</p>
+          </div>
+          <div className="rounded-xl border border-zinc-200 bg-white px-2 py-3">
+            <p className="text-lg font-semibold text-zinc-950">{totalMembers}</p>
+            <p className="text-[0.7rem] font-medium text-muted-foreground">Members</p>
+          </div>
+          <div className="rounded-xl border border-zinc-200 bg-white px-2 py-3">
+            <p className="text-lg font-semibold text-zinc-950">{totalLeaders}</p>
+            <p className="text-[0.7rem] font-medium text-muted-foreground">Leaders</p>
+          </div>
+        </div>
+
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Search ministries..."
+            className="h-11 pl-9"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
       </div>
 
-      <div className="relative mb-6 max-w-sm">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <Input placeholder="Search ministries..." className="pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
-      </div>
-
-      <div className="grid gap-3">
-        {filtered.map((m) => (
-          <Card key={m.id} className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => navigate(`/app/ministries/${m.id}`)}>
-            <CardContent className="p-5 flex items-start gap-4">
-              <div
-                className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"
-                style={{ backgroundColor: m.color ? `${m.color}18` : "#f1f5f9" }}
-              >
-                {m.color ? (
-                  <div className="w-5 h-5 rounded-full" style={{ backgroundColor: m.color }} />
-                ) : (
-                  <Users className="w-5 h-5 text-muted-foreground" />
-                )}
-              </div>
-              <div className="flex-1 min-w-0">
-                <h3 className="font-semibold">{m.name}</h3>
-                <p className="text-sm text-muted-foreground line-clamp-2">{m.description}</p>
-              </div>
-              <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
-                {isAdmin && (
-                  <Button variant="ghost" size="sm" onClick={() => openEditDialog(m)}>
-                    <Pencil className="w-4 h-4" />
-                  </Button>
-                )}
-                {isAdmin && (
-                  <AlertDialog open={deleteId === m.id} onOpenChange={(open) => !open && setDeleteId(null)}>
-                    <AlertDialogTrigger asChild>
-                      <Button variant="ghost" size="sm" onClick={() => setDeleteId(m.id)}>
-                        <Trash2 className="w-4 h-4 text-destructive" />
-                      </Button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>Delete Ministry</AlertDialogTitle>
-                        <AlertDialogDescription>
-                          Are you sure you want to delete "{m.name}"? This action cannot be undone.
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel>Cancel</AlertDialogCancel>
-                        <AlertDialogAction onClick={() => handleDelete(m.id)}>Delete</AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-        {filtered.length === 0 && (
-          <p className="text-sm text-muted-foreground py-4 text-center">No ministries found.</p>
+      <div className="space-y-6">
+        {myMinistries.length > 0 && (
+          <section className="space-y-3">
+            <div>
+              <h2 className="text-sm font-semibold text-zinc-950">My ministries</h2>
+              <p className="text-xs text-muted-foreground">Teams where you are a member or leader.</p>
+            </div>
+            <div className="grid gap-3">
+              {myMinistries.map(renderMinistryCard)}
+            </div>
+          </section>
         )}
+
+        <section className="space-y-3">
+          <div>
+            <h2 className="text-sm font-semibold text-zinc-950">Explore ministries</h2>
+            <p className="text-xs text-muted-foreground">Open a ministry to learn more or send a join request.</p>
+          </div>
+          <div className="grid gap-3">
+            {exploreMinistries.map(renderMinistryCard)}
+            {filtered.length === 0 && (
+              <p className="rounded-xl border border-dashed border-zinc-200 bg-white px-4 py-6 text-center text-sm text-muted-foreground">
+                No ministries found.
+              </p>
+            )}
+          </div>
+        </section>
       </div>
     </div>
   );

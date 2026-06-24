@@ -13,8 +13,8 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, ArrowLeft, Plus, Check, X, UserMinus, Users, Clock, MessageCircle, FileText } from "lucide-react";
-import { apiFetch } from "@/lib/api";
+import { Loader2, ArrowLeft, Plus, Check, X, UserMinus, Users, Clock, MessageCircle, FileText, UserPlus, ShieldCheck } from "lucide-react";
+import { ApiError, apiFetch } from "@/lib/api";
 import { useChurch } from "@/providers/ChurchProvider";
 import { MinistryFinance } from "@/components/MinistryFinance";
 import { MinistryResources } from "@/components/MinistryResources";
@@ -97,6 +97,41 @@ function normalizeRole(role?: string | null): string {
   return String(role || "").toUpperCase();
 }
 
+const JOIN_REQUEST_TIMEOUT_MS = 15000;
+
+function isActiveMember(member: MinistryMember) {
+  const status = normalizeRole(member.status);
+  return !status || status === "ACTIVE";
+}
+
+function formatRole(role?: string | null) {
+  const normalized = normalizeRole(role);
+  if (normalized === "ADMIN") return "Admin";
+  if (normalized === "LEADER") return "Leader";
+  if (normalized === "CO_LEADER") return "Co-leader";
+  return "Member";
+}
+
+function getDisplayName(user?: UserSummary | null) {
+  return [user?.firstName, user?.lastName].filter(Boolean).join(" ").trim() || user?.email || "Member";
+}
+
+function getJoinRequestErrorMessage(error: unknown, timedOut: boolean) {
+  if (timedOut) {
+    return "The request took too long. Check your connection and try again.";
+  }
+
+  if (error instanceof ApiError && error.status === 401) {
+    return "Your session could not send this request. Try signing in again; if it still fails, ask a leader to add you from the members list.";
+  }
+
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  return "The request could not be sent. Please try again.";
+}
+
 export default function MinistryDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -112,6 +147,8 @@ export default function MinistryDetail() {
   const [isMember, setIsMember] = useState(false);
   const [isPending, setIsPending] = useState(false);
   const [myRole, setMyRole] = useState<string | null>(null);
+  const [joinSubmitting, setJoinSubmitting] = useState(false);
+  const [joinError, setJoinError] = useState<string | null>(null);
 
   // Join requests
   const [joinRequests, setJoinRequests] = useState<JoinRequest[]>([]);
@@ -224,14 +261,46 @@ export default function MinistryDetail() {
 
   async function handleJoinRequest() {
     if (!id) return;
-    setSubmitting(true);
+    setJoinSubmitting(true);
+    setJoinError(null);
+    let timedOut = false;
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, JOIN_REQUEST_TIMEOUT_MS);
+
     try {
-      await apiFetch(`/ministries/${id}/join-request`, { method: "POST" });
+      const response = await apiFetch<{ message?: string; status?: string }>(
+        `/ministries/${id}/join-request`,
+        { method: "POST", signal: controller.signal },
+      );
       setIsPending(true);
+      setMinistry((current) => current ? ({
+        ...current,
+        stats: {
+          ...current.stats,
+          pendingCount: Math.max(current.stats?.pendingCount || 0, 1),
+        },
+      }) : current);
+      toast({
+        title: "Request sent",
+        description: response?.message || "A ministry leader can approve it from Requests.",
+      });
     } catch (e) {
       console.error(e);
+      if (e instanceof ApiError && e.message.toLowerCase().includes("already a member")) {
+        setIsMember(true);
+        toast({ title: "You're already a member", description: "This ministry is available in your member list." });
+        return;
+      }
+
+      const message = getJoinRequestErrorMessage(e, timedOut);
+      setJoinError(message);
+      toast({ title: "Request not sent", description: message, variant: "destructive" });
     } finally {
-      setSubmitting(false);
+      window.clearTimeout(timeoutId);
+      setJoinSubmitting(false);
     }
   }
 
@@ -351,13 +420,28 @@ export default function MinistryDetail() {
 
   const colorBg = ministry.color ? `${ministry.color}15` : "#f6f5f4";
   const colorDot = ministry.color || "#a39e98";
+  const ministryMembers = ministry.members || [];
+  const activeMembers = ministryMembers.filter(isActiveMember);
+  const pendingMembers = ministryMembers.filter((member) => normalizeRole(member.status) === "PENDING");
+  const memberCount = ministry.stats?.memberCount ?? activeMembers.length;
+  const pendingCount = ministry.stats?.pendingCount ?? pendingMembers.length;
+  const leaderCount =
+    ministry.stats?.leaderCount ??
+    activeMembers.filter((member) => ["ADMIN", "LEADER", "CO_LEADER"].includes(normalizeRole(member.role))).length;
+  const resourceCount = ministry.stats?.resourceCount ?? 0;
+  const requestBadgeCount = joinRequests.length || pendingCount;
 
   return (
-    <div className="min-h-screen bg-zinc-50">
+    <div className="mobile-page min-h-full bg-zinc-50">
       {/* Header */}
       <div className="bg-white border-b border-zinc-200 sticky top-0 z-10">
         <div className="flex items-center gap-3 px-4 py-3">
-          <button onClick={() => navigate("/app/ministries")} className="p-2 -ml-2 rounded-lg hover:bg-zinc-100">
+          <button
+            type="button"
+            aria-label="Back to ministries"
+            onClick={() => navigate("/app/ministries")}
+            className="p-2 -ml-2 rounded-lg hover:bg-zinc-100"
+          >
             <ArrowLeft className="w-5 h-5 text-zinc-600" />
           </button>
           <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -382,19 +466,19 @@ export default function MinistryDetail() {
         <div className="px-4">
           <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as Tab)} className="w-full">
             <TabsList className="flex h-auto w-full justify-start overflow-x-auto rounded-lg bg-zinc-100/60 p-1">
-              <TabsTrigger value="members" className="shrink-0 text-xs">Members</TabsTrigger>
+              <TabsTrigger value="members" className="shrink-0 text-xs">Members ({memberCount})</TabsTrigger>
               {canManage && (
                 <TabsTrigger value="join-requests" className="relative shrink-0 text-xs">
                   Requests
-                  {joinRequests.length > 0 && (
+                  {requestBadgeCount > 0 && (
                     <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[10px] rounded-full flex items-center justify-center">
-                      {joinRequests.length}
+                      {requestBadgeCount}
                     </span>
                   )}
                 </TabsTrigger>
               )}
               <TabsTrigger value="announcements" className="shrink-0 text-xs">Announcements</TabsTrigger>
-              <TabsTrigger value="resources" className="shrink-0 text-xs">Resources</TabsTrigger>
+              <TabsTrigger value="resources" className="shrink-0 text-xs">Resources ({resourceCount})</TabsTrigger>
               <TabsTrigger value="finance" className="shrink-0 text-xs">Finanzas</TabsTrigger>
             </TabsList>
           </Tabs>
@@ -402,7 +486,38 @@ export default function MinistryDetail() {
         <div className="h-px bg-zinc-200" />
       </div>
 
-      <div className="p-4 space-y-4">
+      <div className="space-y-4 p-4">
+        <Card className="border-zinc-200 bg-white">
+          <CardContent className="space-y-4 p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Ministry overview</p>
+                <h2 className="mt-1 text-base font-semibold text-zinc-950">{ministry.name}</h2>
+                <p className="mt-1 text-sm leading-6 text-zinc-600">
+                  {ministry.description || "A place for people, resources, announcements, and ministry-specific coordination."}
+                </p>
+              </div>
+              <Badge variant={isMember ? "default" : isPending ? "secondary" : "outline"} className="shrink-0">
+                {isMember ? formatRole(myRole) : isPending ? "Pending" : "Open"}
+              </Badge>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-2 py-3">
+                <p className="text-lg font-semibold text-zinc-950">{memberCount}</p>
+                <p className="text-[0.7rem] font-medium text-muted-foreground">Members</p>
+              </div>
+              <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-2 py-3">
+                <p className="text-lg font-semibold text-zinc-950">{leaderCount}</p>
+                <p className="text-[0.7rem] font-medium text-muted-foreground">Leaders</p>
+              </div>
+              <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-2 py-3">
+                <p className="text-lg font-semibold text-zinc-950">{resourceCount}</p>
+                <p className="text-[0.7rem] font-medium text-muted-foreground">Resources</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* MEMBERS TAB */}
         {activeTab === "members" && (
@@ -435,10 +550,35 @@ export default function MinistryDetail() {
 
             {!isMember && !isPending && (
               <Card className="border-primary/30 bg-primary/5">
-                <CardContent className="p-4 text-center space-y-3">
-                  <p className="text-sm text-zinc-600">You're not a member of this ministry yet.</p>
-                  <Button size="sm" onClick={handleJoinRequest} disabled={submitting}>
-                    {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Request to Join"}
+                <CardContent className="space-y-3 p-4">
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                      <UserPlus className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-semibold text-zinc-950">Join this ministry</p>
+                      <p className="mt-1 text-sm leading-5 text-zinc-600">
+                        Send a request to the ministry leaders. Once approved, resources and member updates will appear here.
+                      </p>
+                    </div>
+                  </div>
+                  {joinError && (
+                    <p className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                      {joinError}
+                    </p>
+                  )}
+                  <Button className="h-11 w-full" onClick={handleJoinRequest} disabled={joinSubmitting}>
+                    {joinSubmitting ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Sending request...
+                      </>
+                    ) : (
+                      <>
+                        <UserPlus className="h-4 w-4" />
+                        Join this ministry
+                      </>
+                    )}
                   </Button>
                 </CardContent>
               </Card>
@@ -449,8 +589,8 @@ export default function MinistryDetail() {
                 <CardContent className="p-4 flex items-center gap-3">
                   <Clock className="w-5 h-5 text-amber-600 shrink-0" />
                   <div>
-                    <p className="font-medium text-amber-800 text-sm">Request Pending</p>
-                    <p className="text-xs text-amber-600">Waiting for approval from a leader.</p>
+                    <p className="font-medium text-amber-800 text-sm">Request sent to leaders</p>
+                    <p className="text-xs text-amber-600">Waiting for a ministry leader to approve it.</p>
                   </div>
                 </CardContent>
               </Card>
@@ -458,15 +598,17 @@ export default function MinistryDetail() {
 
             {isMember && (
               <Card>
-                <CardContent className="p-3">
-                  <Badge variant="secondary" className="text-xs">
-                    {myRole === "LEADER" ? "★ Leader" : "Member"}
-                  </Badge>
+                <CardContent className="flex items-center gap-3 p-3">
+                  <ShieldCheck className="h-5 w-5 text-emerald-600" />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-zinc-950">You're in this ministry</p>
+                    <p className="text-xs text-muted-foreground">Role: {formatRole(myRole)}</p>
+                  </div>
                 </CardContent>
               </Card>
             )}
 
-            {(ministry.members || []).length === 0 ? (
+            {activeMembers.length === 0 ? (
               <Card>
                 <CardContent className="p-8 text-center">
                   <Users className="w-8 h-8 mx-auto text-zinc-300 mb-2" />
@@ -475,7 +617,7 @@ export default function MinistryDetail() {
               </Card>
             ) : (
               <div className="space-y-2">
-                {(ministry.members || []).map((member) => (
+                {activeMembers.map((member) => (
                   <Card key={member.id}>
                     <CardContent className="p-3 flex items-center gap-3">
                       <Avatar className="h-10 w-10 shrink-0">
@@ -485,9 +627,7 @@ export default function MinistryDetail() {
                       </Avatar>
                       <div className="flex-1 min-w-0">
                         <p className="font-medium text-sm truncate">
-                          {member.user?.firstName || member.user?.lastName
-                            ? `${member.user?.firstName || ""} ${member.user?.lastName || ""}`.trim()
-                            : member.user?.email || "Miembro"}
+                          {getDisplayName(member.user)}
                         </p>
                         <p className="text-xs text-zinc-500 truncate">{member.user?.email}</p>
                       </div>
@@ -496,10 +636,12 @@ export default function MinistryDetail() {
                           variant={normalizeRole(member.role) === "ADMIN" || normalizeRole(member.role) === "LEADER" || normalizeRole(member.role) === "CO_LEADER" ? "default" : "secondary"}
                           className="text-xs"
                         >
-                          {member.role}
+                          {formatRole(member.role)}
                         </Badge>
                         {canManage && normalizeRole(member.role) !== "ADMIN" && (
                           <button
+                            type="button"
+                            aria-label={`Remove ${getDisplayName(member.user)}`}
                             onClick={() => handleRemoveMember(member.userId)}
                             className="p-1.5 rounded-lg hover:bg-red-50 text-zinc-400 hover:text-red-500 transition-colors"
                           >
@@ -518,7 +660,9 @@ export default function MinistryDetail() {
         {/* JOIN REQUESTS TAB */}
         {activeTab === "join-requests" && canManage && (
           <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">Approve or deny requests to join this ministry.</p>
+            <p className="text-sm text-muted-foreground">
+              Requests from the Join this ministry button appear here for leaders to approve or deny.
+            </p>
 
             {requestsLoading ? (
               <div className="flex justify-center py-8">
@@ -543,7 +687,7 @@ export default function MinistryDetail() {
                       </Avatar>
                       <div className="flex-1 min-w-0">
                         <p className="font-medium text-sm truncate">
-                          {req.user?.firstName} {req.user?.lastName}
+                          {getDisplayName(req.user)}
                         </p>
                         <p className="text-xs text-zinc-500 truncate">{req.user?.email}</p>
                       </div>
