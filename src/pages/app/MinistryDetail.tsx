@@ -13,7 +13,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, ArrowLeft, Plus, Check, X, UserMinus, Users, Clock, MessageCircle, FileText, UserPlus, ShieldCheck } from "lucide-react";
+import { Loader2, ArrowLeft, Plus, Check, X, UserMinus, Users, Clock, MessageCircle, FileText, UserPlus, ShieldCheck, Megaphone } from "lucide-react";
 import { ApiError, apiFetch } from "@/lib/api";
 import { useChurch } from "@/providers/ChurchProvider";
 import { MinistryFinance } from "@/components/MinistryFinance";
@@ -386,6 +386,11 @@ export default function MinistryDetail() {
     }
   }
 
+  function openCommunicationChannel() {
+    if (!id) return;
+    navigate(`/app/messages?ministryId=${encodeURIComponent(id)}`);
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -520,13 +525,27 @@ export default function MinistryDetail() {
               aria-label="Announcements"
             >
               <span className="flex w-full items-start gap-2">
-                <MessageCircle className={tabIconClass} aria-hidden="true" />
+                <Megaphone className={tabIconClass} aria-hidden="true" />
                 <span className="min-w-0">
                   <span className="block text-sm font-semibold leading-tight">Announcements</span>
                   <span className={tabMetaClass}>Updates</span>
                 </span>
               </span>
             </TabsTrigger>
+            <button
+              type="button"
+              onClick={openCommunicationChannel}
+              className={tabTriggerClass}
+              aria-label={`Open ${ministry.name} communication channel`}
+            >
+              <span className="flex w-full items-start gap-2">
+                <MessageCircle className={tabIconClass} aria-hidden="true" />
+                <span className="min-w-0">
+                  <span className="block text-sm font-semibold leading-tight">Messages</span>
+                  <span className={tabMetaClass}>Team channel</span>
+                </span>
+              </span>
+            </button>
             <TabsTrigger
               value="resources"
               className={tabTriggerClass}
