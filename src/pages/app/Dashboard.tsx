@@ -64,6 +64,8 @@ interface Assignment {
   };
 }
 
+const DASHBOARD_SERVICE_PREVIEW_LIMIT = 2;
+
 function formatDate(dateStr: string) {
   return formatServiceDate(dateStr, "es-US", {
     weekday: "short",
@@ -163,6 +165,10 @@ export default function Dashboard() {
             if (!isPlanner && !assignedServiceIds.has(s.id as string)) return false;
             return true;
           })
+          .sort((a: Record<string, unknown>, b: Record<string, unknown>) => {
+            return (getItemTime(a.date) ?? Number.POSITIVE_INFINITY) - (getItemTime(b.date) ?? Number.POSITIVE_INFINITY);
+          })
+          .slice(0, DASHBOARD_SERVICE_PREVIEW_LIMIT)
           .map((s: Record<string, unknown>) => ({
             id: s.id as string,
             _type: "service" as const,
