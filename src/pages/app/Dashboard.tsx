@@ -292,13 +292,13 @@ export default function Dashboard() {
 
   const statItems = stats
     ? [
+        { label: "Anuncios", value: stats.announcements, href: "/app/announcements", icon: Megaphone },
         { label: "Ministerios", value: stats.ministries, href: "/app/ministries", icon: Users },
         { label: "Eventos", value: stats.events, href: "/app/events", icon: CalendarDays },
         { label: "Canciones", value: stats.songs, href: "/app/songs", icon: Music },
         { label: "Servicios", value: stats.services, href: "/app/services", icon: ListChecks },
         { label: "Equipos", value: stats.teams, href: "/app/teams", icon: UsersRound },
         { label: "Miembros", value: stats.members, href: "/app/users", icon: Users },
-        { label: "Anuncios", value: stats.announcements, href: "/app/announcements", icon: Megaphone },
       ]
     : [];
 
@@ -475,6 +475,67 @@ export default function Dashboard() {
         </section>
 
         <aside className="min-w-0 space-y-6 lg:sticky lg:top-[calc(env(safe-area-inset-top)+1rem)] lg:self-start">
+          {announcements.length > 0 && (
+            <div>
+          <div className="flex min-w-0 items-center justify-between gap-3 mb-4">
+            <h2 className="mobile-section-title">
+              Anuncios recientes
+            </h2>
+            <Button className="h-9 shrink-0 rounded-full px-3 font-bold" size="sm" variant="ghost" onClick={() => navigate("/app/announcements")}>
+              Ver todos <ArrowRight className="w-3 h-3 ml-1" />
+            </Button>
+          </div>
+          <div className="space-y-4">
+            {announcements.slice(0, 3).map((ann, index) => {
+              const featured = index === 0;
+
+              return (
+                <Card
+                  key={ann.id}
+                  className={`app-card min-w-0 cursor-pointer overflow-hidden border-[#eadacc] bg-[#fffefa] shadow-[0_16px_42px_rgba(88,64,44,0.10)] transition-all hover:-translate-y-0.5 hover:shadow-lg ${
+                    featured ? "rounded-[1.7rem]" : "rounded-[1.35rem]"
+                  }`}
+                  onClick={() => navigate("/app/announcements")}
+                >
+                  <div className={`relative overflow-hidden bg-[#f4eee8] ${featured ? "h-60" : "h-40"}`}>
+                    {ann.imageUrl ? (
+                      <img src={ann.imageUrl} alt={ann.title} className="h-full w-full object-cover" />
+                    ) : (
+                      <div className="flex h-full items-end bg-[linear-gradient(135deg,#fff1d6_0%,#f8fafc_52%,#dff7ed_100%)] p-5">
+                        <div>
+                          <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/90 text-[#7a4f1c] shadow-sm">
+                            <Megaphone className="h-6 w-6" />
+                          </span>
+                          <p className="mt-3 text-xs font-black uppercase text-[#8a6a4f]">Boletín de la iglesia</p>
+                        </div>
+                      </div>
+                    )}
+                    {ann.imageUrl && (
+                      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-zinc-950/70 via-zinc-950/15 to-transparent p-4 pt-16">
+                        <p className="text-[0.68rem] font-black uppercase text-white/80">Boletín de la iglesia</p>
+                        {featured && <p className="mt-1 line-clamp-2 text-2xl font-black leading-tight text-white">{ann.title}</p>}
+                      </div>
+                    )}
+                  </div>
+                  <CardContent className={featured ? "min-w-0 p-5" : "min-w-0 p-4"}>
+                    <p className={`font-black leading-tight text-[#211915] ${featured ? "text-xl" : "text-lg"}`}>{ann.title}</p>
+                    <p className={`mt-2 text-sm leading-6 text-[#675b52] ${featured ? "line-clamp-3" : "line-clamp-2"}`}>
+                      {ann.content}
+                    </p>
+                    <p className="mt-3 text-xs font-bold text-[#8a6a4f]">
+                      {ann.createdAt ? new Date(ann.createdAt).toLocaleDateString("es-US", {
+                        month: "short",
+                        day: "numeric",
+                      }) : ""}
+                    </p>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+            </div>
+          )}
+
           {ministries.length > 0 && (
             <div>
           <h2 className="mobile-section-title mb-3">
@@ -501,44 +562,6 @@ export default function Dashboard() {
                     )}
                   </div>
                 </CardContent>
-              </Card>
-            ))}
-          </div>
-            </div>
-          )}
-
-          {announcements.length > 0 && (
-            <div>
-          <div className="flex min-w-0 items-center justify-between gap-3 mb-4">
-            <h2 className="mobile-section-title">
-              Anuncios recientes
-            </h2>
-            <Button className="h-9 shrink-0 rounded-full px-3 font-bold" size="sm" variant="ghost" onClick={() => navigate("/app/announcements")}>
-              Ver todos <ArrowRight className="w-3 h-3 ml-1" />
-            </Button>
-          </div>
-          <div className="space-y-3">
-            {announcements.slice(0, 10).map((ann) => (
-              <Card key={ann.id} className="app-card min-w-0 overflow-hidden">
-                <div className="flex min-w-0">
-                  {ann.imageUrl && (
-                    <div className="h-24 w-24 shrink-0 overflow-hidden rounded-l-2xl bg-zinc-100">
-                      <img src={ann.imageUrl} alt={ann.title} className="w-full h-full object-cover" />
-                    </div>
-                  )}
-                  <CardContent className="min-w-0 flex-1 p-3">
-                    <p className="truncate font-bold">{ann.title}</p>
-                    <p className="text-sm text-muted-foreground line-clamp-2 mt-1">
-                      {ann.content}
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-2">
-                      {ann.createdAt ? new Date(ann.createdAt).toLocaleDateString("es-US", {
-                        month: "short",
-                        day: "numeric",
-                      }) : ""}
-                    </p>
-                  </CardContent>
-                </div>
               </Card>
             ))}
           </div>

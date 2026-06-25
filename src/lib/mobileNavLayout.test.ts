@@ -15,6 +15,17 @@ import {
   getMobileNavReservedSpace,
 } from "./mobileNavLayout";
 
+function expectOrder(source: string, labels: string[]) {
+  const indexes = labels.map((label) => source.indexOf(label));
+  indexes.forEach((index, itemIndex) => {
+    expect(index, `${labels[itemIndex]} should be present`).toBeGreaterThanOrEqual(0);
+  });
+
+  for (let index = 1; index < indexes.length; index += 1) {
+    expect(indexes[index], `${labels[index]} should follow ${labels[index - 1]}`).toBeGreaterThan(indexes[index - 1]);
+  }
+}
+
 describe("mobile nav layout", () => {
   it("uses a stable bottom inset so browser chrome scroll cannot resize the tab bar", () => {
     expect(getMobileNavSafeBottom()).toBe(MOBILE_NAV_SAFE_BOTTOM);
@@ -73,6 +84,49 @@ describe("mobile nav layout", () => {
       const source = readFileSync(`${process.cwd()}/src/pages/app/${screen}.tsx`, "utf8");
       expect(source).toContain("mobile-page");
     }
+  });
+
+  it("keeps the original primary nav order with announcements at the end", () => {
+    const appLayoutSource = readFileSync(`${process.cwd()}/src/layouts/AppLayout.tsx`, "utf8");
+    const sidebarSource = readFileSync(`${process.cwd()}/src/components/AppSidebar.tsx`, "utf8");
+
+    expectOrder(appLayoutSource, [
+      'label: "Dar"',
+      'label: "Ministerios"',
+      'label: "Devocional"',
+      'label: "Anuncios"',
+    ]);
+    expectOrder(sidebarSource, [
+      'title: "Servicios"',
+      'title: "Anuncios"',
+      'title: "Devocionales"',
+      'title: "Dar"',
+      'title: "Mis asignaciones"',
+      'title: "Ministerios"',
+      'title: "Eventos"',
+    ]);
+  });
+
+  it("shows recent announcements above my ministries on the dashboard", () => {
+    const source = readFileSync(`${process.cwd()}/src/pages/app/Dashboard.tsx`, "utf8");
+    const orderedSectionSource = source.slice(source.indexOf("announcements.length > 0"));
+
+    expectOrder(source, ['label: "Anuncios"', 'label: "Ministerios"']);
+    expectOrder(orderedSectionSource, ["Anuncios recientes", "Mis ministerios"]);
+    expect(source).toContain("announcements.slice(0, 3)");
+    expect(source).toContain("Boletín de la iglesia");
+    expect(source).toContain('featured ? "h-60" : "h-40"');
+  });
+
+  it("keeps announcements as an image-led church canvas above mobile nav clearance", () => {
+    const source = readFileSync(`${process.cwd()}/src/pages/app/Announcements.tsx`, "utf8");
+
+    expect(source).toContain("mobile-page space-y-5");
+    expect(source).toContain("Un tablón cálido para la vida de la iglesia");
+    expect(source).toContain("AnnouncementAiImageField");
+    expect(source).toContain("announcement.imageUrl");
+    expect(source).toContain("src={announcement.imageUrl}");
+    expect(source).toContain("featured={index === 0}");
   });
 
   it("keeps every ministry detail section scrollable above the bottom nav", () => {
