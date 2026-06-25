@@ -10,50 +10,82 @@ import { ChurchProvider } from "@/providers/ChurchProvider";
 import { UserActionLoggingProvider } from "@/providers/UserActionLoggingProvider";
 import { RequireAuth } from "@/components/RequireAuth";
 import { useNativeDeepLinks } from "@/hooks/useNativeDeepLinks";
+import { appRouteLoaders, scheduleNativeAppPreload } from "@/lib/appRoutePreloaders";
 
-const Landing = lazy(() => import("./pages/Landing"));
-const Login = lazy(() => import("./pages/Login"));
-const Signup = lazy(() => import("./pages/Signup"));
-const AppLayout = lazy(() => import("./layouts/AppLayout").then((module) => ({ default: module.AppLayout })));
-const Dashboard = lazy(() => import("./pages/app/Dashboard"));
-const Songs = lazy(() => import("./pages/app/Songs"));
-const SongDetail = lazy(() => import("./pages/app/SongDetail"));
-const Services = lazy(() => import("./pages/app/Services"));
-const ServiceDetail = lazy(() => import("./pages/app/ServiceDetail"));
-const ServicePresentation = lazy(() => import("./pages/app/ServicePresentation"));
-const Announcements = lazy(() => import("./pages/app/Announcements"));
-const Devotionals = lazy(() => import("./pages/app/Devotionals"));
-const Giving = lazy(() => import("./pages/app/Giving"));
-const Ministries = lazy(() => import("./pages/app/Ministries"));
-const MinistryDetail = lazy(() => import("./pages/app/MinistryDetail"));
-const Events = lazy(() => import("./pages/app/Events"));
-const EventDetail = lazy(() => import("./pages/app/EventDetail"));
-const EventQr = lazy(() => import("./pages/app/EventQr"));
-const EventScanner = lazy(() => import("./pages/app/EventScanner"));
-const Teams = lazy(() => import("./pages/app/Teams"));
-const TeamDetail = lazy(() => import("./pages/app/TeamDetail"));
-const MyAssignments = lazy(() => import("./pages/app/MyAssignments"));
-const Settings = lazy(() => import("./pages/app/Settings"));
-const Messages = lazy(() => import("./pages/app/Messages"));
-const Prayer = lazy(() => import("./pages/app/Prayer"));
-const Training = lazy(() => import("./pages/app/Training"));
-const Calendar = lazy(() => import("./pages/app/Calendar"));
-const Users = lazy(() => import("./pages/app/Users"));
-const Blockouts = lazy(() => import("./pages/app/Blockouts"));
-const Onboarding = lazy(() => import("./pages/app/Onboarding"));
-const JoinChurch = lazy(() => import("./pages/app/JoinChurch"));
-const CreateChurchForm = lazy(() => import("./pages/app/CreateChurchForm"));
-const Presets = lazy(() => import("./pages/app/Presets"));
-const NotFound = lazy(() => import("./pages/NotFound"));
+const Landing = lazy(appRouteLoaders.Landing);
+const Login = lazy(appRouteLoaders.Login);
+const Signup = lazy(appRouteLoaders.Signup);
+const AppLayout = lazy(() => appRouteLoaders.AppLayout().then((module) => ({ default: module.AppLayout })));
+const Dashboard = lazy(appRouteLoaders.Dashboard);
+const Songs = lazy(appRouteLoaders.Songs);
+const SongDetail = lazy(appRouteLoaders.SongDetail);
+const Services = lazy(appRouteLoaders.Services);
+const ServiceDetail = lazy(appRouteLoaders.ServiceDetail);
+const ServicePresentation = lazy(appRouteLoaders.ServicePresentation);
+const Announcements = lazy(appRouteLoaders.Announcements);
+const Devotionals = lazy(appRouteLoaders.Devotionals);
+const Giving = lazy(appRouteLoaders.Giving);
+const Ministries = lazy(appRouteLoaders.Ministries);
+const MinistryDetail = lazy(appRouteLoaders.MinistryDetail);
+const Events = lazy(appRouteLoaders.Events);
+const EventDetail = lazy(appRouteLoaders.EventDetail);
+const EventQr = lazy(appRouteLoaders.EventQr);
+const EventScanner = lazy(appRouteLoaders.EventScanner);
+const Teams = lazy(appRouteLoaders.Teams);
+const TeamDetail = lazy(appRouteLoaders.TeamDetail);
+const MyAssignments = lazy(appRouteLoaders.MyAssignments);
+const Settings = lazy(appRouteLoaders.Settings);
+const Messages = lazy(appRouteLoaders.Messages);
+const Prayer = lazy(appRouteLoaders.Prayer);
+const Training = lazy(appRouteLoaders.Training);
+const Calendar = lazy(appRouteLoaders.Calendar);
+const Users = lazy(appRouteLoaders.Users);
+const Blockouts = lazy(appRouteLoaders.Blockouts);
+const Onboarding = lazy(appRouteLoaders.Onboarding);
+const JoinChurch = lazy(appRouteLoaders.JoinChurch);
+const CreateChurchForm = lazy(appRouteLoaders.CreateChurchForm);
+const Presets = lazy(appRouteLoaders.Presets);
+const NotFound = lazy(appRouteLoaders.NotFound);
 
-const queryClient = new QueryClient();
 const isNativePlatform = Capacitor.isNativePlatform();
 const Router = isNativePlatform ? HashRouter : BrowserRouter;
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: isNativePlatform ? 60_000 : 15_000,
+      gcTime: 10 * 60_000,
+      refetchOnWindowFocus: false,
+      retry: (failureCount, error) => {
+        const status =
+          error && typeof error === "object" && "status" in error
+            ? Number((error as { status?: unknown }).status)
+            : 0;
+
+        if (status >= 400 && status < 500) return false;
+        return failureCount < 2;
+      },
+    },
+    mutations: {
+      retry: 0,
+    },
+  },
+});
 
 function PageLoader() {
   return (
-    <div className="min-h-screen bg-background p-6">
-      <div className="mx-auto mt-24 h-4 w-36 animate-pulse rounded-full bg-muted/30" />
+    <div className="min-h-screen bg-background px-5 pt-[calc(env(safe-area-inset-top,0px)+5rem)]" role="status" aria-label="Cargando Tchurch">
+      <div className="mx-auto w-full max-w-md animate-pulse space-y-5">
+        <div className="h-5 w-36 rounded-full bg-muted/70" />
+        <div className="space-y-3 rounded-2xl border border-border/70 bg-card p-4 shadow-sm">
+          <div className="h-4 w-28 rounded-full bg-muted" />
+          <div className="h-16 rounded-2xl bg-muted/70" />
+          <div className="grid grid-cols-3 gap-2">
+            <div className="h-10 rounded-xl bg-muted/70" />
+            <div className="h-10 rounded-xl bg-muted/70" />
+            <div className="h-10 rounded-xl bg-muted/70" />
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -69,6 +101,10 @@ const App = () => {
   useEffect(() => {
     const savedLanguage = localStorage.getItem("tchurch_language");
     document.documentElement.lang = savedLanguage === "en" ? "en" : "es";
+
+    if (isNativePlatform) {
+      return scheduleNativeAppPreload();
+    }
   }, []);
 
   return (

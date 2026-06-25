@@ -199,20 +199,14 @@ export default function Giving() {
 
   useEffect(() => {
     let active = true;
+    let timer: number | undefined;
 
     async function generateQr() {
-      if (!publicGivingUrl) {
-        setQrDataUrl("");
-        setQrLoading(false);
-        return;
-      }
-
-      setQrLoading(true);
       try {
         const dataUrl = await QRCode.toDataURL(publicGivingUrl, {
           errorCorrectionLevel: "M",
           margin: 2,
-          width: 768,
+          width: Capacitor.isNativePlatform() ? 512 : 768,
           color: {
             dark: "#111827",
             light: "#ffffff",
@@ -238,12 +232,26 @@ export default function Giving() {
       }
     }
 
-    generateQr();
+    if (!publicGivingUrl) {
+      setQrDataUrl("");
+      setQrLoading(false);
+      return undefined;
+    }
+
+    setQrDataUrl("");
+    setQrLoading(true);
+
+    if (!loading) {
+      timer = window.setTimeout(() => {
+        void generateQr();
+      }, Capacitor.isNativePlatform() ? 180 : 0);
+    }
 
     return () => {
       active = false;
+      if (timer) window.clearTimeout(timer);
     };
-  }, [publicGivingUrl, toast]);
+  }, [loading, publicGivingUrl, toast]);
 
   useEffect(() => {
     const success = searchParams.get("success") === "true";

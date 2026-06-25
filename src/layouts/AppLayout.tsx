@@ -1,5 +1,5 @@
-import { useRef, type CSSProperties } from "react";
-import { NavLink, Outlet } from "react-router-dom";
+import { Suspense, useCallback, useEffect, useRef, type CSSProperties, type TouchEvent, type UIEvent } from "react";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { BookOpen, Heart, Home, ListChecks, Megaphone, Users } from "lucide-react";
 import { AppSidebar } from "../components/AppSidebar";
 import { TchurchLogo } from "@/components/TchurchLogo";
@@ -17,6 +17,7 @@ import {
   getMobileNavSafeBottom,
   getMobilePageBottomBuffer,
 } from "@/lib/mobileNavLayout";
+import { preloadAppRoute } from "@/lib/appRoutePreloaders";
 
 const mobileNavItems = [
   { label: "Inicio", href: "/app", icon: Home, end: true },
@@ -42,6 +43,25 @@ const mobileNavGeometryStyle = {
   [CONTENT_CLEARANCE_VAR]: getMobileNavContentClearanceCss(),
 } as CSSProperties;
 
+const mobileRouteScrollPositions = new Map<string, number>();
+
+function RouteContentFallback() {
+  return (
+    <div className="mobile-page min-w-0 animate-pulse space-y-4" aria-hidden="true">
+      <div className="h-8 w-40 rounded-full bg-muted/80" />
+      <div className="grid grid-cols-2 gap-3">
+        <div className="h-24 rounded-2xl bg-muted/70" />
+        <div className="h-24 rounded-2xl bg-muted/60" />
+      </div>
+      <div className="space-y-3 rounded-2xl border border-border/70 bg-card p-4 shadow-sm">
+        <div className="h-4 w-32 rounded-full bg-muted" />
+        <div className="h-16 rounded-xl bg-muted/70" />
+        <div className="h-16 rounded-xl bg-muted/60" />
+      </div>
+    </div>
+  );
+}
+
 function AppLayoutInner() {
   const { selectedChurch } = useChurch();
   const isMobile = useIsMobile();
@@ -49,20 +69,59 @@ function AppLayoutInner() {
   const useCompactNavigation = isMobile;
   const showShortcutBar = useCompactNavigation;
   const { openMobile, setOpenMobile } = useSidebar();
+  const location = useLocation();
+  const routeKey = `${location.pathname}${location.search}`;
   const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);
+  const contentScrollRef = useRef<HTMLDivElement | null>(null);
+  const activeRouteKeyRef = useRef(routeKey);
+  const pendingScrollTopRef = useRef(0);
+  const scrollRafRef = useRef<number | null>(null);
 
   usePushNotifications();
   useEventCheckInQueueSync();
 
-  function handleTouchStart(event: React.TouchEvent<HTMLDivElement>) {
+  useEffect(() => {
+    activeRouteKeyRef.current = routeKey;
+
+    if (!showShortcutBar) return undefined;
+
+    const scrollport = contentScrollRef.current;
+    if (!scrollport) return undefined;
+
+    const frame = window.requestAnimationFrame(() => {
+      scrollport.scrollTop = mobileRouteScrollPositions.get(routeKey) ?? 0;
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [routeKey, showShortcutBar]);
+
+  useEffect(() => () => {
+    if (scrollRafRef.current !== null) {
+      window.cancelAnimationFrame(scrollRafRef.current);
+    }
+  }, []);
+
+  const handleContentScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
+    if (!showShortcutBar) return;
+
+    pendingScrollTopRef.current = event.currentTarget.scrollTop;
+    if (scrollRafRef.current !== null) return;
+
+    scrollRafRef.current = window.requestAnimationFrame(() => {
+      mobileRouteScrollPositions.set(activeRouteKeyRef.current, pendingScrollTopRef.current);
+      scrollRafRef.current = null;
+    });
+  }, [showShortcutBar]);
+
+  function handleTouchStart(event: TouchEvent<HTMLDivElement>) {
     if (!useCompactNavigation || openMobile) return;
     const touch = event.touches[0];
     touchStartX.current = touch.clientX;
     touchStartY.current = touch.clientY;
   }
 
-  function handleTouchEnd(event: React.TouchEvent<HTMLDivElement>) {
+  function handleTouchEnd(event: TouchEvent<HTMLDivElement>) {
     if (!useCompactNavigation || openMobile || touchStartX.current === null || touchStartY.current === null) return;
 
     const touch = event.changedTouches[0];
@@ -116,6 +175,8 @@ function AppLayoutInner() {
         ) : null}
         <div
           data-testid={showShortcutBar ? "mobile-content-scrollport" : undefined}
+          ref={contentScrollRef}
+          onScroll={handleContentScroll}
           className={[
             "mx-auto flex w-full min-w-0 flex-1 flex-col overflow-x-clip px-3 pb-4 pt-4 sm:px-4 md:max-w-[1120px] md:px-5 lg:px-6 xl:max-w-[1320px] xl:px-8",
             showShortcutBar ? "min-h-0 overflow-y-auto overscroll-y-contain" : "",
@@ -137,18 +198,22 @@ function AppLayoutInner() {
               <NotificationBell />
             </div>
           ) : null}
-          <Outlet />
+          <div key={routeKey} data-route-content className="min-w-0">
+            <Suspense fallback={<RouteContentFallback />}>
+              <Outlet />
+            </Suspense>
+          </div>
         </div>
       </SidebarInset>
       {showShortcutBar ? (
         <nav
           data-testid="mobile-bottom-nav"
-          className="pointer-events-none fixed inset-x-0 bottom-0 z-30 translate-y-0"
+          className="pointer-events-none fixed inset-x-0 bottom-0 z-30 bg-white"
           aria-label="Navegación principal"
-          style={{ transform: "translate3d(0, 0, 0)" }}
+          style={{ backfaceVisibility: "hidden" }}
         >
           <div
-            className="border-t border-zinc-200/80 bg-white/95 px-2 pt-2.5 shadow-[0_-14px_30px_rgba(15,23,42,0.07)] backdrop-blur"
+            className="border-t border-zinc-200/80 bg-white px-2 pt-2.5 shadow-[0_-14px_30px_rgba(15,23,42,0.07)]"
             style={{ paddingBottom: "var(--app-safe-area-bottom, var(--tchurch-mobile-safe-bottom, 22px))" }}
           >
             <div className="mx-auto grid max-w-lg grid-cols-6 gap-0.5 md:max-w-2xl">
@@ -159,6 +224,9 @@ function AppLayoutInner() {
                     key={item.href}
                     to={item.href}
                     end={item.end}
+                    onPointerEnter={() => preloadAppRoute(item.href)}
+                    onFocus={() => preloadAppRoute(item.href)}
+                    onTouchStart={() => preloadAppRoute(item.href)}
                     className={({ isActive }) =>
                       [
                         "pointer-events-auto flex h-[3.75rem] min-w-0 flex-col items-center justify-center gap-1 rounded-2xl px-0.5 text-[0.64rem] font-bold leading-tight transition",

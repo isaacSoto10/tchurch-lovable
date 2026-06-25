@@ -50,13 +50,13 @@ describe("Dashboard", () => {
             members: 0,
             announcements: 0,
           };
-        case "/services":
+        case "/services?summary=1&from=today&order=asc&limit=60":
           return [
             { id: "service-3", title: "Tercer servicio", date: futureDate(21), status: "confirmed", type: "Sunday Service" },
             { id: "service-1", title: "Primer servicio", date: futureDate(7), status: "confirmed", type: "Sunday Service" },
             { id: "service-2", title: "Segundo servicio", date: futureDate(14), status: "confirmed", type: "Sunday Service" },
           ];
-        case "/events":
+        case "/events?startDate=today&limit=25":
           return [
             { id: "event-1", title: "Retiro familiar", date: futureDate(28), type: "fellowship", location: "Santuario" },
           ];
@@ -78,6 +78,6 @@ describe("Dashboard", () => {
     });
 
     expect(screen.queryByText("Tercer servicio")).not.toBeInTheDocument();
-    expect(fetchApiMock).toHaveBeenCalledWith("/services");
+    expect(fetchApiMock).toHaveBeenCalledWith("/services?summary=1&from=today&order=asc&limit=60");
   });
 });

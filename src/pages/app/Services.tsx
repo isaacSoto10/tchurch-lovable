@@ -10,6 +10,7 @@ import { Plus, Pencil, Trash2, Search, ChevronUp, ChevronDown, Music, FileText, 
 import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
 import { useChurch } from "@/providers/ChurchProvider";
+import { isNativeMobileAuth } from "@/lib/mobileAuth";
 import { ChordProPreview } from "@/components/ChordProPreview";
 import { ServiceSongPicker } from "@/components/ServiceSongPicker";
 import {
@@ -30,6 +31,7 @@ import {
   formatServiceDate,
   formatServiceTime,
   getServiceDateInputValue,
+  parseServiceDate,
   toServiceApiDateValue,
 } from "@/lib/serviceDates";
 import { hasLocalServiceBlockoutConflict, type ServiceBlockoutLike } from "@/lib/serviceBlockouts";
@@ -113,6 +115,17 @@ interface MyAssignment {
   };
 }
 
+type ServiceListPayload = Service & {
+  items?: ServiceItem[];
+  assignments?: ServiceAssignment[];
+};
+
+type ServicesSnapshot = {
+  savedAt: number;
+  services: ServiceListPayload[];
+  myAssignments: MyAssignment[];
+};
+
 interface Member {
   id: string;
   firstName?: string;
@@ -130,6 +143,14 @@ type PlanningDetails = {
   key?: string;
   notes?: Partial<Record<PlanningNoteKey, string>>;
   [key: string]: unknown;
+};
+
+type ServiceFormPayload = {
+  title: string;
+  date: string;
+  type: string;
+  status: string;
+  notes: string | null;
 };
 
 const NOTE_LABELS: Record<PlanningNoteKey, string> = {
@@ -175,6 +196,8 @@ const TEMPLATE_ITEMS = [
 ];
 
 const MAX_SERVICE_WEEKS = 52;
+const SERVICES_SNAPSHOT_TTL_MS = 2 * 60 * 1000;
+const SERVICES_SNAPSHOT_PREFIX = "tchurch_ios_services_snapshot_v1";
 
 function normalizeRole(role?: string | null) {
   return String(role || "").toUpperCase();
@@ -186,9 +209,106 @@ function getServiceWeeksToCreate(value: string) {
   return Math.min(Math.max(parsed, 1), MAX_SERVICE_WEEKS);
 }
 
+function servicesSnapshotKey(churchId: string) {
+  return `${SERVICES_SNAPSHOT_PREFIX}:${churchId}`;
+}
+
+function isServicePayload(value: unknown): value is ServiceListPayload {
+  if (!value || typeof value !== "object") return false;
+
+  const service = value as Partial<Service>;
+  return (
+    typeof service.id === "string" &&
+    typeof service.title === "string" &&
+    typeof service.date === "string" &&
+    typeof service.type === "string" &&
+    typeof service.status === "string"
+  );
+}
+
+function normalizeServicesPayload(data: unknown): ServiceListPayload[] {
+  return Array.isArray(data) ? data.filter(isServicePayload) : [];
+}
+
+function serviceSummary(service: ServiceListPayload): Service {
+  return {
+    id: service.id,
+    title: service.title,
+    date: service.date,
+    type: service.type,
+    status: service.status,
+    notes: service.notes,
+  };
+}
+
+function sortServicesLikeApi(services: Service[]) {
+  return [...services].sort(
+    (a, b) => (parseServiceDate(b.date)?.getTime() || 0) - (parseServiceDate(a.date)?.getTime() || 0),
+  );
+}
+
+function mergeServices(current: Service[], incoming: Service[]) {
+  const incomingById = new Map(incoming.map((service) => [service.id, service]));
+  const merged = current.map((service) => incomingById.get(service.id) ?? service);
+
+  incoming.forEach((service) => {
+    if (!current.some((currentService) => currentService.id === service.id)) {
+      merged.push(service);
+    }
+  });
+
+  return sortServicesLikeApi(merged);
+}
+
+function serviceFromPayload(base: Service, payload: ServiceFormPayload) {
+  return {
+    ...base,
+    title: payload.title,
+    date: payload.date,
+    type: payload.type,
+    status: payload.status,
+    notes: payload.notes ?? undefined,
+  };
+}
+
+function readServicesSnapshot(churchId: string): ServicesSnapshot | null {
+  if (!isNativeMobileAuth) return null;
+
+  try {
+    const raw = window.sessionStorage.getItem(servicesSnapshotKey(churchId));
+    if (!raw) return null;
+
+    const snapshot = JSON.parse(raw) as ServicesSnapshot;
+    if (!snapshot?.savedAt || Date.now() - snapshot.savedAt > SERVICES_SNAPSHOT_TTL_MS) return null;
+    if (!Array.isArray(snapshot.services) || !Array.isArray(snapshot.myAssignments)) return null;
+
+    return {
+      savedAt: snapshot.savedAt,
+      services: normalizeServicesPayload(snapshot.services),
+      myAssignments: snapshot.myAssignments,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveServicesSnapshot(churchId: string, snapshot: Omit<ServicesSnapshot, "savedAt">) {
+  if (!isNativeMobileAuth) return;
+
+  try {
+    window.sessionStorage.setItem(
+      servicesSnapshotKey(churchId),
+      JSON.stringify({ ...snapshot, savedAt: Date.now() } satisfies ServicesSnapshot),
+    );
+  } catch {
+    // Snapshot restore is only a native perceived-performance hint.
+  }
+}
+
 export default function Services() {
   const navigate = useNavigate();
   const { selectedChurch } = useChurch();
+  const selectedChurchId = selectedChurch?.id ?? null;
   const isAdmin = normalizeRole(selectedChurch?.role) === "ADMIN";
   const { fetchApi } = useApi();
   const { toast } = useToast();
@@ -266,19 +386,58 @@ export default function Services() {
     [selectedServiceId, serviceItems],
   );
 
-  const loadServices = useCallback(() => {
-    setLoading(true);
+  const applyServicesPayload = useCallback((serviceRows: ServiceListPayload[], assignmentRows: MyAssignment[]) => {
+    setServices(serviceRows.map(serviceSummary));
+    setMyAssignments(assignmentRows);
+
+    const nextItems: Record<string, ServiceItem[]> = {};
+    const nextAssignments: Record<string, ServiceAssignment[]> = {};
+
+    serviceRows.forEach((service) => {
+      if (Array.isArray(service.items)) nextItems[service.id] = service.items;
+      if (Array.isArray(service.assignments)) nextAssignments[service.id] = service.assignments;
+    });
+
+    if (Object.keys(nextItems).length > 0) {
+      setServiceItems((prev) => ({ ...prev, ...nextItems }));
+    }
+    if (Object.keys(nextAssignments).length > 0) {
+      setServiceAssignments((prev) => ({ ...prev, ...nextAssignments }));
+    }
+  }, []);
+
+  const loadServices = useCallback((options?: { silent?: boolean; preferSnapshot?: boolean }) => {
+    const snapshot = selectedChurchId && options?.preferSnapshot !== false
+      ? readServicesSnapshot(selectedChurchId)
+      : null;
+
+    if (snapshot && !options?.silent) {
+      applyServicesPayload(snapshot.services, snapshot.myAssignments);
+      setLoading(false);
+    } else if (!options?.silent) {
+      setLoading(true);
+    }
+
     Promise.all([
       fetchApi("/services"),
       fetchApi<MyAssignment[]>("/service-assignments/mine").catch(() => []),
     ])
       .then(([data, assignments]) => {
-        setServices(Array.isArray(data) ? data : []);
-        setMyAssignments(Array.isArray(assignments) ? assignments : []);
+        const serviceRows = normalizeServicesPayload(data);
+        const assignmentRows = Array.isArray(assignments) ? assignments : [];
+        applyServicesPayload(serviceRows, assignmentRows);
+        if (selectedChurchId) {
+          saveServicesSnapshot(selectedChurchId, {
+            services: serviceRows,
+            myAssignments: assignmentRows,
+          });
+        }
       })
       .catch((e) => console.error("No se pudieron cargar los servicios:", e))
-      .finally(() => setLoading(false));
-  }, [fetchApi]);
+      .finally(() => {
+        if (!options?.silent) setLoading(false);
+      });
+  }, [applyServicesPayload, fetchApi, selectedChurchId]);
 
   useEffect(() => {
     loadServices();
@@ -577,7 +736,7 @@ export default function Services() {
         return;
       }
 
-      const buildPayload = (serviceDate: string) => ({
+      const buildPayload = (serviceDate: string): ServiceFormPayload => ({
         title: formData.title.trim(),
         date: serviceDate,
         type: formData.type,
@@ -586,10 +745,13 @@ export default function Services() {
       });
 
       if (editingService) {
-        await fetchApi(`/services/${editingService.id}`, {
+        const payload = buildPayload(baseDate);
+        const updated = await fetchApi<Service>(`/services/${editingService.id}`, {
           method: "PUT",
-          body: JSON.stringify(buildPayload(baseDate)),
+          body: JSON.stringify(payload),
         });
+        const nextService = isServicePayload(updated) ? serviceSummary(updated) : serviceFromPayload(editingService, payload);
+        setServices((prev) => mergeServices(prev, [nextService]));
         toast({ title: "Servicio actualizado" });
       } else {
         const serviceWeeks = getServiceWeeksToCreate(weeksToCreate);
@@ -602,17 +764,24 @@ export default function Services() {
           return;
         }
 
+        const createdServices: Service[] = [];
         for (const serviceDate of serviceDates) {
-          await fetchApi("/services", {
+          const created = await fetchApi<Service>("/services", {
             method: "POST",
             body: JSON.stringify(buildPayload(serviceDate)),
           });
+          if (isServicePayload(created)) {
+            createdServices.push(serviceSummary(created));
+          }
         }
 
+        if (createdServices.length > 0) {
+          setServices((prev) => mergeServices(prev, createdServices));
+        }
         toast({ title: serviceWeeks === 1 ? "Servicio creado" : `${serviceWeeks} servicios creados` });
       }
       setDialogOpen(false);
-      loadServices();
+      loadServices({ silent: true, preferSnapshot: false });
     } catch (e) {
       toast({ title: e instanceof Error ? e.message : "No se pudo guardar el servicio", variant: "destructive" });
     } finally {
@@ -626,8 +795,20 @@ export default function Services() {
     try {
       await fetchApi(`/services/${deleteId}`, { method: "DELETE" });
       toast({ title: "Servicio eliminado" });
+      const deletedServiceId = deleteId;
       setDeleteId(null);
-      loadServices();
+      setServices((prev) => prev.filter((service) => service.id !== deletedServiceId));
+      setServiceItems((prev) => {
+        const next = { ...prev };
+        delete next[deletedServiceId];
+        return next;
+      });
+      setServiceAssignments((prev) => {
+        const next = { ...prev };
+        delete next[deletedServiceId];
+        return next;
+      });
+      loadServices({ silent: true, preferSnapshot: false });
     } catch (e) {
       toast({ title: "No se pudo eliminar el servicio", variant: "destructive" });
     }

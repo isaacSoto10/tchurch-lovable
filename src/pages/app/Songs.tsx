@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { Capacitor } from "@capacitor/core";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Search, Pencil, Trash2 } from "lucide-react";
+import { Plus, Search, Pencil, Trash2, Loader2 } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
 import { useChurch } from "@/providers/ChurchProvider";
@@ -31,7 +32,7 @@ interface Song {
 type SongSort = "lastUsed" | "createdAt" | "title" | "artist" | "key";
 
 const MUSICAL_KEYS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B", "Cm", "C#m", "Dm", "D#m", "Em", "Fm", "F#m", "Gm", "G#m", "Am", "A#m", "Bm"];
-const SONG_SEARCH_DEBOUNCE_MS = 900;
+const SONG_SEARCH_DEBOUNCE_MS = Capacitor.isNativePlatform() ? 350 : 900;
 const SONG_SEARCH_MIN_LENGTH = 2;
 
 export default function Songs() {
@@ -47,7 +48,9 @@ export default function Songs() {
   const [keyFilter, setKeyFilter] = useState("all");
   const [sortBy, setSortBy] = useState<SongSort>("lastUsed");
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const songRequestIdRef = useRef(0);
+  const hasLoadedSongsRef = useRef(false);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingSong, setEditingSong] = useState<Song | null>(null);
@@ -70,17 +73,23 @@ export default function Songs() {
     params.set("sort", sortBy);
     if (trimmedSearch) params.set("q", trimmedSearch);
 
-    setLoading(true);
+    const shouldShowBlockingLoader = !hasLoadedSongsRef.current;
+    setLoading(shouldShowBlockingLoader);
+    setRefreshing(!shouldShowBlockingLoader);
     fetchApi(`/songs?${params.toString()}`)
       .then((data) => {
         if (songRequestIdRef.current !== requestId) return;
         setSongs(Array.isArray(data) ? data : []);
+        hasLoadedSongsRef.current = true;
       })
       .catch((e) => {
         if (songRequestIdRef.current === requestId) console.error("No se pudieron cargar las canciones:", e);
       })
       .finally(() => {
-        if (songRequestIdRef.current === requestId) setLoading(false);
+        if (songRequestIdRef.current === requestId) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       });
   }, [fetchApi, sortBy]);
 
@@ -224,9 +233,12 @@ export default function Songs() {
       <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_180px_160px_180px]">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          {refreshing && (
+            <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />
+          )}
           <Input
             placeholder="Buscar por título, artista o tonalidad..."
-            className="h-12 rounded-2xl border-zinc-200 bg-white pl-9 shadow-sm"
+            className="h-12 rounded-2xl border-zinc-200 bg-white pl-9 pr-9 shadow-sm"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />

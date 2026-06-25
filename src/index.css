@@ -165,10 +165,25 @@
 
 .is-native-app {
   background: hsl(var(--background));
+  -webkit-font-smoothing: antialiased;
 }
 
 .is-native-app body {
   overscroll-behavior-y: none;
+}
+
+.is-native-app :is(a, button, input, select, textarea, [role="button"]) {
+  touch-action: manipulation;
+}
+
+.is-native-app [data-mobile-shell="true"],
+.is-native-app [data-testid="mobile-content-scrollport"] {
+  -webkit-overflow-scrolling: touch;
+}
+
+.is-native-app [data-mobile-shell="true"] [data-route-content] {
+  min-width: 0;
+  transform: translateZ(0);
 }
 
 .mobile-page {
@@ -212,5 +227,27 @@
   .app-card,
   .app-card-soft {
     @apply rounded-[1.35rem];
+  }
+}
+
+@media (max-width: 767px) and (prefers-reduced-motion: no-preference) {
+  [data-mobile-shell="true"] [data-route-content] {
+    animation: tchurch-native-route-in 150ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+
+  [data-mobile-shell="true"] [data-testid="mobile-bottom-nav"] a:active {
+    transform: scale(0.96);
+  }
+}
+
+@keyframes tchurch-native-route-in {
+  from {
+    opacity: 0.94;
+    transform: translate3d(0, 6px, 0);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
   }
 }

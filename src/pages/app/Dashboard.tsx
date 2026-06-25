@@ -65,6 +65,54 @@ interface Assignment {
 }
 
 const DASHBOARD_SERVICE_PREVIEW_LIMIT = 2;
+const DASHBOARD_SNAPSHOT_TTL_MS = 2 * 60 * 1000;
+const DASHBOARD_SNAPSHOT_PREFIX = "tchurch_ios_dashboard_snapshot_v1";
+const DASHBOARD_SERVICES_PATH = "/services?summary=1&from=today&order=asc&limit=60";
+const DASHBOARD_EVENTS_PATH = "/events?startDate=today&limit=25";
+
+type DashboardSnapshot = {
+  savedAt: number;
+  stats: Stats | null;
+  timeline: TimelineItem[];
+  announcements: Announcement[];
+  ministries: Ministry[];
+  assignments: Assignment[];
+};
+
+function dashboardSnapshotKey(churchId: string) {
+  return `${DASHBOARD_SNAPSHOT_PREFIX}:${churchId}`;
+}
+
+function readDashboardSnapshot(churchId: string): DashboardSnapshot | null {
+  if (!isNativeMobileAuth) return null;
+
+  try {
+    const raw = window.sessionStorage.getItem(dashboardSnapshotKey(churchId));
+    if (!raw) return null;
+
+    const snapshot = JSON.parse(raw) as DashboardSnapshot;
+    if (!snapshot?.savedAt || Date.now() - snapshot.savedAt > DASHBOARD_SNAPSHOT_TTL_MS) return null;
+    if (!Array.isArray(snapshot.timeline) || !Array.isArray(snapshot.announcements)) return null;
+    if (!Array.isArray(snapshot.ministries) || !Array.isArray(snapshot.assignments)) return null;
+
+    return snapshot;
+  } catch {
+    return null;
+  }
+}
+
+function saveDashboardSnapshot(churchId: string, snapshot: Omit<DashboardSnapshot, "savedAt">) {
+  if (!isNativeMobileAuth) return;
+
+  try {
+    window.sessionStorage.setItem(
+      dashboardSnapshotKey(churchId),
+      JSON.stringify({ ...snapshot, savedAt: Date.now() } satisfies DashboardSnapshot),
+    );
+  } catch {
+    // Snapshot restore is only a native perceived-performance hint.
+  }
+}
 
 function formatDate(dateStr: string) {
   return formatServiceDate(dateStr, "es-US", {
@@ -107,6 +155,62 @@ function getTimelineItemHref(item: TimelineItem) {
   return item._type === "service" ? `/app/services/${item.id}` : `/app/events/${item.id}`;
 }
 
+function DashboardTimelineSkeleton() {
+  return (
+    <div className="space-y-6" aria-hidden="true">
+      <div>
+        <div className="mb-3 h-3 w-24 animate-pulse rounded-full bg-zinc-200" />
+        <div className="space-y-3">
+          {[0, 1, 2].map((item) => (
+            <Card key={item} className="app-card">
+              <CardContent className="flex items-center gap-3 p-3.5">
+                <div className="h-12 w-1.5 rounded-full bg-zinc-200" />
+                <div className="min-w-0 flex-1 space-y-2">
+                  <div className="h-4 w-3/4 animate-pulse rounded-full bg-zinc-200" />
+                  <div className="h-3 w-1/2 animate-pulse rounded-full bg-zinc-100" />
+                </div>
+                <div className="h-8 w-8 animate-pulse rounded-full bg-zinc-100" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DashboardAsideSkeleton() {
+  return (
+    <div className="space-y-6" aria-hidden="true">
+      <div>
+        <div className="mb-3 h-3 w-32 animate-pulse rounded-full bg-zinc-200" />
+        <Card className="app-card overflow-hidden">
+          <div className="h-44 animate-pulse bg-zinc-100" />
+          <CardContent className="space-y-3 p-4">
+            <div className="h-5 w-4/5 animate-pulse rounded-full bg-zinc-200" />
+            <div className="h-3 w-full animate-pulse rounded-full bg-zinc-100" />
+            <div className="h-3 w-2/3 animate-pulse rounded-full bg-zinc-100" />
+          </CardContent>
+        </Card>
+      </div>
+      <div>
+        <div className="mb-3 h-3 w-20 animate-pulse rounded-full bg-zinc-200" />
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-2">
+          {[0, 1, 2, 3].map((item) => (
+            <Card key={item} className="app-card">
+              <CardContent className="space-y-2 p-3 text-center">
+                <div className="mx-auto h-4 w-4 animate-pulse rounded-full bg-zinc-200" />
+                <div className="mx-auto h-5 w-8 animate-pulse rounded-full bg-zinc-200" />
+                <div className="mx-auto h-3 w-14 animate-pulse rounded-full bg-zinc-100" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const { fetchApi } = useApi();
   const { selectedChurch, loading: churchLoading } = useChurch();
@@ -131,20 +235,32 @@ export default function Dashboard() {
         return;
       }
 
-      setLoading(true);
+      const cachedSnapshot = readDashboardSnapshot(selectedChurch.id);
+      if (cachedSnapshot) {
+        setStats(cachedSnapshot.stats);
+        setTimeline(cachedSnapshot.timeline);
+        setAnnouncements(cachedSnapshot.announcements);
+        setMinistries(cachedSnapshot.ministries);
+        setAssignments(cachedSnapshot.assignments);
+        setLoading(false);
+      } else {
+        setLoading(true);
+      }
+
       try {
         const [statsData, servicesData, eventsData, announcementsData, ministriesData, assignmentsData] = await Promise.all([
           safeDashboardFetch("stats", () => fetchApi("/dashboard/stats"), null),
-          safeDashboardFetch("services", () => fetchApi("/services"), []),
-          safeDashboardFetch("events", () => fetchApi("/events"), []),
+          safeDashboardFetch("services", () => fetchApi(DASHBOARD_SERVICES_PATH), []),
+          safeDashboardFetch("events", () => fetchApi(DASHBOARD_EVENTS_PATH), []),
           safeDashboardFetch("announcements", () => fetchApi("/announcements"), []),
           safeDashboardFetch("ministries", () => fetchApi("/my-ministries"), []),
           safeDashboardFetch("asignaciones", () => fetchApi("/service-assignments/mine"), []),
         ]);
 
-        if (statsData && typeof statsData === "object" && !("error" in statsData)) {
-          setStats(statsData as Stats);
-        }
+        const nextStats = statsData && typeof statsData === "object" && !("error" in statsData)
+          ? statsData as Stats
+          : cachedSnapshot?.stats ?? null;
+        setStats(nextStats);
 
         const assignmentList = Array.isArray(assignmentsData) ? assignmentsData as Assignment[] : [];
         setAssignments(assignmentList);
@@ -195,11 +311,21 @@ export default function Dashboard() {
         const merged = [...svcItems, ...evtItems].sort(
           (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
         );
-        setTimeline(merged.slice(0, 10));
+        const nextTimeline = merged.slice(0, 10);
+        setTimeline(nextTimeline);
 
-        setAnnouncements(Array.isArray(announcementsData) ? announcementsData.slice(0, 10) : []);
+        const nextAnnouncements = Array.isArray(announcementsData) ? announcementsData.slice(0, 10) : [];
+        setAnnouncements(nextAnnouncements);
         const ministryPayload = ministriesData as MinistriesResponse;
-        setMinistries(Array.isArray(ministriesData) ? ministriesData : Array.isArray(ministryPayload?.ministries) ? ministryPayload.ministries : []);
+        const nextMinistries = Array.isArray(ministriesData) ? ministriesData : Array.isArray(ministryPayload?.ministries) ? ministryPayload.ministries : [];
+        setMinistries(nextMinistries);
+        saveDashboardSnapshot(selectedChurch.id, {
+          stats: nextStats,
+          timeline: nextTimeline,
+          announcements: nextAnnouncements,
+          ministries: nextMinistries,
+          assignments: assignmentList,
+        });
       } catch (e) {
         console.error("No se pudo cargar el panel:", e);
       } finally {
@@ -387,9 +513,7 @@ export default function Dashboard() {
           )}
 
           {loading ? (
-            <div className="flex items-center justify-center py-8">
-              <div className="animate-spin w-6 h-6 border-2 border-primary border-t-transparent rounded-full" />
-            </div>
+            <DashboardTimelineSkeleton />
           ) : timeline.length === 0 ? (
             <Card className="app-card">
               <CardContent className="p-8 text-center">
@@ -481,6 +605,10 @@ export default function Dashboard() {
         </section>
 
         <aside className="min-w-0 space-y-6 lg:sticky lg:top-[calc(env(safe-area-inset-top)+1rem)] lg:self-start">
+          {loading ? (
+            <DashboardAsideSkeleton />
+          ) : (
+            <>
           {announcements.length > 0 && (
             <div>
           <div className="flex min-w-0 items-center justify-between gap-3 mb-4">
@@ -595,6 +723,8 @@ export default function Dashboard() {
             ))}
           </div>
             </div>
+          )}
+            </>
           )}
         </aside>
         </div>
