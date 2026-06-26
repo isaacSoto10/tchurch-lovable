@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,6 +19,8 @@ import { AnnouncementAiImageField } from "@/components/AnnouncementAiImageField"
 import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
 import { CalendarDays, Check, Clock3, ImageIcon, Loader2, Megaphone, MessageCircle, Send, Sparkles, Trash2, Users, X, type LucideIcon } from "lucide-react";
+import { getChurchId } from "@/lib/api";
+import { readSessionSnapshot, sessionSnapshotKey, writeSessionSnapshot } from "@/lib/sessionSnapshots";
 
 type AnnouncementStatus = "PENDING" | "PUBLISHED" | "REJECTED";
 type Locale = "en" | "es";
@@ -48,6 +50,21 @@ interface MyMinistriesResponse {
   ministries?: Ministry[];
   role?: string | null;
   ministryRoles?: Record<string, string>;
+}
+
+type AnnouncementsSnapshot = {
+  announcements: Announcement[];
+  ministries: Ministry[];
+  role: string | null;
+  ministryRoles: Record<string, string>;
+};
+
+const ANNOUNCEMENTS_SNAPSHOT_PREFIX = "tchurch_ios_announcements_snapshot_v1";
+
+function isAnnouncementsSnapshot(data: unknown): data is AnnouncementsSnapshot {
+  if (!data || typeof data !== "object") return false;
+  const snapshot = data as Partial<AnnouncementsSnapshot>;
+  return Array.isArray(snapshot.announcements) && Array.isArray(snapshot.ministries) && Boolean(snapshot.ministryRoles);
 }
 
 function statusVariant(status: AnnouncementStatus) {
@@ -105,6 +122,7 @@ export default function Announcements() {
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const loadedOnceRef = useRef(false);
 
   const isAdmin = role === "ADMIN";
   const leaderMinistries = useMemo(
@@ -115,30 +133,46 @@ export default function Announcements() {
   const pending = announcements.filter((announcement) => announcement.status === "PENDING");
   const posted = announcements.filter((announcement) => announcement.status === "PUBLISHED");
   const rejected = announcements.filter((announcement) => announcement.status === "REJECTED");
+  const snapshotKey = sessionSnapshotKey(ANNOUNCEMENTS_SNAPSHOT_PREFIX, getChurchId());
+
+  const applyPageData = useCallback((snapshot: AnnouncementsSnapshot) => {
+    setAnnouncements(snapshot.announcements);
+    setMinistries(snapshot.ministries);
+    setRole(snapshot.role);
+    setMinistryRoles(snapshot.ministryRoles);
+    loadedOnceRef.current = true;
+  }, []);
 
   const loadPage = useCallback(async () => {
-    setLoading(true);
+    const snapshot = readSessionSnapshot<AnnouncementsSnapshot>(snapshotKey, { validate: isAnnouncementsSnapshot });
+    if (snapshot) {
+      applyPageData(snapshot.data);
+      setLoading(false);
+    } else if (!loadedOnceRef.current) {
+      setLoading(true);
+    }
+
     try {
       const [announcementResult, mineResult] = await Promise.allSettled([
-        fetchApi<Announcement[]>("/announcements?includePending=1"),
+        fetchApi<Announcement[]>("/announcements?includePending=1&limit=40"),
         fetchApi<MyMinistriesResponse>("/my-ministries"),
       ]);
 
       if (announcementResult.status === "fulfilled") {
-        setAnnouncements(Array.isArray(announcementResult.value) ? announcementResult.value : []);
+        const nextSnapshot: AnnouncementsSnapshot = {
+          announcements: Array.isArray(announcementResult.value) ? announcementResult.value : [],
+          ministries: mineResult.status === "fulfilled" ? mineResult.value.ministries || [] : snapshot?.data.ministries || [],
+          role: mineResult.status === "fulfilled" ? mineResult.value.role || null : snapshot?.data.role || null,
+          ministryRoles: mineResult.status === "fulfilled" ? mineResult.value.ministryRoles || {} : snapshot?.data.ministryRoles || {},
+        };
+        applyPageData(nextSnapshot);
+        writeSessionSnapshot(snapshotKey, nextSnapshot);
       } else {
         throw announcementResult.reason;
       }
 
-      if (mineResult.status === "fulfilled") {
-        setMinistries(mineResult.value.ministries || []);
-        setRole(mineResult.value.role || null);
-        setMinistryRoles(mineResult.value.ministryRoles || {});
-      } else {
+      if (mineResult.status === "rejected") {
         console.warn("Ministry context unavailable for announcements:", mineResult.reason);
-        setMinistries([]);
-        setRole(null);
-        setMinistryRoles({});
       }
     } catch (error) {
       console.error("Failed to load announcements:", error);
@@ -149,7 +183,7 @@ export default function Announcements() {
     } finally {
       setLoading(false);
     }
-  }, [fetchApi, toast]);
+  }, [applyPageData, fetchApi, snapshotKey, toast]);
 
   useEffect(() => {
     loadPage();

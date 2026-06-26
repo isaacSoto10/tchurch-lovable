@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   AlertCircle,
@@ -45,6 +45,7 @@ import {
   fetchEvent,
   fetchEventRsvp,
   fetchEventSignupItems,
+  getChurchId,
   updateEventSignupItem,
   updateEventRsvp,
 } from "@/lib/api";
@@ -55,6 +56,7 @@ import {
   submitEventCheckInOnlineFirst,
 } from "@/lib/eventCheckInQueue";
 import { useChurch } from "@/providers/ChurchProvider";
+import { readSessionSnapshot, sessionSnapshotKey, writeSessionSnapshot } from "@/lib/sessionSnapshots";
 import type {
   ChurchEvent,
   EventAttendee,
@@ -94,6 +96,31 @@ const emptyRsvpForm: RsvpFormState = {
   answers: {},
   reminderOptIn: true,
 };
+const EVENT_DETAIL_SNAPSHOT_PREFIX = "tchurch_ios_event_detail_snapshot_v1";
+
+type EventDetailSnapshot = {
+  event: ChurchEvent;
+  signupItems: EventSignupItem[];
+  myRsvp: EventRsvpStatus | null;
+  rsvpForm: RsvpFormState;
+};
+
+type EventDetailPayload = ChurchEvent & {
+  myRegistration?: EventRsvpResponse | EventAttendee | null;
+  registration?: EventRsvpResponse | EventAttendee | null;
+  rsvp?: EventRsvpResponse | EventAttendee | null;
+};
+
+function isEventDetailSnapshot(data: unknown): data is EventDetailSnapshot {
+  if (!data || typeof data !== "object") return false;
+  const snapshot = data as Partial<EventDetailSnapshot>;
+  return (
+    Boolean(snapshot.event?.id) &&
+    Array.isArray(snapshot.signupItems) &&
+    (snapshot.myRsvp === null || snapshot.myRsvp === "yes" || snapshot.myRsvp === "no" || snapshot.myRsvp === "maybe") &&
+    Boolean(snapshot.rsvpForm && typeof snapshot.rsvpForm === "object")
+  );
+}
 
 function routeTab(pathname: string): TabValue {
   if (pathname.endsWith("/rsvp")) return "rsvp";
@@ -156,6 +183,12 @@ function whatsappEventShare(event: ChurchEvent) {
 function extractRsvpStatus(response: EventRsvpResponse | null): EventRsvpStatus | null {
   const status = response?.status || response?.rsvp?.status || response?.registration?.status || null;
   return status === "yes" || status === "no" || status === "maybe" ? status : null;
+}
+
+function rsvpFromEventPayload(event: EventDetailPayload): EventRsvpResponse | null {
+  const candidate = event.myRegistration || event.registration || event.rsvp || null;
+  if (!candidate || typeof candidate !== "object") return null;
+  return candidate as EventRsvpResponse;
 }
 
 function defaultAnswerForQuestion(question: EventQuestion) {
@@ -313,12 +346,22 @@ export default function EventDetail() {
   const [signupItemSaving, setSignupItemSaving] = useState(false);
   const [signupItemDeleteTarget, setSignupItemDeleteTarget] = useState<EventSignupItem | null>(null);
   const [signupItemDeletingId, setSignupItemDeletingId] = useState<string | null>(null);
+  const loadedOnceRef = useRef(false);
 
   const canManage = selectedChurch?.role === "ADMIN" || selectedChurch?.role === "PLANNER";
   const userEmail = user?.primaryEmailAddress?.emailAddress || null;
   const checkInEnabled = event?.requiresCheckIn !== false;
   const rsvpQuestions = useMemo(() => event?.registrationConfig?.questions || [], [event?.registrationConfig?.questions]);
   const reminderOptInEnabled = Boolean(event?.reminderConfig?.enabled);
+  const snapshotKey = sessionSnapshotKey(EVENT_DETAIL_SNAPSHOT_PREFIX, `${selectedChurch?.id || getChurchId()}:${id || "unknown"}`);
+
+  const applyEventSnapshot = useCallback((snapshot: EventDetailSnapshot) => {
+    setEvent(snapshot.event);
+    setSignupItems(snapshot.signupItems);
+    setMyRsvp(snapshot.myRsvp);
+    setRsvpForm(snapshot.rsvpForm);
+    loadedOnceRef.current = true;
+  }, []);
 
   const attendees = useMemo(() => event?.attendees || [], [event?.attendees]);
   const counts = useMemo(() => {
@@ -345,20 +388,33 @@ export default function EventDetail() {
   const loadEvent = useCallback(
     async (showSpinner = true) => {
       if (!id) return;
-      if (showSpinner) setLoading(true);
+
+      if (showSpinner) {
+        const snapshot = readSessionSnapshot<EventDetailSnapshot>(snapshotKey, { validate: isEventDetailSnapshot });
+        if (snapshot) {
+          applyEventSnapshot(snapshot.data);
+          setLoading(false);
+        } else if (!loadedOnceRef.current) {
+          setLoading(true);
+        }
+      }
 
       try {
-        const [eventData, rsvpData, attendeeData, signupData] = await Promise.all([
-          fetchEvent(id),
-          fetchEventRsvp(id).catch(() => null),
-          apiFetch<EventAttendee[]>(`/events/${id}/rsvps`).catch(() => []),
-          fetchEventSignupItems(id).catch(() => []),
-        ]);
+        const eventData = await fetchEvent(id) as EventDetailPayload;
 
         if ((eventData as { error?: string }).error) {
           navigate("/app/events");
           return;
         }
+
+        const detailRsvp = rsvpFromEventPayload(eventData);
+        const [rsvpData, attendeeData, signupData] = await Promise.all([
+          detailRsvp ? Promise.resolve(detailRsvp) : fetchEventRsvp(id).catch(() => null),
+          Array.isArray(eventData.attendees) || !canManage
+            ? Promise.resolve([])
+            : apiFetch<EventAttendee[]>(`/events/${id}/rsvps`).catch(() => []),
+          Array.isArray(eventData.signupItems) ? Promise.resolve(eventData.signupItems) : fetchEventSignupItems(id).catch(() => []),
+        ]);
 
         const normalizedAttendees = Array.isArray(eventData.attendees)
           ? eventData.attendees
@@ -367,10 +423,14 @@ export default function EventDetail() {
             : [];
         const ownAttendee = findMyAttendee(normalizedAttendees, user?.id, userEmail);
         const rsvpDetails = rsvpData || (ownAttendee ? ({ rsvp: ownAttendee } satisfies EventRsvpResponse) : null);
-        setEvent({ ...eventData, attendees: normalizedAttendees });
-        setSignupItems(normalizeSignupItems(signupData));
-        setMyRsvp(extractRsvpStatus(rsvpDetails) || ownAttendee?.status || null);
-        setRsvpForm(rsvpFormFromEvent(eventData, rsvpDetails));
+        const nextSnapshot = {
+          event: { ...eventData, attendees: normalizedAttendees },
+          signupItems: normalizeSignupItems(signupData),
+          myRsvp: extractRsvpStatus(rsvpDetails) || ownAttendee?.status || null,
+          rsvpForm: rsvpFormFromEvent(eventData, rsvpDetails),
+        };
+        applyEventSnapshot(nextSnapshot);
+        writeSessionSnapshot(snapshotKey, nextSnapshot);
       } catch (error) {
         console.error("Failed to load event:", error);
         toast({ title: "No se pudo cargar el evento", variant: "destructive" });
@@ -378,7 +438,7 @@ export default function EventDetail() {
         setLoading(false);
       }
     },
-    [id, navigate, toast, user?.id, userEmail]
+    [applyEventSnapshot, canManage, id, navigate, snapshotKey, toast, user?.id, userEmail]
   );
 
   const reloadSignupItems = useCallback(async () => {

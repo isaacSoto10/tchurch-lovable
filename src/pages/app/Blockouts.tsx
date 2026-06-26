@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,6 +8,8 @@ import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
 import { useAppAuth } from "@/hooks/useAppAuth";
 import { useChurch } from "@/providers/ChurchProvider";
+import { getChurchId } from "@/lib/api";
+import { readSessionSnapshot, sessionSnapshotKey, writeSessionSnapshot } from "@/lib/sessionSnapshots";
 import {
   Dialog,
   DialogContent,
@@ -54,10 +56,26 @@ interface User {
   email: string;
 }
 
+type CurrentUserResponse = Partial<User> & { id: string };
+
+type BlockoutsSnapshot = {
+  blockouts: Blockout[];
+  users: User[];
+  currentUserId: string | null;
+};
+
+const BLOCKOUTS_SNAPSHOT_PREFIX = "tchurch_ios_blockouts_snapshot_v1";
+
+function isBlockoutsSnapshot(data: unknown): data is BlockoutsSnapshot {
+  if (!data || typeof data !== "object") return false;
+  const snapshot = data as Partial<BlockoutsSnapshot>;
+  return Array.isArray(snapshot.blockouts) && Array.isArray(snapshot.users);
+}
+
 export default function Blockouts() {
   const { fetchApi } = useApi();
   const { toast } = useToast();
-  const { userId: authUserId } = useAppAuth();
+  const { user: authUser, userId: authUserId } = useAppAuth();
   const { selectedChurch } = useChurch();
   const isAdmin = selectedChurch?.role === "ADMIN";
   const [blockouts, setBlockouts] = useState<Blockout[]>([]);
@@ -72,21 +90,55 @@ export default function Blockouts() {
   const [submitting, setSubmitting] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const loadedOnceRef = useRef(false);
+  const snapshotKey = sessionSnapshotKey(BLOCKOUTS_SNAPSHOT_PREFIX, selectedChurch?.id || getChurchId());
+
+  const applyBlockoutsSnapshot = useCallback((snapshot: BlockoutsSnapshot) => {
+    setBlockouts(snapshot.blockouts);
+    setUsers(snapshot.users);
+    setCurrentUserId(snapshot.currentUserId);
+    loadedOnceRef.current = true;
+  }, []);
 
   const loadData = useCallback(async () => {
-    setLoading(true);
+    const snapshot = readSessionSnapshot<BlockoutsSnapshot>(snapshotKey, { validate: isBlockoutsSnapshot });
+    if (snapshot) {
+      applyBlockoutsSnapshot(snapshot.data);
+      setLoading(false);
+    } else if (!loadedOnceRef.current) {
+      setLoading(true);
+    }
+
     try {
-      const [currentUser, usersData] = await Promise.all([
-        fetchApi<{ id: string }>("/users/me").catch((e) => {
+      const currentUser = await fetchApi<CurrentUserResponse>("/users/me").catch((e) => {
           console.error("Failed to load current user:", e);
           return null;
-        }),
-        fetchApi<User[]>("/users"),
-      ]);
+        });
       setCurrentUserId(currentUser?.id || null);
 
-      const usersList = Array.isArray(usersData) ? usersData : [];
+      const authEmail = authUser?.primaryEmailAddress?.emailAddress || "";
+      const currentUserOption: User | null = currentUser?.id
+        ? {
+            id: currentUser.id,
+            firstName: currentUser.firstName ?? authUser?.firstName ?? null,
+            lastName: currentUser.lastName ?? authUser?.lastName ?? null,
+            email: currentUser.email ?? authEmail,
+          }
+        : authUserId
+          ? {
+              id: authUserId,
+              firstName: authUser?.firstName ?? null,
+              lastName: authUser?.lastName ?? null,
+              email: authEmail,
+            }
+          : null;
+      const usersList = isAdmin
+        ? await fetchApi<User[]>("/users")
+        : currentUserOption
+          ? [currentUserOption]
+          : [];
       setUsers(usersList);
+      if (!isAdmin && currentUserOption) setSelectedUser(currentUserOption);
 
       const blockoutPromises = usersList.map((user: User) =>
         fetchApi(`/blockouts?userId=${user.id}`).catch(() => [])
@@ -112,13 +164,19 @@ export default function Blockouts() {
         const bTime = parseCalendarDate(b.startDate)?.getTime() || 0;
         return aTime - bTime;
       });
-      setBlockouts(allBlockouts);
+      const nextSnapshot = {
+        blockouts: allBlockouts,
+        users: usersList,
+        currentUserId: currentUser?.id || authUserId || null,
+      };
+      applyBlockoutsSnapshot(nextSnapshot);
+      writeSessionSnapshot(snapshotKey, nextSnapshot);
     } catch (e) {
       console.error("Failed to load blockouts:", e);
     } finally {
       setLoading(false);
     }
-  }, [fetchApi]);
+  }, [applyBlockoutsSnapshot, authUser?.firstName, authUser?.lastName, authUser?.primaryEmailAddress?.emailAddress, authUserId, fetchApi, isAdmin, snapshotKey]);
 
   useEffect(() => {
     setCurrentUserId(null);
@@ -170,7 +228,11 @@ export default function Blockouts() {
     setDeletingId(deleteId);
     try {
       await fetchApi(`/blockouts/${deleteId}`, { method: "DELETE" });
-      setBlockouts((current) => current.filter((blockout) => blockout.id !== deleteId));
+      setBlockouts((current) => {
+        const nextBlockouts = current.filter((blockout) => blockout.id !== deleteId);
+        writeSessionSnapshot(snapshotKey, { blockouts: nextBlockouts, users, currentUserId });
+        return nextBlockouts;
+      });
       toast({ title: "Blockout date deleted" });
       setDeleteId(null);
     } catch (e) {
@@ -276,7 +338,7 @@ export default function Blockouts() {
       </div>
 
       <div className="space-y-3">
-        {loading && (
+        {loading && blockouts.length === 0 && (
           <div className="flex items-center justify-center py-8">
             <div className="animate-spin w-6 h-6 border-2 border-primary border-t-transparent rounded-full" />
           </div>
@@ -292,8 +354,7 @@ export default function Blockouts() {
             </CardContent>
           </Card>
         )}
-        {!loading &&
-          blockouts.map((blockout) => {
+        {blockouts.map((blockout) => {
             const isPast = isPastBlockout(blockout.endDate);
             const canDelete = canDeleteBlockout(blockout);
 

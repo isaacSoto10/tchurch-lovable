@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -21,10 +21,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { AlertCircle, Check, Clock, Loader2, Mail, Plus, Search, ShieldCheck, User, UserMinus, Users as UsersIcon, X } from "lucide-react";
-import { ApiError } from "@/lib/api";
+import { ApiError, getChurchId } from "@/lib/api";
 import { useApi } from "@/hooks/useApi";
 import { useChurch } from "@/providers/ChurchProvider";
 import { useToast } from "@/components/ui/use-toast";
+import { readSessionSnapshot, sessionSnapshotKey, writeSessionSnapshot } from "@/lib/sessionSnapshots";
 
 interface Member {
   id: string;
@@ -44,6 +45,17 @@ interface Member {
     email?: string | null;
     imageUrl?: string | null;
   } | null;
+}
+
+type UsersSnapshot = {
+  members: Member[];
+};
+
+const USERS_SNAPSHOT_PREFIX = "tchurch_ios_users_snapshot_v1";
+
+function isUsersSnapshot(data: unknown): data is UsersSnapshot {
+  if (!data || typeof data !== "object") return false;
+  return Array.isArray((data as Partial<UsersSnapshot>).members);
 }
 
 const ROLE_OPTIONS = [
@@ -123,8 +135,15 @@ export default function Users() {
   const [submitting, setSubmitting] = useState(false);
   const [updatingRole, setUpdatingRole] = useState<string | null>(null);
   const [processingMember, setProcessingMember] = useState<string | null>(null);
+  const loadedOnceRef = useRef(false);
 
   const isAdmin = selectedChurch?.role === "ADMIN";
+  const snapshotKey = sessionSnapshotKey(USERS_SNAPSHOT_PREFIX, selectedChurch?.id || getChurchId());
+
+  const applyMembers = useCallback((memberList: Member[]) => {
+    setMembers(memberList);
+    loadedOnceRef.current = true;
+  }, []);
 
   const loadMembers = useCallback(async () => {
     if (!selectedChurch) {
@@ -133,11 +152,19 @@ export default function Users() {
       return;
     }
 
-    setLoading(true);
+    const snapshot = readSessionSnapshot<UsersSnapshot>(snapshotKey, { validate: isUsersSnapshot });
+    if (snapshot) {
+      applyMembers(snapshot.data.members);
+      setLoading(false);
+    } else if (!loadedOnceRef.current) {
+      setLoading(true);
+    }
+
     try {
       const data = await fetchApi<{ members?: Member[] } | Member[]>(`/churches/${selectedChurch.id}/members`);
       const memberList = Array.isArray(data) ? data : (data.members || []);
-      setMembers(memberList);
+      applyMembers(memberList);
+      writeSessionSnapshot(snapshotKey, { members: memberList });
     } catch (error) {
       console.error("Failed to load members:", error);
       try {
@@ -147,7 +174,8 @@ export default function Users() {
           userId: member.userId || member.id,
           status: member.status || "APPROVED",
         }));
-        setMembers(fallbackMembers);
+        applyMembers(fallbackMembers);
+        writeSessionSnapshot(snapshotKey, { members: fallbackMembers });
       } catch (fallbackError) {
         console.error("Fallback also failed:", fallbackError);
         toast({
@@ -159,7 +187,7 @@ export default function Users() {
     } finally {
       setLoading(false);
     }
-  }, [fetchApi, selectedChurch, toast]);
+  }, [applyMembers, fetchApi, selectedChurch, snapshotKey, toast]);
 
   useEffect(() => {
     void loadMembers();
@@ -209,7 +237,11 @@ export default function Users() {
         body: JSON.stringify({ role: newRole }),
       });
       toast({ title: "Rol actualizado" });
-      setMembers((prev) => prev.map((member) => getMemberUserId(member) === userId ? { ...member, role: newRole } : member));
+      setMembers((prev) => {
+        const nextMembers = prev.map((member) => getMemberUserId(member) === userId ? { ...member, role: newRole } : member);
+        writeSessionSnapshot(snapshotKey, { members: nextMembers });
+        return nextMembers;
+      });
     } catch (error) {
       console.error(error);
       toast({
@@ -271,7 +303,11 @@ export default function Users() {
     try {
       await reviewMemberRequest(userId, "deny");
       toast({ title: "Solicitud rechazada" });
-      setMembers((prev) => prev.filter((member) => getMemberUserId(member) !== userId));
+      setMembers((prev) => {
+        const nextMembers = prev.filter((member) => getMemberUserId(member) !== userId);
+        writeSessionSnapshot(snapshotKey, { members: nextMembers });
+        return nextMembers;
+      });
     } catch (error) {
       console.error(error);
       toast({
@@ -290,7 +326,11 @@ export default function Users() {
     try {
       await fetchApi(`/churches/${selectedChurch.id}/members/${userId}`, { method: "DELETE" });
       toast({ title: "Miembro removido" });
-      setMembers((prev) => prev.filter((member) => getMemberUserId(member) !== userId));
+      setMembers((prev) => {
+        const nextMembers = prev.filter((member) => getMemberUserId(member) !== userId);
+        writeSessionSnapshot(snapshotKey, { members: nextMembers });
+        return nextMembers;
+      });
     } catch (error) {
       console.error(error);
       toast({
@@ -399,7 +439,7 @@ export default function Users() {
       </div>
 
       <div className="space-y-2">
-        {loading && (
+        {loading && members.length === 0 && (
           <div className="app-card flex items-center justify-center py-10">
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
           </div>
@@ -419,7 +459,7 @@ export default function Users() {
           </Card>
         )}
 
-        {!loading && filteredMembers.map((member) => {
+        {filteredMembers.map((member) => {
           const userId = getMemberUserId(member);
           const pending = isPendingMember(member);
           const email = getMemberEmail(member);

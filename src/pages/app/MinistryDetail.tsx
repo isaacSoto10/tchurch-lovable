@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useCallback, useState, useEffect, useRef } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -14,11 +14,12 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Loader2, ArrowLeft, Plus, Check, X, UserMinus, Users, Clock, MessageCircle, FileText, UserPlus, ShieldCheck, Megaphone } from "lucide-react";
-import { ApiError, apiFetch } from "@/lib/api";
+import { ApiError, apiFetch, getChurchId } from "@/lib/api";
 import { useChurch } from "@/providers/ChurchProvider";
 import { MinistryFinance } from "@/components/MinistryFinance";
 import { MinistryResources } from "@/components/MinistryResources";
 import { useToast } from "@/components/ui/use-toast";
+import { readSessionSnapshot, sessionSnapshotKey, writeSessionSnapshot } from "@/lib/sessionSnapshots";
 
 type Tab = "members" | "join-requests" | "announcements" | "resources" | "finance";
 
@@ -87,6 +88,17 @@ type Announcement = {
   imageUrl?: string | null;
   createdAt: string;
 };
+
+type MinistryDetailSnapshot = {
+  ministry: Ministry;
+};
+
+const MINISTRY_DETAIL_SNAPSHOT_PREFIX = "tchurch_ios_ministry_detail_snapshot_v1";
+
+function isMinistryDetailSnapshot(data: unknown): data is MinistryDetailSnapshot {
+  if (!data || typeof data !== "object") return false;
+  return Boolean((data as Partial<MinistryDetailSnapshot>).ministry?.id);
+}
 
 function getInitials(firstName?: string | null, lastName?: string | null, email?: string): string {
   if (firstName || lastName) return `${firstName?.[0] || ""}${lastName?.[0] || ""}`.toUpperCase();
@@ -164,9 +176,12 @@ export default function MinistryDetail() {
   const [addRole, setAddRole] = useState("MEMBER");
   const [submitting, setSubmitting] = useState(false);
   const [editForm, setEditForm] = useState({ name: "", description: "", color: "", whatsappGroupUrl: "" });
+  const loadedOnceRef = useRef(false);
+  const snapshotKey = sessionSnapshotKey(MINISTRY_DETAIL_SNAPSHOT_PREFIX, `${selectedChurch?.id || getChurchId()}:${id || "unknown"}`);
 
-  function applyMinistryData(data: Ministry) {
+  const applyMinistryData = useCallback((data: Ministry) => {
     setMinistry(data);
+    loadedOnceRef.current = true;
     setEditForm({
       name: data.name || "",
       description: data.description || "",
@@ -178,18 +193,25 @@ export default function MinistryDetail() {
     if (typeof data.isMember === "boolean") setIsMember(data.isMember);
     if (typeof data.isPending === "boolean") setIsPending(data.isPending);
     if ("memberRole" in data) setMyRole(data.memberRole ? normalizeRole(data.memberRole) : null);
-  }
+  }, []);
 
   // Fetch ministry
   useEffect(() => {
     if (!id) return;
     async function load() {
-      setLoading(true);
+      const snapshot = readSessionSnapshot<MinistryDetailSnapshot>(snapshotKey, { validate: isMinistryDetailSnapshot });
+      if (snapshot) {
+        applyMinistryData(snapshot.data.ministry);
+        setLoading(false);
+      } else if (!loadedOnceRef.current) {
+        setLoading(true);
+      }
       setLoadError(null);
       try {
         const data = await apiFetch<Ministry>(`/ministries/${id}`);
         if (!data?.id) throw new Error("Respuesta inválida del ministerio.");
         applyMinistryData(data);
+        writeSessionSnapshot(snapshotKey, { ministry: data });
       } catch (e) {
         console.error(e);
         const message = e instanceof Error ? e.message : "No se pudo cargar este ministerio.";
@@ -202,20 +224,21 @@ export default function MinistryDetail() {
 
           if (fallback) {
             applyMinistryData(fallback);
+            writeSessionSnapshot(snapshotKey, { ministry: fallback });
             return;
           }
         } catch (fallbackError) {
           console.error("Failed to load ministry fallback list:", fallbackError);
         }
 
-        setMinistry(null);
+        if (!loadedOnceRef.current) setMinistry(null);
         setLoadError(message);
       } finally {
         setLoading(false);
       }
     }
     load();
-  }, [id]);
+  }, [applyMinistryData, id, snapshotKey]);
 
   // Fetch my ministries status
   useEffect(() => {
@@ -347,6 +370,7 @@ export default function MinistryDetail() {
       // Refresh ministry
       const data = await apiFetch<Ministry>(`/ministries/${id}`);
       applyMinistryData(data);
+      writeSessionSnapshot(snapshotKey, { ministry: data });
     } catch (e) {
       console.error(e);
     } finally {
@@ -379,6 +403,7 @@ export default function MinistryDetail() {
       setShowEditMinistry(false);
       const data = await apiFetch<Ministry>(`/ministries/${id}`);
       applyMinistryData(data);
+      writeSessionSnapshot(snapshotKey, { ministry: data });
     } catch (e) {
       console.error(e);
     } finally {

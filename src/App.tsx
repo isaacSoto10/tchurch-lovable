@@ -10,6 +10,7 @@ import { ChurchProvider } from "@/providers/ChurchProvider";
 import { UserActionLoggingProvider } from "@/providers/UserActionLoggingProvider";
 import { RequireAuth } from "@/components/RequireAuth";
 import { useNativeDeepLinks } from "@/hooks/useNativeDeepLinks";
+import { scheduleNativeAppDataWarmup } from "@/lib/nativeAppWarmup";
 import { appRouteLoaders, scheduleNativeAppPreload } from "@/lib/appRoutePreloaders";
 
 const Landing = lazy(appRouteLoaders.Landing);
@@ -103,7 +104,12 @@ const App = () => {
     document.documentElement.lang = savedLanguage === "en" ? "en" : "es";
 
     if (isNativePlatform) {
-      return scheduleNativeAppPreload();
+      const cancelRoutePreload = scheduleNativeAppPreload();
+      const cancelDataWarmup = scheduleNativeAppDataWarmup();
+      return () => {
+        cancelRoutePreload?.();
+        cancelDataWarmup?.();
+      };
     }
   }, []);
 

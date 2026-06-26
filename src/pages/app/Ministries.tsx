@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,9 @@ import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
 import { useChurch } from "@/providers/ChurchProvider";
 import { MinistryResources } from "@/components/MinistryResources";
+import { getChurchId } from "@/lib/api";
+import { preloadAppRoute } from "@/lib/appRoutePreloaders";
+import { readSessionSnapshot, sessionSnapshotKey, writeSessionSnapshot } from "@/lib/sessionSnapshots";
 import {
   Dialog,
   DialogContent,
@@ -84,6 +87,28 @@ type MyMinistriesResponse = {
   ministryRoles?: Record<string, string>;
 };
 
+type MinistriesSnapshot = {
+  ministries: Ministry[];
+  groups: Group[];
+  myMinistryIds: string[];
+  pendingMinistryIds: string[];
+  ministryRoles: Record<string, string>;
+};
+
+const MINISTRIES_SNAPSHOT_PREFIX = "tchurch_ios_ministries_snapshot_v1";
+
+function isMinistriesSnapshot(data: unknown): data is MinistriesSnapshot {
+  if (!data || typeof data !== "object") return false;
+  const snapshot = data as Partial<MinistriesSnapshot>;
+  return (
+    Array.isArray(snapshot.ministries) &&
+    Array.isArray(snapshot.groups) &&
+    Array.isArray(snapshot.myMinistryIds) &&
+    Array.isArray(snapshot.pendingMinistryIds) &&
+    Boolean(snapshot.ministryRoles)
+  );
+}
+
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 function normalizeRole(role?: string | null) {
@@ -131,34 +156,56 @@ export default function Ministries() {
   const [announcementFormOpen, setAnnouncementFormOpen] = useState(false);
   const [announcementForm, setAnnouncementForm] = useState({ title: "", content: "" });
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const loadedOnceRef = useRef(false);
+
+  const snapshotKey = sessionSnapshotKey(MINISTRIES_SNAPSHOT_PREFIX, selectedChurch?.id || getChurchId());
+
+  const applyMinistriesSnapshot = useCallback((snapshot: MinistriesSnapshot) => {
+    setMinistries(snapshot.ministries);
+    setAllGroups(snapshot.groups);
+    setMyMinistryIds(snapshot.myMinistryIds);
+    setPendingMinistryIds(snapshot.pendingMinistryIds);
+    setMinistryRoles(snapshot.ministryRoles);
+    loadedOnceRef.current = true;
+  }, []);
 
   const loadData = useCallback(async () => {
-    setLoading(true);
+    const snapshot = readSessionSnapshot<MinistriesSnapshot>(snapshotKey, { validate: isMinistriesSnapshot });
+    if (snapshot) {
+      applyMinistriesSnapshot(snapshot.data);
+      setLoading(false);
+    } else if (!loadedOnceRef.current) {
+      setLoading(true);
+    }
+
     try {
-      const [ministriesData, myMinistriesData, groupsData] = await Promise.allSettled([
+      const [ministriesData, myMinistriesData] = await Promise.allSettled([
         fetchApi<Ministry[]>("/ministries"),
         fetchApi<MyMinistriesResponse>("/my-ministries"),
-        fetchApi<Group[]>("/groups"),
       ]);
       
-      if (ministriesData.status === "fulfilled") {
-        setMinistries(Array.isArray(ministriesData.value) ? ministriesData.value : []);
-      }
-      if (myMinistriesData.status === "fulfilled") {
-        const data = myMinistriesData.value || {};
-        setMyMinistryIds(Array.isArray(data.myMinistryIds) ? data.myMinistryIds : []);
-        setPendingMinistryIds(Array.isArray(data.pendingMinistryIds) ? data.pendingMinistryIds : []);
-        setMinistryRoles(data.ministryRoles || {});
-      }
-      if (groupsData.status === "fulfilled") {
-        setAllGroups(Array.isArray(groupsData.value) ? groupsData.value : []);
-      }
+      const myMinistries: MyMinistriesResponse = myMinistriesData.status === "fulfilled" ? myMinistriesData.value || {} : {};
+      const nextSnapshot = {
+        ministries: ministriesData.status === "fulfilled"
+          ? Array.isArray(ministriesData.value) ? ministriesData.value : []
+          : snapshot?.data.ministries || [],
+        groups: snapshot?.data.groups || [],
+        myMinistryIds: Array.isArray(myMinistries.myMinistryIds)
+          ? myMinistries.myMinistryIds
+          : snapshot?.data.myMinistryIds || [],
+        pendingMinistryIds: Array.isArray(myMinistries.pendingMinistryIds)
+          ? myMinistries.pendingMinistryIds
+          : snapshot?.data.pendingMinistryIds || [],
+        ministryRoles: myMinistries.ministryRoles || snapshot?.data.ministryRoles || {},
+      };
+      applyMinistriesSnapshot(nextSnapshot);
+      writeSessionSnapshot(snapshotKey, nextSnapshot);
     } catch (e) {
       console.error("Failed to load ministries:", e);
     } finally {
       setLoading(false);
     }
-  }, [fetchApi]);
+  }, [applyMinistriesSnapshot, fetchApi, snapshotKey]);
 
   useEffect(() => {
     loadData();
@@ -172,11 +219,14 @@ export default function Ministries() {
 
   const loadMinistryDetail = async (ministryId: string) => {
     try {
-      const data = await fetchApi<Ministry>(`/ministries/${ministryId}`);
+      const [data, annData, groupsData] = await Promise.all([
+        fetchApi<Ministry>(`/ministries/${ministryId}`),
+        fetchApi<Announcement[]>(`/announcements?ministryId=${encodeURIComponent(ministryId)}&limit=20`),
+        fetchApi<Group[]>("/groups").catch(() => []),
+      ]);
       setSelectedMinistry(data);
-
-      const annData = await fetchApi<Announcement[]>(`/announcements?ministryId=${ministryId}`);
       setAnnouncements(Array.isArray(annData) ? annData : []);
+      if (Array.isArray(groupsData)) setAllGroups(groupsData);
     } catch (e) {
       console.error("Failed to load ministry detail:", e);
     }
@@ -687,7 +737,13 @@ export default function Ministries() {
     const role = formatRole(ministryRoles[m.id]);
 
     return (
-      <Card key={m.id} className="cursor-pointer transition-shadow hover:shadow-md" onClick={() => navigate(`/app/ministries/${m.id}`)}>
+      <Card
+        key={m.id}
+        className="cursor-pointer transition-shadow hover:shadow-md"
+        onClick={() => navigate(`/app/ministries/${m.id}`)}
+        onFocus={() => preloadAppRoute(`/app/ministries/${m.id}`)}
+        onPointerEnter={() => preloadAppRoute(`/app/ministries/${m.id}`)}
+      >
         <CardContent className="flex items-start gap-4 p-4 sm:p-5">
           <div
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl"

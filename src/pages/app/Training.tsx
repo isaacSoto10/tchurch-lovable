@@ -1,9 +1,11 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { BookOpen, CheckCircle } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
+import { getChurchId } from "@/lib/api";
+import { readSessionSnapshot, sessionSnapshotKey, writeSessionSnapshot } from "@/lib/sessionSnapshots";
 
 interface TrainingMaterial {
   id: string;
@@ -20,6 +22,19 @@ interface Category {
   count: number;
 }
 
+type TrainingSnapshot = {
+  materials: TrainingMaterial[];
+  categories: Category[];
+};
+
+const TRAINING_SNAPSHOT_PREFIX = "tchurch_ios_training_snapshot_v1";
+
+function isTrainingSnapshot(data: unknown): data is TrainingSnapshot {
+  if (!data || typeof data !== "object") return false;
+  const snapshot = data as Partial<TrainingSnapshot>;
+  return Array.isArray(snapshot.materials) && Array.isArray(snapshot.categories);
+}
+
 const CATEGORY_COLORS: Record<string, string> = {
   volunteer: "bg-purple-100 text-purple-800",
   tech: "bg-blue-100 text-blue-800",
@@ -33,26 +48,50 @@ export default function Training() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [loading, setLoading] = useState(true);
+  const loadedOnceRef = useRef(false);
+  const snapshotKey = sessionSnapshotKey(TRAINING_SNAPSHOT_PREFIX, getChurchId());
 
-  useEffect(() => {
+  const loadTraining = useCallback(() => {
+    const snapshot = readSessionSnapshot<TrainingSnapshot>(snapshotKey, { validate: isTrainingSnapshot });
+    if (snapshot) {
+      setMaterials(snapshot.data.materials);
+      setCategories(snapshot.data.categories);
+      loadedOnceRef.current = true;
+      setLoading(false);
+    } else if (!loadedOnceRef.current) {
+      setLoading(true);
+    }
+
     Promise.all([
-      fetchApi("/training/materials"),
-      fetchApi("/training/categories"),
+      fetchApi<TrainingMaterial[]>("/training/materials"),
+      fetchApi<Category[]>("/training/categories"),
     ])
       .then(([materialsData, categoriesData]) => {
-        setMaterials(Array.isArray(materialsData) ? materialsData : []);
-        setCategories(Array.isArray(categoriesData) ? categoriesData : []);
+        const nextSnapshot = {
+          materials: Array.isArray(materialsData) ? materialsData : [],
+          categories: Array.isArray(categoriesData) ? categoriesData : [],
+        };
+        setMaterials(nextSnapshot.materials);
+        setCategories(nextSnapshot.categories);
+        loadedOnceRef.current = true;
+        writeSessionSnapshot(snapshotKey, nextSnapshot);
       })
       .catch((e) => console.error("Failed to load training:", e))
       .finally(() => setLoading(false));
-  }, [fetchApi]);
+  }, [fetchApi, snapshotKey]);
+
+  useEffect(() => {
+    loadTraining();
+  }, [loadTraining]);
 
   const handleMarkComplete = async (id: string) => {
     try {
       await fetchApi(`/training/materials/${id}/complete`, { method: "POST" });
-      setMaterials((prev) =>
-        prev.map((m) => (m.id === id ? { ...m, completed: true, progress: 100 } : m))
-      );
+      setMaterials((prev) => {
+        const nextMaterials = prev.map((m) => (m.id === id ? { ...m, completed: true, progress: 100 } : m));
+        writeSessionSnapshot(snapshotKey, { materials: nextMaterials, categories });
+        return nextMaterials;
+      });
     } catch (e) {
       console.error("Failed to mark complete:", e);
     }
@@ -65,7 +104,7 @@ export default function Training() {
     ? materials
     : materials.filter((m) => m.category?.toLowerCase() === selectedCategory);
 
-  if (loading) {
+  if (loading && materials.length === 0) {
     return <div className="flex items-center justify-center py-20"><div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full" /></div>;
   }
 

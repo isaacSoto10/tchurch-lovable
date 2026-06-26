@@ -1,5 +1,6 @@
 import { API_BASE } from "@/lib/apiConfig";
 import { getMobileAuthSession, isNativeMobileAuth } from "@/lib/mobileAuth";
+import { clearNativeApiCache, isNativeApiCacheableGet, readNativeApiCache, writeNativeApiCache } from "@/lib/nativeApiCache";
 import { actionNow, logApiRequestSummary } from "@/lib/userActionLogger";
 import type {
   ChurchEvent,
@@ -67,6 +68,19 @@ export async function apiFetch<T = unknown>(
     (isNativeMobileAuth ? getMobileAuthSession()?.token : null) ??
     (await (window as ClerkTokenWindow).Clerk?.session?.getToken?.()) ??
     null;
+  const shouldUseNativeCache =
+    method === "GET" &&
+    Boolean(resolvedToken) &&
+    options.cache !== "no-store" &&
+    options.cache !== "reload" &&
+    options.cache !== "no-cache" &&
+    isNativeApiCacheableGet(path);
+  const nativeCache = shouldUseNativeCache ? readNativeApiCache<T>(path) : null;
+
+  if (nativeCache?.fresh) {
+    return nativeCache.value;
+  }
+
   const headers: Record<string, string> = {
     ...(!isFormData ? { "Content-Type": "application/json" } : {}),
     ...(options.headers as Record<string, string>),
@@ -100,6 +114,10 @@ export async function apiFetch<T = unknown>(
       body: options.body,
       source: "apiFetch",
     });
+    if (nativeCache?.stale) {
+      console.warn("[apiFetch] Using stale native cache after network failure", { path });
+      return nativeCache.value;
+    }
     console.error("API request failed before receiving a response", { path, url, error });
     throw new ApiError(
       "No se pudo conectar con Tchurch. Revisa tu conexión e intenta otra vez.",
@@ -137,8 +155,15 @@ export async function apiFetch<T = unknown>(
           )
         : String(parsed || `API error ${res.status}`);
 
+    if (nativeCache?.stale && res.status >= 500) {
+      console.warn("[apiFetch] Using stale native cache after server error", { path, status: res.status });
+      return nativeCache.value;
+    }
+
     throw new ApiError(message, res.status, parsed);
   }
+
+  if (isNativeMobileAuth && method !== "GET") clearNativeApiCache();
 
   if (res.status === 204) return undefined as T;
 
@@ -146,9 +171,13 @@ export async function apiFetch<T = unknown>(
   if (!text) return undefined as T;
 
   try {
-    return JSON.parse(text) as T;
+    const data = JSON.parse(text) as T;
+    if (shouldUseNativeCache) writeNativeApiCache(path, data);
+    return data;
   } catch {
-    return text as T;
+    const data = text as T;
+    if (shouldUseNativeCache) writeNativeApiCache(path, data);
+    return data;
   }
 }
 

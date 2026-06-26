@@ -38,7 +38,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/use-toast";
 import { useApi } from "@/hooks/useApi";
-import { ApiError } from "@/lib/api";
+import { ApiError, getChurchId } from "@/lib/api";
 import { API_BASE } from "@/lib/apiConfig";
 import {
   buildMessagesRealtimeUrl,
@@ -59,6 +59,7 @@ import {
   type MessageRecord,
   type RealtimeTokenResponse,
 } from "@/lib/messages";
+import { readSessionSnapshot, sessionSnapshotKey, writeSessionSnapshot } from "@/lib/sessionSnapshots";
 import { useChurch } from "@/providers/ChurchProvider";
 
 type RealtimeStatus = "idle" | "connecting" | "live" | "polling";
@@ -73,6 +74,12 @@ type RegisteredAttachment = {
 
 const REACTION_CHOICES = ["🙏", "❤️", "👍"];
 const DEFAULT_READ_ONLY_REASON = "Only admins and planners can post in announcement channels.";
+const MESSAGES_SNAPSHOT_PREFIX = "tchurch_ios_messages_snapshot_v1";
+
+type MessagesSnapshot = {
+  channels: MessageChannel[];
+  selectedChannelId: string | null;
+};
 
 function optionalEndpointUnavailable(error: unknown) {
   return error instanceof ApiError && (error.status === 404 || error.status === 405);
@@ -86,8 +93,36 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object");
 }
 
+function isMessagesSnapshot(data: unknown): data is MessagesSnapshot {
+  if (!data || typeof data !== "object") return false;
+  const snapshot = data as Partial<MessagesSnapshot>;
+  return Array.isArray(snapshot.channels) && "selectedChannelId" in snapshot;
+}
+
 function selectedLocale(): "en" | "es" {
   return localStorage.getItem("tchurch_language") === "en" ? "en" : "es";
+}
+
+function resolveRequestedChannelId(
+  channels: MessageChannel[],
+  current: string | null,
+  requested: string | null,
+  requestedMinistry: string | null,
+) {
+  if (current && channels.some((channel) => channel.id === current)) return current;
+  if (!requested && !requestedMinistry) return null;
+
+  if (requestedMinistry) {
+    const ministryMatch = channels.find((channel) => channel.ministryId === requestedMinistry);
+    if (ministryMatch) return ministryMatch.id;
+  }
+
+  const requestedLower = requested?.toLowerCase() || "";
+  const match = requestedLower === "first"
+    ? channels[0]
+    : channels.find((channel) => channel.id === requested || channel.name.toLowerCase() === requestedLower);
+
+  return match?.id || null;
 }
 
 function channelIcon(type: MessageChannelType) {
@@ -187,6 +222,7 @@ export default function Messages() {
   const requestedMinistryRef = useRef<string | null>(
     requestedMinistryId || requestedParamFromLocation("ministryId")
   );
+  const snapshotKey = sessionSnapshotKey(MESSAGES_SNAPSHOT_PREFIX, selectedChurch?.id || getChurchId());
 
   const selectedChannel = useMemo(
     () => channels.find((channel) => channel.id === selectedChannelId) || null,
@@ -217,10 +253,21 @@ export default function Messages() {
     });
   }, []);
 
+  const applyMessagesSnapshot = useCallback((snapshot: MessagesSnapshot) => {
+    setChannels(snapshot.channels);
+    setSelectedChannelId((current) => current || snapshot.selectedChannelId || snapshot.channels[0]?.id || null);
+  }, []);
+
   const loadChannels = useCallback(
     async (silent = false) => {
       if (!silent) {
-        setLoadingChannels(true);
+        const snapshot = readSessionSnapshot<MessagesSnapshot>(snapshotKey, { validate: isMessagesSnapshot });
+        if (snapshot) {
+          applyMessagesSnapshot(snapshot.data);
+          setLoadingChannels(false);
+        } else {
+          setLoadingChannels(true);
+        }
         setChannelError("");
       }
 
@@ -229,23 +276,21 @@ export default function Messages() {
         const nextChannels = normalizeChannels(data);
         setChannels(nextChannels);
         setSelectedChannelId((current) => {
-          if (current && nextChannels.some((channel) => channel.id === current)) return current;
-
-          const requested = requestedChannelRef.current;
-          const requestedMinistry = requestedMinistryRef.current;
-          if (!requested && !requestedMinistry) return null;
-
-          if (requestedMinistry) {
-            const ministryMatch = nextChannels.find((channel) => channel.ministryId === requestedMinistry);
-            if (ministryMatch) return ministryMatch.id;
-          }
-
-          const requestedLower = requested?.toLowerCase() || "";
-          const match = requestedLower === "first"
-            ? nextChannels[0]
-            : nextChannels.find((channel) => channel.id === requested || channel.name.toLowerCase() === requestedLower);
-
-          return match?.id || null;
+          return resolveRequestedChannelId(
+            nextChannels,
+            current,
+            requestedChannelRef.current,
+            requestedMinistryRef.current,
+          );
+        });
+        writeSessionSnapshot(snapshotKey, {
+          channels: nextChannels,
+          selectedChannelId: resolveRequestedChannelId(
+            nextChannels,
+            null,
+            requestedChannelRef.current,
+            requestedMinistryRef.current,
+          ),
         });
       } catch (error) {
         if (!silent) {
@@ -257,7 +302,7 @@ export default function Messages() {
         if (!silent) setLoadingChannels(false);
       }
     },
-    [fetchApi],
+    [applyMessagesSnapshot, fetchApi, snapshotKey],
   );
 
   const loadMessages = useCallback(
@@ -268,7 +313,7 @@ export default function Messages() {
       }
 
       try {
-        const data = await fetchApi<unknown>(`/channels/${encodeURIComponent(channelId)}/messages?limit=100`);
+        const data = await fetchApi<unknown>(`/channels/${encodeURIComponent(channelId)}/messages?limit=50`);
         setMessagesByChannel((current) => ({ ...current, [channelId]: normalizeMessages(data) }));
       } catch (error) {
         if (!silent) setMessageError(errorMessage(error));
@@ -293,16 +338,9 @@ export default function Messages() {
 
   const fetchRealtimeToken = useCallback(
     async (channelId: string): Promise<RealtimeTokenResponse> => {
-      try {
-        return await fetchApi<RealtimeTokenResponse>(
-          `/realtime/messages/token?channelId=${encodeURIComponent(channelId)}`,
-        );
-      } catch (error) {
-        if (!optionalEndpointUnavailable(error)) throw error;
-        return fetchApi<RealtimeTokenResponse>(
-          `/messages/realtime-token?channelId=${encodeURIComponent(channelId)}`,
-        );
-      }
+      return fetchApi<RealtimeTokenResponse>(
+        `/messages/realtime-token?channelId=${encodeURIComponent(channelId)}`,
+      );
     },
     [fetchApi],
   );
@@ -478,6 +516,7 @@ export default function Messages() {
 
   function handleSelectChannel(channel: MessageChannel) {
     setSelectedChannelId(channel.id);
+    writeSessionSnapshot(snapshotKey, { channels, selectedChannelId: channel.id });
     setMessageError("");
   }
 

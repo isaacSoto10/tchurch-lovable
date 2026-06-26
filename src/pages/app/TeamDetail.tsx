@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useCallback, useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -14,8 +14,9 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Loader2, ArrowLeft, Plus, UserMinus, Trash2, Users } from "lucide-react";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, getChurchId } from "@/lib/api";
 import { useChurch } from "@/providers/ChurchProvider";
+import { readSessionSnapshot, sessionSnapshotKey, writeSessionSnapshot } from "@/lib/sessionSnapshots";
 
 type TeamMember = {
   id: string;
@@ -32,6 +33,17 @@ type Team = {
   members: TeamMember[];
   createdAt: string;
 };
+
+type TeamDetailSnapshot = {
+  team: Team;
+};
+
+const TEAM_DETAIL_SNAPSHOT_PREFIX = "tchurch_ios_team_detail_snapshot_v1";
+
+function isTeamDetailSnapshot(data: unknown): data is TeamDetailSnapshot {
+  if (!data || typeof data !== "object") return false;
+  return Boolean((data as Partial<TeamDetailSnapshot>).team?.id);
+}
 
 function getInitials(firstName?: string | null, lastName?: string | null, email?: string): string {
   if (firstName || lastName) return `${firstName?.[0] || ""}${lastName?.[0] || ""}`.toUpperCase();
@@ -51,29 +63,46 @@ export default function TeamDetail() {
   const [addRole, setAddRole] = useState("MEMBER");
   const [editForm, setEditForm] = useState({ name: "", description: "", color: "" });
   const [submitting, setSubmitting] = useState(false);
+  const loadedOnceRef = useRef(false);
 
   const isAdmin = selectedChurch?.role === "ADMIN";
+  const snapshotKey = sessionSnapshotKey(TEAM_DETAIL_SNAPSHOT_PREFIX, `${selectedChurch?.id || getChurchId()}:${id || "unknown"}`);
+
+  const applyTeamData = useCallback((data: Team) => {
+    setTeam(data);
+    loadedOnceRef.current = true;
+    setEditForm({
+      name: data.name || "",
+      description: data.description || "",
+      color: data.color || "",
+    });
+  }, []);
 
   useEffect(() => {
     if (!id) return;
     async function load() {
+      const snapshot = readSessionSnapshot<TeamDetailSnapshot>(snapshotKey, { validate: isTeamDetailSnapshot });
+      if (snapshot) {
+        applyTeamData(snapshot.data.team);
+        setLoading(false);
+      } else if (!loadedOnceRef.current) {
+        setLoading(true);
+      }
+
       try {
         const data = await apiFetch<Team & { error?: string }>(`/teams/${id}`);
         if (data.error) { navigate("/app/teams"); return; }
-        setTeam(data);
-        setEditForm({
-          name: data.name || "",
-          description: data.description || "",
-          color: data.color || "",
-        });
+        applyTeamData(data);
+        writeSessionSnapshot(snapshotKey, { team: data });
       } catch (e) {
         console.error(e);
+        if (!loadedOnceRef.current) setTeam(null);
       } finally {
         setLoading(false);
       }
     }
     load();
-  }, [id]);
+  }, [applyTeamData, id, navigate, snapshotKey]);
 
   async function handleAddMember(e: React.FormEvent) {
     e.preventDefault();
@@ -88,7 +117,8 @@ export default function TeamDetail() {
       setAddEmail("");
       setAddRole("MEMBER");
       const data = await apiFetch<Team>(`/teams/${id}`);
-      setTeam(data);
+      applyTeamData(data);
+      writeSessionSnapshot(snapshotKey, { team: data });
     } catch (e) {
       console.error(e);
     } finally {
@@ -120,7 +150,8 @@ export default function TeamDetail() {
       });
       setShowEditTeam(false);
       const data = await apiFetch<Team>(`/teams/${id}`);
-      setTeam(data);
+      applyTeamData(data);
+      writeSessionSnapshot(snapshotKey, { team: data });
     } catch (e) {
       console.error(e);
     } finally {

@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Check, X, Calendar } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
+import { getChurchId } from "@/lib/api";
+import { readSessionSnapshot, sessionSnapshotKey, writeSessionSnapshot } from "@/lib/sessionSnapshots";
 import { formatServiceDate } from "@/lib/serviceDates";
 
 type Assignment = {
@@ -19,23 +21,51 @@ type Assignment = {
   };
 };
 
+type AssignmentsSnapshot = {
+  assignments: Assignment[];
+};
+
+const ASSIGNMENTS_SNAPSHOT_PREFIX = "tchurch_ios_assignments_snapshot_v1";
+
+function isAssignmentsSnapshot(data: unknown): data is AssignmentsSnapshot {
+  if (!data || typeof data !== "object") return false;
+  return Array.isArray((data as Partial<AssignmentsSnapshot>).assignments);
+}
+
 export default function MyAssignments() {
   const { fetchApi } = useApi();
   const { toast } = useToast();
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const loadedOnceRef = useRef(false);
+  const snapshotKey = sessionSnapshotKey(ASSIGNMENTS_SNAPSHOT_PREFIX, getChurchId());
+
+  const applyAssignments = useCallback((nextAssignments: Assignment[]) => {
+    setAssignments(nextAssignments);
+    loadedOnceRef.current = true;
+  }, []);
 
   const loadAssignments = useCallback(async () => {
+    const snapshot = readSessionSnapshot<AssignmentsSnapshot>(snapshotKey, { validate: isAssignmentsSnapshot });
+    if (snapshot) {
+      applyAssignments(snapshot.data.assignments);
+      setLoading(false);
+    } else if (!loadedOnceRef.current) {
+      setLoading(true);
+    }
+
     try {
       const data = await fetchApi<Assignment[]>("/service-assignments/mine");
-      setAssignments(Array.isArray(data) ? data : []);
+      const nextAssignments = Array.isArray(data) ? data : [];
+      applyAssignments(nextAssignments);
+      writeSessionSnapshot(snapshotKey, { assignments: nextAssignments });
     } catch (e) {
       console.error("Failed to load assignments:", e);
     } finally {
       setLoading(false);
     }
-  }, [fetchApi]);
+  }, [applyAssignments, fetchApi, snapshotKey]);
 
   useEffect(() => {
     loadAssignments();
@@ -51,18 +81,21 @@ export default function MyAssignments() {
       toast({
         title: action === "accept" ? "Asignación aceptada" : "Asignación declinada",
       });
-      setAssignments((prev) =>
-        prev.map((assignment) =>
+      const responseStatus: Assignment["responseStatus"] = action === "accept" ? "accepted" : "declined";
+      setAssignments((prev) => {
+        const nextAssignments = prev.map((assignment) =>
           assignment.id === assignmentId
             ? {
                 ...assignment,
                 confirmed: action === "accept",
-                responseStatus: action === "accept" ? "accepted" : "declined",
+                responseStatus,
                 respondedAt: new Date().toISOString(),
               }
             : assignment
-        )
-      );
+        );
+        writeSessionSnapshot(snapshotKey, { assignments: nextAssignments });
+        return nextAssignments;
+      });
     } catch (e) {
       toast({
         title: e instanceof Error ? e.message : "No se pudo responder la asignación",

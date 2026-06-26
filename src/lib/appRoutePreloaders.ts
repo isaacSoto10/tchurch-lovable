@@ -73,8 +73,23 @@ export function preloadAppRoute(route: string) {
     return;
   }
 
+  if (path.startsWith("/app/services/") && path.endsWith("/presentation")) {
+    preload([...baseLoaders, appRouteLoaders.ServicePresentation]);
+    return;
+  }
+
   if (path.startsWith("/app/services/")) {
     preload([...baseLoaders, appRouteLoaders.ServiceDetail]);
+    return;
+  }
+
+  if (path === "/app/songs") {
+    preload([...baseLoaders, appRouteLoaders.Songs]);
+    return;
+  }
+
+  if (path.startsWith("/app/songs/")) {
+    preload([...baseLoaders, appRouteLoaders.SongDetail]);
     return;
   }
 
@@ -128,8 +143,48 @@ export function preloadAppRoute(route: string) {
     return;
   }
 
+  if (path === "/app/teams") {
+    preload([...baseLoaders, appRouteLoaders.Teams]);
+    return;
+  }
+
+  if (path.startsWith("/app/teams/")) {
+    preload([...baseLoaders, appRouteLoaders.TeamDetail]);
+    return;
+  }
+
+  if (path === "/app/my-assignments") {
+    preload([...baseLoaders, appRouteLoaders.MyAssignments]);
+    return;
+  }
+
+  if (path === "/app/settings") {
+    preload([...baseLoaders, appRouteLoaders.Settings]);
+    return;
+  }
+
+  if (path === "/app/prayer") {
+    preload([...baseLoaders, appRouteLoaders.Prayer]);
+    return;
+  }
+
+  if (path === "/app/training") {
+    preload([...baseLoaders, appRouteLoaders.Training]);
+    return;
+  }
+
   if (path === "/app/calendar") {
     preload([...baseLoaders, appRouteLoaders.Calendar]);
+    return;
+  }
+
+  if (path === "/app/users") {
+    preload([...baseLoaders, appRouteLoaders.Users]);
+    return;
+  }
+
+  if (path === "/app/blockouts") {
+    preload([...baseLoaders, appRouteLoaders.Blockouts]);
   }
 }
 
@@ -137,14 +192,30 @@ export function preloadPrimaryAppRoutes() {
   preload([
     appRouteLoaders.AppLayout,
     appRouteLoaders.Dashboard,
+    appRouteLoaders.Songs,
+    appRouteLoaders.SongDetail,
     appRouteLoaders.Services,
+    appRouteLoaders.ServiceDetail,
+    appRouteLoaders.ServicePresentation,
     appRouteLoaders.Giving,
     appRouteLoaders.Ministries,
+    appRouteLoaders.MinistryDetail,
     appRouteLoaders.Devotionals,
     appRouteLoaders.Announcements,
     appRouteLoaders.Events,
+    appRouteLoaders.EventDetail,
+    appRouteLoaders.EventQr,
+    appRouteLoaders.EventScanner,
     appRouteLoaders.Calendar,
     appRouteLoaders.Messages,
+    appRouteLoaders.Teams,
+    appRouteLoaders.TeamDetail,
+    appRouteLoaders.MyAssignments,
+    appRouteLoaders.Settings,
+    appRouteLoaders.Prayer,
+    appRouteLoaders.Training,
+    appRouteLoaders.Users,
+    appRouteLoaders.Blockouts,
   ]);
 }
 

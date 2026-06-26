@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -9,6 +9,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useApi } from "@/hooks/useApi";
 import { useChurch } from "@/providers/ChurchProvider";
 import { User, Bell, Church, LogOut, Settings as SettingsIcon, Loader2, Check, X, Shield, MessageCircle } from "lucide-react";
+import { getChurchId } from "@/lib/api";
+import { readSessionSnapshot, sessionSnapshotKey, writeSessionSnapshot } from "@/lib/sessionSnapshots";
 
 type PendingMember = {
   id: string;
@@ -64,7 +66,18 @@ type WhatsAppSettings = {
   };
 };
 
+type SettingsSnapshot = {
+  profile: Profile | null;
+};
+
+const SETTINGS_SNAPSHOT_PREFIX = "tchurch_ios_settings_snapshot_v1";
+
 const LANGUAGE_KEY = "tchurch_language";
+
+function isSettingsSnapshot(data: unknown): data is SettingsSnapshot {
+  if (!data || typeof data !== "object") return false;
+  return "profile" in data;
+}
 
 export default function Settings() {
   const { selectedChurch, churches, switchChurch } = useChurch();
@@ -97,12 +110,25 @@ export default function Settings() {
   const [testingWhatsApp, setTestingWhatsApp] = useState(false);
   const [whatsappMessage, setWhatsappMessage] = useState("");
   const [whatsappError, setWhatsappError] = useState("");
+  const loadedOnceRef = useRef(false);
+  const snapshotKey = sessionSnapshotKey(SETTINGS_SNAPSHOT_PREFIX, selectedChurch?.id || getChurchId());
 
   useEffect(() => {
     async function load() {
+      const snapshot = readSessionSnapshot<SettingsSnapshot>(snapshotKey, { validate: isSettingsSnapshot });
+      if (snapshot) {
+        setProfile(snapshot.data.profile);
+        loadedOnceRef.current = true;
+        setLoading(false);
+      } else if (!loadedOnceRef.current) {
+        setLoading(true);
+      }
+
       try {
         const data = await fetchApi<Profile>("/users/me");
         setProfile(data);
+        loadedOnceRef.current = true;
+        writeSessionSnapshot(snapshotKey, { profile: data });
       } catch (e) {
         console.error("Failed to load profile:", e);
       } finally {
@@ -110,7 +136,7 @@ export default function Settings() {
       }
     }
     load();
-  }, [fetchApi]);
+  }, [fetchApi, snapshotKey]);
 
   const loadWhatsAppSettings = useCallback(async () => {
     setLoadingWhatsApp(true);
@@ -297,7 +323,7 @@ export default function Settings() {
 
   const initials = `${profile?.firstName?.[0] || ""}${profile?.lastName?.[0] || ""}`.toUpperCase() || "?";
 
-  if (loading) {
+  if (loading && !profile) {
     return (
       <div className="flex items-center justify-center py-20">
         <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />

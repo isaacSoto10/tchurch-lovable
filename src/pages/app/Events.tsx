@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -21,7 +21,9 @@ import { useApi } from "@/hooks/useApi";
 import { useChurch } from "@/providers/ChurchProvider";
 import { useToast } from "@/components/ui/use-toast";
 import { CalendarDays, Clock, Loader2, MapPin, Plus, Trash2, UserRound } from "lucide-react";
-import { eventCollectionPath, eventCrudRequest } from "@/lib/api";
+import { eventCollectionPath, eventCrudRequest, getChurchId } from "@/lib/api";
+import { preloadAppRoute } from "@/lib/appRoutePreloaders";
+import { readSessionSnapshot, sessionSnapshotKey, writeSessionSnapshot } from "@/lib/sessionSnapshots";
 import type { ChurchEvent, KnownEventType } from "@/types/events";
 import { EVENT_TYPE_OPTIONS as EVENT_TYPES, getEventTypeLabel } from "@/types/events";
 
@@ -42,6 +44,19 @@ interface UserOption {
 }
 
 const DURATION_OPTIONS = [60, 90, 120, 180];
+const EVENTS_SNAPSHOT_PREFIX = "tchurch_ios_events_snapshot_v1";
+
+type EventsSnapshot = {
+  events: EventItem[];
+  ministries: Ministry[];
+  users: UserOption[];
+};
+
+function isEventsSnapshot(data: unknown): data is EventsSnapshot {
+  if (!data || typeof data !== "object") return false;
+  const snapshot = data as Partial<EventsSnapshot>;
+  return Array.isArray(snapshot.events) && Array.isArray(snapshot.ministries) && Array.isArray(snapshot.users);
+}
 
 const emptyForm = {
   title: "",
@@ -159,6 +174,7 @@ export default function Events() {
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [typeFilter, setTypeFilter] = useState("");
+  const loadedOnceRef = useRef(false);
   const [form, setForm] = useState(() => {
     const start = defaultStart();
     return { ...emptyForm, start, end: addMinutes(start, emptyForm.duration) };
@@ -176,25 +192,47 @@ export default function Events() {
   const leaderOptions = useMemo(() => [...users].sort((a, b) => displayName(a).localeCompare(displayName(b))), [users]);
   const selectedMinistry = ministries.find((ministry) => ministry.id === form.ministryId);
   const selectedLeader = users.find((user) => user.id === form.leaderId);
+  const snapshotKey = sessionSnapshotKey(EVENTS_SNAPSHOT_PREFIX, selectedChurch?.id || getChurchId());
 
-  const loadPage = useCallback(async () => {
-    setLoading(true);
+  const applyPageData = useCallback((snapshot: EventsSnapshot) => {
+    setEvents(snapshot.events);
+    setMinistries(snapshot.ministries);
+    setUsers(snapshot.users);
+    loadedOnceRef.current = true;
+  }, []);
+
+  const loadPage = useCallback(async (options?: { preferSnapshot?: boolean }) => {
+    const snapshot = options?.preferSnapshot !== false
+      ? readSessionSnapshot<EventsSnapshot>(snapshotKey, { validate: isEventsSnapshot })
+      : null;
+
+    if (snapshot) {
+      applyPageData(snapshot.data);
+      setLoading(false);
+    } else if (!loadedOnceRef.current) {
+      setLoading(true);
+    }
+
     try {
       const [eventData, ministryData, userData] = await Promise.all([
-        fetchApi<EventItem[]>(eventCollectionPath("limit=200")),
+        fetchApi<EventItem[]>(eventCollectionPath("limit=120")),
         fetchApi<Ministry[]>("/ministries"),
         fetchApi<UserOption[]>("/users"),
       ]);
-      setEvents(Array.isArray(eventData) ? eventData : []);
-      setMinistries(Array.isArray(ministryData) ? ministryData : []);
-      setUsers(Array.isArray(userData) ? userData : []);
+      const nextSnapshot = {
+        events: Array.isArray(eventData) ? eventData : [],
+        ministries: Array.isArray(ministryData) ? ministryData : [],
+        users: Array.isArray(userData) ? userData : [],
+      };
+      applyPageData(nextSnapshot);
+      writeSessionSnapshot(snapshotKey, nextSnapshot);
     } catch (error) {
       console.error("Failed to load events:", error);
       toast({ title: "Failed to load events", variant: "destructive" });
     } finally {
       setLoading(false);
     }
-  }, [fetchApi, toast]);
+  }, [applyPageData, fetchApi, snapshotKey, toast]);
 
   useEffect(() => {
     loadPage();
@@ -411,6 +449,7 @@ export default function Events() {
               event={event}
               canManage={canManage}
               onOpen={() => navigate(`/app/events/${event.id}`)}
+              onPreload={() => preloadAppRoute(`/app/events/${event.id}`)}
               onEdit={() => openEditDialog(event)}
               onDelete={() => setDeleteId(event.id)}
             />
@@ -433,6 +472,7 @@ export default function Events() {
               compact
               canManage={canManage}
               onOpen={() => navigate(`/app/events/${event.id}`)}
+              onPreload={() => preloadAppRoute(`/app/events/${event.id}`)}
               onEdit={() => openEditDialog(event)}
               onDelete={() => setDeleteId(event.id)}
             />
@@ -722,6 +762,7 @@ function EventCard({
   canManage,
   compact = false,
   onOpen,
+  onPreload,
   onEdit,
   onDelete,
 }: {
@@ -729,13 +770,19 @@ function EventCard({
   canManage: boolean;
   compact?: boolean;
   onOpen: () => void;
+  onPreload?: () => void;
   onEdit: () => void;
   onDelete: () => void;
 }) {
   const leader = leaderName(event);
 
   return (
-    <Card className="cursor-pointer transition-shadow hover:shadow-md" onClick={onOpen}>
+    <Card
+      className="cursor-pointer transition-shadow hover:shadow-md"
+      onClick={onOpen}
+      onFocus={onPreload}
+      onPointerEnter={onPreload}
+    >
       <CardContent className={compact ? "p-4" : "p-5"}>
         <div className="flex items-start gap-3">
           <div className="h-12 w-1 rounded-full bg-primary" />

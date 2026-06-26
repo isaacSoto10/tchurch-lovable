@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BookOpen, CheckCircle, Loader2, Pencil, PlayCircle, Plus, Trash2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -7,6 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/use-toast";
 import { useApi } from "@/hooks/useApi";
+import { getChurchId } from "@/lib/api";
+import { readSessionSnapshot, sessionSnapshotKey, writeSessionSnapshot } from "@/lib/sessionSnapshots";
 import { getYoutubeEmbedUrl } from "@/lib/youtube";
 
 type DevotionalStatus = "draft" | "published";
@@ -44,6 +46,20 @@ interface Ministry {
 
 interface MyMinistriesResponse {
   ministries?: Ministry[];
+}
+
+type DevotionalsSnapshot = {
+  devotionals: Devotional[];
+  ministries: Ministry[];
+  canManage: boolean;
+};
+
+const DEVOTIONALS_SNAPSHOT_PREFIX = "tchurch_ios_devotionals_snapshot_v1";
+
+function isDevotionalsSnapshot(data: unknown): data is DevotionalsSnapshot {
+  if (!data || typeof data !== "object") return false;
+  const snapshot = data as Partial<DevotionalsSnapshot>;
+  return Array.isArray(snapshot.devotionals) && Array.isArray(snapshot.ministries) && typeof snapshot.canManage === "boolean";
 }
 
 const emptyForm = {
@@ -84,13 +100,29 @@ export default function Devotionals() {
   const [markingId, setMarkingId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
+  const loadedOnceRef = useRef(false);
 
   const published = useMemo(() => devotionals.filter((devotional) => devotional.status === "published"), [devotionals]);
   const todayDevotional = published[0] || devotionals[0] || null;
   const pastDevotionals = devotionals.filter((devotional) => devotional.id !== todayDevotional?.id);
+  const snapshotKey = sessionSnapshotKey(DEVOTIONALS_SNAPSHOT_PREFIX, getChurchId());
+
+  const applyDevotionalsData = useCallback((snapshot: DevotionalsSnapshot) => {
+    setDevotionals(snapshot.devotionals);
+    setMinistries(snapshot.ministries);
+    setCanManage(snapshot.canManage);
+    loadedOnceRef.current = true;
+  }, []);
 
   const loadDevotionals = useCallback(async () => {
-    setLoading(true);
+    const snapshot = readSessionSnapshot<DevotionalsSnapshot>(snapshotKey, { validate: isDevotionalsSnapshot });
+    if (snapshot) {
+      applyDevotionalsData(snapshot.data);
+      setLoading(false);
+    } else if (!loadedOnceRef.current) {
+      setLoading(true);
+    }
+
     try {
       const [devotionalsResult, ministriesResult] = await Promise.allSettled([
         fetchApi<DevotionalsResponse>("/devotionals?includeDrafts=1"),
@@ -99,14 +131,15 @@ export default function Devotionals() {
 
       if (devotionalsResult.status === "rejected") throw devotionalsResult.reason;
 
-      setDevotionals(Array.isArray(devotionalsResult.value.devotionals) ? devotionalsResult.value.devotionals : []);
-      setCanManage(Boolean(devotionalsResult.value.permissions?.canManage));
-
-      if (ministriesResult.status === "fulfilled") {
-        setMinistries(Array.isArray(ministriesResult.value.ministries) ? ministriesResult.value.ministries : []);
-      } else {
-        setMinistries([]);
-      }
+      const nextSnapshot = {
+        devotionals: Array.isArray(devotionalsResult.value.devotionals) ? devotionalsResult.value.devotionals : [],
+        ministries: ministriesResult.status === "fulfilled"
+          ? Array.isArray(ministriesResult.value.ministries) ? ministriesResult.value.ministries : []
+          : snapshot?.data.ministries || [],
+        canManage: Boolean(devotionalsResult.value.permissions?.canManage),
+      };
+      applyDevotionalsData(nextSnapshot);
+      writeSessionSnapshot(snapshotKey, nextSnapshot);
     } catch (error) {
       toast({
         title: error instanceof Error ? error.message : "No se pudieron cargar los devocionales",
@@ -115,7 +148,7 @@ export default function Devotionals() {
     } finally {
       setLoading(false);
     }
-  }, [fetchApi, toast]);
+  }, [applyDevotionalsData, fetchApi, snapshotKey, toast]);
 
   useEffect(() => {
     loadDevotionals();

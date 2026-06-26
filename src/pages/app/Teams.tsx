@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -6,6 +6,9 @@ import { Plus, Users, Pencil, Trash2 } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
 import { useChurch } from "@/providers/ChurchProvider";
+import { getChurchId } from "@/lib/api";
+import { preloadAppRoute } from "@/lib/appRoutePreloaders";
+import { readSessionSnapshot, sessionSnapshotKey, writeSessionSnapshot } from "@/lib/sessionSnapshots";
 import {
   Dialog,
   DialogContent,
@@ -37,6 +40,17 @@ interface Team {
   color?: string;
 }
 
+type TeamsSnapshot = {
+  teams: Team[];
+};
+
+const TEAMS_SNAPSHOT_PREFIX = "tchurch_ios_teams_snapshot_v1";
+
+function isTeamsSnapshot(data: unknown): data is TeamsSnapshot {
+  if (!data || typeof data !== "object") return false;
+  return Array.isArray((data as Partial<TeamsSnapshot>).teams);
+}
+
 export default function Teams() {
   const navigate = useNavigate();
   const { selectedChurch } = useChurch();
@@ -50,21 +64,36 @@ export default function Teams() {
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [formData, setFormData] = useState({ name: "", description: "", color: "" });
   const [submitting, setSubmitting] = useState(false);
+  const loadedOnceRef = useRef(false);
+  const snapshotKey = sessionSnapshotKey(TEAMS_SNAPSHOT_PREFIX, selectedChurch?.id || getChurchId());
 
-  useEffect(() => {
-    loadTeams();
-  }, [fetchApi]);
+  const loadTeams = useCallback(() => {
+    const snapshot = readSessionSnapshot<TeamsSnapshot>(snapshotKey, { validate: isTeamsSnapshot });
+    if (snapshot) {
+      setTeams(snapshot.data.teams);
+      loadedOnceRef.current = true;
+      setLoading(false);
+    } else if (!loadedOnceRef.current) {
+      setLoading(true);
+    }
 
-  const loadTeams = () => {
-    setLoading(true);
-    fetchApi("/teams")
-      .then((data) => setTeams(Array.isArray(data) ? data : []))
+    fetchApi<Team[]>("/teams")
+      .then((data) => {
+        const nextTeams = Array.isArray(data) ? data : [];
+        setTeams(nextTeams);
+        loadedOnceRef.current = true;
+        writeSessionSnapshot(snapshotKey, { teams: nextTeams });
+      })
       .catch((e) => {
         console.error("Failed to load teams:", e);
         toast({ title: "Failed to load teams", variant: "destructive" });
       })
       .finally(() => setLoading(false));
-  };
+  }, [fetchApi, snapshotKey, toast]);
+
+  useEffect(() => {
+    loadTeams();
+  }, [loadTeams]);
 
   const openNewDialog = () => {
     setEditingTeam(null);
@@ -186,7 +215,7 @@ export default function Teams() {
       </Dialog>
 
       <div className="grid gap-3">
-        {loading && (
+        {loading && teams.length === 0 && (
           <div className="flex items-center justify-center py-8">
             <div className="animate-spin w-6 h-6 border-2 border-primary border-t-transparent rounded-full" />
           </div>
@@ -195,7 +224,13 @@ export default function Teams() {
           <p className="text-sm text-muted-foreground text-center py-8">No teams yet.</p>
         )}
         {!loading && teams.map((t) => (
-          <Card key={t.id} className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => navigate(`/app/teams/${t.id}`)}>
+          <Card
+            key={t.id}
+            className="hover:shadow-md transition-shadow cursor-pointer"
+            onClick={() => navigate(`/app/teams/${t.id}`)}
+            onFocus={() => preloadAppRoute(`/app/teams/${t.id}`)}
+            onPointerEnter={() => preloadAppRoute(`/app/teams/${t.id}`)}
+          >
             <CardContent className="p-5 flex items-center gap-4">
               <div
                 className="w-10 h-10 rounded-lg flex items-center justify-center"

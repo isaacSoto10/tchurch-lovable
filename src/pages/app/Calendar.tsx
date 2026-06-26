@@ -7,6 +7,8 @@ import { useNavigate } from "react-router-dom";
 import { formatServiceDate, formatServiceTime, getServiceDateKey } from "@/lib/serviceDates";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { getEventTypeLabel } from "@/types/events";
+import { getChurchId } from "@/lib/api";
+import { readSessionSnapshot, sessionSnapshotKey, writeSessionSnapshot } from "@/lib/sessionSnapshots";
 
 interface CalendarEvent {
   id: string;
@@ -33,6 +35,17 @@ interface CalendarItem {
   status: string | null;
 }
 
+type CalendarSnapshot = {
+  items: CalendarItem[];
+};
+
+const CALENDAR_SNAPSHOT_PREFIX = "tchurch_ios_calendar_snapshot_v1";
+
+function isCalendarSnapshot(data: unknown): data is CalendarSnapshot {
+  if (!data || typeof data !== "object") return false;
+  return Array.isArray((data as Partial<CalendarSnapshot>).items);
+}
+
 function getCalendarItemHref(item: CalendarItem) {
   return item.type === "event" ? `/app/events/${item.id}` : "/app/services";
 }
@@ -47,6 +60,7 @@ export default function Calendar() {
 
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
+  const snapshotKey = sessionSnapshotKey(CALENDAR_SNAPSHOT_PREFIX, `${getChurchId() || "default"}:${year}-${month}`);
 
   const startOfMonth = new Date(year, month, 1);
   const endOfMonth = new Date(year, month + 1, 0);
@@ -57,7 +71,14 @@ export default function Calendar() {
 
   useEffect(() => {
     const loadCalendar = async () => {
-      setLoading(true);
+      const snapshot = readSessionSnapshot<CalendarSnapshot>(snapshotKey, { validate: isCalendarSnapshot });
+      if (snapshot) {
+        setItems(snapshot.data.items);
+        setLoading(false);
+      } else {
+        setLoading(true);
+      }
+
       try {
         const start = startOfWeek.toISOString();
         const end = endOfWeek.toISOString();
@@ -94,6 +115,7 @@ export default function Calendar() {
         }
         
         setItems(calendarItems);
+        writeSessionSnapshot(snapshotKey, { items: calendarItems });
       } catch (e) {
         console.error("Failed to load calendar:", e);
       } finally {
@@ -102,7 +124,7 @@ export default function Calendar() {
     };
     
     loadCalendar();
-  }, [fetchApi, year, month]);
+  }, [fetchApi, snapshotKey, year, month]);
 
   const prevMonth = () => {
     setCurrentDate(new Date(year, month - 1, 1));

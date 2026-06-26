@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -8,6 +8,8 @@ import { Plus, Heart, Check } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useChurch } from "@/providers/ChurchProvider";
 import { useToast } from "@/components/ui/use-toast";
+import { getChurchId } from "@/lib/api";
+import { readSessionSnapshot, sessionSnapshotKey, writeSessionSnapshot } from "@/lib/sessionSnapshots";
 
 interface PrayerRequest {
   id: string;
@@ -17,6 +19,17 @@ interface PrayerRequest {
   status: "active" | "answered";
   prayCount?: number;
   createdAt: string;
+}
+
+type PrayerSnapshot = {
+  prayerRequests: PrayerRequest[];
+};
+
+const PRAYER_SNAPSHOT_PREFIX = "tchurch_ios_prayer_snapshot_v1";
+
+function isPrayerSnapshot(data: unknown): data is PrayerSnapshot {
+  if (!data || typeof data !== "object") return false;
+  return Array.isArray((data as Partial<PrayerSnapshot>).prayerRequests);
 }
 
 export default function Prayer() {
@@ -29,18 +42,33 @@ export default function Prayer() {
   const [showForm, setShowForm] = useState(false);
   const [newRequest, setNewRequest] = useState({ title: "", content: "" });
   const [submitting, setSubmitting] = useState(false);
+  const loadedOnceRef = useRef(false);
+  const snapshotKey = sessionSnapshotKey(PRAYER_SNAPSHOT_PREFIX, `${selectedChurch?.id || getChurchId()}:${filter}`);
+
+  const loadPrayerRequests = useCallback(() => {
+    const snapshot = readSessionSnapshot<PrayerSnapshot>(snapshotKey, { validate: isPrayerSnapshot });
+    if (snapshot) {
+      setPrayerRequests(snapshot.data.prayerRequests);
+      loadedOnceRef.current = true;
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+
+    fetchApi<PrayerRequest[]>(`/prayer-requests?status=${filter}`)
+      .then((data) => {
+        const nextRequests = Array.isArray(data) ? data : [];
+        setPrayerRequests(nextRequests);
+        loadedOnceRef.current = true;
+        writeSessionSnapshot(snapshotKey, { prayerRequests: nextRequests });
+      })
+      .catch((e) => console.error("Failed to load prayer requests:", e))
+      .finally(() => setLoading(false));
+  }, [fetchApi, filter, snapshotKey]);
 
   useEffect(() => {
     loadPrayerRequests();
-  }, [filter, fetchApi, selectedChurch]);
-
-  const loadPrayerRequests = () => {
-    setLoading(true);
-    fetchApi(`/prayer-requests?status=${filter}`)
-      .then((data) => setPrayerRequests(Array.isArray(data) ? data : []))
-      .catch((e) => console.error("Failed to load prayer requests:", e))
-      .finally(() => setLoading(false));
-  };
+  }, [loadPrayerRequests]);
 
   const handlePray = async (id: string) => {
     try {
@@ -120,7 +148,7 @@ export default function Prayer() {
       </Tabs>
 
       <div className="grid gap-3">
-        {loading && (
+        {loading && prayerRequests.length === 0 && (
           <div className="flex items-center justify-center py-8">
             <div className="animate-spin w-6 h-6 border-2 border-primary border-t-transparent rounded-full" />
           </div>
@@ -130,7 +158,7 @@ export default function Prayer() {
             No {filter} prayer requests.
           </p>
         )}
-        {!loading && prayerRequests.map((pr) => (
+        {prayerRequests.map((pr) => (
           <Card key={pr.id}>
             <CardContent className="p-4">
               <div className="flex items-start justify-between gap-3">
