@@ -13,6 +13,7 @@ import { MediaEmbed, MediaExternalLink, MediaProviderBadge } from "@/components/
 import {
   flattenServiceMedia,
   formatMediaDate,
+  isMediaEndpointUnavailableError,
   mediaSearchText,
   mediaSnapshotKey,
   readMediaSnapshot,
@@ -153,6 +154,10 @@ export default function Media() {
       applyResponse(data);
       writeMediaSnapshot(snapshotKey, { response: data });
     } catch (error) {
+      if (isMediaEndpointUnavailableError(error)) {
+        if (!snapshot) applyResponse(emptyResponse());
+        return;
+      }
       if (!snapshot) {
         toast({
           title: error instanceof Error ? error.message : "No se pudo cargar media",

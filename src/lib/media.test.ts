@@ -5,6 +5,7 @@ import {
   getMediaProvider,
   getServiceMediaEntryFromDetail,
   getUrlMediaEmbed,
+  isMediaEndpointUnavailableError,
   readMediaSnapshot,
   normalizeMediaUrl,
   type ServiceMediaEntry,
@@ -74,6 +75,14 @@ describe("service media helpers", () => {
     expect(getMediaProvider("https://embed.resi.io/webplayer/video.html?id=abc")).toBe("resi");
     expect(getMediaProvider("https://iframe.videodelivery.net/0123456789abcdefghijklmnop")).toBe("cloudflare");
     expect(getMediaProvider("https://cdn.example.com/live/index.m3u8")).toBe("hls");
+  });
+
+  it("recognizes route-missing media endpoints as rollout-unavailable", () => {
+    expect(isMediaEndpointUnavailableError({ status: 404 })).toBe(true);
+    expect(isMediaEndpointUnavailableError({ status: 405 })).toBe(true);
+    expect(isMediaEndpointUnavailableError({ status: 501 })).toBe(true);
+    expect(isMediaEndpointUnavailableError({ status: 401 })).toBe(false);
+    expect(isMediaEndpointUnavailableError(new Error("network"))).toBe(false);
   });
 
   it("builds safe iframe embeds and Resi fallbacks", () => {
