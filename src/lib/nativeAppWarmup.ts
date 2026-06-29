@@ -35,6 +35,8 @@ function warmupPaths(churchId: string) {
     eventCollectionPath("limit=120"),
     "/announcements?includePending=1&limit=40",
     "/devotionals?includeDrafts=1",
+    "/service-media?limit=140",
+    "/live-destinations",
     "/ministries",
     "/my-ministries",
     "/groups",

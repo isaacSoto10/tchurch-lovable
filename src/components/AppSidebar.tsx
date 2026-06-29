@@ -16,6 +16,7 @@ import {
   UserCircle,
   CalendarX,
   Shield,
+  Radio,
   type LucideIcon,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
@@ -119,6 +120,7 @@ const navItems: NavItem[] = [
   { title: "Servicios", url: "/app/services", icon: ListChecks },
   { title: "Anuncios", url: "/app/announcements", icon: Megaphone },
   { title: "Devocionales", url: "/app/devotionals", icon: BookOpen },
+  { title: "Media", url: "/app/media", icon: Radio },
   { title: "Dar", url: "/app/giving", icon: Heart },
   { title: "Mis asignaciones", url: "/app/my-assignments", icon: ClipboardList },
   { title: "Ministerios", url: "/app/ministries", icon: Users },

@@ -36,6 +36,7 @@ function cacheKey(path: string) {
 }
 
 export function nativeApiCacheTtlMs(path: string) {
+  if (path.startsWith("/service-media") || path.startsWith("/live-destinations")) return SHORT_TTL_MS;
   if (path.startsWith("/channels") || path.includes("/messages")) return SHORT_TTL_MS;
   if (path.includes("/users") || path.includes("/members")) return MEMBER_TTL_MS;
   return DEFAULT_TTL_MS;
@@ -46,6 +47,7 @@ export function isNativeApiCacheableGet(path: string) {
   if (!path || !path.startsWith("/")) return false;
 
   const lowerPath = path.toLowerCase();
+  if (lowerPath.includes("credentials")) return false;
   if (lowerPath.includes("token")) return false;
   if (lowerPath.includes("realtime")) return false;
   if (lowerPath.includes("/qr")) return false;

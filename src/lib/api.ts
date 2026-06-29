@@ -1,4 +1,5 @@
 import { API_BASE } from "@/lib/apiConfig";
+import { clearMediaSnapshots } from "@/lib/media";
 import { getMobileAuthSession, isNativeMobileAuth } from "@/lib/mobileAuth";
 import { clearNativeApiCache, isNativeApiCacheableGet, readNativeApiCache, writeNativeApiCache } from "@/lib/nativeApiCache";
 import { actionNow, logApiRequestSummary } from "@/lib/userActionLogger";
@@ -146,7 +147,7 @@ export async function apiFetch<T = unknown>(
       parsed = text;
     }
 
-    const message =
+    const rawMessage =
       parsed && typeof parsed === "object"
         ? String(
             (parsed as { error?: unknown; message?: unknown }).error ||
@@ -154,6 +155,9 @@ export async function apiFetch<T = unknown>(
               `API error ${res.status}`
           )
         : String(parsed || `API error ${res.status}`);
+    const message = rawMessage.trim().startsWith("<")
+      ? `No se pudo completar la solicitud (${res.status}). Intenta de nuevo en un momento.`
+      : rawMessage;
 
     if (nativeCache?.stale && res.status >= 500) {
       console.warn("[apiFetch] Using stale native cache after server error", { path, status: res.status });
@@ -163,7 +167,10 @@ export async function apiFetch<T = unknown>(
     throw new ApiError(message, res.status, parsed);
   }
 
-  if (isNativeMobileAuth && method !== "GET") clearNativeApiCache();
+  if (method !== "GET") {
+    if (isNativeMobileAuth) clearNativeApiCache();
+    clearMediaSnapshots(churchId);
+  }
 
   if (res.status === 204) return undefined as T;
 
