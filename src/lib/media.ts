@@ -359,6 +359,11 @@ export function flattenServiceMedia(response: ServiceMediaResponse | null | unde
   return [...response.live, ...response.scheduled, ...response.previous];
 }
 
+export function isMediaEndpointUnavailableError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  return [404, 405, 501].includes(Number((error as { status?: unknown }).status));
+}
+
 export function mediaSnapshotKey(churchId: string | null | undefined) {
   return `${MEDIA_SNAPSHOT_PREFIX}:${churchId || "no-church"}`;
 }

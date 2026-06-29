@@ -10,6 +10,7 @@ import {
   flattenServiceMedia,
   formatMediaDate,
   getServiceMediaEntryFromDetail,
+  isMediaEndpointUnavailableError,
   mediaSnapshotKey,
   readMediaSnapshot,
   writeMediaSnapshot,
@@ -72,12 +73,17 @@ export default function MediaDetail() {
       }
       throw new Error("No se encontró este servicio");
     } catch (error) {
+      const detailWasUnavailable = isMediaEndpointUnavailableError(error);
       try {
         const data = await fetchApi<ServiceMediaResponse>(MEDIA_LIST_PATH);
         const nextItem = flattenServiceMedia(data).find((mediaItem) => mediaItem.id === id) || cached;
         setItem(nextItem || null);
         writeMediaSnapshot(snapshotKey, { response: data });
       } catch (fallbackError) {
+        if (detailWasUnavailable && isMediaEndpointUnavailableError(fallbackError)) {
+          setItem(cached || null);
+          return;
+        }
         if (!cached) {
           const message = fallbackError instanceof Error
             ? fallbackError.message

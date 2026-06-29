@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/components/ui/use-toast";
 import { useApi } from "@/hooks/useApi";
-import type { LiveDestination } from "@/lib/media";
+import { isMediaEndpointUnavailableError, type LiveDestination } from "@/lib/media";
 
 type Credentials = {
   id: string;
@@ -67,13 +67,21 @@ export function LiveDestinationSetup({ compact = false }: { compact?: boolean })
   const [form, setForm] = useState(emptyForm);
   const [credentials, setCredentials] = useState<Record<string, Credentials>>({});
   const [processingCredentialId, setProcessingCredentialId] = useState<string | null>(null);
+  const [endpointUnavailable, setEndpointUnavailable] = useState(false);
 
   const loadDestinations = useCallback(async () => {
     setLoading(true);
     try {
       const data = await fetchApi<{ destinations?: LiveDestination[] }>("/live-destinations");
       setDestinations(Array.isArray(data.destinations) ? data.destinations : []);
+      setEndpointUnavailable(false);
     } catch (error) {
+      if (isMediaEndpointUnavailableError(error)) {
+        setDestinations([]);
+        setEndpointUnavailable(true);
+        setShowForm(false);
+        return;
+      }
       console.warn("No se pudieron cargar destinos de transmisión:", error);
     } finally {
       setLoading(false);
@@ -105,6 +113,11 @@ export function LiveDestinationSetup({ compact = false }: { compact?: boolean })
       toast({ title: "Destino de transmisión guardado" });
       await loadDestinations();
     } catch (error) {
+      if (isMediaEndpointUnavailableError(error)) {
+        setEndpointUnavailable(true);
+        setShowForm(false);
+        return;
+      }
       toast({
         title: error instanceof Error ? error.message : "No se pudo guardar el destino",
         variant: "destructive",
@@ -125,6 +138,11 @@ export function LiveDestinationSetup({ compact = false }: { compact?: boolean })
       toast({ title: regenerate ? "Credenciales regeneradas" : "Credenciales listas" });
       if (regenerate) await loadDestinations();
     } catch (error) {
+      if (isMediaEndpointUnavailableError(error)) {
+        setEndpointUnavailable(true);
+        setShowForm(false);
+        return;
+      }
       toast({
         title: error instanceof Error ? error.message : "No se pudieron cargar credenciales",
         variant: "destructive",
@@ -149,13 +167,15 @@ export function LiveDestinationSetup({ compact = false }: { compact?: boolean })
             </p>
           )}
         </div>
-        <Button type="button" size="sm" onClick={() => setShowForm((value) => !value)}>
-          <Plus className="h-4 w-4" />
-          Nuevo
-        </Button>
+        {!endpointUnavailable && (
+          <Button type="button" size="sm" onClick={() => setShowForm((value) => !value)}>
+            <Plus className="h-4 w-4" />
+            Nuevo
+          </Button>
+        )}
       </div>
 
-      {showForm && (
+      {showForm && !endpointUnavailable && (
         <form onSubmit={handleCreate} className="grid gap-3 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-2">
@@ -224,6 +244,14 @@ export function LiveDestinationSetup({ compact = false }: { compact?: boolean })
       {loading ? (
         <div className="flex items-center justify-center py-6">
           <Loader2 className="h-5 w-5 animate-spin text-zinc-400" />
+        </div>
+      ) : endpointUnavailable ? (
+        <div className="rounded-lg border border-dashed border-zinc-300 bg-zinc-50 px-4 py-8 text-center">
+          <Radio className="mx-auto h-8 w-8 text-zinc-300" />
+          <p className="mt-2 text-sm font-bold text-zinc-700">La configuración de transmisiones todavía no está activa</p>
+          <p className="mx-auto mt-1 max-w-sm text-xs font-medium text-zinc-500">
+            Media se puede revisar en modo lectura hasta que el backend de transmisiones esté desplegado.
+          </p>
         </div>
       ) : destinations.length === 0 ? (
         <div className="rounded-lg border border-dashed border-zinc-300 bg-zinc-50 px-4 py-8 text-center">
