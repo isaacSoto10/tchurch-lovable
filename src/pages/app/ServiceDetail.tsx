@@ -53,6 +53,7 @@ import {
   getCustomAssignmentPositions,
   servicePositionsMatch,
 } from "@/lib/serviceAssignments";
+import { isMediaEndpointUnavailableError, type LiveDestination } from "@/lib/media";
 
 type ServiceItem = {
   id: string;
@@ -134,6 +135,8 @@ type PlanningDetails = {
   serviceKey?: string;
   selectedKey?: string;
   key?: string;
+  destinationId?: string;
+  liveDestinationId?: string;
   notes?: Partial<Record<PlanningNoteKey, string>>;
   [key: string]: unknown;
 };
@@ -177,6 +180,11 @@ const MEDIA_PROVIDERS = [
   { label: "Vimeo", value: "vimeo" },
   { label: "Personalizado", value: "custom" },
 ];
+
+function liveDestinationLabel(destination: LiveDestination) {
+  const provider = destination.provider ? ` · ${destination.provider}` : "";
+  return `${destination.name || "Destino en vivo"}${provider}`;
+}
 
 function formatItemType(type: string) {
   return ITEM_TYPES.find((item) => item.value === type.toLowerCase())?.label || type;
@@ -230,6 +238,7 @@ export default function ServiceDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { selectedChurch } = useChurch();
+  const selectedChurchId = selectedChurch?.id ?? null;
   const { toast } = useToast();
 
   const [service, setService] = useState<Service | null>(null);
@@ -254,6 +263,7 @@ export default function ServiceDetail() {
   });
   const [detailMedia, setDetailMedia] = useState({
     mediaProvider: "auto",
+    destinationId: "",
     livestreamUrl: "",
     videoUrl: "",
     audioUrl: "",
@@ -263,6 +273,7 @@ export default function ServiceDetail() {
     series: "",
     description: "",
   });
+  const [liveDestinations, setLiveDestinations] = useState<LiveDestination[]>([]);
   const [savingDetails, setSavingDetails] = useState(false);
   const [draggingItemId, setDraggingItemId] = useState<string | null>(null);
   const [dragOverItemId, setDragOverItemId] = useState<string | null>(null);
@@ -303,6 +314,33 @@ export default function ServiceDetail() {
 
   const isAdmin = selectedChurch?.role === "ADMIN";
   const isPlanner = selectedChurch?.role === "PLANNER" || isAdmin;
+  useEffect(() => {
+    let cancelled = false;
+
+    setLiveDestinations([]);
+
+    if (!isPlanner || !selectedChurchId) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    apiFetch<{ destinations?: LiveDestination[] }>("/live-destinations")
+      .then((data) => {
+        if (!cancelled) setLiveDestinations(Array.isArray(data.destinations) ? data.destinations : []);
+      })
+      .catch((error) => {
+        if (!cancelled) setLiveDestinations([]);
+        if (!isMediaEndpointUnavailableError(error)) {
+          console.warn("No se pudieron cargar destinos de transmisión:", error);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isPlanner, selectedChurchId]);
+
   const chartSong = chartItem?.song || null;
   const chartActiveArrangement = getPrimaryArrangement(chartSong);
   const chartHasChords = Boolean(getSongChordPro(chartSong));
@@ -983,6 +1021,7 @@ export default function ServiceDetail() {
     });
     setDetailMedia({
       mediaProvider: typeof details.mediaProvider === "string" ? details.mediaProvider : typeof details.provider === "string" ? details.provider : "auto",
+      destinationId: typeof details.destinationId === "string" ? details.destinationId : typeof details.liveDestinationId === "string" ? details.liveDestinationId : "",
       livestreamUrl: typeof details.livestreamUrl === "string" ? details.livestreamUrl : typeof details.liveUrl === "string" ? details.liveUrl : "",
       videoUrl: typeof details.videoUrl === "string" ? details.videoUrl : typeof details.youtubeUrl === "string" ? details.youtubeUrl : "",
       audioUrl: typeof details.audioUrl === "string" ? details.audioUrl : "",
@@ -1006,6 +1045,8 @@ export default function ServiceDetail() {
         person: detailNotes.person.trim(),
       },
       mediaProvider: detailMedia.mediaProvider === "auto" ? undefined : detailMedia.mediaProvider,
+      destinationId: detailMedia.destinationId.trim() || undefined,
+      liveDestinationId: detailMedia.destinationId.trim() || undefined,
       livestreamUrl: detailMedia.livestreamUrl.trim() || undefined,
       videoUrl: detailMedia.videoUrl.trim() || undefined,
       audioUrl: detailMedia.audioUrl.trim() || undefined,
@@ -1479,6 +1520,38 @@ export default function ServiceDetail() {
                               <p className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">Media</p>
                               <p className="mt-1 text-xs leading-5 text-zinc-500">Estos campos alimentan la pantalla Media y las transmisiones en vivo.</p>
                             </div>
+                            {liveDestinations.length > 0 && (
+                              <div className="space-y-1.5">
+                                <Label className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">Destino guardado</Label>
+                                <Select
+                                  value={detailMedia.destinationId || "none"}
+                                  onValueChange={(value) => {
+                                    const selectedDestination = liveDestinations.find((destination) => destination.id === value);
+                                    setDetailMedia((current) => ({
+                                      ...current,
+                                      destinationId: value === "none" ? "" : value,
+                                      mediaProvider: selectedDestination?.provider || current.mediaProvider,
+                                    }));
+                                  }}
+                                >
+                                  <SelectTrigger className="h-11 rounded-2xl bg-white">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="none">Sin destino guardado</SelectItem>
+                                    {detailMedia.destinationId && !liveDestinations.some((destination) => destination.id === detailMedia.destinationId) && (
+                                      <SelectItem value={detailMedia.destinationId}>Destino guardado no disponible</SelectItem>
+                                    )}
+                                    {liveDestinations.map((destination) => (
+                                      <SelectItem key={destination.id} value={destination.id}>
+                                        {liveDestinationLabel(destination)}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                                <p className="text-xs leading-5 text-zinc-500">Usa un destino de Transmisión guardado para Facebook, Resi, HLS u OBS.</p>
+                              </div>
+                            )}
                             <div className="grid gap-3 sm:grid-cols-2">
                               <div className="space-y-1.5">
                                 <Label className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">Proveedor</Label>
