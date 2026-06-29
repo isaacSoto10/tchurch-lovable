@@ -361,7 +361,12 @@ export function flattenServiceMedia(response: ServiceMediaResponse | null | unde
 
 export function isMediaEndpointUnavailableError(error: unknown) {
   if (!error || typeof error !== "object") return false;
-  return [404, 405, 501].includes(Number((error as { status?: unknown }).status));
+  const status = Number((error as { status?: unknown }).status);
+  if ([404, 405, 501].includes(status)) return true;
+
+  const body = (error as { body?: unknown }).body;
+  const code = body && typeof body === "object" ? (body as { code?: unknown }).code : null;
+  return status === 503 && code === "live_destinations_unavailable";
 }
 
 export function mediaSnapshotKey(churchId: string | null | undefined) {
