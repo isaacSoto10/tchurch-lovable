@@ -162,7 +162,20 @@ const ITEM_TYPES = [
   { label: "Escritura", value: "scripture" },
   { label: "Anuncio", value: "announcement" },
   { label: "Video", value: "video" },
+  { label: "Sermón", value: "sermon" },
+  { label: "Livestream", value: "livestream" },
   { label: "Otro", value: "other" },
+];
+
+const MEDIA_PROVIDERS = [
+  { label: "Automático", value: "auto" },
+  { label: "Facebook Live", value: "facebook" },
+  { label: "Resi", value: "resi" },
+  { label: "Tchurch / OBS", value: "cloudflare" },
+  { label: "HLS", value: "hls" },
+  { label: "YouTube", value: "youtube" },
+  { label: "Vimeo", value: "vimeo" },
+  { label: "Personalizado", value: "custom" },
 ];
 
 function formatItemType(type: string) {
@@ -238,6 +251,17 @@ export default function ServiceDetail() {
     band: "",
     audioVisual: "",
     person: "",
+  });
+  const [detailMedia, setDetailMedia] = useState({
+    mediaProvider: "auto",
+    livestreamUrl: "",
+    videoUrl: "",
+    audioUrl: "",
+    thumbnailUrl: "",
+    speaker: "",
+    scripture: "",
+    series: "",
+    description: "",
   });
   const [savingDetails, setSavingDetails] = useState(false);
   const [draggingItemId, setDraggingItemId] = useState<string | null>(null);
@@ -957,6 +981,17 @@ export default function ServiceDetail() {
       audioVisual: notes.audioVisual || "",
       person: notes.person || "",
     });
+    setDetailMedia({
+      mediaProvider: typeof details.mediaProvider === "string" ? details.mediaProvider : typeof details.provider === "string" ? details.provider : "auto",
+      livestreamUrl: typeof details.livestreamUrl === "string" ? details.livestreamUrl : typeof details.liveUrl === "string" ? details.liveUrl : "",
+      videoUrl: typeof details.videoUrl === "string" ? details.videoUrl : typeof details.youtubeUrl === "string" ? details.youtubeUrl : "",
+      audioUrl: typeof details.audioUrl === "string" ? details.audioUrl : "",
+      thumbnailUrl: typeof details.thumbnailUrl === "string" ? details.thumbnailUrl : typeof details.imageUrl === "string" ? details.imageUrl : "",
+      speaker: typeof details.speaker === "string" ? details.speaker : typeof details.preacher === "string" ? details.preacher : "",
+      scripture: typeof details.scripture === "string" ? details.scripture : typeof details.scriptureRef === "string" ? details.scriptureRef : "",
+      series: typeof details.series === "string" ? details.series : typeof details.seriesTitle === "string" ? details.seriesTitle : "",
+      description: typeof details.description === "string" ? details.description : typeof details.summary === "string" ? details.summary : "",
+    });
   }
 
   async function saveItemDetails(item: ServiceItem) {
@@ -970,6 +1005,15 @@ export default function ServiceDetail() {
         audioVisual: detailNotes.audioVisual.trim(),
         person: detailNotes.person.trim(),
       },
+      mediaProvider: detailMedia.mediaProvider === "auto" ? undefined : detailMedia.mediaProvider,
+      livestreamUrl: detailMedia.livestreamUrl.trim() || undefined,
+      videoUrl: detailMedia.videoUrl.trim() || undefined,
+      audioUrl: detailMedia.audioUrl.trim() || undefined,
+      thumbnailUrl: detailMedia.thumbnailUrl.trim() || undefined,
+      speaker: detailMedia.speaker.trim() || undefined,
+      scripture: detailMedia.scripture.trim() || undefined,
+      series: detailMedia.series.trim() || undefined,
+      description: detailMedia.description.trim() || undefined,
     };
 
     setSavingDetails(true);
@@ -1428,6 +1472,110 @@ export default function ServiceDetail() {
                                 />
                               </div>
                             ))}
+                          </div>
+
+                          <div className="grid gap-3 rounded-2xl border border-zinc-100 bg-zinc-50 p-3">
+                            <div>
+                              <p className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">Media</p>
+                              <p className="mt-1 text-xs leading-5 text-zinc-500">Estos campos alimentan la pantalla Media y las transmisiones en vivo.</p>
+                            </div>
+                            <div className="grid gap-3 sm:grid-cols-2">
+                              <div className="space-y-1.5">
+                                <Label className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">Proveedor</Label>
+                                <Select
+                                  value={detailMedia.mediaProvider}
+                                  onValueChange={(value) => setDetailMedia((current) => ({ ...current, mediaProvider: value }))}
+                                >
+                                  <SelectTrigger className="h-11 rounded-2xl bg-white">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {MEDIA_PROVIDERS.map((provider) => (
+                                      <SelectItem key={provider.value} value={provider.value}>{provider.label}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="space-y-1.5">
+                                <Label className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">Predicador</Label>
+                                <Input
+                                  value={detailMedia.speaker}
+                                  onChange={(event) => setDetailMedia((current) => ({ ...current, speaker: event.target.value }))}
+                                  className="h-11 rounded-2xl bg-white"
+                                  placeholder="Pastor..."
+                                />
+                              </div>
+                            </div>
+                            <div className="grid gap-3 sm:grid-cols-2">
+                              <div className="space-y-1.5">
+                                <Label className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">URL en vivo</Label>
+                                <Input
+                                  value={detailMedia.livestreamUrl}
+                                  onChange={(event) => setDetailMedia((current) => ({ ...current, livestreamUrl: event.target.value }))}
+                                  className="h-11 rounded-2xl bg-white"
+                                  inputMode="url"
+                                  placeholder="Facebook, Resi, Cloudflare..."
+                                />
+                              </div>
+                              <div className="space-y-1.5">
+                                <Label className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">Video</Label>
+                                <Input
+                                  value={detailMedia.videoUrl}
+                                  onChange={(event) => setDetailMedia((current) => ({ ...current, videoUrl: event.target.value }))}
+                                  className="h-11 rounded-2xl bg-white"
+                                  inputMode="url"
+                                  placeholder="Grabación..."
+                                />
+                              </div>
+                            </div>
+                            <div className="grid gap-3 sm:grid-cols-2">
+                              <div className="space-y-1.5">
+                                <Label className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">Audio</Label>
+                                <Input
+                                  value={detailMedia.audioUrl}
+                                  onChange={(event) => setDetailMedia((current) => ({ ...current, audioUrl: event.target.value }))}
+                                  className="h-11 rounded-2xl bg-white"
+                                  inputMode="url"
+                                />
+                              </div>
+                              <div className="space-y-1.5">
+                                <Label className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">Imagen</Label>
+                                <Input
+                                  value={detailMedia.thumbnailUrl}
+                                  onChange={(event) => setDetailMedia((current) => ({ ...current, thumbnailUrl: event.target.value }))}
+                                  className="h-11 rounded-2xl bg-white"
+                                  inputMode="url"
+                                />
+                              </div>
+                            </div>
+                            <div className="grid gap-3 sm:grid-cols-2">
+                              <div className="space-y-1.5">
+                                <Label className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">Escritura</Label>
+                                <Input
+                                  value={detailMedia.scripture}
+                                  onChange={(event) => setDetailMedia((current) => ({ ...current, scripture: event.target.value }))}
+                                  className="h-11 rounded-2xl bg-white"
+                                  placeholder="Juan 3:16"
+                                />
+                              </div>
+                              <div className="space-y-1.5">
+                                <Label className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">Serie</Label>
+                                <Input
+                                  value={detailMedia.series}
+                                  onChange={(event) => setDetailMedia((current) => ({ ...current, series: event.target.value }))}
+                                  className="h-11 rounded-2xl bg-white"
+                                />
+                              </div>
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">Descripción</Label>
+                              <Textarea
+                                value={detailMedia.description}
+                                onChange={(event) => setDetailMedia((current) => ({ ...current, description: event.target.value }))}
+                                rows={2}
+                                className="rounded-2xl bg-white"
+                              />
+                            </div>
                           </div>
 
                           <div className="flex justify-end gap-2">

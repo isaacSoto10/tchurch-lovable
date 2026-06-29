@@ -18,6 +18,8 @@ export const appRouteLoaders = {
   ServicePresentation: () => import("@/pages/app/ServicePresentation"),
   Announcements: () => import("@/pages/app/Announcements"),
   Devotionals: () => import("@/pages/app/Devotionals"),
+  Media: () => import("@/pages/app/Media"),
+  MediaDetail: () => import("@/pages/app/MediaDetail"),
   Giving: () => import("@/pages/app/Giving"),
   Ministries: () => import("@/pages/app/Ministries"),
   MinistryDetail: () => import("@/pages/app/MinistryDetail"),
@@ -113,6 +115,16 @@ export function preloadAppRoute(route: string) {
     return;
   }
 
+  if (path === "/app/media") {
+    preload([...baseLoaders, appRouteLoaders.Media]);
+    return;
+  }
+
+  if (path.startsWith("/app/media/")) {
+    preload([...baseLoaders, appRouteLoaders.MediaDetail]);
+    return;
+  }
+
   if (path === "/app/announcements") {
     preload([...baseLoaders, appRouteLoaders.Announcements]);
     return;
@@ -201,6 +213,8 @@ export function preloadPrimaryAppRoutes() {
     appRouteLoaders.Ministries,
     appRouteLoaders.MinistryDetail,
     appRouteLoaders.Devotionals,
+    appRouteLoaders.Media,
+    appRouteLoaders.MediaDetail,
     appRouteLoaders.Announcements,
     appRouteLoaders.Events,
     appRouteLoaders.EventDetail,

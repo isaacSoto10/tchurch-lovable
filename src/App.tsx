@@ -25,6 +25,8 @@ const ServiceDetail = lazy(appRouteLoaders.ServiceDetail);
 const ServicePresentation = lazy(appRouteLoaders.ServicePresentation);
 const Announcements = lazy(appRouteLoaders.Announcements);
 const Devotionals = lazy(appRouteLoaders.Devotionals);
+const Media = lazy(appRouteLoaders.Media);
+const MediaDetail = lazy(appRouteLoaders.MediaDetail);
 const Giving = lazy(appRouteLoaders.Giving);
 const Ministries = lazy(appRouteLoaders.Ministries);
 const MinistryDetail = lazy(appRouteLoaders.MinistryDetail);
@@ -138,6 +140,8 @@ const App = () => {
                     <Route path="services/:id" element={<ServiceDetail />} />
                     <Route path="announcements" element={<Announcements />} />
                     <Route path="devotionals" element={<Devotionals />} />
+                    <Route path="media" element={<Media />} />
+                    <Route path="media/:id" element={<MediaDetail />} />
                     <Route path="giving" element={<Giving />} />
                     <Route path="ministries" element={<Ministries />} />
                     <Route path="ministries/:id" element={<MinistryDetail />} />

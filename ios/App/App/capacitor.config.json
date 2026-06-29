@@ -19,6 +19,7 @@
 	"packageClassList": [
 		"AppPlugin",
 		"CapacitorBarcodeScannerPlugin",
+		"CAPBrowserPlugin",
 		"FilesystemPlugin",
 		"PushNotificationsPlugin",
 		"SharePlugin"
