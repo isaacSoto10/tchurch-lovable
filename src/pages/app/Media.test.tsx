@@ -31,7 +31,10 @@ vi.mock("@/lib/appRoutePreloaders", () => ({
 }));
 
 function endpointUnavailable() {
-  return Object.assign(new Error("No se pudo completar la solicitud (404)."), { status: 404 });
+  return Object.assign(new Error("Livestream destinations are not configured yet."), {
+    status: 503,
+    body: { code: "live_destinations_unavailable" },
+  });
 }
 
 describe("Media", () => {

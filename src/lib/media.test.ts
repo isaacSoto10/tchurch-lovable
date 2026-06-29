@@ -80,8 +80,10 @@ describe("service media helpers", () => {
   it("recognizes route-missing media endpoints as rollout-unavailable", () => {
     expect(isMediaEndpointUnavailableError({ status: 404 })).toBe(true);
     expect(isMediaEndpointUnavailableError({ status: 405 })).toBe(true);
+    expect(isMediaEndpointUnavailableError({ status: 503, body: { code: "live_destinations_unavailable" } })).toBe(true);
     expect(isMediaEndpointUnavailableError({ status: 501 })).toBe(true);
     expect(isMediaEndpointUnavailableError({ status: 401 })).toBe(false);
+    expect(isMediaEndpointUnavailableError({ status: 503 })).toBe(false);
     expect(isMediaEndpointUnavailableError(new Error("network"))).toBe(false);
   });
 
