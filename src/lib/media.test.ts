@@ -6,8 +6,10 @@ import {
   getServiceMediaEntryFromDetail,
   getUrlMediaEmbed,
   isMediaEndpointUnavailableError,
+  isLiveDestinationSelectable,
   readMediaSnapshot,
   normalizeMediaUrl,
+  type LiveDestination,
   type ServiceMediaEntry,
   type ServiceMediaPlayback,
   type ServiceMediaResponse,
@@ -66,6 +68,29 @@ function response(mediaEntry: ServiceMediaEntry): ServiceMediaResponse {
     previous: [],
     destinations: [],
     generatedAt: "2026-06-29T12:00:00.000Z",
+  };
+}
+
+function destination(overrides: Partial<LiveDestination>): LiveDestination {
+  return {
+    id: "dest_1",
+    provider: "cloudflare",
+    name: "Tchurch OBS",
+    description: null,
+    status: "active",
+    streamStatus: "offline",
+    playbackUrl: "https://iframe.videodelivery.net/0123456789abcdefghijklmnop",
+    embedUrl: "https://iframe.videodelivery.net/0123456789abcdefghijklmnop",
+    hlsUrl: "https://videodelivery.net/0123456789abcdefghijklmnop/manifest/video.m3u8",
+    rtmpServerUrl: null,
+    srtUrl: null,
+    cloudflareLiveInputId: "0123456789abcdefghijklmnop",
+    cloudflareUid: "0123456789abcdefghijklmnop",
+    metadata: {},
+    hasCredentials: false,
+    createdAt: null,
+    updatedAt: null,
+    ...overrides,
   };
 }
 
@@ -181,6 +206,74 @@ describe("service media helpers", () => {
         externalUrl: "https://example.com/service",
       }),
     }))).toMatchObject({ kind: "link", sourceUrl: "https://example.com/service" });
+  });
+
+  it("uses external playback when the backend marks iOS inline playback unsafe", () => {
+    const facebook = entry({
+      provider: "facebook",
+      embedUrl: "https://www.facebook.com/plugins/video.php?href=x",
+      playback: playback({
+        kind: "iframe",
+        provider: "facebook",
+        sourceUrl: "https://www.facebook.com/church/videos/12345",
+        embedUrl: "https://www.facebook.com/plugins/video.php?href=x",
+        externalUrl: "https://www.facebook.com/church/videos/12345",
+        canInlineIos: false,
+        requiresExternalBrowser: false,
+      }),
+    });
+
+    expect(getMediaEmbed(facebook).kind).toBe("iframe");
+    expect(getMediaEmbed(facebook, { respectIosPlaybackFlags: true })).toMatchObject({
+      kind: "link",
+      provider: "facebook",
+      sourceUrl: "https://www.facebook.com/church/videos/12345",
+      embedUrl: null,
+    });
+
+    const externalOnly = entry({
+      playback: playback({
+        kind: "video",
+        provider: "external",
+        sourceUrl: "https://player.example.com/watch/service",
+        requiresExternalBrowser: true,
+      }),
+    });
+
+    expect(getMediaEmbed(externalOnly, { respectIosPlaybackFlags: true })).toMatchObject({
+      kind: "link",
+      sourceUrl: "https://player.example.com/watch/service",
+    });
+  });
+
+  it("only treats configured active live destinations as selectable", () => {
+    expect(isLiveDestinationSelectable(destination({}))).toBe(true);
+    expect(isLiveDestinationSelectable(destination({ status: "setup_required" }))).toBe(false);
+    expect(isLiveDestinationSelectable(destination({ status: "inactive" }))).toBe(false);
+    expect(isLiveDestinationSelectable(destination({
+      provider: "cloudflare",
+      playbackUrl: null,
+      embedUrl: null,
+      hlsUrl: null,
+      cloudflareUid: null,
+      cloudflareLiveInputId: null,
+    }))).toBe(false);
+    expect(isLiveDestinationSelectable(destination({
+      provider: "hls",
+      playbackUrl: "http://cdn.example.com/live/index.m3u8",
+      embedUrl: null,
+      hlsUrl: null,
+      cloudflareUid: null,
+      cloudflareLiveInputId: null,
+    }))).toBe(false);
+    expect(isLiveDestinationSelectable(destination({
+      provider: "facebook",
+      playbackUrl: "https://facebook.com/church/videos/12345",
+      embedUrl: null,
+      hlsUrl: null,
+      cloudflareUid: null,
+      cloudflareLiveInputId: null,
+    }))).toBe(true);
   });
 
   it("falls back for cleartext HLS and keeps normal video playable", () => {

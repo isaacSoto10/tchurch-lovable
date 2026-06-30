@@ -43,7 +43,7 @@ import {
   updateSongYoutubeUrlInServiceItems,
 } from "@/lib/songYoutube";
 import { getAssignmentPositionOptions } from "@/lib/serviceAssignments";
-import { isMediaEndpointUnavailableError, type LiveDestination } from "@/lib/media";
+import { isLiveDestinationSelectable, isMediaEndpointUnavailableError, type LiveDestination } from "@/lib/media";
 import {
   Dialog,
   DialogClose,
@@ -381,6 +381,10 @@ export default function Services() {
     description: "",
   });
   const [liveDestinations, setLiveDestinations] = useState<LiveDestination[]>([]);
+  const selectableLiveDestinations = useMemo(
+    () => liveDestinations.filter(isLiveDestinationSelectable),
+    [liveDestinations],
+  );
   const [savingDetails, setSavingDetails] = useState(false);
   const [serviceItems, setServiceItems] = useState<Record<string, ServiceItem[]>>({});
   const [serviceAssignments, setServiceAssignments] = useState<Record<string, ServiceAssignment[]>>({});
@@ -2168,7 +2172,7 @@ export default function Services() {
                                               <Select
                                                 value={detailMedia.destinationId || "none"}
                                                 onValueChange={(value) => {
-                                                  const selectedDestination = liveDestinations.find((destination) => destination.id === value);
+                                                  const selectedDestination = selectableLiveDestinations.find((destination) => destination.id === value);
                                                   setDetailMedia((current) => ({
                                                     ...current,
                                                     destinationId: value === "none" ? "" : value,
@@ -2181,17 +2185,21 @@ export default function Services() {
                                                 </SelectTrigger>
                                                 <SelectContent>
                                                   <SelectItem value="none">Sin destino guardado</SelectItem>
-                                                  {detailMedia.destinationId && !liveDestinations.some((destination) => destination.id === detailMedia.destinationId) && (
+                                                  {detailMedia.destinationId && !selectableLiveDestinations.some((destination) => destination.id === detailMedia.destinationId) && (
                                                     <SelectItem value={detailMedia.destinationId}>Destino guardado no disponible</SelectItem>
                                                   )}
-                                                  {liveDestinations.map((destination) => (
+                                                  {selectableLiveDestinations.map((destination) => (
                                                     <SelectItem key={destination.id} value={destination.id}>
                                                       {liveDestinationLabel(destination)}
                                                     </SelectItem>
                                                   ))}
                                                 </SelectContent>
                                               </Select>
-                                              <p className="text-xs leading-5 text-zinc-500">Usa un destino de Transmisión guardado para Facebook, Resi, HLS u OBS.</p>
+                                              <p className="text-xs leading-5 text-zinc-500">
+                                                {selectableLiveDestinations.length > 0
+                                                  ? "Usa un destino de Transmisión guardado para Facebook, Resi, HLS u OBS."
+                                                  : "No hay destinos listos. Termina la configuración en Transmisión antes de adjuntarlo."}
+                                              </p>
                                             </div>
                                           )}
                                           <div className="grid gap-3 sm:grid-cols-2">
