@@ -13,6 +13,7 @@ import { MediaEmbed, MediaExternalLink, MediaProviderBadge } from "@/components/
 import {
   flattenServiceMedia,
   formatMediaDate,
+  getMediaEmbed,
   isMediaEndpointUnavailableError,
   mediaSearchText,
   mediaSnapshotKey,
@@ -67,7 +68,67 @@ function MediaSkeleton() {
   );
 }
 
+function shouldShowInlineMediaCard(item: ServiceMediaEntry) {
+  const embed = getMediaEmbed(item);
+  const isPlayableInline = Boolean(embed.embedUrl) && ["iframe", "hls", "video"].includes(embed.kind);
+  if (!isPlayableInline) return false;
+  if (item.isLive || item.isScheduled || item.streamStatus) return true;
+  if (item.type.toLowerCase().includes("live")) return true;
+  return embed.provider === "facebook" || embed.provider === "resi" || item.playback?.kind === "iframe";
+}
+
 function MediaCard({ item }: { item: ServiceMediaEntry }) {
+  const showInline = shouldShowInlineMediaCard(item);
+
+  if (showInline) {
+    return (
+      <article className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm transition hover:border-primary/30 hover:shadow-md">
+        <div className="mb-4">
+          <MediaEmbed item={item} compact />
+        </div>
+
+        <div className="flex min-w-0 items-start justify-between gap-3">
+          <div className="min-w-0">
+            <Link
+              to={`/app/media/${item.id}`}
+              onPointerEnter={() => preloadAppRoute(`/app/media/${item.id}`)}
+              onFocus={() => preloadAppRoute(`/app/media/${item.id}`)}
+              onTouchStart={() => preloadAppRoute(`/app/media/${item.id}`)}
+              className="block rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+            >
+              <h3 className="line-clamp-2 text-base font-black text-zinc-950 hover:text-primary">{item.title}</h3>
+              <p className="mt-1 truncate text-sm font-medium text-zinc-500">{item.serviceTitle}</p>
+            </Link>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <MediaProviderBadge item={item} />
+              {item.series && <Badge variant="outline" className="bg-white">{item.series}</Badge>}
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-1 text-xs font-bold text-zinc-500">
+            <CalendarDays className="h-3.5 w-3.5" />
+            {formatMediaDate(item.date)}
+          </div>
+        </div>
+
+        {(item.speaker || item.scripture || item.description) && (
+          <p className="mt-3 line-clamp-2 text-sm leading-6 text-zinc-600">
+            {[item.speaker, item.scripture, item.description].filter(Boolean).join(" · ")}
+          </p>
+        )}
+
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <Button asChild variant="outline" size="sm" className="h-9 rounded-lg">
+            <Link to={`/app/media/${item.id}`}>
+              <Video className="h-4 w-4" />
+              Ver detalle
+            </Link>
+          </Button>
+          <MediaExternalLink item={item} />
+        </div>
+      </article>
+    );
+  }
+
   return (
     <Link
       to={`/app/media/${item.id}`}

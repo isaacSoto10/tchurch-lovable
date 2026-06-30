@@ -184,6 +184,18 @@ function facebookEmbedUrl(sourceUrl: string) {
   return `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(sourceUrl)}&show_text=false&autoplay=false`;
 }
 
+function sourceUrlFromIframeEmbed(value: string | null | undefined): string | null {
+  const normalized = normalizeMediaUrl(value);
+  const url = parseMediaUrl(normalized);
+  if (!normalized || !url) return null;
+
+  if (isHost(url, "facebook.com") && url.pathname.startsWith("/plugins/video.php")) {
+    return normalizeMediaUrl(url.searchParams.get("href"));
+  }
+
+  return normalized;
+}
+
 function isTrustedResiEmbed(url: URL) {
   const host = hostWithoutWww(url);
   const trusted =
@@ -301,6 +313,13 @@ function playbackExternalUrl(playback: ServiceMediaPlayback | null, item: Servic
   );
 }
 
+function canUseApiIframe(provider: MediaProvider, playback: ServiceMediaPlayback | null, embedUrl: string | null) {
+  if (!embedUrl) return false;
+  if (!playback) return true;
+  if (playback.kind === "iframe" || playback.canInlineIos) return true;
+  return provider === "facebook" || provider === "resi";
+}
+
 export function isLiveDestinationSelectable(destination: LiveDestination | null | undefined) {
   if (!destination) return false;
   if (destination.status?.trim().toLowerCase() !== "active") return false;
@@ -334,6 +353,9 @@ export function getUrlMediaEmbed(value: string | null | undefined, explicitProvi
 export function getMediaEmbed(item: ServiceMediaEntry | null | undefined, options: MediaEmbedOptions = {}): MediaEmbed {
   if (!item) return embed("link", "custom", null, null);
   const playback = item.playback || null;
+  const playbackEmbedUrl = firstNormalizedMediaUrl(playback?.embedUrl);
+  const itemEmbedUrl = firstNormalizedMediaUrl(item.embedUrl);
+  const apiEmbedUrl = playbackEmbedUrl || itemEmbedUrl;
   const sourceUrl = firstNormalizedMediaUrl(
     playback?.externalUrl,
     item.externalUrl,
@@ -344,12 +366,23 @@ export function getMediaEmbed(item: ServiceMediaEntry | null | undefined, option
     item.hlsUrl,
     item.audioUrl,
   );
+  const iframeSourceUrl = firstNormalizedMediaUrl(
+    playback?.externalUrl,
+    item.externalUrl,
+    playback?.sourceUrl,
+    item.playbackUrl,
+    item.livestreamUrl,
+    item.videoUrl,
+    sourceUrlFromIframeEmbed(apiEmbedUrl),
+  );
   const provider = getMediaProvider(
-    sourceUrl || playback?.hlsUrl || item.hlsUrl || playback?.embedUrl || item.embedUrl,
+    sourceUrl || playback?.hlsUrl || item.hlsUrl || apiEmbedUrl,
     playback?.provider || item.provider,
   );
 
-  if (shouldUseExternalPlayback(playback, options)) {
+  const hasAllowedApiIframe = canUseApiIframe(provider, playback, apiEmbedUrl);
+
+  if (shouldUseExternalPlayback(playback, options) && !hasAllowedApiIframe) {
     return embed("link", provider, playbackExternalUrl(playback, item), null);
   }
 
@@ -358,11 +391,11 @@ export function getMediaEmbed(item: ServiceMediaEntry | null | undefined, option
     const hlsUrl = firstSecureHlsUrl(playback.hlsUrl, playback.sourceUrl, item.hlsUrl, item.videoUrl, item.playbackUrl, item.livestreamUrl);
     if (kind === "hls") {
       if (hlsUrl) return embed("hls", provider, sourceUrl || hlsUrl, hlsUrl);
-      if (playback.embedUrl) return embed("iframe", provider, sourceUrl || playback.embedUrl, playback.embedUrl);
+      if (apiEmbedUrl) return embed("iframe", provider, iframeSourceUrl, apiEmbedUrl);
       return embed("link", provider, sourceUrl || firstNormalizedMediaUrl(playback.sourceUrl, playback.externalUrl), null);
     }
-    if (kind === "iframe" && playback.embedUrl) {
-      return embed("iframe", provider, sourceUrl || playback.sourceUrl, playback.embedUrl);
+    if (kind === "iframe" && apiEmbedUrl) {
+      return embed("iframe", provider, iframeSourceUrl, apiEmbedUrl);
     }
     if (kind === "audio") {
       const audioUrl = firstNormalizedMediaUrl(playback.sourceUrl, item.audioUrl, item.playbackUrl);
@@ -373,6 +406,9 @@ export function getMediaEmbed(item: ServiceMediaEntry | null | undefined, option
       if (videoUrl) return embed("video", provider, sourceUrl || videoUrl, videoUrl);
     }
     if (kind === "link") {
+      if (hasAllowedApiIframe) {
+        return embed("iframe", provider, iframeSourceUrl, apiEmbedUrl);
+      }
       return embed("link", provider, sourceUrl || firstNormalizedMediaUrl(playback.sourceUrl, playback.externalUrl), null);
     }
   }
@@ -383,7 +419,7 @@ export function getMediaEmbed(item: ServiceMediaEntry | null | undefined, option
       return embed("hls", provider === "cloudflare" ? "cloudflare" : "hls", sourceUrl || hlsUrl, hlsUrl);
     }
   }
-  if (item.embedUrl) return embed("iframe", provider, sourceUrl, item.embedUrl);
+  if (apiEmbedUrl) return embed("iframe", provider, iframeSourceUrl, apiEmbedUrl);
   if (item.audioUrl && !item.videoUrl && !item.playbackUrl) return embed("audio", provider, sourceUrl, item.audioUrl);
 
   const fallback = getUrlMediaEmbed(sourceUrl, provider);

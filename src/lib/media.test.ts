@@ -208,7 +208,7 @@ describe("service media helpers", () => {
     }))).toMatchObject({ kind: "link", sourceUrl: "https://example.com/service" });
   });
 
-  it("uses external playback when the backend marks iOS inline playback unsafe", () => {
+  it("keeps trusted Facebook iframe playback inline even when old iOS flags are conservative", () => {
     const facebook = entry({
       provider: "facebook",
       embedUrl: "https://www.facebook.com/plugins/video.php?href=x",
@@ -225,10 +225,10 @@ describe("service media helpers", () => {
 
     expect(getMediaEmbed(facebook).kind).toBe("iframe");
     expect(getMediaEmbed(facebook, { respectIosPlaybackFlags: true })).toMatchObject({
-      kind: "link",
+      kind: "iframe",
       provider: "facebook",
       sourceUrl: "https://www.facebook.com/church/videos/12345",
-      embedUrl: null,
+      embedUrl: "https://www.facebook.com/plugins/video.php?href=x",
     });
 
     const externalOnly = entry({
@@ -243,6 +243,29 @@ describe("service media helpers", () => {
     expect(getMediaEmbed(externalOnly, { respectIosPlaybackFlags: true })).toMatchObject({
       kind: "link",
       sourceUrl: "https://player.example.com/watch/service",
+    });
+  });
+
+  it("keeps allowed Facebook iframe embeds inline with an external fallback", () => {
+    const facebook = entry({
+      provider: "facebook",
+      embedUrl: "https://www.facebook.com/plugins/video.php?href=https%3A%2F%2Fwww.facebook.com%2Fchurch%2Fvideos%2F12345",
+      playback: playback({
+        kind: "external",
+        provider: "facebook",
+        sourceUrl: "https://www.facebook.com/church/videos/12345",
+        embedUrl: "https://www.facebook.com/plugins/video.php?href=https%3A%2F%2Fwww.facebook.com%2Fchurch%2Fvideos%2F12345",
+        externalUrl: "https://www.facebook.com/church/videos/12345",
+        canInlineIos: true,
+        requiresExternalBrowser: false,
+      }),
+    });
+
+    expect(getMediaEmbed(facebook, { respectIosPlaybackFlags: true })).toMatchObject({
+      kind: "iframe",
+      provider: "facebook",
+      sourceUrl: "https://www.facebook.com/church/videos/12345",
+      embedUrl: "https://www.facebook.com/plugins/video.php?href=https%3A%2F%2Fwww.facebook.com%2Fchurch%2Fvideos%2F12345",
     });
   });
 
