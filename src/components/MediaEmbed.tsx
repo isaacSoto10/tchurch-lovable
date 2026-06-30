@@ -8,6 +8,12 @@ import { Badge } from "@/components/ui/badge";
 import { getMediaEmbed, type MediaEmbed as MediaEmbedConfig, type ServiceMediaEntry } from "@/lib/media";
 import { cn } from "@/lib/utils";
 
+function getNativeAwareMediaEmbed(item: ServiceMediaEntry) {
+  return getMediaEmbed(item, {
+    respectIosPlaybackFlags: Capacitor.isNativePlatform() && Capacitor.getPlatform() === "ios",
+  });
+}
+
 function ProviderIcon({ embed }: { embed: MediaEmbedConfig }) {
   if (embed.kind === "audio") return <Volume2 className="h-4 w-4" />;
   if (embed.kind === "link") return <FileText className="h-4 w-4" />;
@@ -106,7 +112,7 @@ function OpenLink({ href, label = "Abrir" }: { href: string | null; label?: stri
 }
 
 export function MediaProviderBadge({ item }: { item: ServiceMediaEntry }) {
-  const embed = getMediaEmbed(item);
+  const embed = getNativeAwareMediaEmbed(item);
 
   return (
     <Badge variant="outline" className="gap-1.5 bg-white/85 text-zinc-700">
@@ -117,7 +123,7 @@ export function MediaProviderBadge({ item }: { item: ServiceMediaEntry }) {
 }
 
 export function MediaEmbed({ item, compact = false }: { item: ServiceMediaEntry; compact?: boolean }) {
-  const embed = getMediaEmbed(item);
+  const embed = getNativeAwareMediaEmbed(item);
 
   if (embed.kind === "iframe" && embed.embedUrl) {
     return (
@@ -183,6 +189,6 @@ export function MediaEmbed({ item, compact = false }: { item: ServiceMediaEntry;
 }
 
 export function MediaExternalLink({ item, label = "Abrir" }: { item: ServiceMediaEntry; label?: string }) {
-  const embed = getMediaEmbed(item);
+  const embed = getNativeAwareMediaEmbed(item);
   return <OpenLink href={embed.sourceUrl} label={label} />;
 }

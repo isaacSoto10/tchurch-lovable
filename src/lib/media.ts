@@ -93,6 +93,10 @@ export type MediaEmbed = {
   allow?: string;
 };
 
+export type MediaEmbedOptions = {
+  respectIosPlaybackFlags?: boolean;
+};
+
 type SnapshotEnvelope<T> = {
   savedAt: number;
   value: T;
@@ -274,6 +278,43 @@ function playbackKindToEmbedKind(kind: ServiceMediaPlaybackKind): MediaEmbedKind
   return kind === "external" ? "link" : kind;
 }
 
+function shouldUseExternalPlayback(playback: ServiceMediaPlayback | null, options: MediaEmbedOptions) {
+  if (!playback) return false;
+  if (!options.respectIosPlaybackFlags) return false;
+  if (playback.requiresExternalBrowser) return true;
+  return playback.canInlineIos === false;
+}
+
+function playbackExternalUrl(playback: ServiceMediaPlayback | null, item: ServiceMediaEntry) {
+  return firstNormalizedMediaUrl(
+    playback?.externalUrl,
+    item.externalUrl,
+    playback?.sourceUrl,
+    item.playbackUrl,
+    item.livestreamUrl,
+    item.videoUrl,
+    playback?.hlsUrl,
+    item.hlsUrl,
+    playback?.embedUrl,
+    item.embedUrl,
+    item.audioUrl,
+  );
+}
+
+export function isLiveDestinationSelectable(destination: LiveDestination | null | undefined) {
+  if (!destination) return false;
+  if (destination.status?.trim().toLowerCase() !== "active") return false;
+
+  const provider = getMediaProvider(
+    firstNormalizedMediaUrl(destination.hlsUrl, destination.embedUrl, destination.playbackUrl),
+    destination.provider,
+  );
+
+  if (provider === "hls") return Boolean(firstSecureHlsUrl(destination.hlsUrl, destination.playbackUrl));
+
+  return Boolean(firstNormalizedMediaUrl(destination.embedUrl, destination.playbackUrl, destination.hlsUrl));
+}
+
 export function getUrlMediaEmbed(value: string | null | undefined, explicitProvider?: string | null): MediaEmbed {
   const normalized = normalizeMediaUrl(value);
   const url = parseMediaUrl(normalized);
@@ -290,7 +331,7 @@ export function getUrlMediaEmbed(value: string | null | undefined, explicitProvi
   return embed("link", provider, normalized, null);
 }
 
-export function getMediaEmbed(item: ServiceMediaEntry | null | undefined): MediaEmbed {
+export function getMediaEmbed(item: ServiceMediaEntry | null | undefined, options: MediaEmbedOptions = {}): MediaEmbed {
   if (!item) return embed("link", "custom", null, null);
   const playback = item.playback || null;
   const sourceUrl = firstNormalizedMediaUrl(
@@ -307,6 +348,10 @@ export function getMediaEmbed(item: ServiceMediaEntry | null | undefined): Media
     sourceUrl || playback?.hlsUrl || item.hlsUrl || playback?.embedUrl || item.embedUrl,
     playback?.provider || item.provider,
   );
+
+  if (shouldUseExternalPlayback(playback, options)) {
+    return embed("link", provider, playbackExternalUrl(playback, item), null);
+  }
 
   if (playback?.kind) {
     const kind = playbackKindToEmbedKind(playback.kind);
