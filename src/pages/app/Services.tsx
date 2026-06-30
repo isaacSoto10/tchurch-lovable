@@ -43,6 +43,7 @@ import {
   updateSongYoutubeUrlInServiceItems,
 } from "@/lib/songYoutube";
 import { getAssignmentPositionOptions } from "@/lib/serviceAssignments";
+import { isLiveDestinationSelectable, isMediaEndpointUnavailableError, type LiveDestination } from "@/lib/media";
 import {
   Dialog,
   DialogClose,
@@ -83,7 +84,7 @@ interface ServiceItem {
   serviceId: string;
   songId?: string;
   title: string;
-  type: "song" | "header" | "item" | "announcement";
+  type: "song" | "header" | "item" | "announcement" | "video" | "sermon" | "livestream";
   position: number;
   duration?: number;
   details?: Record<string, unknown>;
@@ -141,6 +142,8 @@ type PlanningDetails = {
   serviceKey?: string;
   selectedKey?: string;
   key?: string;
+  destinationId?: string;
+  liveDestinationId?: string;
   notes?: Partial<Record<PlanningNoteKey, string>>;
   [key: string]: unknown;
 };
@@ -172,7 +175,26 @@ const ITEM_TYPES = [
   { label: "Encabezado", value: "header", icon: FileText },
   { label: "Elemento", value: "item", icon: FileText },
   { label: "Anuncio", value: "announcement", icon: Bell },
+  { label: "Video", value: "video", icon: PlayCircle },
+  { label: "Sermón", value: "sermon", icon: FileText },
+  { label: "Livestream", value: "livestream", icon: Link2 },
 ];
+
+const MEDIA_PROVIDERS = [
+  { label: "Automático", value: "auto" },
+  { label: "Facebook Live", value: "facebook" },
+  { label: "Resi", value: "resi" },
+  { label: "Tchurch / OBS", value: "cloudflare" },
+  { label: "HLS", value: "hls" },
+  { label: "YouTube", value: "youtube" },
+  { label: "Vimeo", value: "vimeo" },
+  { label: "Personalizado", value: "custom" },
+];
+
+function liveDestinationLabel(destination: LiveDestination) {
+  const provider = destination.provider ? ` · ${destination.provider}` : "";
+  return `${destination.name || "Destino en vivo"}${provider}`;
+}
 
 const TEMPLATE_ITEMS = [
   { title: "Bienvenida", type: "header" },
@@ -346,6 +368,23 @@ export default function Services() {
     audioVisual: "",
     person: "",
   });
+  const [detailMedia, setDetailMedia] = useState({
+    mediaProvider: "auto",
+    destinationId: "",
+    livestreamUrl: "",
+    videoUrl: "",
+    audioUrl: "",
+    thumbnailUrl: "",
+    speaker: "",
+    scripture: "",
+    series: "",
+    description: "",
+  });
+  const [liveDestinations, setLiveDestinations] = useState<LiveDestination[]>([]);
+  const selectableLiveDestinations = useMemo(
+    () => liveDestinations.filter(isLiveDestinationSelectable),
+    [liveDestinations],
+  );
   const [savingDetails, setSavingDetails] = useState(false);
   const [serviceItems, setServiceItems] = useState<Record<string, ServiceItem[]>>({});
   const [serviceAssignments, setServiceAssignments] = useState<Record<string, ServiceAssignment[]>>({});
@@ -618,6 +657,18 @@ export default function Services() {
       audioVisual: notes.audioVisual || "",
       person: notes.person || "",
     });
+    setDetailMedia({
+      mediaProvider: typeof details.mediaProvider === "string" ? details.mediaProvider : typeof details.provider === "string" ? details.provider : "auto",
+      destinationId: typeof details.destinationId === "string" ? details.destinationId : typeof details.liveDestinationId === "string" ? details.liveDestinationId : "",
+      livestreamUrl: typeof details.livestreamUrl === "string" ? details.livestreamUrl : typeof details.liveUrl === "string" ? details.liveUrl : "",
+      videoUrl: typeof details.videoUrl === "string" ? details.videoUrl : typeof details.youtubeUrl === "string" ? details.youtubeUrl : "",
+      audioUrl: typeof details.audioUrl === "string" ? details.audioUrl : "",
+      thumbnailUrl: typeof details.thumbnailUrl === "string" ? details.thumbnailUrl : typeof details.imageUrl === "string" ? details.imageUrl : "",
+      speaker: typeof details.speaker === "string" ? details.speaker : typeof details.preacher === "string" ? details.preacher : "",
+      scripture: typeof details.scripture === "string" ? details.scripture : typeof details.scriptureRef === "string" ? details.scriptureRef : "",
+      series: typeof details.series === "string" ? details.series : typeof details.seriesTitle === "string" ? details.seriesTitle : "",
+      description: typeof details.description === "string" ? details.description : typeof details.summary === "string" ? details.summary : "",
+    });
   }
 
   async function saveItemDetails(serviceId: string, item: ServiceItem) {
@@ -636,6 +687,17 @@ export default function Services() {
         audioVisual: detailNotes.audioVisual.trim(),
         person: detailNotes.person.trim(),
       },
+      mediaProvider: detailMedia.mediaProvider === "auto" ? undefined : detailMedia.mediaProvider,
+      destinationId: detailMedia.destinationId.trim() || undefined,
+      liveDestinationId: detailMedia.destinationId.trim() || undefined,
+      livestreamUrl: detailMedia.livestreamUrl.trim() || undefined,
+      videoUrl: detailMedia.videoUrl.trim() || undefined,
+      audioUrl: detailMedia.audioUrl.trim() || undefined,
+      thumbnailUrl: detailMedia.thumbnailUrl.trim() || undefined,
+      speaker: detailMedia.speaker.trim() || undefined,
+      scripture: detailMedia.scripture.trim() || undefined,
+      series: detailMedia.series.trim() || undefined,
+      description: detailMedia.description.trim() || undefined,
     };
 
     setSavingDetails(true);
@@ -690,6 +752,33 @@ export default function Services() {
   }
 
   const isPlanner = ["ADMIN", "PLANNER"].includes(normalizeRole(selectedChurch?.role));
+  useEffect(() => {
+    let cancelled = false;
+
+    setLiveDestinations([]);
+
+    if (!isPlanner || !selectedChurchId) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    fetchApi<{ destinations?: LiveDestination[] }>("/live-destinations")
+      .then((data) => {
+        if (!cancelled) setLiveDestinations(Array.isArray(data.destinations) ? data.destinations : []);
+      })
+      .catch((error) => {
+        if (!cancelled) setLiveDestinations([]);
+        if (!isMediaEndpointUnavailableError(error)) {
+          console.warn("No se pudieron cargar destinos de transmisión:", error);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchApi, isPlanner, selectedChurchId]);
+
   const visibleServiceIds = new Set(
     myAssignments
       .filter((assignment) => assignment.responseStatus !== "declined")
@@ -2070,6 +2159,80 @@ export default function Services() {
                                               />
                                             </div>
                                           ))}
+                                        </div>
+
+                                        <div className="grid gap-3 rounded-2xl border border-zinc-100 bg-white p-3">
+                                          <div>
+                                            <p className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">Media</p>
+                                            <p className="mt-1 text-xs leading-5 text-zinc-500">Campos para transmisiones y servicios anteriores.</p>
+                                          </div>
+                                          {liveDestinations.length > 0 && (
+                                            <div className="space-y-1.5">
+                                              <Label className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">Destino guardado</Label>
+                                              <Select
+                                                value={detailMedia.destinationId || "none"}
+                                                onValueChange={(value) => {
+                                                  const selectedDestination = selectableLiveDestinations.find((destination) => destination.id === value);
+                                                  setDetailMedia((current) => ({
+                                                    ...current,
+                                                    destinationId: value === "none" ? "" : value,
+                                                    mediaProvider: selectedDestination?.provider || current.mediaProvider,
+                                                  }));
+                                                }}
+                                              >
+                                                <SelectTrigger className="h-11 rounded-2xl bg-white">
+                                                  <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                  <SelectItem value="none">Sin destino guardado</SelectItem>
+                                                  {detailMedia.destinationId && !selectableLiveDestinations.some((destination) => destination.id === detailMedia.destinationId) && (
+                                                    <SelectItem value={detailMedia.destinationId}>Destino guardado no disponible</SelectItem>
+                                                  )}
+                                                  {selectableLiveDestinations.map((destination) => (
+                                                    <SelectItem key={destination.id} value={destination.id}>
+                                                      {liveDestinationLabel(destination)}
+                                                    </SelectItem>
+                                                  ))}
+                                                </SelectContent>
+                                              </Select>
+                                              <p className="text-xs leading-5 text-zinc-500">
+                                                {selectableLiveDestinations.length > 0
+                                                  ? "Usa un destino de Transmisión guardado para Facebook, Resi, HLS u OBS."
+                                                  : "No hay destinos listos. Termina la configuración en Transmisión antes de adjuntarlo."}
+                                              </p>
+                                            </div>
+                                          )}
+                                          <div className="grid gap-3 sm:grid-cols-2">
+                                            <div className="space-y-1.5">
+                                              <Label className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">Proveedor</Label>
+                                              <Select
+                                                value={detailMedia.mediaProvider}
+                                                onValueChange={(value) => setDetailMedia((current) => ({ ...current, mediaProvider: value }))}
+                                              >
+                                                <SelectTrigger className="h-11 rounded-2xl bg-white">
+                                                  <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                  {MEDIA_PROVIDERS.map((provider) => (
+                                                    <SelectItem key={provider.value} value={provider.value}>{provider.label}</SelectItem>
+                                                  ))}
+                                                </SelectContent>
+                                              </Select>
+                                            </div>
+                                            <div className="space-y-1.5">
+                                              <Label className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">Predicador</Label>
+                                              <Input value={detailMedia.speaker} onChange={(event) => setDetailMedia((current) => ({ ...current, speaker: event.target.value }))} className="h-11 rounded-2xl bg-white" />
+                                            </div>
+                                          </div>
+                                          <div className="grid gap-3 sm:grid-cols-2">
+                                            <Input value={detailMedia.livestreamUrl} onChange={(event) => setDetailMedia((current) => ({ ...current, livestreamUrl: event.target.value }))} className="h-11 rounded-2xl bg-white" inputMode="url" placeholder="URL en vivo" />
+                                            <Input value={detailMedia.videoUrl} onChange={(event) => setDetailMedia((current) => ({ ...current, videoUrl: event.target.value }))} className="h-11 rounded-2xl bg-white" inputMode="url" placeholder="Video grabado" />
+                                            <Input value={detailMedia.audioUrl} onChange={(event) => setDetailMedia((current) => ({ ...current, audioUrl: event.target.value }))} className="h-11 rounded-2xl bg-white" inputMode="url" placeholder="Audio" />
+                                            <Input value={detailMedia.thumbnailUrl} onChange={(event) => setDetailMedia((current) => ({ ...current, thumbnailUrl: event.target.value }))} className="h-11 rounded-2xl bg-white" inputMode="url" placeholder="Imagen" />
+                                            <Input value={detailMedia.scripture} onChange={(event) => setDetailMedia((current) => ({ ...current, scripture: event.target.value }))} className="h-11 rounded-2xl bg-white" placeholder="Escritura" />
+                                            <Input value={detailMedia.series} onChange={(event) => setDetailMedia((current) => ({ ...current, series: event.target.value }))} className="h-11 rounded-2xl bg-white" placeholder="Serie" />
+                                          </div>
+                                          <Textarea value={detailMedia.description} onChange={(event) => setDetailMedia((current) => ({ ...current, description: event.target.value }))} rows={2} className="rounded-2xl bg-white" placeholder="Descripción" />
                                         </div>
 
                                         <div className="flex justify-end gap-2">

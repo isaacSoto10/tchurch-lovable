@@ -8,9 +8,10 @@ import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useApi } from "@/hooks/useApi";
 import { useChurch } from "@/providers/ChurchProvider";
-import { User, Bell, Church, LogOut, Settings as SettingsIcon, Loader2, Check, X, Shield, MessageCircle } from "lucide-react";
+import { User, Bell, Church, LogOut, Settings as SettingsIcon, Loader2, Check, X, Shield, MessageCircle, Radio } from "lucide-react";
 import { getChurchId } from "@/lib/api";
 import { readSessionSnapshot, sessionSnapshotKey, writeSessionSnapshot } from "@/lib/sessionSnapshots";
+import { LiveDestinationSetup } from "@/components/LiveDestinationSetup";
 
 type PendingMember = {
   id: string;
@@ -83,6 +84,7 @@ export default function Settings() {
   const { selectedChurch, churches, switchChurch } = useChurch();
   const { fetchApi } = useApi();
   const isAdmin = selectedChurch?.role === "ADMIN";
+  const isPlanner = selectedChurch?.role === "PLANNER" || isAdmin;
 
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -347,6 +349,12 @@ export default function Settings() {
             <MessageCircle className="w-4 h-4 mr-1.5" />
             WhatsApp
           </TabsTrigger>
+          {isPlanner && (
+            <TabsTrigger value="streaming" className="shrink-0 rounded-xl">
+              <Radio className="w-4 h-4 mr-1.5" />
+              Transmisión
+            </TabsTrigger>
+          )}
           {isAdmin && (
             <>
               <TabsTrigger value="church" className="shrink-0 rounded-xl">Iglesia</TabsTrigger>
@@ -678,6 +686,12 @@ export default function Settings() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        {isPlanner && (
+          <TabsContent value="streaming" className="mt-6">
+            <LiveDestinationSetup />
+          </TabsContent>
+        )}
 
         {isAdmin && (
           <>
