@@ -59,6 +59,8 @@ test -f ios/App/CapacitorApp/Package.swift
 test -d ios/App/CapacitorApp/ios/Sources/AppPlugin
 test -f ios/App/CapacitorBarcodeScanner/Package.swift
 test -d ios/App/CapacitorBarcodeScanner/ios/Sources/CapacitorBarcodeScannerPlugin
+test -f ios/App/CapacitorBrowser/Package.swift
+test -d ios/App/CapacitorBrowser/ios/Sources/BrowserPlugin
 test -f ios/App/CapacitorFilesystem/Package.swift
 test -d ios/App/CapacitorFilesystem/ios/Sources/FilesystemPlugin
 test -f ios/App/CapacitorPushNotifications/Package.swift
@@ -69,6 +71,7 @@ test -d ios/App/CapacitorShare/ios/Sources/SharePlugin
 perl -0pi -e '
   s#path: "[^"]*node_modules/\@capacitor/app"#path: "../CapacitorApp"#g;
   s#path: "[^"]*node_modules/\@capacitor/barcode-scanner"#path: "../CapacitorBarcodeScanner"#g;
+  s#path: "[^"]*node_modules/\@capacitor/browser"#path: "../CapacitorBrowser"#g;
   s#path: "[^"]*node_modules/\@capacitor/filesystem"#path: "../CapacitorFilesystem"#g;
   s#path: "[^"]*node_modules/\@capacitor/push-notifications"#path: "../CapacitorPushNotifications"#g;
   s#path: "[^"]*node_modules/\@capacitor/share"#path: "../CapacitorShare"#g;

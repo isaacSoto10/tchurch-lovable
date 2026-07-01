@@ -12,12 +12,12 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/ionic-team/capacitor-swift-pm.git", exact: "8.3.0"),
-        .package(name: "CapacitorApp", path: "../../../../../../Users/isaacsoto/Tchurch-app/node_modules/@capacitor/app"),
-        .package(name: "CapacitorBarcodeScanner", path: "../../../../../../Users/isaacsoto/Tchurch-app/node_modules/@capacitor/barcode-scanner"),
-        .package(name: "CapacitorBrowser", path: "../../../../../../Users/isaacsoto/Tchurch-app/node_modules/@capacitor/browser"),
-        .package(name: "CapacitorFilesystem", path: "../../../../../../Users/isaacsoto/Tchurch-app/node_modules/@capacitor/filesystem"),
-        .package(name: "CapacitorPushNotifications", path: "../../../../../../Users/isaacsoto/Tchurch-app/node_modules/@capacitor/push-notifications"),
-        .package(name: "CapacitorShare", path: "../../../../../../Users/isaacsoto/Tchurch-app/node_modules/@capacitor/share")
+        .package(name: "CapacitorApp", path: "../CapacitorApp"),
+        .package(name: "CapacitorBarcodeScanner", path: "../CapacitorBarcodeScanner"),
+        .package(name: "CapacitorBrowser", path: "../CapacitorBrowser"),
+        .package(name: "CapacitorFilesystem", path: "../CapacitorFilesystem"),
+        .package(name: "CapacitorPushNotifications", path: "../CapacitorPushNotifications"),
+        .package(name: "CapacitorShare", path: "../CapacitorShare")
     ],
     targets: [
         .target(
