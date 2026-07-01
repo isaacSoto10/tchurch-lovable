@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { CalendarDays, Music, Users, Megaphone, ListChecks, UsersRound, Calendar, ArrowRight, Plus, Check, X, Loader2 } from "lucide-react";
+import { CalendarDays, Music, Users, Megaphone, ListChecks, UsersRound, Calendar, ArrowRight, Plus, Check, X, Loader2, PlayCircle, Radio } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useChurch } from "@/providers/ChurchProvider";
 import { useNavigate } from "react-router-dom";
 import { formatServiceDate, formatServiceTime, parseServiceDate } from "@/lib/serviceDates";
 import { isNativeMobileAuth } from "@/lib/mobileAuth";
 import { getEventTypeLabel } from "@/types/events";
+import { formatMediaDate, isServiceMediaResponse, type ServiceMediaEntry, type ServiceMediaResponse } from "@/lib/media";
 
 interface TimelineItem {
   id: string;
@@ -69,6 +70,7 @@ const DASHBOARD_SNAPSHOT_TTL_MS = 2 * 60 * 1000;
 const DASHBOARD_SNAPSHOT_PREFIX = "tchurch_ios_dashboard_snapshot_v1";
 const DASHBOARD_SERVICES_PATH = "/services?summary=1&from=today&order=asc&limit=60";
 const DASHBOARD_EVENTS_PATH = "/events?startDate=today&limit=25";
+const DASHBOARD_MEDIA_PATH = "/service-media?limit=6";
 
 type DashboardSnapshot = {
   savedAt: number;
@@ -77,6 +79,7 @@ type DashboardSnapshot = {
   announcements: Announcement[];
   ministries: Ministry[];
   assignments: Assignment[];
+  mediaShortcut?: ServiceMediaEntry | null;
 };
 
 function dashboardSnapshotKey(churchId: string) {
@@ -155,6 +158,70 @@ function getTimelineItemHref(item: TimelineItem) {
   return item._type === "service" ? `/app/services/${item.id}` : `/app/events/${item.id}`;
 }
 
+function getDashboardMediaShortcut(value: unknown): ServiceMediaEntry | null {
+  if (!isServiceMediaResponse(value)) return null;
+  return value.live[0] || value.scheduled[0] || null;
+}
+
+function DashboardLiveShortcut({
+  item,
+  loading,
+  onOpen,
+}: {
+  item: ServiceMediaEntry | null;
+  loading: boolean;
+  onOpen: () => void;
+}) {
+  if (loading && !item) {
+    return (
+      <div className="media-card-enter overflow-hidden rounded-[1.45rem] border border-zinc-200/80 bg-white p-4 shadow-sm shadow-zinc-200/60" aria-hidden="true">
+        <div className="flex items-center gap-3">
+          <div className="h-12 w-12 animate-pulse rounded-2xl bg-zinc-100" />
+          <div className="min-w-0 flex-1 space-y-2">
+            <div className="h-4 w-28 animate-pulse rounded-full bg-zinc-200" />
+            <div className="h-3 w-40 animate-pulse rounded-full bg-zinc-100" />
+          </div>
+          <div className="h-9 w-20 animate-pulse rounded-full bg-zinc-100" />
+        </div>
+      </div>
+    );
+  }
+
+  const isLive = Boolean(item?.isLive || item?.streamStatus?.toLowerCase() === "live");
+  const label = isLive ? "En vivo ahora" : item?.isScheduled ? "Próximo live" : "Live";
+  const title = item?.title || "Transmisiones de la iglesia";
+  const meta = item
+    ? [item.providerLabel, formatMediaDate(item.date)].filter(Boolean).join(" · ")
+    : "Ver live y servicios anteriores";
+
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="media-card-enter group w-full overflow-hidden rounded-[1.45rem] border border-zinc-200/80 bg-white text-left shadow-sm shadow-zinc-200/60 transition duration-200 hover:-translate-y-0.5 hover:border-emerald-200 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+    >
+      <div className="relative flex min-w-0 items-center gap-3 p-4">
+        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-zinc-950 text-white shadow-sm">
+          {isLive ? <Radio className="h-6 w-6 text-red-300" /> : <PlayCircle className="h-6 w-6 text-emerald-200" />}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`rounded-full px-2.5 py-1 text-[0.68rem] font-black uppercase ${isLive ? "bg-red-600 text-white" : "bg-emerald-100 text-emerald-800"}`}>
+              {label}
+            </span>
+            {item?.series && <span className="truncate text-xs font-bold text-zinc-500">{item.series}</span>}
+          </div>
+          <p className="mt-2 line-clamp-1 text-base font-black text-zinc-950 group-hover:text-emerald-700">{title}</p>
+          <p className="mt-1 truncate text-xs font-bold text-zinc-500">{meta}</p>
+        </div>
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-700 transition group-hover:bg-zinc-950 group-hover:text-white">
+          <ArrowRight className="h-4 w-4" />
+        </span>
+      </div>
+    </button>
+  );
+}
+
 function DashboardTimelineSkeleton() {
   return (
     <div className="space-y-6" aria-hidden="true">
@@ -220,6 +287,7 @@ export default function Dashboard() {
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [ministries, setMinistries] = useState<Ministry[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [mediaShortcut, setMediaShortcut] = useState<ServiceMediaEntry | null>(null);
   const [loading, setLoading] = useState(true);
   const [respondingId, setRespondingId] = useState<string | null>(null);
 
@@ -242,19 +310,21 @@ export default function Dashboard() {
         setAnnouncements(cachedSnapshot.announcements);
         setMinistries(cachedSnapshot.ministries);
         setAssignments(cachedSnapshot.assignments);
+        setMediaShortcut(cachedSnapshot.mediaShortcut ?? null);
         setLoading(false);
       } else {
         setLoading(true);
       }
 
       try {
-        const [statsData, servicesData, eventsData, announcementsData, ministriesData, assignmentsData] = await Promise.all([
+        const [statsData, servicesData, eventsData, announcementsData, ministriesData, assignmentsData, mediaData] = await Promise.all([
           safeDashboardFetch("stats", () => fetchApi("/dashboard/stats"), null),
           safeDashboardFetch("services", () => fetchApi(DASHBOARD_SERVICES_PATH), []),
           safeDashboardFetch("events", () => fetchApi(DASHBOARD_EVENTS_PATH), []),
           safeDashboardFetch("announcements", () => fetchApi("/announcements"), []),
           safeDashboardFetch("ministries", () => fetchApi("/my-ministries"), []),
           safeDashboardFetch("asignaciones", () => fetchApi("/service-assignments/mine"), []),
+          safeDashboardFetch<ServiceMediaResponse | null>("media", () => fetchApi<ServiceMediaResponse>(DASHBOARD_MEDIA_PATH), null),
         ]);
 
         const nextStats = statsData && typeof statsData === "object" && !("error" in statsData)
@@ -319,12 +389,15 @@ export default function Dashboard() {
         const ministryPayload = ministriesData as MinistriesResponse;
         const nextMinistries = Array.isArray(ministriesData) ? ministriesData : Array.isArray(ministryPayload?.ministries) ? ministryPayload.ministries : [];
         setMinistries(nextMinistries);
+        const nextMediaShortcut = getDashboardMediaShortcut(mediaData);
+        setMediaShortcut(nextMediaShortcut);
         saveDashboardSnapshot(selectedChurch.id, {
           stats: nextStats,
           timeline: nextTimeline,
           announcements: nextAnnouncements,
           ministries: nextMinistries,
           assignments: assignmentList,
+          mediaShortcut: nextMediaShortcut,
         });
       } catch (e) {
         console.error("No se pudo cargar el panel:", e);
@@ -466,6 +539,12 @@ export default function Dashboard() {
           </Button>
         </div>
       </div>
+
+      <DashboardLiveShortcut
+        item={mediaShortcut}
+        loading={loading}
+        onOpen={() => navigate(mediaShortcut ? `/app/media/${mediaShortcut.id}` : "/app/media")}
+      />
 
       <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(280px,0.8fr)]">
         <section className="min-w-0 space-y-6">
