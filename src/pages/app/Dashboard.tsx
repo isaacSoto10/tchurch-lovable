@@ -174,7 +174,7 @@ function DashboardLiveShortcut({
 }) {
   if (loading && !item) {
     return (
-      <div className="media-card-enter overflow-hidden rounded-[1.45rem] border border-zinc-200/80 bg-white p-4 shadow-sm shadow-zinc-200/60" aria-hidden="true">
+      <div className="media-card-enter app-card overflow-hidden p-4" aria-hidden="true">
         <div className="flex items-center gap-3">
           <div className="h-12 w-12 animate-pulse rounded-2xl bg-zinc-100" />
           <div className="min-w-0 flex-1 space-y-2">
@@ -198,23 +198,25 @@ function DashboardLiveShortcut({
     <button
       type="button"
       onClick={onOpen}
-      className="media-card-enter group w-full overflow-hidden rounded-[1.45rem] border border-zinc-200/80 bg-white text-left shadow-sm shadow-zinc-200/60 transition duration-200 hover:-translate-y-0.5 hover:border-emerald-200 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+      aria-label={item ? `Abrir media: ${title}` : "Abrir media"}
+      className="media-card-enter app-card group w-full overflow-hidden text-left transition-colors hover:border-primary/25 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
     >
       <div className="relative flex min-w-0 items-center gap-3 p-4">
-        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-zinc-950 text-white shadow-sm">
-          {isLive ? <Radio className="h-6 w-6 text-red-300" /> : <PlayCircle className="h-6 w-6 text-emerald-200" />}
+        <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ring-1 ${isLive ? "bg-red-50 text-red-600 ring-red-100" : "bg-primary/10 text-primary ring-primary/10"}`}>
+          {isLive ? <Radio className="h-6 w-6" /> : <PlayCircle className="h-6 w-6" />}
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className={`rounded-full px-2.5 py-1 text-[0.68rem] font-black uppercase ${isLive ? "bg-red-600 text-white" : "bg-emerald-100 text-emerald-800"}`}>
+            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[0.68rem] font-bold uppercase ${isLive ? "bg-red-600 text-white" : "bg-primary/10 text-primary"}`}>
+              {isLive && <span className="media-live-dot" aria-hidden="true" />}
               {label}
             </span>
             {item?.series && <span className="truncate text-xs font-bold text-zinc-500">{item.series}</span>}
           </div>
-          <p className="mt-2 line-clamp-1 text-base font-black text-zinc-950 group-hover:text-emerald-700">{title}</p>
+          <p className="mt-2 line-clamp-1 text-base font-black text-zinc-950 group-hover:text-primary">{title}</p>
           <p className="mt-1 truncate text-xs font-bold text-zinc-500">{meta}</p>
         </div>
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-700 transition group-hover:bg-zinc-950 group-hover:text-white">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
           <ArrowRight className="h-4 w-4" />
         </span>
       </div>

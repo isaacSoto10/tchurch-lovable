@@ -69,14 +69,15 @@ function featureMeta(item: ServiceMediaEntry | null) {
 
 function StatTile({ label, value, tone }: { label: string; value: number | string; tone: "live" | "soon" | "archive" }) {
   const toneClass = {
-    live: "from-red-50 to-white text-red-700 border-red-100",
-    soon: "from-amber-50 to-white text-amber-700 border-amber-100",
-    archive: "from-emerald-50 to-white text-emerald-700 border-emerald-100",
+    live: "bg-red-500",
+    soon: "bg-amber-400",
+    archive: "bg-primary",
   }[tone];
 
   return (
-    <div className={`media-card-enter rounded-2xl border bg-gradient-to-br px-3 py-3 shadow-sm ${toneClass}`}>
-      <p className="text-[0.68rem] font-black uppercase text-zinc-500">{label}</p>
+    <div className="media-card-enter app-card px-3 py-3">
+      <span className={`mb-3 block h-1.5 w-9 rounded-full ${toneClass}`} aria-hidden="true" />
+      <p className="text-[0.68rem] font-bold uppercase text-muted-foreground">{label}</p>
       <p className="mt-1 text-2xl font-black text-zinc-950">{value}</p>
     </div>
   );
@@ -114,45 +115,45 @@ function MediaHero({
   const isLive = isLiveMediaItem(item);
 
   return (
-    <section className="media-hero-enter overflow-hidden rounded-[1.6rem] border border-zinc-900 bg-zinc-950 text-white shadow-[0_24px_70px_rgba(24,24,27,0.22)]">
-      <div className="media-broadcast-scan relative grid min-h-[25rem] gap-5 p-4 sm:min-h-0 sm:p-5 lg:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)] lg:items-center">
+    <section className="media-hero-enter app-card-soft overflow-hidden rounded-[1.75rem]">
+      <div className="grid gap-5 p-4 sm:p-5 md:p-6 lg:grid-cols-[minmax(0,1.05fr)_minmax(320px,0.95fr)] lg:items-center">
         <div className="relative z-10 min-w-0 space-y-4">
           <div className="flex flex-wrap items-center gap-2">
-            <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-[0.68rem] font-black uppercase ${isLive ? "bg-red-500 text-white" : "bg-white/10 text-white"}`}>
+            <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-[0.68rem] font-black uppercase ${isLive ? "bg-red-600 text-white" : "bg-primary/10 text-primary"}`}>
               <span className={isLive ? "media-live-dot" : ""} />
               <Radio className="h-3.5 w-3.5" />
               {featureLabel(item)}
             </span>
             {item?.providerLabel && (
-              <span className="rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[0.68rem] font-black uppercase text-white/80">
+              <span className="rounded-full border border-border bg-white/80 px-3 py-1 text-[0.68rem] font-black uppercase text-muted-foreground">
                 {item.providerLabel}
               </span>
             )}
           </div>
 
           <div className="space-y-3">
-            <p className="text-xs font-black uppercase text-emerald-200">{churchName}</p>
-            <h1 className="line-clamp-3 text-3xl font-black leading-[0.98] text-white sm:text-4xl">
+            <p className="mobile-section-title">{churchName}</p>
+            <h1 className="line-clamp-3 text-[1.9rem] font-black leading-none tracking-tight text-foreground sm:text-4xl">
               {item?.title || "Media"}
             </h1>
-            <p className="max-w-xl text-sm font-medium leading-6 text-white/72">
+            <p className="max-w-xl text-sm font-medium leading-6 text-muted-foreground">
               {item?.description || "Servicios anteriores y transmisiones de tu iglesia en un solo lugar."}
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-white/70">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5">
+          <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-muted-foreground">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-3 py-1.5">
               <Clock3 className="h-3.5 w-3.5" />
               {featureMeta(item)}
             </span>
             {item?.series && (
-              <span className="rounded-full bg-white/10 px-3 py-1.5">{item.series}</span>
+              <span className="rounded-full bg-accent px-3 py-1.5 text-accent-foreground">{item.series}</span>
             )}
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
             {item ? (
-              <Button asChild className="h-11 rounded-2xl bg-white text-zinc-950 hover:bg-white/90">
+              <Button asChild className="h-11 rounded-2xl font-bold">
                 <Link to={`/app/media/${item.id}`}>
                   <PlayCircle className="h-4 w-4" />
                   Ver ahora
@@ -165,7 +166,7 @@ function MediaHero({
               size="sm"
               onClick={onRefresh}
               disabled={refreshing}
-              className="h-11 rounded-2xl border-white/20 bg-white/10 text-white hover:bg-white/15 hover:text-white"
+              className="h-11 rounded-2xl bg-white/80 font-bold"
             >
               {refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
               Actualizar
@@ -175,16 +176,26 @@ function MediaHero({
 
         <div className="relative z-10 min-w-0">
           {item ? (
-            <div className="media-player-lift overflow-hidden rounded-[1.35rem] border border-white/10 bg-zinc-900 shadow-2xl">
-              <MediaEmbed item={item} compact />
+            <div className="media-player-lift overflow-hidden rounded-[1.5rem] border border-border bg-white p-2 shadow-sm shadow-zinc-200/60">
+              <div className="mb-2 flex items-center justify-between px-1 text-xs font-bold text-muted-foreground">
+                <span className="inline-flex items-center gap-1.5">
+                  <Video className="h-3.5 w-3.5 text-primary" />
+                  Reproductor
+                </span>
+                {isLive && <span className="rounded-full bg-red-50 px-2 py-0.5 text-red-700">Live</span>}
+              </div>
+              <div className="overflow-hidden rounded-[1.1rem]">
+                <MediaEmbed item={item} compact />
+              </div>
             </div>
           ) : (
-            <div className="media-player-lift flex aspect-video min-h-52 items-center justify-center rounded-[1.35rem] border border-white/10 bg-white/[0.06]">
+            <div className="media-player-lift flex aspect-video min-h-52 items-center justify-center rounded-[1.5rem] border border-dashed border-border bg-muted/60">
               <div className="text-center">
-                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-white/10 text-emerald-200">
+                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
                   <Film className="h-7 w-7" />
                 </div>
-                <p className="mt-3 text-sm font-black text-white">No hay transmisión activa</p>
+                <p className="mt-3 text-sm font-black text-foreground">No hay transmisión activa</p>
+                <p className="mt-1 text-xs font-medium text-muted-foreground">Cuando haya live, aparecerá aquí.</p>
               </div>
             </div>
           )}
@@ -211,7 +222,7 @@ function MediaCard({ item, index }: { item: ServiceMediaEntry; index: number }) 
   if (showInline) {
     return (
       <article
-        className="media-card-enter group overflow-hidden rounded-[1.35rem] border border-zinc-200/90 bg-white p-3 shadow-sm shadow-zinc-200/60 transition duration-200 hover:-translate-y-0.5 hover:border-emerald-200 hover:shadow-lg"
+        className="media-card-enter group overflow-hidden rounded-[1.35rem] border border-zinc-200/90 bg-white p-3 shadow-sm shadow-zinc-200/60 transition duration-200 hover:-translate-y-0.5 hover:border-primary/20 hover:shadow-md"
         style={{ animationDelay }}
       >
         <div className="mb-4">
@@ -227,13 +238,13 @@ function MediaCard({ item, index }: { item: ServiceMediaEntry; index: number }) 
               onTouchStart={() => preloadAppRoute(`/app/media/${item.id}`)}
               className="block rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
             >
-              <h3 className="line-clamp-2 text-base font-black text-zinc-950 group-hover:text-emerald-700">{item.title}</h3>
+              <h3 className="line-clamp-2 text-base font-black text-foreground group-hover:text-primary">{item.title}</h3>
               <p className="mt-1 truncate text-sm font-medium text-zinc-500">{item.serviceTitle}</p>
             </Link>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               {isLive && <Badge className="bg-red-600 text-white">En vivo</Badge>}
               <MediaProviderBadge item={item} />
-              {item.series && <Badge variant="outline" className="bg-white">{item.series}</Badge>}
+              {item.series && <Badge variant="outline" className="bg-white text-muted-foreground">{item.series}</Badge>}
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1 text-xs font-bold text-zinc-500">
@@ -267,17 +278,17 @@ function MediaCard({ item, index }: { item: ServiceMediaEntry; index: number }) 
       onPointerEnter={() => preloadAppRoute(`/app/media/${item.id}`)}
       onFocus={() => preloadAppRoute(`/app/media/${item.id}`)}
       onTouchStart={() => preloadAppRoute(`/app/media/${item.id}`)}
-      className="media-card-enter group block rounded-[1.35rem] border border-zinc-200/90 bg-white p-4 shadow-sm shadow-zinc-200/60 transition duration-200 hover:-translate-y-0.5 hover:border-emerald-200 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+      className="media-card-enter group block rounded-[1.35rem] border border-zinc-200/90 bg-white p-4 shadow-sm shadow-zinc-200/60 transition duration-200 hover:-translate-y-0.5 hover:border-primary/20 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
       style={{ animationDelay }}
     >
       <div className="flex min-w-0 items-start justify-between gap-3">
         <div className="min-w-0">
-          <h3 className="line-clamp-2 text-base font-black text-zinc-950 group-hover:text-emerald-700">{item.title}</h3>
+          <h3 className="line-clamp-2 text-base font-black text-foreground group-hover:text-primary">{item.title}</h3>
           <p className="mt-1 truncate text-sm font-medium text-zinc-500">{item.serviceTitle}</p>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             {isLive && <Badge className="bg-red-600 text-white">En vivo</Badge>}
             <MediaProviderBadge item={item} />
-            {item.series && <Badge variant="outline" className="bg-white">{item.series}</Badge>}
+            {item.series && <Badge variant="outline" className="bg-white text-muted-foreground">{item.series}</Badge>}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1 text-xs font-bold text-zinc-500">
