@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { Browser } from "@capacitor/browser";
 import { Capacitor } from "@capacitor/core";
 import QRCode from "qrcode";
 import {
@@ -90,6 +91,10 @@ type MinistryFinanceSnapshot = {
     enabled?: boolean;
     connected?: boolean;
     publicUrl?: string | null;
+    provider?: "tchurch_stripe" | "church_center" | "external_url";
+    externalUrl?: string | null;
+    externalLabel?: string | null;
+    externalInstructions?: string | null;
   } | null;
   fund?: Fund | null;
   funds?: Fund[];
@@ -97,6 +102,8 @@ type MinistryFinanceSnapshot = {
   transactions?: FinanceTransaction[];
   expenses?: MinistryExpense[];
 };
+
+type GivingConfig = NonNullable<MinistryFinanceSnapshot["giving"]>;
 
 const completedStatuses = new Set(["succeeded", "paid", "confirmed"]);
 
@@ -192,6 +199,7 @@ export function MinistryFinance({ ministryId, ministryName, canManage }: Ministr
   const [funds, setFunds] = useState<Fund[]>([]);
   const [enabled, setEnabled] = useState(false);
   const [connected, setConnected] = useState(false);
+  const [givingConfig, setGivingConfig] = useState<GivingConfig>({});
   const [summary, setSummary] = useState<Required<MinistryFinanceSummary>>({
     receivedCents: 0,
     expenseCents: 0,
@@ -233,15 +241,19 @@ export function MinistryFinance({ ministryId, ministryName, canManage }: Ministr
     note: "",
   });
 
+  const externalGivingUrl = givingConfig.externalUrl?.trim() || "";
+  const usesExternalGiving = Boolean(externalGivingUrl);
+  const externalGivingLabel = givingConfig.externalLabel || "Church Center";
   const publicGivingUrl = useMemo(() => {
+    if (externalGivingUrl) return externalGivingUrl;
     if (!fund || !selectedChurch?.slug) return "";
     return `https://www.tchurchapp.com/give/${selectedChurch.slug}?fund=${encodeURIComponent(fund.id)}&ministry=${encodeURIComponent(ministryId)}`;
-  }, [fund, ministryId, selectedChurch?.slug]);
+  }, [externalGivingUrl, fund, ministryId, selectedChurch?.slug]);
 
   const qrFileName = `tchurch-${sanitizeFileName(selectedChurch?.slug || selectedChurch?.name || "iglesia")}-${sanitizeFileName(ministryName)}-qr.png`;
   const csvFileName = `tchurch-${sanitizeFileName(ministryName)}-finanzas.csv`;
   const goalProgress = summary.goalCents > 0 ? Math.min(100, Math.round((summary.receivedCents / summary.goalCents) * 100)) : 0;
-  const canDonate = Boolean(fund && enabled && connected);
+  const canDonate = Boolean(fund && enabled && connected && !usesExternalGiving);
 
   const loadFinance = useCallback(async () => {
     setLoading(true);
@@ -260,14 +272,22 @@ export function MinistryFinance({ ministryId, ministryName, canManage }: Ministr
 
       setAdvancedAvailable(hasAdvancedEndpoint);
 
-      const fundData = await fetchApi<{ funds: Fund[]; giving?: { enabled?: boolean; connected?: boolean } }>("/giving/funds");
+      const fundData = await fetchApi<{ funds: Fund[]; giving?: GivingConfig }>("/giving/funds");
       const availableFunds = snapshot?.funds?.length ? snapshot.funds : fundData.funds || [];
       const selectedFund = snapshot?.fund || chooseMinistryFund(availableFunds, ministryId, ministryName);
+      const mergedGiving: GivingConfig = {
+        ...(fundData.giving || {}),
+        ...(snapshot?.giving || {}),
+        externalUrl: snapshot?.giving?.externalUrl ?? fundData.giving?.externalUrl ?? null,
+        externalLabel: snapshot?.giving?.externalLabel ?? fundData.giving?.externalLabel ?? null,
+        externalInstructions: snapshot?.giving?.externalInstructions ?? fundData.giving?.externalInstructions ?? null,
+      };
 
       setFunds(availableFunds.filter((item) => item.active !== false));
       setFund(selectedFund);
-      setEnabled(Boolean(snapshot?.giving?.enabled ?? fundData.giving?.enabled));
-      setConnected(Boolean(snapshot?.giving?.connected ?? fundData.giving?.connected));
+      setGivingConfig(mergedGiving);
+      setEnabled(Boolean(mergedGiving.enabled));
+      setConnected(Boolean(mergedGiving.connected));
 
       let scopedTransactions = snapshot?.transactions || [];
       if (canManage && scopedTransactions.length === 0 && selectedFund) {
@@ -393,9 +413,9 @@ export function MinistryFinance({ ministryId, ministryName, canManage }: Ministr
     return `${window.location.origin}/app/ministries/${ministryId}?tab=finance&${status}=true`;
   }
 
-  function openCheckoutUrl(url: string) {
+  async function openCheckoutUrl(url: string) {
     if (Capacitor.isNativePlatform()) {
-      window.open(url, "_system", "noopener,noreferrer");
+      await Browser.open({ url });
       return;
     }
 
@@ -484,7 +504,7 @@ export function MinistryFinance({ ministryId, ministryName, canManage }: Ministr
           cancelUrl: getCheckoutReturnUrl("canceled"),
         }),
       });
-      openCheckoutUrl(data.url);
+      await openCheckoutUrl(data.url);
     } catch (checkoutError) {
       toast({
         title: "No se pudo abrir el pago",
@@ -698,11 +718,27 @@ export function MinistryFinance({ ministryId, ministryName, canManage }: Ministr
               Donar a {ministryName}
             </CardTitle>
             <CardDescription>
-              Las donaciones usan Stripe y quedan designadas al fondo del ministerio.
+              {usesExternalGiving
+                ? `Las donaciones se completan en ${externalGivingLabel}.`
+                : "Las donaciones usan Stripe y quedan designadas al fondo del ministerio."}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {!fund ? (
+            {usesExternalGiving ? (
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+                <p className="text-sm font-semibold text-emerald-950">Donaciones en {externalGivingLabel}</p>
+                <p className="mt-1 text-xs leading-5 text-emerald-900">
+                  {givingConfig.externalInstructions || `Grace en Espanol recibe diezmos y ofrendas a traves de ${externalGivingLabel}.`}
+                </p>
+                <Button type="button" className="mt-4 h-11 w-full rounded-2xl" onClick={() => void openCheckoutUrl(externalGivingUrl)}>
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  Abrir {externalGivingLabel}
+                </Button>
+                <p className="mt-3 text-xs leading-5 text-emerald-900">
+                  Los recibos, metodos de pago e historial de donaciones se manejan directamente en {externalGivingLabel}.
+                </p>
+              </div>
+            ) : !fund ? (
               <div className="rounded-2xl border border-dashed p-4 text-center">
                 <Wallet className="mx-auto mb-2 h-8 w-8 text-muted-foreground/60" />
                 <p className="text-sm font-semibold">Este ministerio no tiene fondo vinculado</p>
@@ -781,7 +817,7 @@ export function MinistryFinance({ ministryId, ministryName, canManage }: Ministr
               Link y QR del ministerio
             </CardTitle>
             <CardDescription>
-              Compártelo para que el fondo salga preseleccionado.
+              {usesExternalGiving ? `Compártelo para abrir ${externalGivingLabel}.` : "Compártelo para que el fondo salga preseleccionado."}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -802,7 +838,7 @@ export function MinistryFinance({ ministryId, ministryName, canManage }: Ministr
                 <Copy className="mr-1 h-3.5 w-3.5" />
                 Copiar
               </Button>
-              <Button type="button" variant="outline" className="h-10 rounded-2xl px-2 text-xs" onClick={() => openCheckoutUrl(publicGivingUrl)} disabled={!publicGivingUrl}>
+              <Button type="button" variant="outline" className="h-10 rounded-2xl px-2 text-xs" onClick={() => void openCheckoutUrl(publicGivingUrl)} disabled={!publicGivingUrl}>
                 <ExternalLink className="mr-1 h-3.5 w-3.5" />
                 Abrir
               </Button>
