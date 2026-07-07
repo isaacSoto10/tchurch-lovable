@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { Browser } from "@capacitor/browser";
 import { Capacitor } from "@capacitor/core";
 import QRCode from "qrcode";
 import { Copy, Download, Heart, Loader2, ExternalLink, QrCode, Receipt, ShieldCheck } from "lucide-react";
@@ -38,6 +39,15 @@ type Transaction = Donation & {
   paymentProvider?: string | null;
 };
 
+type GivingConfig = {
+  enabled?: boolean;
+  connected?: boolean;
+  provider?: "tchurch_stripe" | "church_center" | "external_url";
+  externalUrl?: string | null;
+  externalLabel?: string | null;
+  externalInstructions?: string | null;
+};
+
 const frequencyLabels: Record<string, string> = {
   one_time: "Una vez",
   weekly: "Semanal",
@@ -66,6 +76,7 @@ export default function Giving() {
   const [funds, setFunds] = useState<Fund[]>([]);
   const [connected, setConnected] = useState(false);
   const [enabled, setEnabled] = useState(false);
+  const [givingConfig, setGivingConfig] = useState<GivingConfig>({});
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [donations, setDonations] = useState<Donation[]>([]);
@@ -85,7 +96,10 @@ export default function Giving() {
   });
 
   const isAdmin = selectedChurch?.role === "ADMIN";
-  const publicGivingUrl = selectedChurch?.slug ? `https://www.tchurchapp.com/give/${selectedChurch.slug}` : "";
+  const externalGivingUrl = givingConfig.externalUrl?.trim() || "";
+  const usesExternalGiving = Boolean(externalGivingUrl);
+  const externalGivingLabel = givingConfig.externalLabel || "Church Center";
+  const publicGivingUrl = externalGivingUrl || (selectedChurch?.slug ? `https://www.tchurchapp.com/give/${selectedChurch.slug}` : "");
   const qrFileName = `tchurch-${sanitizeFileName(selectedChurch?.slug || selectedChurch?.name || "donaciones")}-qr-donaciones.png`;
 
   function getCheckoutReturnUrl(status: "success" | "canceled") {
@@ -96,9 +110,9 @@ export default function Giving() {
     return `${window.location.origin}/app/giving?${status}=true`;
   }
 
-  function openCheckoutUrl(url: string) {
+  async function openCheckoutUrl(url: string) {
     if (Capacitor.isNativePlatform()) {
-      window.open(url, "_system", "noopener,noreferrer");
+      await Browser.open({ url });
       return;
     }
 
@@ -168,11 +182,12 @@ export default function Giving() {
     setLoading(true);
     try {
       const [fundData, meData] = await Promise.all([
-        fetchApi<{ funds: Fund[]; giving?: { enabled?: boolean; connected?: boolean } }>("/giving/funds"),
+        fetchApi<{ funds: Fund[]; giving?: GivingConfig }>("/giving/funds"),
         fetchApi<{ donations: Donation[] }>("/giving/me").catch(() => ({ donations: [] })),
       ]);
       const activeFunds = (fundData.funds || []).filter((fund) => fund.active);
       setFunds(activeFunds);
+      setGivingConfig(fundData.giving || {});
       setEnabled(Boolean(fundData.giving?.enabled));
       setConnected(Boolean(fundData.giving?.connected));
       setDonations(meData.donations || []);
@@ -313,7 +328,7 @@ export default function Giving() {
           cancelUrl: getCheckoutReturnUrl("canceled"),
         }),
       });
-      openCheckoutUrl(data.url);
+      await openCheckoutUrl(data.url);
     } catch (error) {
       toast({ title: "No se pudo abrir el pago", description: error instanceof Error ? error.message : undefined, variant: "destructive" });
     } finally {
@@ -344,7 +359,9 @@ export default function Giving() {
           <CardHeader>
             <CardTitle>Link público y QR para donar</CardTitle>
             <CardDescription>
-              Compártelo con visitantes, familiares o cualquier persona que quiera apoyar a la iglesia.
+              {usesExternalGiving
+                ? `Este link abre ${externalGivingLabel} para completar la donación.`
+                : "Compártelo con visitantes, familiares o cualquier persona que quiera apoyar a la iglesia."}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -367,7 +384,7 @@ export default function Giving() {
                     <Copy className="mr-2 h-4 w-4" />
                     Copiar
                   </Button>
-                  <Button type="button" variant="outline" className="h-11 rounded-2xl" onClick={() => openCheckoutUrl(publicGivingUrl)}>
+                  <Button type="button" variant="outline" className="h-11 rounded-2xl" onClick={() => void openCheckoutUrl(publicGivingUrl)}>
                     <ExternalLink className="mr-2 h-4 w-4" />
                     Abrir
                   </Button>
@@ -382,7 +399,28 @@ export default function Giving() {
         </Card>
       ) : null}
 
-      {!enabled || !connected ? (
+      {usesExternalGiving ? (
+        <Card className="app-card border-emerald-200 bg-emerald-50">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-emerald-950">
+              <ShieldCheck className="h-5 w-5" />
+              Donaciones en {externalGivingLabel}
+            </CardTitle>
+            <CardDescription className="text-emerald-900">
+              {givingConfig.externalInstructions || `Grace en Espanol recibe diezmos y ofrendas a traves de ${externalGivingLabel}.`}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Button type="button" className="h-12 w-full rounded-2xl text-base font-bold" onClick={() => void openCheckoutUrl(externalGivingUrl)}>
+              <ExternalLink className="mr-2 h-4 w-4" />
+              Abrir {externalGivingLabel}
+            </Button>
+            <p className="text-xs leading-5 text-emerald-900">
+              Los recibos, metodos de pago e historial de donaciones se manejan directamente en {externalGivingLabel}.
+            </p>
+          </CardContent>
+        </Card>
+      ) : !enabled || !connected ? (
         <Card className="app-card border-amber-200 bg-amber-50">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-amber-900">
@@ -462,7 +500,7 @@ export default function Giving() {
         </Card>
       )}
 
-      <Card className="app-card">
+      {!usesExternalGiving && <Card className="app-card">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Receipt className="h-5 w-5" />
@@ -495,9 +533,9 @@ export default function Giving() {
             </div>
           )}
         </CardContent>
-      </Card>
+      </Card>}
 
-      {(canViewFinance || isAdmin) && (
+      {!usesExternalGiving && (canViewFinance || isAdmin) && (
         <Card className="app-card">
           <CardHeader>
             <CardTitle>Finanzas</CardTitle>
