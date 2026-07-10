@@ -4,7 +4,8 @@ import { canDeleteAnnouncement, canManageAnnouncements, resolveAnnouncementRole 
 describe("announcement permissions", () => {
   it("falls back to the selected church role when the ministries response has no role", () => {
     expect(resolveAnnouncementRole(null, "admin")).toBe("ADMIN");
-    expect(canManageAnnouncements(undefined, "PLANNER")).toBe(true);
+    expect(canManageAnnouncements(undefined, "ADMIN")).toBe(true);
+    expect(canManageAnnouncements(undefined, "PLANNER")).toBe(false);
   });
 
   it("keeps a supplied API role authoritative", () => {

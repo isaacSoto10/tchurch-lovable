@@ -8,7 +8,7 @@ export function resolveAnnouncementRole(apiRole?: string | null, churchRole?: st
 
 export function canManageAnnouncements(apiRole?: string | null, churchRole?: string | null) {
   const role = resolveAnnouncementRole(apiRole, churchRole);
-  return role === "ADMIN" || role === "PLANNER";
+  return role === "ADMIN";
 }
 
 export function canDeleteAnnouncement(status: "PENDING" | "PUBLISHED" | "REJECTED", canManage: boolean) {
