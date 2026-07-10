@@ -3,12 +3,14 @@ import {
   MEDIA_SNAPSHOT_TTL_MS,
   getMediaEmbed,
   getMediaProvider,
+  groupMediaBySeries,
   getServiceMediaEntryFromDetail,
   getUrlMediaEmbed,
   isMediaEndpointUnavailableError,
   isLiveDestinationSelectable,
   readMediaSnapshot,
   normalizeMediaUrl,
+  normalizeSeriesKey,
   type LiveDestination,
   type ServiceMediaEntry,
   type ServiceMediaPlayback,
@@ -320,5 +322,17 @@ describe("service media helpers", () => {
     expect(readMediaSnapshot(key)).toBeNull();
     expect(readMediaSnapshot(key, { allowStale: true })?.response.live[0]?.id).toBe("cached-service");
     window.sessionStorage.removeItem(key);
+  });
+
+  it("groups series without splitting case, accents, or whitespace variants", () => {
+    const grouped = groupMediaBySeries([
+      entry({ id: "one", series: "Fe y Vida", date: "2026-06-01T12:00:00.000Z" }),
+      entry({ id: "two", series: "  FÉ   Y VIDA ", date: "2026-06-08T12:00:00.000Z" }),
+      entry({ id: "three", series: null }),
+    ]);
+
+    expect(normalizeSeriesKey("  FÉ   Y VIDA ")).toBe("fe y vida");
+    expect(grouped).toHaveLength(1);
+    expect(grouped[0].items.map((item) => item.id)).toEqual(["two", "one"]);
   });
 });

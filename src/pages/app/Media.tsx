@@ -1,40 +1,33 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
-import {
-  CalendarDays,
-  Clock3,
-  Film,
-  Loader2,
-  PlayCircle,
-  Radio,
-  RefreshCw,
-  Search,
-  Video,
-} from "lucide-react";
+import { Link, useSearchParams } from "react-router-dom";
+import { CalendarDays, ChevronRight, Loader2, PlayCircle, Radio, RefreshCw, Search, Settings2, Video } from "lucide-react";
+import { LiveDestinationSetup } from "@/components/LiveDestinationSetup";
+import { MediaProviderBadge } from "@/components/MediaEmbed";
+import { SectionNav } from "@/components/SectionNav";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useToast } from "@/components/ui/use-toast";
 import { useApi } from "@/hooks/useApi";
-import { useChurch } from "@/providers/ChurchProvider";
-import { LiveDestinationSetup } from "@/components/LiveDestinationSetup";
-import { MediaEmbed, MediaExternalLink, MediaProviderBadge } from "@/components/MediaEmbed";
+import { preloadAppRoute } from "@/lib/appRoutePreloaders";
 import {
   flattenServiceMedia,
   formatMediaDate,
-  getMediaEmbed,
+  groupMediaBySeries,
   isMediaEndpointUnavailableError,
   mediaSearchText,
   mediaSnapshotKey,
+  normalizeSeriesKey,
   readMediaSnapshot,
   writeMediaSnapshot,
+  type MediaSeriesGroup,
   type ServiceMediaEntry,
   type ServiceMediaResponse,
 } from "@/lib/media";
-import { preloadAppRoute } from "@/lib/appRoutePreloaders";
+import { useChurch } from "@/providers/ChurchProvider";
 
 const MEDIA_LIST_PATH = "/service-media?limit=140";
+type MediaView = "recent" | "series" | "live";
 
 function roleCanManage(role?: string | null) {
   const normalized = String(role || "").toUpperCase();
@@ -42,310 +35,125 @@ function roleCanManage(role?: string | null) {
 }
 
 function emptyResponse(): ServiceMediaResponse {
-  return {
-    live: [],
-    scheduled: [],
-    previous: [],
-    destinations: [],
-    generatedAt: new Date().toISOString(),
-  };
-}
-
-function isLiveMediaItem(item: ServiceMediaEntry | null | undefined) {
-  return Boolean(item?.isLive || item?.streamStatus?.toLowerCase() === "live");
-}
-
-function featureLabel(item: ServiceMediaEntry | null) {
-  if (!item) return "Media";
-  if (isLiveMediaItem(item)) return "En vivo ahora";
-  if (item.isScheduled) return "Próxima transmisión";
-  return "Servicio destacado";
-}
-
-function featureMeta(item: ServiceMediaEntry | null) {
-  if (!item) return "Transmisiones y servicios anteriores";
-  return [item.providerLabel, formatMediaDate(item.date), item.speaker].filter(Boolean).join(" · ");
-}
-
-function StatTile({ label, value, tone }: { label: string; value: number | string; tone: "live" | "soon" | "archive" }) {
-  const toneClass = {
-    live: "bg-red-500",
-    soon: "bg-amber-400",
-    archive: "bg-primary",
-  }[tone];
-
-  return (
-    <div className="media-card-enter app-card px-3 py-3">
-      <span className={`mb-3 block h-1.5 w-9 rounded-full ${toneClass}`} aria-hidden="true" />
-      <p className="text-[0.68rem] font-bold uppercase text-muted-foreground">{label}</p>
-      <p className="mt-1 text-2xl font-black text-zinc-950">{value}</p>
-    </div>
-  );
+  return { live: [], scheduled: [], previous: [], destinations: [], generatedAt: new Date().toISOString() };
 }
 
 function MediaSkeleton() {
   return (
-    <div className="mobile-page animate-pulse space-y-4">
-      <div className="h-8 w-36 rounded-full bg-muted" />
-      <div className="aspect-video rounded-lg bg-muted" />
-      <div className="grid grid-cols-3 gap-3">
-        <div className="h-20 rounded-lg bg-muted/80" />
-        <div className="h-20 rounded-lg bg-muted/70" />
-        <div className="h-20 rounded-lg bg-muted/60" />
-      </div>
-      <div className="space-y-3">
-        <div className="h-24 rounded-lg bg-muted/70" />
-        <div className="h-24 rounded-lg bg-muted/60" />
+    <div className="mobile-page space-y-4" role="status" aria-label="Cargando sermones">
+      <div className="h-11 animate-pulse rounded-xl border border-border bg-card" />
+      <div className="h-20 animate-pulse rounded-xl border border-border bg-card" />
+      <div className="grid gap-3 sm:grid-cols-2">
+        {[0, 1, 2, 3].map((item) => <div key={item} className="h-64 animate-pulse rounded-xl border border-border bg-card" />)}
       </div>
     </div>
   );
 }
 
-function MediaHero({
-  item,
-  churchName,
-  refreshing,
-  onRefresh,
-}: {
-  item: ServiceMediaEntry | null;
-  churchName: string;
-  refreshing: boolean;
-  onRefresh: () => void;
-}) {
-  const isLive = isLiveMediaItem(item);
-
+function SermonArtwork({ item }: { item: ServiceMediaEntry }) {
   return (
-    <section className="media-hero-enter app-card-soft overflow-hidden rounded-[1.75rem]">
-      <div className="grid gap-5 p-4 sm:p-5 md:p-6 lg:grid-cols-[minmax(0,1.05fr)_minmax(320px,0.95fr)] lg:items-center">
-        <div className="relative z-10 min-w-0 space-y-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-[0.68rem] font-black uppercase ${isLive ? "bg-red-600 text-white" : "bg-primary/10 text-primary"}`}>
-              <span className={isLive ? "media-live-dot" : ""} />
-              <Radio className="h-3.5 w-3.5" />
-              {featureLabel(item)}
-            </span>
-            {item?.providerLabel && (
-              <span className="rounded-full border border-border bg-white/80 px-3 py-1 text-[0.68rem] font-black uppercase text-muted-foreground">
-                {item.providerLabel}
-              </span>
-            )}
-          </div>
-
-          <div className="space-y-3">
-            <p className="mobile-section-title">{churchName}</p>
-            <h1 className="line-clamp-3 text-[1.9rem] font-black leading-none tracking-tight text-foreground sm:text-4xl">
-              {item?.title || "Media"}
-            </h1>
-            <p className="max-w-xl text-sm font-medium leading-6 text-muted-foreground">
-              {item?.description || "Servicios anteriores y transmisiones de tu iglesia en un solo lugar."}
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-muted-foreground">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-3 py-1.5">
-              <Clock3 className="h-3.5 w-3.5" />
-              {featureMeta(item)}
-            </span>
-            {item?.series && (
-              <span className="rounded-full bg-accent px-3 py-1.5 text-accent-foreground">{item.series}</span>
-            )}
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            {item ? (
-              <Button asChild className="h-11 rounded-2xl font-bold">
-                <Link to={`/app/media/${item.id}`}>
-                  <PlayCircle className="h-4 w-4" />
-                  Ver ahora
-                </Link>
-              </Button>
-            ) : null}
-            {item ? <MediaExternalLink item={item} /> : null}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={onRefresh}
-              disabled={refreshing}
-              className="h-11 rounded-2xl bg-white/80 font-bold"
-            >
-              {refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-              Actualizar
-            </Button>
-          </div>
-        </div>
-
-        <div className="relative z-10 min-w-0">
-          {item ? (
-            <div className="media-player-lift overflow-hidden rounded-[1.5rem] border border-border bg-white p-2 shadow-sm shadow-zinc-200/60">
-              <div className="mb-2 flex items-center justify-between px-1 text-xs font-bold text-muted-foreground">
-                <span className="inline-flex items-center gap-1.5">
-                  <Video className="h-3.5 w-3.5 text-primary" />
-                  Reproductor
-                </span>
-                {isLive && <span className="rounded-full bg-red-50 px-2 py-0.5 text-red-700">Live</span>}
-              </div>
-              <div className="overflow-hidden rounded-[1.1rem]">
-                <MediaEmbed item={item} compact />
-              </div>
-            </div>
-          ) : (
-            <div className="media-player-lift flex aspect-video min-h-52 items-center justify-center rounded-[1.5rem] border border-dashed border-border bg-muted/60">
-              <div className="text-center">
-                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-                  <Film className="h-7 w-7" />
-                </div>
-                <p className="mt-3 text-sm font-black text-foreground">No hay transmisión activa</p>
-                <p className="mt-1 text-xs font-medium text-muted-foreground">Cuando haya live, aparecerá aquí.</p>
-              </div>
-            </div>
-          )}
-        </div>
+    <div className="relative aspect-video overflow-hidden bg-secondary">
+      {item.thumbnailUrl ? (
+        <img src={item.thumbnailUrl} alt="" className="h-full w-full object-cover" />
+      ) : (
+        <div className="flex h-full items-center justify-center text-primary"><Video className="h-10 w-10" /></div>
+      )}
+      <div className="absolute left-3 top-3 flex flex-wrap gap-2">
+        {item.isLive && <Badge className="bg-red-600 text-white hover:bg-red-600">En vivo</Badge>}
+        {item.isScheduled && <Badge className="bg-amber-500 text-white hover:bg-amber-500">Próximo</Badge>}
       </div>
-    </section>
+      <span className="absolute bottom-3 right-3 flex h-11 w-11 items-center justify-center rounded-full bg-primary text-white">
+        <PlayCircle className="h-5 w-5" />
+      </span>
+    </div>
   );
 }
 
-function shouldShowInlineMediaCard(item: ServiceMediaEntry) {
-  const embed = getMediaEmbed(item);
-  const isPlayableInline = Boolean(embed.embedUrl) && ["iframe", "hls", "video"].includes(embed.kind);
-  if (!isPlayableInline) return false;
-  if (item.isLive || item.isScheduled || item.streamStatus) return true;
-  if (item.type.toLowerCase().includes("live")) return true;
-  return embed.provider === "facebook" || embed.provider === "resi" || item.playback?.kind === "iframe";
-}
-
-function MediaCard({ item, index }: { item: ServiceMediaEntry; index: number }) {
-  const showInline = shouldShowInlineMediaCard(item);
-  const isLive = isLiveMediaItem(item);
-  const animationDelay = `${Math.min(index, 8) * 55}ms`;
-
-  if (showInline) {
-    return (
-      <article
-        className="media-card-enter group overflow-hidden rounded-[1.35rem] border border-zinc-200/90 bg-white p-3 shadow-sm shadow-zinc-200/60 transition duration-200 hover:-translate-y-0.5 hover:border-primary/20 hover:shadow-md"
-        style={{ animationDelay }}
-      >
-        <div className="mb-4">
-          <MediaEmbed item={item} compact />
-        </div>
-
-        <div className="flex min-w-0 items-start justify-between gap-3">
-          <div className="min-w-0">
-            <Link
-              to={`/app/media/${item.id}`}
-              onPointerEnter={() => preloadAppRoute(`/app/media/${item.id}`)}
-              onFocus={() => preloadAppRoute(`/app/media/${item.id}`)}
-              onTouchStart={() => preloadAppRoute(`/app/media/${item.id}`)}
-              className="block rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-            >
-              <h3 className="line-clamp-2 text-base font-black text-foreground group-hover:text-primary">{item.title}</h3>
-              <p className="mt-1 truncate text-sm font-medium text-zinc-500">{item.serviceTitle}</p>
-            </Link>
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              {isLive && <Badge className="bg-red-600 text-white">En vivo</Badge>}
-              <MediaProviderBadge item={item} />
-              {item.series && <Badge variant="outline" className="bg-white text-muted-foreground">{item.series}</Badge>}
-            </div>
-          </div>
-          <div className="flex shrink-0 items-center gap-1 text-xs font-bold text-zinc-500">
-            <CalendarDays className="h-3.5 w-3.5" />
-            {formatMediaDate(item.date)}
-          </div>
-        </div>
-
-        {(item.speaker || item.scripture || item.description) && (
-          <p className="mt-3 line-clamp-2 text-sm leading-6 text-zinc-600">
-            {[item.speaker, item.scripture, item.description].filter(Boolean).join(" · ")}
-          </p>
-        )}
-
-        <div className="mt-4 flex flex-wrap items-center gap-2">
-          <Button asChild variant="outline" size="sm" className="h-9 rounded-xl">
-            <Link to={`/app/media/${item.id}`}>
-              <Video className="h-4 w-4" />
-              Ver detalle
-            </Link>
-          </Button>
-          <MediaExternalLink item={item} />
-        </div>
-      </article>
-    );
-  }
-
+function SermonCard({ item }: { item: ServiceMediaEntry }) {
+  const href = `/app/media/${item.id}`;
   return (
     <Link
-      to={`/app/media/${item.id}`}
-      onPointerEnter={() => preloadAppRoute(`/app/media/${item.id}`)}
-      onFocus={() => preloadAppRoute(`/app/media/${item.id}`)}
-      onTouchStart={() => preloadAppRoute(`/app/media/${item.id}`)}
-      className="media-card-enter group block rounded-[1.35rem] border border-zinc-200/90 bg-white p-4 shadow-sm shadow-zinc-200/60 transition duration-200 hover:-translate-y-0.5 hover:border-primary/20 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-      style={{ animationDelay }}
+      to={href}
+      onFocus={() => preloadAppRoute(href)}
+      onPointerEnter={() => preloadAppRoute(href)}
+      onTouchStart={() => preloadAppRoute(href)}
+      className="group overflow-hidden rounded-xl border border-border bg-card transition-colors hover:border-primary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
-      <div className="flex min-w-0 items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h3 className="line-clamp-2 text-base font-black text-foreground group-hover:text-primary">{item.title}</h3>
-          <p className="mt-1 truncate text-sm font-medium text-zinc-500">{item.serviceTitle}</p>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            {isLive && <Badge className="bg-red-600 text-white">En vivo</Badge>}
-            <MediaProviderBadge item={item} />
-            {item.series && <Badge variant="outline" className="bg-white text-muted-foreground">{item.series}</Badge>}
+      <SermonArtwork item={item} />
+      <div className="p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="line-clamp-2 text-lg font-semibold leading-tight text-foreground group-hover:text-primary">{item.title || item.serviceTitle}</h3>
+            {item.serviceTitle && item.serviceTitle !== item.title && <p className="mt-1 truncate text-sm text-muted-foreground">{item.serviceTitle}</p>}
           </div>
+          <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground"><CalendarDays className="h-3.5 w-3.5" />{formatMediaDate(item.date)}</span>
         </div>
-        <div className="flex shrink-0 items-center gap-1 text-xs font-bold text-zinc-500">
-          <CalendarDays className="h-3.5 w-3.5" />
-          {formatMediaDate(item.date)}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <MediaProviderBadge item={item} />
+          {item.series && <Badge variant="secondary">{item.series.trim()}</Badge>}
         </div>
+        {(item.speaker || item.scripture) && <p className="mt-3 line-clamp-2 text-sm text-muted-foreground">{[item.speaker, item.scripture].filter(Boolean).join(" · ")}</p>}
       </div>
-      {(item.speaker || item.scripture || item.description) && (
-        <p className="mt-3 line-clamp-2 text-sm leading-6 text-zinc-600">
-          {[item.speaker, item.scripture, item.description].filter(Boolean).join(" · ")}
-        </p>
-      )}
     </Link>
   );
 }
 
-function MediaGrid({ items, emptyLabel }: { items: ServiceMediaEntry[]; emptyLabel: string }) {
+function MediaGrid({ items, emptyTitle, emptyDescription }: { items: ServiceMediaEntry[]; emptyTitle: string; emptyDescription: string }) {
   if (items.length === 0) {
     return (
-      <div className="media-card-enter rounded-[1.35rem] border border-dashed border-zinc-300 bg-white px-4 py-12 text-center shadow-sm">
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-zinc-100 text-zinc-400">
-          <Radio className="h-6 w-6" />
-        </div>
-        <p className="mt-3 text-sm font-black text-zinc-800">{emptyLabel}</p>
+      <div className="rounded-xl border border-dashed border-border bg-card px-5 py-12 text-center">
+        <Radio className="mx-auto h-9 w-9 text-primary" />
+        <p className="mt-3 font-semibold text-foreground">{emptyTitle}</p>
+        <p className="mt-1 text-sm text-muted-foreground">{emptyDescription}</p>
       </div>
     );
   }
+  return <div className="grid gap-3 sm:grid-cols-2">{items.map((item) => <SermonCard key={item.id} item={item} />)}</div>;
+}
 
+function SeriesCard({ series, onSelect }: { series: MediaSeriesGroup; onSelect: () => void }) {
   return (
-    <div className="grid gap-3 lg:grid-cols-2">
-      {items.map((item, index) => <MediaCard key={item.id} item={item} index={index} />)}
-    </div>
+    <button
+      type="button"
+      onClick={onSelect}
+      className="group overflow-hidden rounded-xl border border-border bg-card text-left transition-colors hover:border-primary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      <div className="aspect-[16/9] bg-secondary">
+        {series.coverUrl ? <img src={series.coverUrl} alt="" className="h-full w-full object-cover" /> : <div className="flex h-full items-center justify-center text-primary"><Video className="h-10 w-10" /></div>}
+      </div>
+      <div className="flex items-center gap-3 p-4">
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate text-lg font-semibold text-foreground group-hover:text-primary">{series.label}</h3>
+          <p className="mt-1 text-sm text-muted-foreground">{series.items.length} sermón{series.items.length === 1 ? "" : "es"}</p>
+        </div>
+        <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground" />
+      </div>
+    </button>
   );
 }
 
 export default function Media() {
   const { fetchApi } = useApi();
   const { selectedChurch } = useChurch();
-  const { toast } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
   const selectedChurchId = selectedChurch?.id ?? null;
   const canManage = roleCanManage(selectedChurch?.role);
-  const hasLoadedPageRef = useRef(false);
   const [response, setResponse] = useState<ServiceMediaResponse>(() => emptyResponse());
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-
+  const [view, setView] = useState<MediaView>(() => searchParams.get("series") ? "series" : "recent");
+  const hasLoadedPageRef = useRef(false);
   const snapshotKey = mediaSnapshotKey(selectedChurchId);
 
   const applyResponse = useCallback((nextResponse: ServiceMediaResponse) => {
-    setResponse(nextResponse);
+    setResponse({ ...emptyResponse(), ...nextResponse });
     hasLoadedPageRef.current = true;
   }, []);
 
   const loadPage = useCallback(async (options?: { silent?: boolean; preferSnapshot?: boolean }) => {
     const snapshot = options?.preferSnapshot !== false ? readMediaSnapshot(snapshotKey) : null;
-
     if (!options?.silent) {
       if (snapshot) {
         applyResponse(snapshot.response);
@@ -354,29 +162,21 @@ export default function Media() {
         setLoading(true);
       }
     }
-
+    setError(null);
     try {
       if (options?.silent) setRefreshing(true);
-      const requestOptions = options?.preferSnapshot === false ? { cache: "no-store" as RequestCache } : undefined;
-      const data = await fetchApi<ServiceMediaResponse>(MEDIA_LIST_PATH, requestOptions);
+      const data = await fetchApi<ServiceMediaResponse>(MEDIA_LIST_PATH, options?.preferSnapshot === false ? { cache: "no-store" } : undefined);
       applyResponse(data);
       writeMediaSnapshot(snapshotKey, { response: data });
-    } catch (error) {
-      if (isMediaEndpointUnavailableError(error)) {
-        if (!snapshot) applyResponse(emptyResponse());
-        return;
-      }
-      if (!snapshot) {
-        toast({
-          title: error instanceof Error ? error.message : "No se pudo cargar media",
-          variant: "destructive",
-        });
+    } catch (loadError) {
+      if (!snapshot && !isMediaEndpointUnavailableError(loadError)) {
+        setError(loadError instanceof Error ? loadError.message : "No pudimos cargar los sermones.");
       }
     } finally {
-      if (!options?.silent) setLoading(false);
+      setLoading(false);
       setRefreshing(false);
     }
-  }, [applyResponse, fetchApi, snapshotKey, toast]);
+  }, [applyResponse, fetchApi, snapshotKey]);
 
   useEffect(() => {
     hasLoadedPageRef.current = false;
@@ -384,80 +184,94 @@ export default function Media() {
   }, [selectedChurchId]);
 
   useEffect(() => {
-    loadPage();
+    void loadPage();
   }, [loadPage]);
 
+  const query = search.trim().toLocaleLowerCase("es");
+  const filterItems = useCallback((items: ServiceMediaEntry[]) => query ? items.filter((item) => mediaSearchText(item).includes(query)) : items, [query]);
+  const recentItems = useMemo(() => filterItems([...response.previous].sort((left, right) => new Date(right.date).getTime() - new Date(left.date).getTime())), [filterItems, response.previous]);
+  const liveItems = useMemo(() => filterItems([...response.live, ...response.scheduled]), [filterItems, response.live, response.scheduled]);
+  const seriesGroups = useMemo(() => groupMediaBySeries(filterItems(response.previous)), [filterItems, response.previous]);
+  const selectedSeriesKey = normalizeSeriesKey(searchParams.get("series"));
+  const selectedSeries = seriesGroups.find((series) => series.key === selectedSeriesKey) || null;
   const allItems = useMemo(() => flattenServiceMedia(response), [response]);
-  const featured = response.live[0] || response.scheduled[0] || response.previous[0] || null;
-  const query = search.trim().toLowerCase();
-  const filtered = useMemo(() => {
-    if (!query) return response;
-    const filterItems = (items: ServiceMediaEntry[]) => items.filter((item) => mediaSearchText(item).includes(query));
-    return {
-      ...response,
-      live: filterItems(response.live),
-      scheduled: filterItems(response.scheduled),
-      previous: filterItems(response.previous),
-    };
-  }, [query, response]);
+
+  function selectSeries(series: MediaSeriesGroup | null) {
+    const next = new URLSearchParams(searchParams);
+    if (series) next.set("series", series.key);
+    else next.delete("series");
+    setSearchParams(next, { replace: true });
+  }
 
   if (loading && allItems.length === 0) return <MediaSkeleton />;
 
   return (
-    <div className="mobile-page space-y-5">
-      <MediaHero
-        item={featured}
-        churchName={selectedChurch?.name || "Tu iglesia"}
-        refreshing={refreshing}
-        onRefresh={() => loadPage({ silent: true, preferSnapshot: false })}
-      />
+    <div className="mobile-page mx-auto max-w-6xl space-y-5">
+      <SectionNav section="community" label="Comunidad" />
 
-      <div className="grid grid-cols-3 gap-3">
-        <StatTile label="En vivo" value={response.live.length} tone="live" />
-        <StatTile label="Próximos" value={response.scheduled.length} tone="soon" />
-        <StatTile label="Anteriores" value={response.previous.length} tone="archive" />
-      </div>
-
-      <section className="media-card-enter rounded-[1.35rem] border border-zinc-200/90 bg-white p-3 shadow-sm shadow-zinc-200/60">
-        <div className="flex items-center gap-2">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-zinc-100 text-zinc-500">
-            <Search className="h-4 w-4" />
-          </div>
-          <Input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Buscar por serie, predicador, escritura..."
-            className="h-11 border-0 bg-zinc-50 text-base focus-visible:ring-1"
-          />
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="mobile-section-title">Comunidad</p>
+          <h1 className="mt-1 text-3xl font-bold tracking-tight text-foreground">Sermones</h1>
+          <p className="mt-1 text-sm text-muted-foreground">Mensajes, series y transmisiones de {selectedChurch?.name || "tu iglesia"}.</p>
         </div>
-      </section>
+        <Button variant="outline" onClick={() => loadPage({ silent: true, preferSnapshot: false })} disabled={refreshing}>
+          {refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Actualizar
+        </Button>
+      </header>
 
-      <Tabs defaultValue={response.live.length > 0 ? "live" : "previous"} className="w-full">
-        <TabsList className="grid h-auto w-full grid-cols-3 rounded-2xl bg-zinc-100 p-1">
-          <TabsTrigger value="live" className="h-10 rounded-xl font-black data-[state=active]:bg-white data-[state=active]:shadow-sm">En vivo</TabsTrigger>
-          <TabsTrigger value="scheduled" className="h-10 rounded-xl font-black data-[state=active]:bg-white data-[state=active]:shadow-sm">Próximos</TabsTrigger>
-          <TabsTrigger value="previous" className="h-10 rounded-xl font-black data-[state=active]:bg-white data-[state=active]:shadow-sm">Anteriores</TabsTrigger>
+      <label className="relative block">
+        <span className="sr-only">Buscar sermones</span>
+        <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por serie, predicador o pasaje..." className="h-11 rounded-xl bg-card pl-10 text-base sm:text-sm" />
+      </label>
+
+      {error && (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700" role="alert">
+          <p className="font-semibold">No pudimos cargar los sermones.</p><p className="mt-1">{error}</p>
+          <Button size="sm" variant="outline" className="mt-3 border-red-200 bg-white text-red-700" onClick={() => loadPage({ preferSnapshot: false })}>Reintentar</Button>
+        </div>
+      )}
+
+      <Tabs value={view} onValueChange={(value) => { setView(value as MediaView); if (value !== "series") selectSeries(null); }}>
+        <TabsList className="grid h-auto w-full grid-cols-3 rounded-xl border border-border bg-card p-1">
+          <TabsTrigger value="recent">Recientes</TabsTrigger>
+          <TabsTrigger value="series">Series</TabsTrigger>
+          <TabsTrigger value="live">En vivo</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="recent" className="mt-4">
+          <MediaGrid items={recentItems} emptyTitle="Aún no hay sermones" emptyDescription="Los mensajes anteriores aparecerán aquí cuando tengan audio o video." />
+        </TabsContent>
+
+        <TabsContent value="series" className="mt-4 space-y-4">
+          {selectedSeries ? (
+            <>
+              <div className="flex items-center justify-between gap-3">
+                <div><p className="mobile-section-title">Serie</p><h2 className="mt-1 text-2xl font-semibold text-foreground">{selectedSeries.label}</h2></div>
+                <Button variant="outline" onClick={() => selectSeries(null)}>Todas las series</Button>
+              </div>
+              <MediaGrid items={selectedSeries.items} emptyTitle="Esta serie está vacía" emptyDescription="Prueba otra serie." />
+            </>
+          ) : seriesGroups.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-border bg-card px-5 py-12 text-center"><Video className="mx-auto h-9 w-9 text-primary" /><p className="mt-3 font-semibold text-foreground">Aún no hay series</p><p className="mt-1 text-sm text-muted-foreground">Asigna una serie a los sermones para organizarlos aquí.</p></div>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{seriesGroups.map((series) => <SeriesCard key={series.key} series={series} onSelect={() => selectSeries(series)} />)}</div>
+          )}
+        </TabsContent>
+
         <TabsContent value="live" className="mt-4">
-          <MediaGrid items={filtered.live} emptyLabel="No hay transmisión en vivo ahora" />
-        </TabsContent>
-        <TabsContent value="scheduled" className="mt-4">
-          <MediaGrid items={filtered.scheduled} emptyLabel="No hay transmisiones programadas" />
-        </TabsContent>
-        <TabsContent value="previous" className="mt-4">
-          <MediaGrid items={filtered.previous} emptyLabel="Aún no hay servicios anteriores con media" />
+          <MediaGrid items={liveItems} emptyTitle="No hay transmisión ahora" emptyDescription="Las transmisiones en vivo y programadas aparecerán aquí." />
         </TabsContent>
       </Tabs>
 
-      {canManage && <LiveDestinationSetup />}
-
-      {allItems.length === 0 && canManage && (
-        <div className="media-card-enter rounded-[1.35rem] border border-zinc-200 bg-white p-4 shadow-sm">
-          <p className="flex items-center gap-2 text-sm font-bold text-zinc-800">
-            <Video className="h-4 w-4 text-primary" />
-            Agrega campos de media en un elemento del servicio para que aparezca aquí.
-          </p>
-        </div>
+      {canManage && (
+        <details className="rounded-xl border border-border bg-card">
+          <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 px-4 py-3 text-sm font-semibold text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <Settings2 className="h-4 w-4 text-primary" /> Configuración de transmisión
+          </summary>
+          <div className="border-t border-border p-4"><LiveDestinationSetup /></div>
+        </details>
       )}
     </div>
   );

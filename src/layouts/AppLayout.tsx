@@ -1,6 +1,6 @@
 import { Suspense, useCallback, useEffect, useRef, type CSSProperties, type TouchEvent, type UIEvent } from "react";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
-import { BookOpen, Heart, Home, ListChecks, Megaphone, Users } from "lucide-react";
+import { Link, Outlet, useLocation } from "react-router-dom";
+import { CalendarDays, Home, ListChecks, Menu, Users } from "lucide-react";
 import { AppSidebar } from "../components/AppSidebar";
 import { TchurchLogo } from "@/components/TchurchLogo";
 import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
@@ -18,14 +18,19 @@ import {
   getMobilePageBottomBuffer,
 } from "@/lib/mobileNavLayout";
 import { preloadAppRoute } from "@/lib/appRoutePreloaders";
+import { getPrimaryNavigationGroup, type PrimaryNavigationGroup } from "@/lib/appNavigation";
 
-const mobileNavItems = [
-  { label: "Inicio", href: "/app", icon: Home, end: true },
-  { label: "Servicios", href: "/app/services", icon: ListChecks },
-  { label: "Dar", href: "/app/giving", icon: Heart },
-  { label: "Ministerios", href: "/app/ministries", icon: Users },
-  { label: "Devocional", href: "/app/devotionals", icon: BookOpen },
-  { label: "Anuncios", href: "/app/announcements", icon: Megaphone },
+const mobileNavItems: ReadonlyArray<{
+  label: string;
+  href?: string;
+  icon: typeof Home;
+  group: PrimaryNavigationGroup;
+}> = [
+  { label: "Inicio", href: "/app", icon: Home, group: "home" },
+  { label: "Agenda", href: "/app/calendar", icon: CalendarDays, group: "agenda" },
+  { label: "Servicios", href: "/app/services", icon: ListChecks, group: "services" },
+  { label: "Comunidad", href: "/app/announcements", icon: Users, group: "community" },
+  { label: "Más", icon: Menu, group: "more" },
 ];
 
 const SAFE_BOTTOM_VAR = "--tchurch-mobile-safe-bottom";
@@ -70,6 +75,7 @@ function AppLayoutInner() {
   const showShortcutBar = useCompactNavigation;
   const { openMobile, setOpenMobile } = useSidebar();
   const location = useLocation();
+  const activePrimaryGroup = getPrimaryNavigationGroup(location.pathname);
   const routeKey = `${location.pathname}${location.search}`;
   const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);
@@ -142,7 +148,7 @@ function AppLayoutInner() {
       data-mobile-shell={showShortcutBar ? "true" : undefined}
       data-device-class={responsive.isPhone ? "phone" : responsive.isTablet ? "tablet" : "wide"}
       className={[
-        "flex w-full flex-1 overflow-x-clip bg-zinc-50",
+        "flex w-full flex-1 overflow-x-clip bg-background",
         showShortcutBar ? "h-svh max-h-svh min-h-0 overflow-hidden overscroll-none" : "min-h-svh",
       ].join(" ")}
       style={showShortcutBar ? mobileNavGeometryStyle : undefined}
@@ -158,11 +164,11 @@ function AppLayoutInner() {
       >
         {useCompactNavigation ? (
           <header
-            className="sticky top-0 z-20 border-b border-zinc-200/80 bg-white/95 shadow-sm shadow-zinc-200/30 backdrop-blur"
+            className="sticky top-0 z-20 border-b border-border bg-card/95 backdrop-blur"
             style={{ paddingTop: "max(var(--app-safe-area-top), 0.65rem)" }}
           >
             <div className="flex items-center gap-3 px-4 pb-2.5">
-              <SidebarTrigger className="h-10 w-10 rounded-2xl border border-zinc-200 bg-white shadow-sm" />
+              <SidebarTrigger className="h-11 w-11 rounded-xl border border-border bg-card" />
               <div className="min-w-0 flex-1">
                 <TchurchLogo size="xs" wordPurple className="justify-start" />
                 <p className="truncate text-[0.8rem] leading-tight text-muted-foreground">
@@ -208,35 +214,52 @@ function AppLayoutInner() {
       {showShortcutBar ? (
         <nav
           data-testid="mobile-bottom-nav"
-          className="pointer-events-none fixed inset-x-0 bottom-0 z-30 bg-white"
+          className="pointer-events-none fixed inset-x-0 bottom-0 z-30 bg-card"
           aria-label="Navegación principal"
           style={{ backfaceVisibility: "hidden" }}
         >
           <div
-            className="border-t border-zinc-200/80 bg-white px-2 pt-2.5 shadow-[0_-14px_30px_rgba(15,23,42,0.07)]"
+            className="border-t border-border bg-card px-2 pt-2.5"
             style={{ paddingBottom: "var(--app-safe-area-bottom, var(--tchurch-mobile-safe-bottom, 22px))" }}
           >
-            <div className="mx-auto grid max-w-lg grid-cols-6 gap-0.5 md:max-w-2xl">
+            <div className="mx-auto grid max-w-lg grid-cols-5 gap-1 md:max-w-2xl">
               {mobileNavItems.map((item) => {
                 const Icon = item.icon;
+                const isActive = activePrimaryGroup === item.group;
+                const className = [
+                  "pointer-events-auto flex h-[3.75rem] min-w-0 flex-col items-center justify-center gap-1 rounded-xl px-1 text-[0.68rem] font-semibold leading-tight transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                  isActive ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+                ].join(" ");
+
+                if (!item.href) {
+                  return (
+                    <button
+                      key={item.group}
+                      type="button"
+                      aria-label="Abrir menú completo"
+                      aria-current={isActive ? "page" : undefined}
+                      onClick={() => setOpenMobile(true)}
+                      className={className}
+                    >
+                      <Icon className="h-5 w-5" />
+                      <span className="max-w-full truncate">{item.label}</span>
+                    </button>
+                  );
+                }
+
                 return (
-                  <NavLink
+                  <Link
                     key={item.href}
                     to={item.href}
-                    end={item.end}
+                    aria-current={isActive ? "page" : undefined}
                     onPointerEnter={() => preloadAppRoute(item.href)}
                     onFocus={() => preloadAppRoute(item.href)}
                     onTouchStart={() => preloadAppRoute(item.href)}
-                    className={({ isActive }) =>
-                      [
-                        "pointer-events-auto flex h-[3.75rem] min-w-0 flex-col items-center justify-center gap-1 rounded-2xl px-0.5 text-[0.64rem] font-bold leading-tight transition",
-                        isActive ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-zinc-100 hover:text-zinc-950",
-                      ].join(" ")
-                    }
+                    className={className}
                   >
                     <Icon className="h-5 w-5" />
                     <span className="max-w-full truncate">{item.label}</span>
-                  </NavLink>
+                  </Link>
                 );
               })}
             </div>

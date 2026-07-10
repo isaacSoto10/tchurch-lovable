@@ -440,6 +440,55 @@ export function flattenServiceMedia(response: ServiceMediaResponse | null | unde
   return [...response.live, ...response.scheduled, ...response.previous];
 }
 
+export type MediaSeriesGroup = {
+  key: string;
+  label: string;
+  items: ServiceMediaEntry[];
+  latestDate: string;
+  coverUrl: string | null;
+};
+
+export function normalizeSeriesKey(value?: string | null) {
+  return String(value || "")
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .toLocaleLowerCase("es");
+}
+
+export function groupMediaBySeries(items: ServiceMediaEntry[]): MediaSeriesGroup[] {
+  const groups = new Map<string, MediaSeriesGroup>();
+
+  for (const item of items) {
+    const label = String(item.series || "").trim().replace(/\s+/g, " ");
+    const key = normalizeSeriesKey(label);
+    if (!key) continue;
+
+    const existing = groups.get(key);
+    if (existing) {
+      existing.items.push(item);
+      if (!existing.coverUrl && item.thumbnailUrl) existing.coverUrl = item.thumbnailUrl;
+      if (new Date(item.date).getTime() > new Date(existing.latestDate).getTime()) existing.latestDate = item.date;
+    } else {
+      groups.set(key, {
+        key,
+        label,
+        items: [item],
+        latestDate: item.date,
+        coverUrl: item.thumbnailUrl,
+      });
+    }
+  }
+
+  return [...groups.values()]
+    .map((group) => ({
+      ...group,
+      items: [...group.items].sort((left, right) => new Date(right.date).getTime() - new Date(left.date).getTime()),
+    }))
+    .sort((left, right) => new Date(right.latestDate).getTime() - new Date(left.latestDate).getTime());
+}
+
 export function isMediaEndpointUnavailableError(error: unknown) {
   if (!error || typeof error !== "object") return false;
   const status = Number((error as { status?: unknown }).status);

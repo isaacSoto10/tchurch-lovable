@@ -43,7 +43,7 @@ describe("Media", () => {
     window.sessionStorage.clear();
   });
 
-  it("keeps the Media screen calm when preview routes are not deployed yet", async () => {
+  it("keeps the sermon screen calm when media routes are unavailable", async () => {
     fetchApiMock.mockRejectedValue(endpointUnavailable());
 
     render(
@@ -53,7 +53,7 @@ describe("Media", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Aún no hay servicios anteriores con media")).toBeInTheDocument();
+      expect(screen.getByText("Aún no hay sermones")).toBeInTheDocument();
       expect(screen.getByText("La configuración de transmisiones todavía no está activa")).toBeInTheDocument();
     });
 

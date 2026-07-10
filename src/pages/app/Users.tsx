@@ -26,6 +26,7 @@ import { useApi } from "@/hooks/useApi";
 import { useChurch } from "@/providers/ChurchProvider";
 import { useToast } from "@/components/ui/use-toast";
 import { readSessionSnapshot, sessionSnapshotKey, writeSessionSnapshot } from "@/lib/sessionSnapshots";
+import { SectionNav } from "@/components/SectionNav";
 
 interface Member {
   id: string;
@@ -146,9 +147,10 @@ export default function Users() {
   }, []);
 
   const loadMembers = useCallback(async () => {
-    if (!selectedChurch) {
+    if (!selectedChurch || !isAdmin) {
       setMembers([]);
       setLoading(false);
+      loadedOnceRef.current = false;
       return;
     }
 
@@ -162,32 +164,24 @@ export default function Users() {
 
     try {
       const data = await fetchApi<{ members?: Member[] } | Member[]>(`/churches/${selectedChurch.id}/members`);
-      const memberList = Array.isArray(data) ? data : (data.members || []);
+      const memberList = (Array.isArray(data) ? data : (data.members || [])).map((member) => ({
+        ...member,
+        userId: member.userId || member.id,
+        status: member.status || "APPROVED",
+      }));
       applyMembers(memberList);
       writeSessionSnapshot(snapshotKey, { members: memberList });
     } catch (error) {
       console.error("Failed to load members:", error);
-      try {
-        const data = await fetchApi<Member[]>("/users");
-        const fallbackMembers = (Array.isArray(data) ? data : []).map((member) => ({
-          ...member,
-          userId: member.userId || member.id,
-          status: member.status || "APPROVED",
-        }));
-        applyMembers(fallbackMembers);
-        writeSessionSnapshot(snapshotKey, { members: fallbackMembers });
-      } catch (fallbackError) {
-        console.error("Fallback also failed:", fallbackError);
-        toast({
-          title: "No se pudieron cargar los miembros",
-          description: getApiErrorMessage(fallbackError, "Intenta nuevamente en unos segundos."),
-          variant: "destructive",
-        });
-      }
+      toast({
+        title: "No se pudieron cargar los miembros",
+        description: getApiErrorMessage(error, "Intenta nuevamente en unos segundos."),
+        variant: "destructive",
+      });
     } finally {
       setLoading(false);
     }
-  }, [applyMembers, fetchApi, selectedChurch, snapshotKey, toast]);
+  }, [applyMembers, fetchApi, isAdmin, selectedChurch, snapshotKey, toast]);
 
   useEffect(() => {
     void loadMembers();
@@ -373,14 +367,30 @@ export default function Users() {
     );
   };
 
+  if (!isAdmin) {
+    return (
+      <div className="mobile-page mx-auto max-w-3xl space-y-4">
+        <SectionNav section="people" label="Personas" isAdmin={isAdmin} />
+        <div className="app-card px-5 py-12 text-center" role="status">
+          <ShieldCheck className="mx-auto h-10 w-10 text-primary" />
+          <h1 className="mt-4 text-xl font-bold text-foreground">Miembros es un espacio administrativo</h1>
+          <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
+            Solo los administradores de la iglesia pueden ver datos de miembros, aprobar solicitudes y cambiar roles.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="mobile-page mx-auto max-w-3xl space-y-4">
+      <SectionNav section="people" label="Personas" isAdmin={isAdmin} />
       <div className="app-card-soft p-4">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
             <p className="mobile-section-title">Administración</p>
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              <h1 className="text-3xl font-black tracking-tight text-zinc-950">Miembros</h1>
+              <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Miembros</h1>
               {pendingCount > 0 && isAdmin && (
                 <Badge variant="destructive" className="text-xs">{pendingCount} pendiente{pendingCount === 1 ? "" : "s"}</Badge>
               )}
@@ -409,7 +419,7 @@ export default function Users() {
             <Button
               size="sm"
               variant={filter === "all" ? "default" : "ghost"}
-              className="h-10 rounded-xl"
+              className="h-11 rounded-xl"
               onClick={() => setFilter("all")}
             >
               <UsersIcon className="h-4 w-4" /> Todos ({members.length})
@@ -418,7 +428,7 @@ export default function Users() {
               <Button
                 size="sm"
                 variant={filter === "pending" ? "default" : "ghost"}
-                className="h-10 rounded-xl"
+                className="h-11 rounded-xl"
                 onClick={() => setFilter("pending")}
               >
                 <Clock className="h-4 w-4" /> Pendientes ({pendingCount})
@@ -448,8 +458,8 @@ export default function Users() {
         {!loading && filteredMembers.length === 0 && (
           <Card className="app-card">
             <CardContent className="p-8 text-center">
-              <User className="mx-auto mb-2 h-8 w-8 text-zinc-300" />
-              <p className="text-sm font-semibold text-zinc-900">
+              <User className="mx-auto mb-2 h-8 w-8 text-muted-foreground" />
+              <p className="text-sm font-semibold text-foreground">
                 {filter === "pending" ? "No hay solicitudes pendientes" : "No encontramos miembros"}
               </p>
               <p className="mt-1 text-xs leading-5 text-muted-foreground">
@@ -477,7 +487,7 @@ export default function Users() {
                     </Avatar>
                     <div className="min-w-0 flex-1">
                       <div className="flex min-w-0 flex-wrap items-center gap-2">
-                        <p className="truncate text-sm font-semibold text-zinc-950">{getMemberName(member)}</p>
+                        <p className="truncate text-sm font-semibold text-foreground">{getMemberName(member)}</p>
                         {pending ? (
                           <Badge variant="outline" className="border-amber-200 bg-amber-50 text-xs text-amber-700">
                             Pendiente
@@ -498,7 +508,7 @@ export default function Users() {
                       <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
                         <Button
                           size="sm"
-                          className="h-10 rounded-xl bg-emerald-600 hover:bg-emerald-700"
+                          className="h-11 rounded-xl bg-emerald-600 hover:bg-emerald-700"
                           onClick={() => handleApproveMember(userId)}
                           disabled={processing}
                         >
@@ -508,7 +518,7 @@ export default function Users() {
                         <Button
                           size="sm"
                           variant="outline"
-                          className="h-10 rounded-xl border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
+                          className="h-11 rounded-xl border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
                           onClick={() => handleDenyMember(userId)}
                           disabled={processing}
                         >
@@ -530,7 +540,7 @@ export default function Users() {
                             onValueChange={(value) => handleUpdateRole(userId, value)}
                             disabled={updatingRole === userId || processing}
                           >
-                            <SelectTrigger className="h-10 w-full rounded-xl sm:w-36">
+                            <SelectTrigger className="h-11 w-full rounded-xl sm:w-36">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -542,7 +552,7 @@ export default function Users() {
                           <Button
                             size="icon"
                             variant="ghost"
-                            className="h-10 w-full rounded-xl text-red-600 hover:bg-red-50 hover:text-red-700 sm:w-10"
+                            className="h-11 w-full rounded-xl text-red-600 hover:bg-red-50 hover:text-red-700 sm:w-11"
                             onClick={() => handleRemoveMember(userId)}
                             disabled={processing}
                             aria-label={`Remover a ${getMemberName(member)}`}

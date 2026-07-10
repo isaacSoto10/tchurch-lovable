@@ -7,16 +7,12 @@ import {
   CalendarDays,
   UsersRound,
   LogOut,
-  ClipboardList,
   Settings,
   MessageCircle,
   Heart,
   BookOpen,
-  Calendar,
-  UserCircle,
   CalendarX,
   Shield,
-  Radio,
   type LucideIcon,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
@@ -118,16 +114,12 @@ const navItems: NavItem[] = [
   { title: "Panel", url: "/app", icon: LayoutDashboard },
   { title: "Canciones", url: "/app/songs", icon: Music },
   { title: "Servicios", url: "/app/services", icon: ListChecks },
-  { title: "Anuncios", url: "/app/announcements", icon: Megaphone },
+  { title: "Agenda", url: "/app/calendar", icon: CalendarDays },
+  { title: "Comunidad", url: "/app/announcements", icon: Megaphone },
   { title: "Devocionales", url: "/app/devotionals", icon: BookOpen },
-  { title: "Media", url: "/app/media", icon: Radio },
   { title: "Dar", url: "/app/giving", icon: Heart },
-  { title: "Mis asignaciones", url: "/app/my-assignments", icon: ClipboardList },
   { title: "Ministerios", url: "/app/ministries", icon: Users },
-  { title: "Eventos", url: "/app/events", icon: CalendarDays },
-  { title: "Equipos", url: "/app/teams", icon: UsersRound },
-  { title: "Calendario", url: "/app/calendar", icon: Calendar },
-  { title: "Miembros", url: "/app/users", icon: UserCircle },
+  { title: "Personas", url: "/app/teams", icon: UsersRound, leaderOnly: true },
   { title: "Fechas bloqueadas", url: "/app/blockouts", icon: CalendarX },
   { title: "Ajustes", url: "/app/settings", icon: Settings },
   { title: "Mensajes", url: "/app/messages", icon: MessageCircle },
@@ -200,7 +192,7 @@ export function AppSidebar() {
                       {!collapsed && (
                         <span className="flex items-center gap-2">
                           {item.title}
-                          {item.title === "Miembros" && pendingCount > 0 && (
+                          {item.title === "Personas" && pendingCount > 0 && (
                             <Badge
                               variant="destructive"
                               className="h-5 w-5 p-0 text-xs justify-center items-center"
@@ -218,7 +210,7 @@ export function AppSidebar() {
                           )}
                         </span>
                       )}
-                      {collapsed && item.title === "Miembros" && pendingCount > 0 && (
+                      {collapsed && item.title === "Personas" && pendingCount > 0 && (
                         <Badge
                           variant="destructive"
                           className="absolute -top-1 -right-1 h-4 w-4 p-0 text-[10px] justify-center items-center"

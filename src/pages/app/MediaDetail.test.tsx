@@ -38,7 +38,7 @@ describe("MediaDetail", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("No se encontró este servicio")).toBeInTheDocument();
+      expect(screen.getByText("No se encontró este sermón")).toBeInTheDocument();
     });
 
     expect(toastMock).not.toHaveBeenCalled();

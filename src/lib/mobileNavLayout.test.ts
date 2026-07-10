@@ -86,24 +86,25 @@ describe("mobile nav layout", () => {
     }
   });
 
-  it("keeps the original primary nav order with announcements at the end", () => {
+  it("keeps the five primary hubs in the new mobile information architecture", () => {
     const appLayoutSource = readFileSync(`${process.cwd()}/src/layouts/AppLayout.tsx`, "utf8");
     const sidebarSource = readFileSync(`${process.cwd()}/src/components/AppSidebar.tsx`, "utf8");
 
     expectOrder(appLayoutSource, [
-      'label: "Dar"',
-      'label: "Ministerios"',
-      'label: "Devocional"',
-      'label: "Anuncios"',
+      'label: "Inicio"',
+      'label: "Agenda"',
+      'label: "Servicios"',
+      'label: "Comunidad"',
+      'label: "Más"',
     ]);
     expectOrder(sidebarSource, [
       'title: "Servicios"',
-      'title: "Anuncios"',
+      'title: "Agenda"',
+      'title: "Comunidad"',
       'title: "Devocionales"',
       'title: "Dar"',
-      'title: "Mis asignaciones"',
       'title: "Ministerios"',
-      'title: "Eventos"',
+      'title: "Personas"',
     ]);
   });
 
@@ -118,15 +119,15 @@ describe("mobile nav layout", () => {
     expect(source).toContain('featured ? "h-60" : "h-40"');
   });
 
-  it("keeps announcements as an image-led church canvas above mobile nav clearance", () => {
+  it("keeps announcements as a calm feed above mobile nav clearance", () => {
     const source = readFileSync(`${process.cwd()}/src/pages/app/Announcements.tsx`, "utf8");
 
-    expect(source).toContain("mobile-page space-y-5");
-    expect(source).toContain("Un tablón cálido para la vida de la iglesia");
+    expect(source).toContain("mobile-page mx-auto max-w-5xl space-y-5");
+    expect(source).toContain('<SectionNav section="community" label="Comunidad" />');
     expect(source).toContain("AnnouncementAiImageField");
     expect(source).toContain("announcement.imageUrl");
     expect(source).toContain("src={announcement.imageUrl}");
-    expect(source).toContain("featured={index === 0}");
+    expect(source).toContain("Crear anuncio");
   });
 
   it("keeps every ministry detail section scrollable above the bottom nav", () => {

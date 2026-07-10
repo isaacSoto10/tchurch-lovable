@@ -235,23 +235,23 @@ export interface QueuedEventCheckIn {
 }
 
 export const EVENT_TYPE_LABELS: Record<KnownEventType, string> = {
-  service: "Service",
-  bible_study: "Bible Study",
-  fellowship: "Fellowship",
-  youth: "Youth",
-  children: "Children",
-  special_event: "Special Event",
+  service: "Servicio",
+  bible_study: "Estudio bíblico",
+  fellowship: "Convivencia",
+  youth: "Jóvenes",
+  children: "Niños",
+  special_event: "Evento especial",
 };
 
 export const EVENT_TYPE_OPTIONS: Array<{ value: KnownEventType; title: string; description: string }> = [
-  { value: "service", title: "Special Service", description: "A service for worship, prayer, and church-wide connection." },
-  { value: "bible_study", title: "Bible Study", description: "A focused time to study Scripture and grow together." },
-  { value: "fellowship", title: "Fellowship Gathering", description: "A warm gathering for food, connection, and community." },
-  { value: "youth", title: "Youth Night", description: "A night for students to worship and build friendships." },
-  { value: "children", title: "Children's Event", description: "A safe and joyful event for children and families." },
-  { value: "special_event", title: "Special Event", description: "A church event with clear details for everyone attending." },
+  { value: "service", title: "Servicio especial", description: "Un servicio para adorar, orar y reunir a toda la iglesia." },
+  { value: "bible_study", title: "Estudio bíblico", description: "Un tiempo dedicado a estudiar la Biblia y crecer juntos." },
+  { value: "fellowship", title: "Convivencia", description: "Un encuentro para compartir alimentos, conectar y hacer comunidad." },
+  { value: "youth", title: "Noche de jóvenes", description: "Una noche para que los jóvenes adoren y formen amistades." },
+  { value: "children", title: "Evento de niños", description: "Un evento seguro y alegre para niños y familias." },
+  { value: "special_event", title: "Evento especial", description: "Un evento de iglesia con información clara para todos los asistentes." },
 ];
 
 export function getEventTypeLabel(type?: EventType | null) {
-  return type && EVENT_TYPE_LABELS[type as KnownEventType] ? EVENT_TYPE_LABELS[type as KnownEventType] : type || "Event";
+  return type && EVENT_TYPE_LABELS[type as KnownEventType] ? EVENT_TYPE_LABELS[type as KnownEventType] : type || "Evento";
 }

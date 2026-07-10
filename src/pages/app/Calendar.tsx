@@ -1,14 +1,18 @@
-import { useEffect, useState } from "react";
-import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { ChevronLeft, ChevronRight, CalendarDays } from "lucide-react";
-import { useApi } from "@/hooks/useApi";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { formatServiceDate, formatServiceTime, getServiceDateKey } from "@/lib/serviceDates";
-import { useIsMobile } from "@/hooks/use-mobile";
-import { getEventTypeLabel } from "@/types/events";
+import { CalendarDays, ChevronLeft, ChevronRight, Clock, ListFilter, MapPin, RotateCw } from "lucide-react";
+import { SectionNav } from "@/components/SectionNav";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { useResponsiveLayout } from "@/hooks/use-mobile";
+import { useApi } from "@/hooks/useApi";
 import { getChurchId } from "@/lib/api";
+import { formatServiceDate, formatServiceTime, getServiceDateKey } from "@/lib/serviceDates";
 import { readSessionSnapshot, sessionSnapshotKey, writeSessionSnapshot } from "@/lib/sessionSnapshots";
+import { getEventTypeLabel } from "@/types/events";
+
+type AgendaFilter = "all" | "service" | "event";
 
 interface CalendarEvent {
   id: string;
@@ -25,431 +29,298 @@ interface CalendarService {
   status: string | null;
 }
 
-interface CalendarItem {
+interface AgendaItem {
   id: string;
   title: string;
   date: string;
-  type: "service" | "event";
+  kind: "service" | "event";
   typeLabel: string | null;
   location: string | null;
   status: string | null;
 }
 
-type CalendarSnapshot = {
-  items: CalendarItem[];
-};
+type CalendarSnapshot = { items: AgendaItem[] };
+const CALENDAR_SNAPSHOT_PREFIX = "tchurch_ios_calendar_snapshot_v2";
 
-const CALENDAR_SNAPSHOT_PREFIX = "tchurch_ios_calendar_snapshot_v1";
-
-function isCalendarSnapshot(data: unknown): data is CalendarSnapshot {
-  if (!data || typeof data !== "object") return false;
-  return Array.isArray((data as Partial<CalendarSnapshot>).items);
+function isCalendarSnapshot(value: unknown): value is CalendarSnapshot {
+  return Boolean(value && typeof value === "object" && Array.isArray((value as CalendarSnapshot).items));
 }
 
-function getCalendarItemHref(item: CalendarItem) {
-  return item.type === "event" ? `/app/events/${item.id}` : "/app/services";
+function localDateKey(value: string | Date) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function itemDateKey(item: AgendaItem) {
+  return item.kind === "service" ? getServiceDateKey(item.date) : localDateKey(item.date);
+}
+
+function itemHref(item: AgendaItem) {
+  return item.kind === "service" ? `/app/services/${item.id}` : `/app/events/${item.id}`;
+}
+
+function formatItemDate(item: AgendaItem, options?: Intl.DateTimeFormatOptions) {
+  if (item.kind === "service") return formatServiceDate(item.date, "es-US", options);
+  return new Date(item.date).toLocaleDateString("es-US", options);
+}
+
+function formatItemTime(item: AgendaItem) {
+  if (item.kind === "service") return formatServiceTime(item.date, "es-US");
+  return new Date(item.date).toLocaleTimeString("es-US", { hour: "numeric", minute: "2-digit" });
+}
+
+function monthRange(date: Date) {
+  const start = new Date(date.getFullYear(), date.getMonth(), 1);
+  start.setDate(start.getDate() - start.getDay());
+  const end = new Date(date.getFullYear(), date.getMonth() + 1, 0);
+  end.setDate(end.getDate() + (6 - end.getDay()));
+  return { start, end };
+}
+
+function monthDays(date: Date) {
+  const { start, end } = monthRange(date);
+  const days: Date[] = [];
+  const cursor = new Date(start);
+  while (cursor <= end) {
+    days.push(new Date(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return days;
+}
+
+function AgendaRow({ item, onOpen }: { item: AgendaItem; onOpen: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="flex min-h-16 w-full items-start gap-3 rounded-xl border border-border bg-card p-3 text-left transition-colors hover:border-primary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      <span className={`mt-1 h-10 w-1 shrink-0 rounded-full ${item.kind === "service" ? "bg-primary" : "bg-blue-500"}`} />
+      <span className="min-w-0 flex-1">
+        <span className="flex flex-wrap items-center gap-2">
+          <span className="truncate font-semibold text-foreground">{item.title}</span>
+          <Badge variant="secondary" className="shrink-0 text-[11px]">
+            {item.kind === "service" ? "Servicio" : getEventTypeLabel(item.typeLabel)}
+          </Badge>
+        </span>
+        <span className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          <span className="inline-flex items-center gap-1"><Clock className="h-3.5 w-3.5" />{formatItemTime(item)}</span>
+          {item.location && <span className="inline-flex min-w-0 items-center gap-1"><MapPin className="h-3.5 w-3.5" /><span className="truncate">{item.location}</span></span>}
+        </span>
+      </span>
+      <ChevronRight className="mt-3 h-4 w-4 shrink-0 text-muted-foreground" />
+    </button>
+  );
 }
 
 export default function Calendar() {
   const { fetchApi } = useApi();
   const navigate = useNavigate();
-  const isMobile = useIsMobile();
-  const [currentDate, setCurrentDate] = useState(new Date());
-  const [items, setItems] = useState<CalendarItem[]>([]);
+  const responsive = useResponsiveLayout();
+  const [currentMonth, setCurrentMonth] = useState(() => new Date());
+  const [selectedDate, setSelectedDate] = useState(() => new Date());
+  const [items, setItems] = useState<AgendaItem[]>([]);
+  const [filter, setFilter] = useState<AgendaFilter>("all");
   const [loading, setLoading] = useState(true);
-
-  const year = currentDate.getFullYear();
-  const month = currentDate.getMonth();
+  const [error, setError] = useState<string | null>(null);
+  const year = currentMonth.getFullYear();
+  const month = currentMonth.getMonth();
+  const range = useMemo(() => monthRange(currentMonth), [currentMonth]);
+  const days = useMemo(() => monthDays(currentMonth), [currentMonth]);
   const snapshotKey = sessionSnapshotKey(CALENDAR_SNAPSHOT_PREFIX, `${getChurchId() || "default"}:${year}-${month}`);
 
-  const startOfMonth = new Date(year, month, 1);
-  const endOfMonth = new Date(year, month + 1, 0);
-  const startOfWeek = new Date(startOfMonth);
-  startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
-  const endOfWeek = new Date(endOfMonth);
-  endOfWeek.setDate(endOfWeek.getDate() + (6 - endOfWeek.getDay()));
+  const loadAgenda = useCallback(async (preferSnapshot = true) => {
+    const snapshot = preferSnapshot
+      ? readSessionSnapshot<CalendarSnapshot>(snapshotKey, { validate: isCalendarSnapshot })
+      : null;
+    if (snapshot) {
+      setItems(snapshot.data.items);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+    setError(null);
+
+    try {
+      const data = await fetchApi<{ events?: CalendarEvent[]; services?: CalendarService[] }>(
+        `/calendar?start=${encodeURIComponent(range.start.toISOString())}&end=${encodeURIComponent(range.end.toISOString())}`,
+      );
+      const nextItems: AgendaItem[] = [
+        ...(data.events || []).map((event): AgendaItem => ({
+          id: event.id,
+          title: event.title,
+          date: event.date,
+          kind: "event",
+          typeLabel: event.type,
+          location: event.location,
+          status: null,
+        })),
+        ...(data.services || []).map((service): AgendaItem => ({
+          id: service.id,
+          title: service.title,
+          date: service.date,
+          kind: "service",
+          typeLabel: service.status,
+          location: null,
+          status: service.status,
+        })),
+      ].sort((left, right) => new Date(left.date).getTime() - new Date(right.date).getTime());
+      setItems(nextItems);
+      writeSessionSnapshot(snapshotKey, { items: nextItems });
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "No pudimos cargar la agenda.");
+    } finally {
+      setLoading(false);
+    }
+  }, [fetchApi, range.end, range.start, snapshotKey]);
 
   useEffect(() => {
-    const loadCalendar = async () => {
-      const snapshot = readSessionSnapshot<CalendarSnapshot>(snapshotKey, { validate: isCalendarSnapshot });
-      if (snapshot) {
-        setItems(snapshot.data.items);
-        setLoading(false);
-      } else {
-        setLoading(true);
-      }
+    void loadAgenda();
+  }, [loadAgenda]);
 
-      try {
-        const start = startOfWeek.toISOString();
-        const end = endOfWeek.toISOString();
-        const data = await fetchApi(`/calendar?start=${start}&end=${end}`) as { events?: CalendarEvent[]; services?: CalendarService[] };
-        
-        const calendarItems: CalendarItem[] = [];
-        
-        if (data?.events) {
-          for (const e of data.events) {
-            calendarItems.push({
-              id: e.id,
-              title: e.title,
-              date: e.date,
-              type: "event",
-              typeLabel: getEventTypeLabel(e.type),
-              location: e.location,
-              status: null,
-            });
-          }
-        }
-        
-        if (data?.services) {
-          for (const s of data.services) {
-            calendarItems.push({
-              id: s.id,
-              title: s.title,
-              date: s.date,
-              type: "service",
-              typeLabel: s.status,
-              location: null,
-              status: s.status,
-            });
-          }
-        }
-        
-        setItems(calendarItems);
-        writeSessionSnapshot(snapshotKey, { items: calendarItems });
-      } catch (e) {
-        console.error("Failed to load calendar:", e);
-      } finally {
-        setLoading(false);
-      }
-    };
-    
-    loadCalendar();
-  }, [fetchApi, snapshotKey, year, month]);
-
-  const prevMonth = () => {
-    setCurrentDate(new Date(year, month - 1, 1));
-  };
-
-  const nextMonth = () => {
-    setCurrentDate(new Date(year, month + 1, 1));
-  };
-
-  const getDaysInMonth = () => {
-    const days: (Date | null)[] = [];
-    
-    const day = new Date(startOfWeek);
-    while (day <= endOfWeek) {
-      if (day.getMonth() === month) {
-        days.push(new Date(day));
-      } else {
-        days.push(null);
-      }
-      day.setDate(day.getDate() + 1);
+  const filteredItems = useMemo(
+    () => filter === "all" ? items : items.filter((item) => item.kind === filter),
+    [filter, items],
+  );
+  const groupedItems = useMemo(() => {
+    const groups = new Map<string, AgendaItem[]>();
+    for (const item of filteredItems) {
+      const key = itemDateKey(item);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(item);
     }
-    
-    return days;
-  };
+    return [...groups.entries()];
+  }, [filteredItems]);
+  const selectedItems = filteredItems.filter((item) => itemDateKey(item) === localDateKey(selectedDate));
 
-  const getItemsForDay = (date: Date) => {
-    const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-    return items.filter(item => {
-      const itemDateStr = item.type === "service"
-        ? getServiceDateKey(item.date)
-        : getLocalDateKey(item.date);
-      return itemDateStr === dateStr;
-    });
-  };
-
-  const isToday = (date: Date) => {
-    const today = new Date();
-    return date.toDateString() === today.toDateString();
-  };
-
-  const isCurrentMonth = (date: Date) => {
-    return date.getMonth() === month;
-  };
-
-  const formatTime = (item: CalendarItem) => {
-    if (item.type === "service") return formatServiceTime(item.date, "en-US");
-
-    return new Date(item.date).toLocaleTimeString("en-US", {
-      hour: "numeric",
-      minute: "2-digit",
-    });
-  };
-
-  const getLocalDateKey = (value: string) => {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return "";
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-  };
-
-  const days = getDaysInMonth();
-  const dayNames = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
-
-  const getStatusColor = (status: string | null) => {
-    switch (status) {
-      case "confirmed":
-        return "bg-green-500";
-      case "completed":
-        return "bg-gray-400";
-      default:
-        return "bg-green-500";
-    }
-  };
-
-  const getStatusLabel = (status: string | null) => {
-    if (status === "completed") return "completado";
-    return "confirmado";
-  };
-
-  if (isMobile) {
-    const mobileDayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-    return (
-      <div>
-        <div className="flex items-center justify-between mb-6">
-          <h1 className="text-2xl font-bold">Calendar</h1>
-        </div>
-
-        <Card className="mb-6">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between mb-4">
-              <Button variant="ghost" size="icon" onClick={prevMonth}>
-                <ChevronLeft className="w-4 h-4" />
-              </Button>
-              <h2 className="text-lg font-semibold">
-                {currentDate.toLocaleDateString("en-US", { month: "long", year: "numeric" })}
-              </h2>
-              <Button variant="ghost" size="icon" onClick={nextMonth}>
-                <ChevronRight className="w-4 h-4" />
-              </Button>
-            </div>
-
-            <div className="grid grid-cols-7 gap-1">
-              {mobileDayNames.map((name) => (
-                <div key={name} className="text-center text-xs font-medium text-muted-foreground py-2">
-                  {name}
-                </div>
-              ))}
-
-              {days.map((day, idx) => (
-                <div
-                  key={idx}
-                  className={`min-h-20 border rounded p-1 ${
-                    day ? (isCurrentMonth(day) ? "bg-background" : "bg-muted/30") : "bg-muted/10"
-                  }`}
-                >
-                  {day && (
-                    <>
-                      <div className={`text-xs font-medium p-1 ${
-                        isToday(day) ? "bg-primary text-primary-foreground rounded w-6 h-6 flex items-center justify-center" : ""
-                      }`}>
-                        {day.getDate()}
-                      </div>
-                      <div className="space-y-0.5 mt-1">
-                        {getItemsForDay(day).slice(0, 3).map((item) => (
-                          <button
-                            key={item.id}
-                            onClick={() => navigate(getCalendarItemHref(item))}
-                            className={`w-full text-left text-xs px-1 py-0.5 rounded truncate text-white ${item.type === "service" ? getStatusColor(item.status) : "bg-indigo-500"}`}
-                          >
-                            {item.title}
-                          </button>
-                        ))}
-                        {getItemsForDay(day).length > 3 && (
-                          <div className="text-xs text-muted-foreground text-center">
-                            +{getItemsForDay(day).length - 3} more
-                          </div>
-                        )}
-                      </div>
-                    </>
-                  )}
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-
-        <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-          Upcoming This Month
-        </h3>
-        <div className="space-y-2">
-          {loading ? (
-            <div className="flex items-center justify-center py-8">
-              <div className="animate-spin w-6 h-6 border-2 border-primary border-t-transparent rounded-full" />
-            </div>
-          ) : items.length === 0 ? (
-            <Card>
-              <CardContent className="p-4 text-center">
-                <CalendarDays className="w-6 h-6 mx-auto text-muted-foreground mb-2" />
-                <p className="text-sm text-muted-foreground">No events or services this month</p>
-              </CardContent>
-            </Card>
-          ) : (
-            items.slice(0, 10).map((item) => (
-              <Card
-                key={`${item.type}-${item.id}`}
-                className="cursor-pointer hover:shadow-md transition-shadow"
-                onClick={() => navigate(getCalendarItemHref(item))}
-              >
-                <CardContent className="p-3 flex items-center gap-3">
-                  <div className={`w-1 h-10 rounded ${item.type === "service" ? "bg-primary" : "bg-indigo-500"}`} />
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium truncate">{item.title}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {item.type === "service"
-                        ? formatServiceDate(item.date, "en-US", {
-                            weekday: "short",
-                            month: "short",
-                            day: "numeric",
-                          })
-                        : new Date(item.date).toLocaleDateString("en-US", {
-                            weekday: "short",
-                            month: "short",
-                            day: "numeric",
-                          })}{" "}
-                      · {formatTime(item)}
-                      {item.location && ` · ${item.location}`}
-                    </p>
-                  </div>
-                  <span className={`text-xs px-2 py-1 rounded text-white ${item.type === "service" ? getStatusColor(item.status) : "bg-indigo-500"}`}>
-                    {item.type === "service" ? getStatusLabel(item.status) : (item.typeLabel || "event")}
-                  </span>
-                </CardContent>
-              </Card>
-            ))
-          )}
-        </div>
-      </div>
-    );
+  function changeMonth(offset: number) {
+    const next = new Date(year, month + offset, 1);
+    setCurrentMonth(next);
+    setSelectedDate(next);
   }
 
   return (
-    <div className="mobile-page space-y-5">
-      <div className="app-card-soft p-4 md:p-5">
-        <p className="mobile-section-title">Agenda</p>
-        <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <h1 className="text-3xl font-black tracking-tight text-zinc-950">Calendario</h1>
-            <p className="mt-1 text-sm text-muted-foreground">Servicios y eventos del mes en una sola vista.</p>
-          </div>
-          <div className="flex items-center justify-between gap-2 rounded-2xl border border-zinc-200 bg-white p-1 shadow-sm sm:justify-start">
-            <Button className="h-10 w-10 rounded-xl" variant="ghost" size="icon" onClick={prevMonth} aria-label="Mes anterior">
-              <ChevronLeft className="w-4 h-4" />
-            </Button>
-            <h2 className="min-w-40 text-center text-base font-bold">
-              {currentDate.toLocaleDateString("es-US", { month: "long", year: "numeric" })}
-            </h2>
-            <Button className="h-10 w-10 rounded-xl" variant="ghost" size="icon" onClick={nextMonth} aria-label="Mes siguiente">
-              <ChevronRight className="w-4 h-4" />
-            </Button>
-          </div>
+    <div className="mobile-page mx-auto max-w-6xl space-y-5">
+      <SectionNav section="agenda" label="Agenda" />
+
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="mobile-section-title">Agenda</p>
+          <h1 className="mt-1 text-3xl font-bold tracking-tight text-foreground">Agenda de la iglesia</h1>
+          <p className="mt-1 text-sm text-muted-foreground">Servicios y eventos organizados por fecha.</p>
         </div>
+        <div className="flex items-center gap-1 rounded-xl border border-border bg-card p-1">
+          <Button variant="ghost" size="icon" onClick={() => changeMonth(-1)} aria-label="Mes anterior"><ChevronLeft className="h-4 w-4" /></Button>
+          <p className="min-w-40 text-center text-sm font-semibold capitalize text-foreground">
+            {currentMonth.toLocaleDateString("es-US", { month: "long", year: "numeric" })}
+          </p>
+          <Button variant="ghost" size="icon" onClick={() => changeMonth(1)} aria-label="Mes siguiente"><ChevronRight className="h-4 w-4" /></Button>
+        </div>
+      </header>
+
+      <div className="flex items-center gap-2 overflow-x-auto pb-1" aria-label="Filtrar agenda">
+        <ListFilter className="h-4 w-4 shrink-0 text-muted-foreground" />
+        {([
+          ["all", "Todo"],
+          ["service", "Servicios"],
+          ["event", "Eventos"],
+        ] as const).map(([value, label]) => (
+          <Button key={value} size="sm" variant={filter === value ? "default" : "outline"} onClick={() => setFilter(value)}>{label}</Button>
+        ))}
       </div>
 
-      <div className="grid min-w-0 gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.38fr)]">
-        <Card className="app-card min-w-0">
-          <CardContent className="p-2 sm:p-4">
-            <div className="grid grid-cols-7 gap-1 sm:gap-2">
-              {dayNames.map((name) => (
-                <div key={name} className="py-2 text-center text-xs font-bold text-muted-foreground">
-                  {name}
+      {error && (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700" role="alert">
+          <p className="font-semibold">No pudimos cargar la agenda.</p>
+          <p className="mt-1">{error}</p>
+          <Button size="sm" variant="outline" className="mt-3 border-red-200 bg-white text-red-700" onClick={() => loadAgenda(false)}>
+            <RotateCw className="h-4 w-4" /> Reintentar
+          </Button>
+        </div>
+      )}
+
+      {loading && items.length === 0 ? (
+        <div className="space-y-3" role="status" aria-label="Cargando agenda">
+          {[0, 1, 2].map((item) => <div key={item} className="h-24 animate-pulse rounded-xl border border-border bg-card" />)}
+        </div>
+      ) : !responsive.isPhone ? (
+        <div className="grid min-w-0 gap-4 md:grid-cols-[minmax(0,1fr)_18rem]">
+          <Card className="app-card min-w-0">
+            <CardContent className="p-3">
+              <div className="grid grid-cols-7 gap-1">
+                {["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"].map((name) => (
+                  <div key={name} className="py-2 text-center text-xs font-semibold text-muted-foreground">{name}</div>
+                ))}
+                {days.map((day) => {
+                  const dayItems = filteredItems.filter((item) => itemDateKey(item) === localDateKey(day));
+                  const selected = localDateKey(day) === localDateKey(selectedDate);
+                  const inMonth = day.getMonth() === month;
+                  const today = localDateKey(day) === localDateKey(new Date());
+                  return (
+                    <button
+                      type="button"
+                      key={day.toISOString()}
+                      onClick={() => setSelectedDate(day)}
+                      aria-label={`${day.toLocaleDateString("es-US", { month: "long", day: "numeric" })}, ${dayItems.length} elementos`}
+                      className={[
+                        "min-h-24 rounded-xl border p-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:min-h-28",
+                        selected ? "border-primary bg-secondary" : "border-border bg-card hover:border-primary/30",
+                        inMonth ? "" : "opacity-45",
+                      ].join(" ")}
+                    >
+                      <span className={`inline-flex h-7 w-7 items-center justify-center rounded-[10px] text-xs font-semibold ${today ? "bg-primary text-white" : "text-foreground"}`}>{day.getDate()}</span>
+                      <span className="mt-2 block space-y-1">
+                        {dayItems.slice(0, 2).map((item) => (
+                          <span key={`${item.kind}-${item.id}`} className="block truncate text-[11px] font-medium text-foreground">
+                            <span className={`mr-1 inline-block h-1.5 w-1.5 rounded-full ${item.kind === "service" ? "bg-primary" : "bg-blue-500"}`} />
+                            {item.title}
+                          </span>
+                        ))}
+                        {dayItems.length > 2 && <span className="block text-[11px] text-muted-foreground">+{dayItems.length - 2} más</span>}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+
+          <aside className="space-y-3 md:sticky md:top-4 md:self-start">
+            <div>
+              <p className="mobile-section-title">Día seleccionado</p>
+              <h2 className="mt-1 text-lg font-semibold capitalize text-foreground">
+                {selectedDate.toLocaleDateString("es-US", { weekday: "long", month: "long", day: "numeric" })}
+              </h2>
+            </div>
+            {selectedItems.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-border bg-card p-5 text-center text-sm text-muted-foreground">No hay actividades este día.</div>
+            ) : selectedItems.map((item) => <AgendaRow key={`${item.kind}-${item.id}`} item={item} onOpen={() => navigate(itemHref(item))} />)}
+          </aside>
+        </div>
+      ) : groupedItems.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-border bg-card px-5 py-12 text-center">
+          <CalendarDays className="mx-auto h-9 w-9 text-primary" />
+          <p className="mt-3 font-semibold text-foreground">No hay actividades este mes</p>
+          <p className="mt-1 text-sm text-muted-foreground">Prueba otro mes o cambia el filtro.</p>
+        </div>
+      ) : (
+        <div className="space-y-6">
+          {groupedItems.map(([dateKey, dayItems]) => {
+            const first = dayItems[0];
+            return (
+              <section key={dateKey} className="space-y-2">
+                <h2 className="text-sm font-semibold capitalize text-foreground">
+                  {formatItemDate(first, { weekday: "long", month: "long", day: "numeric" })}
+                </h2>
+                <div className="space-y-2">
+                  {dayItems.map((item) => <AgendaRow key={`${item.kind}-${item.id}`} item={item} onOpen={() => navigate(itemHref(item))} />)}
                 </div>
-              ))}
-
-              {days.map((day, idx) => {
-                const dayItems = day ? getItemsForDay(day) : [];
-                return (
-                  <div
-                    key={idx}
-                    className={`min-h-[5.25rem] rounded-xl border p-1.5 sm:min-h-28 sm:p-2 lg:min-h-32 ${
-                      day ? (isCurrentMonth(day) ? "bg-background" : "bg-muted/30") : "bg-muted/10"
-                    }`}
-                  >
-                    {day && (
-                      <>
-                        <div className={`flex h-7 w-7 items-center justify-center text-xs font-bold ${
-                          isToday(day) ? "rounded-full bg-primary text-primary-foreground" : "text-zinc-700"
-                        }`}>
-                          {day.getDate()}
-                        </div>
-                        <div className="mt-1.5 space-y-1">
-                          {dayItems.slice(0, 3).map((item) => (
-                            <button
-                              key={item.id}
-                              onClick={() => navigate(getCalendarItemHref(item))}
-                              className={`min-h-7 w-full truncate rounded-lg px-1.5 py-1 text-left text-[11px] font-semibold leading-tight text-white ${item.type === "service" ? getStatusColor(item.status) : "bg-indigo-500"}`}
-                            >
-                              {item.title}
-                            </button>
-                          ))}
-                          {dayItems.length > 3 && (
-                            <div className="text-center text-[11px] font-semibold text-muted-foreground">
-                              +{dayItems.length - 3} más
-                            </div>
-                          )}
-                        </div>
-                      </>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </CardContent>
-        </Card>
-
-        <aside className="min-w-0 space-y-3 lg:sticky lg:top-[calc(env(safe-area-inset-top)+1rem)] lg:self-start">
-          <h3 className="mobile-section-title">Próximos este mes</h3>
-          {loading ? (
-            <div className="flex items-center justify-center py-8">
-              <div className="animate-spin w-6 h-6 border-2 border-primary border-t-transparent rounded-full" />
-            </div>
-          ) : items.length === 0 ? (
-            <Card className="app-card">
-              <CardContent className="p-5 text-center">
-                <CalendarDays className="w-6 h-6 mx-auto text-muted-foreground mb-2" />
-                <p className="text-sm text-muted-foreground">No hay eventos o servicios este mes</p>
-              </CardContent>
-            </Card>
-          ) : (
-            <div className="space-y-2">
-              {items.slice(0, 12).map((item) => (
-                <Card
-                  key={`${item.type}-${item.id}`}
-                  className="app-card cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-md"
-                  onClick={() => navigate(getCalendarItemHref(item))}
-                >
-                  <CardContent className="flex min-w-0 items-center gap-3 p-3">
-                    <div className={`h-11 w-1.5 shrink-0 rounded ${item.type === "service" ? "bg-primary" : "bg-indigo-500"}`} />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate font-bold">{item.title}</p>
-                      <p className="truncate text-xs text-muted-foreground">
-                        {item.type === "service"
-                          ? formatServiceDate(item.date, "es-US", {
-                              weekday: "short",
-                              month: "short",
-                              day: "numeric",
-                            })
-                          : new Date(item.date).toLocaleDateString("es-US", {
-                              weekday: "short",
-                              month: "short",
-                              day: "numeric",
-                            })}{" "}
-                        · {formatTime(item)}
-                        {item.location && ` · ${item.location}`}
-                      </p>
-                    </div>
-                    <span className={`shrink-0 rounded-full px-2 py-1 text-[11px] font-bold text-white ${item.type === "service" ? getStatusColor(item.status) : "bg-indigo-500"}`}>
-                      {item.type === "service" ? getStatusLabel(item.status) : (item.typeLabel || "evento")}
-                    </span>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          )}
-        </aside>
-      </div>
+              </section>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
