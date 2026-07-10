@@ -1,4 +1,5 @@
-export type PrayerPrivacy = "name" | "anonymous" | "private";
+export type PrayerPrivacy = "public" | "anonymous" | "private";
+export const DEFAULT_PRAYER_PRIVACY: PrayerPrivacy = "public";
 
 export type PrayerRequest = {
   id: string;

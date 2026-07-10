@@ -123,7 +123,6 @@ const navItems: NavItem[] = [
   { title: "Fechas bloqueadas", url: "/app/blockouts", icon: CalendarX },
   { title: "Ajustes", url: "/app/settings", icon: Settings },
   { title: "Mensajes", url: "/app/messages", icon: MessageCircle },
-  { title: "Oración", url: "/app/prayer", icon: Heart },
   { title: "Capacitación", url: "/app/training", icon: BookOpen },
 ];
 
@@ -173,7 +172,7 @@ export function AppSidebar() {
         <div className="min-w-0 flex-1">
           {collapsed ? <TchurchLogo variant="mark" size="md" /> : <TchurchLogo size="sm" wordPurple />}
         </div>
-        <SidebarTrigger className="h-9 w-9 shrink-0 rounded-xl border border-zinc-200 bg-white shadow-sm" />
+        <SidebarTrigger className="h-11 w-11 shrink-0 rounded-xl border border-zinc-200 bg-white shadow-sm" />
       </div>
       <SidebarContent>
         <SidebarGroup>
@@ -181,7 +180,7 @@ export function AppSidebar() {
             <SidebarMenu>
               {visibleItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild tooltip={item.title}>
+                  <SidebarMenuButton asChild tooltip={item.title} className="min-h-11 group-data-[collapsible=icon]:!size-11">
                     <NavLink
                       to={item.url}
                       end={item.url === "/app"}
@@ -256,7 +255,7 @@ export function AppSidebar() {
         )}
         <button
           onClick={() => signOut("/")}
-          className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground w-full px-2 py-1.5 rounded-md hover:bg-muted/50 transition-colors"
+          className="flex min-h-11 w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
         >
           <LogOut className="w-4 h-4" />
           {!collapsed && <span>Cerrar sesión</span>}

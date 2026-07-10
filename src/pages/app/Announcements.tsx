@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CalendarDays, Check, ImageIcon, Loader2, Megaphone, MessageCircle, Plus, Send, Trash2, X } from "lucide-react";
 import { AnnouncementAiImageField } from "@/components/AnnouncementAiImageField";
 import { SectionNav } from "@/components/SectionNav";
@@ -21,7 +21,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/use-toast";
 import { useApi } from "@/hooks/useApi";
 import { getChurchId } from "@/lib/api";
+import { canDeleteAnnouncement, canManageAnnouncements, resolveAnnouncementRole } from "@/lib/announcements";
 import { readSessionSnapshot, sessionSnapshotKey, writeSessionSnapshot } from "@/lib/sessionSnapshots";
+import { useChurch } from "@/providers/ChurchProvider";
 
 type AnnouncementStatus = "PENDING" | "PUBLISHED" | "REJECTED";
 type Locale = "en" | "es";
@@ -157,10 +159,12 @@ function AnnouncementCard({ announcement, onDelete, actions }: AnnouncementCardP
 export default function Announcements() {
   const { fetchApi } = useApi();
   const { toast } = useToast();
+  const { selectedChurch } = useChurch();
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [ministries, setMinistries] = useState<Ministry[]>([]);
   const [role, setRole] = useState<string | null>(null);
   const [ministryRoles, setMinistryRoles] = useState<Record<string, string>>({});
+  const [loadedChurchId, setLoadedChurchId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
@@ -173,22 +177,32 @@ export default function Announcements() {
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [imageUrl, setImageUrl] = useState<string | null>(null);
-  const isAdmin = role === "ADMIN";
+  const currentChurchId = selectedChurch?.id || null;
+  const selectedChurchIdRef = useRef(currentChurchId);
+  selectedChurchIdRef.current = currentChurchId;
+  const dataIsCurrent = loadedChurchId === currentChurchId;
+  const currentAnnouncements = dataIsCurrent ? announcements : [];
+  const currentMinistries = dataIsCurrent ? ministries : [];
+  const currentApiRole = dataIsCurrent ? role : null;
+  const canManage = canManageAnnouncements(currentApiRole, selectedChurch?.role);
   const leaderMinistries = useMemo(
-    () => ministries.filter((ministry) => ["LEADER", "CO_LEADER"].includes(String(ministryRoles[ministry.id] || "").toUpperCase())),
-    [ministries, ministryRoles],
+    () => dataIsCurrent
+      ? ministries.filter((ministry) => ["LEADER", "CO_LEADER"].includes(String(ministryRoles[ministry.id] || "").toUpperCase()))
+      : [],
+    [dataIsCurrent, ministries, ministryRoles],
   );
-  const selectedMinistry = ministries.find((ministry) => ministry.id === ministryId);
-  const pending = announcements.filter((announcement) => announcement.status === "PENDING");
-  const published = announcements.filter((announcement) => announcement.status === "PUBLISHED");
-  const rejected = announcements.filter((announcement) => announcement.status === "REJECTED");
-  const snapshotKey = sessionSnapshotKey(ANNOUNCEMENTS_SNAPSHOT_PREFIX, getChurchId() || "default");
+  const selectedMinistry = currentMinistries.find((ministry) => ministry.id === ministryId);
+  const pending = currentAnnouncements.filter((announcement) => announcement.status === "PENDING");
+  const published = currentAnnouncements.filter((announcement) => announcement.status === "PUBLISHED");
+  const rejected = currentAnnouncements.filter((announcement) => announcement.status === "REJECTED");
+  const snapshotKey = sessionSnapshotKey(ANNOUNCEMENTS_SNAPSHOT_PREFIX, currentChurchId || getChurchId() || "default");
 
-  const applyPageData = useCallback((snapshot: AnnouncementsSnapshot) => {
+  const applyPageData = useCallback((snapshot: AnnouncementsSnapshot, churchId: string | null) => {
     setAnnouncements(snapshot.announcements);
     setMinistries(snapshot.ministries);
     setRole(snapshot.role);
     setMinistryRoles(snapshot.ministryRoles);
+    setLoadedChurchId(churchId);
   }, []);
 
   const loadPage = useCallback(async (preferSnapshot = true) => {
@@ -196,9 +210,18 @@ export default function Announcements() {
       ? readSessionSnapshot<AnnouncementsSnapshot>(snapshotKey, { validate: isAnnouncementsSnapshot })
       : null;
     if (snapshot) {
-      applyPageData(snapshot.data);
+      applyPageData({
+        ...snapshot.data,
+        role: resolveAnnouncementRole(null, selectedChurch?.role),
+        ministryRoles: {},
+      }, currentChurchId);
       setLoading(false);
     } else {
+      setAnnouncements([]);
+      setMinistries([]);
+      setRole(null);
+      setMinistryRoles({});
+      setLoadedChurchId(currentChurchId);
       setLoading(true);
     }
     setLoadError(null);
@@ -212,17 +235,23 @@ export default function Announcements() {
       const nextSnapshot: AnnouncementsSnapshot = {
         announcements: Array.isArray(announcementResult.value) ? announcementResult.value : [],
         ministries: mineResult.status === "fulfilled" ? mineResult.value.ministries || [] : snapshot?.data.ministries || [],
-        role: mineResult.status === "fulfilled" ? mineResult.value.role || null : snapshot?.data.role || null,
-        ministryRoles: mineResult.status === "fulfilled" ? mineResult.value.ministryRoles || {} : snapshot?.data.ministryRoles || {},
+        role: resolveAnnouncementRole(
+          mineResult.status === "fulfilled" ? mineResult.value.role : null,
+          selectedChurch?.role,
+        ),
+        ministryRoles: mineResult.status === "fulfilled" ? mineResult.value.ministryRoles || {} : {},
       };
-      applyPageData(nextSnapshot);
+      if (selectedChurchIdRef.current !== currentChurchId) return;
+      applyPageData(nextSnapshot, currentChurchId);
       writeSessionSnapshot(snapshotKey, nextSnapshot);
     } catch (error) {
-      setLoadError(error instanceof Error ? error.message : "No se pudieron cargar los anuncios.");
+      if (selectedChurchIdRef.current === currentChurchId) {
+        setLoadError(error instanceof Error ? error.message : "No se pudieron cargar los anuncios.");
+      }
     } finally {
-      setLoading(false);
+      if (selectedChurchIdRef.current === currentChurchId) setLoading(false);
     }
-  }, [applyPageData, fetchApi, snapshotKey]);
+  }, [applyPageData, currentChurchId, fetchApi, selectedChurch?.role, snapshotKey]);
 
   useEffect(() => {
     void loadPage();
@@ -347,7 +376,7 @@ export default function Announcements() {
                 />
                 <Button type="submit" className="w-full" disabled={submitting || !title.trim() || !content.trim() || (audience === "ministry" && !ministryId)}>
                   {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                  {submitting ? "Publicando..." : audience === "general" && !isAdmin ? "Enviar para aprobación" : "Publicar anuncio"}
+                  {submitting ? "Publicando..." : audience === "general" && !canManage ? "Enviar para aprobación" : "Publicar anuncio"}
                 </Button>
               </div>
             </form>
@@ -363,13 +392,13 @@ export default function Announcements() {
         </div>
       )}
 
-      {loading && announcements.length === 0 ? (
+      {loading && currentAnnouncements.length === 0 ? (
         <div className="space-y-3" role="status" aria-label="Cargando anuncios">
           {[0, 1, 2].map((item) => <div key={item} className="h-44 animate-pulse rounded-xl border border-border bg-card" />)}
         </div>
       ) : (
         <div className="space-y-8">
-          {isAdmin && pending.length > 0 && (
+          {canManage && pending.length > 0 && (
             <section className="space-y-3">
               <div className="flex items-center justify-between gap-3">
                 <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-amber-700">Pendientes de aprobación</h2>
@@ -403,14 +432,14 @@ export default function Announcements() {
                 <p className="mt-1 text-sm text-muted-foreground">Los anuncios publicados aparecerán aquí.</p>
               </div>
             ) : published.map((announcement) => (
-              <AnnouncementCard key={announcement.id} announcement={announcement} onDelete={isAdmin ? () => setDeleteId(announcement.id) : undefined} />
+              <AnnouncementCard key={announcement.id} announcement={announcement} onDelete={canDeleteAnnouncement(announcement.status, canManage) ? () => setDeleteId(announcement.id) : undefined} />
             ))}
           </section>
 
-          {!isAdmin && rejected.length > 0 && (
+          {!canManage && rejected.length > 0 && (
             <section className="space-y-3">
               <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-red-700">Requieren cambios</h2>
-              {rejected.map((announcement) => <AnnouncementCard key={announcement.id} announcement={announcement} onDelete={() => setDeleteId(announcement.id)} />)}
+              {rejected.map((announcement) => <AnnouncementCard key={announcement.id} announcement={announcement} />)}
             </section>
           )}
         </div>

@@ -9,6 +9,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { useApi } from "@/hooks/useApi";
 import { getChurchId } from "@/lib/api";
 import {
+  DEFAULT_PRAYER_PRIVACY,
   getPrayerAuthorLabel,
   normalizePrayerRequest,
   normalizePrayerRequests,
@@ -29,7 +30,7 @@ const PRIVACY_OPTIONS: Array<{
   description: string;
   icon: typeof UserRound;
 }> = [
-  { value: "name", label: "Con mi nombre", description: "Visible para la iglesia", icon: UserRound },
+  { value: "public", label: "Con mi nombre", description: "Visible para la iglesia", icon: UserRound },
   { value: "anonymous", label: "Anónima", description: "Oculta tu nombre", icon: VenetianMask },
   { value: "private", label: "Solo yo", description: "Petición privada", icon: Lock },
 ];
@@ -141,7 +142,7 @@ export default function Prayer() {
   const [error, setError] = useState<string | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
   const [content, setContent] = useState("");
-  const [privacy, setPrivacy] = useState<PrayerPrivacy>("name");
+  const [privacy, setPrivacy] = useState<PrayerPrivacy>(DEFAULT_PRAYER_PRIVACY);
   const [submitting, setSubmitting] = useState(false);
   const [prayingIds, setPrayingIds] = useState<Set<string>>(() => new Set());
   const [answeringId, setAnsweringId] = useState<string | null>(null);
@@ -197,7 +198,7 @@ export default function Prayer() {
         body: JSON.stringify({ content: nextContent, privacy }),
       }));
       setContent("");
-      setPrivacy("name");
+      setPrivacy(DEFAULT_PRAYER_PRIVACY);
       setComposerOpen(false);
       if (created && filter !== "answered") setRequests((current) => [created, ...current]);
       else await loadRequests(false);

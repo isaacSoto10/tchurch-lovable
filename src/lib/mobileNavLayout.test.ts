@@ -106,6 +106,9 @@ describe("mobile nav layout", () => {
       'title: "Ministerios"',
       'title: "Personas"',
     ]);
+    expect(sidebarSource).not.toContain('title: "Oración"');
+    expect(sidebarSource).toContain('className="h-11 w-11 shrink-0');
+    expect(sidebarSource).toContain('className="min-h-11 group-data-[collapsible=icon]:!size-11"');
   });
 
   it("shows recent announcements above my ministries on the dashboard", () => {

@@ -25,6 +25,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { useApi } from "@/hooks/useApi";
 import { getChurchId } from "@/lib/api";
 import { readSessionSnapshot, sessionSnapshotKey, writeSessionSnapshot } from "@/lib/sessionSnapshots";
+import { buildTeamMemberPayload, type TeamMemberRole } from "@/lib/teamMembers";
 import { useChurch } from "@/providers/ChurchProvider";
 
 type TeamUser = {
@@ -84,6 +85,7 @@ export default function TeamDetail() {
   const [deleteTeamOpen, setDeleteTeamOpen] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<TeamMember | null>(null);
   const [selectedUserId, setSelectedUserId] = useState("");
+  const [memberRole, setMemberRole] = useState<TeamMemberRole>("MUSICIAN");
   const [position, setPosition] = useState("");
   const [editForm, setEditForm] = useState({ name: "", description: "", color: "#5B4FD8" });
   const [submitting, setSubmitting] = useState(false);
@@ -141,10 +143,11 @@ export default function TeamDetail() {
     try {
       await fetchApi("/team-members", {
         method: "POST",
-        body: JSON.stringify({ teamId: id, userId: selectedUserId, position: position.trim() || null, role: "MUSICIAN" }),
+        body: JSON.stringify(buildTeamMemberPayload({ teamId: id, userId: selectedUserId, position, role: memberRole })),
       });
       setAddOpen(false);
       setSelectedUserId("");
+      setMemberRole("MUSICIAN");
       setPosition("");
       toast({ title: "Integrante agregado" });
       await loadTeam(false);
@@ -282,7 +285,7 @@ export default function TeamDetail() {
 
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Agregar integrante</DialogTitle><DialogDescription>Selecciona un miembro de la iglesia y su posición.</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle>Agregar integrante</DialogTitle><DialogDescription>Selecciona un miembro de la iglesia, su rol y su posición.</DialogDescription></DialogHeader>
           <form onSubmit={addMember} className="space-y-4">
             <div className="space-y-2">
               <Label>Miembro</Label>
@@ -291,6 +294,18 @@ export default function TeamDetail() {
                 <SelectContent>{availableUsers.map((user) => <SelectItem key={user.id} value={user.id}>{displayName(user)} · {user.email}</SelectItem>)}</SelectContent>
               </Select>
               {availableUsers.length === 0 && <p className="text-xs text-muted-foreground">No hay más miembros disponibles.</p>}
+            </div>
+            <div className="space-y-2">
+              <Label>Rol</Label>
+              <Select value={memberRole} onValueChange={(value) => setMemberRole(value as TeamMemberRole)}>
+                <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="LEADER">Líder</SelectItem>
+                  <SelectItem value="MUSICIAN">Músico</SelectItem>
+                  <SelectItem value="TECH">Técnico</SelectItem>
+                  <SelectItem value="MEMBER">Miembro</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-2"><Label htmlFor="team-position">Posición</Label><Input id="team-position" value={position} onChange={(event) => setPosition(event.target.value)} placeholder="Voz, guitarra, audio..." className="h-11 rounded-xl" /></div>
             <DialogFooter className="gap-2 sm:gap-0"><Button type="button" variant="outline" onClick={() => setAddOpen(false)}>Cancelar</Button><Button type="submit" disabled={submitting || !selectedUserId}>{submitting && <Loader2 className="h-4 w-4 animate-spin" />}Agregar</Button></DialogFooter>

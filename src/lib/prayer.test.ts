@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { getPrayerAuthorLabel, normalizePrayerRequest, normalizePrayerRequests } from "@/lib/prayer";
+import { DEFAULT_PRAYER_PRIVACY, getPrayerAuthorLabel, normalizePrayerRequest, normalizePrayerRequests } from "@/lib/prayer";
 
 describe("prayer request normalization", () => {
+  it("uses the backend public privacy value by default", () => {
+    expect(DEFAULT_PRAYER_PRIVACY).toBe("public");
+  });
+
   it("maps the current API contract", () => {
     expect(normalizePrayerRequest({
       id: "prayer-1",

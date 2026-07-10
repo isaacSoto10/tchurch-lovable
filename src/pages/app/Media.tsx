@@ -196,11 +196,17 @@ export default function Media() {
   const selectedSeries = seriesGroups.find((series) => series.key === selectedSeriesKey) || null;
   const allItems = useMemo(() => flattenServiceMedia(response), [response]);
 
+  useEffect(() => {
+    if (selectedSeriesKey) setView("series");
+  }, [selectedSeriesKey]);
+
   function selectSeries(series: MediaSeriesGroup | null) {
+    const currentSeriesKey = normalizeSeriesKey(searchParams.get("series"));
+    if ((series && currentSeriesKey === series.key) || (!series && !currentSeriesKey)) return;
     const next = new URLSearchParams(searchParams);
     if (series) next.set("series", series.key);
     else next.delete("series");
-    setSearchParams(next, { replace: true });
+    setSearchParams(next);
   }
 
   if (loading && allItems.length === 0) return <MediaSkeleton />;

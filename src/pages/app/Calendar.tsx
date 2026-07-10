@@ -8,6 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useResponsiveLayout } from "@/hooks/use-mobile";
 import { useApi } from "@/hooks/useApi";
 import { getChurchId } from "@/lib/api";
+import { toCalendarQueryDate } from "@/lib/calendar";
 import { formatServiceDate, formatServiceTime, getServiceDateKey } from "@/lib/serviceDates";
 import { readSessionSnapshot, sessionSnapshotKey, writeSessionSnapshot } from "@/lib/sessionSnapshots";
 import { getEventTypeLabel } from "@/types/events";
@@ -144,7 +145,7 @@ export default function Calendar() {
 
     try {
       const data = await fetchApi<{ events?: CalendarEvent[]; services?: CalendarService[] }>(
-        `/calendar?start=${encodeURIComponent(range.start.toISOString())}&end=${encodeURIComponent(range.end.toISOString())}`,
+        `/calendar?start=${toCalendarQueryDate(range.start)}&end=${toCalendarQueryDate(range.end)}`,
       );
       const nextItems: AgendaItem[] = [
         ...(data.events || []).map((event): AgendaItem => ({
