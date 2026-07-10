@@ -1,4 +1,4 @@
-export const TEAM_MEMBER_ROLES = ["LEADER", "MUSICIAN", "TECH", "MEMBER"] as const;
+export const TEAM_MEMBER_ROLES = ["ADMIN", "PLANNER", "MUSICIAN", "TECH"] as const;
 export type TeamMemberRole = typeof TEAM_MEMBER_ROLES[number];
 
 export function buildTeamMemberPayload(input: {

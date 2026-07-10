@@ -300,10 +300,10 @@ export default function TeamDetail() {
               <Select value={memberRole} onValueChange={(value) => setMemberRole(value as TeamMemberRole)}>
                 <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="LEADER">Líder</SelectItem>
+                  <SelectItem value="ADMIN">Administrador</SelectItem>
+                  <SelectItem value="PLANNER">Líder / planificador</SelectItem>
                   <SelectItem value="MUSICIAN">Músico</SelectItem>
                   <SelectItem value="TECH">Técnico</SelectItem>
-                  <SelectItem value="MEMBER">Miembro</SelectItem>
                 </SelectContent>
               </Select>
             </div>
