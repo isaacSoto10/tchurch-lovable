@@ -12,5 +12,5 @@ export function canManageAnnouncements(apiRole?: string | null, churchRole?: str
 }
 
 export function canDeleteAnnouncement(status: "PENDING" | "PUBLISHED" | "REJECTED", canManage: boolean) {
-  return canManage && ["PENDING", "PUBLISHED", "REJECTED"].includes(status);
+  return canManage || status === "PENDING";
 }

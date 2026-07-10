@@ -14,6 +14,7 @@ describe("announcement permissions", () => {
 
   it("does not expose deletion of rejected announcements to non-managers", () => {
     expect(canDeleteAnnouncement("REJECTED", false)).toBe(false);
+    expect(canDeleteAnnouncement("PENDING", false)).toBe(true);
     expect(canDeleteAnnouncement("REJECTED", true)).toBe(true);
   });
 });

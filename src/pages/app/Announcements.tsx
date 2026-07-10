@@ -420,6 +420,22 @@ export default function Announcements() {
             </section>
           )}
 
+          {!canManage && pending.length > 0 && (
+            <section className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-amber-700">En revisión</h2>
+                <Badge className="bg-amber-100 text-amber-800 hover:bg-amber-100">{pending.length}</Badge>
+              </div>
+              {pending.map((announcement) => (
+                <AnnouncementCard
+                  key={announcement.id}
+                  announcement={announcement}
+                  onDelete={canDeleteAnnouncement(announcement.status, canManage) ? () => setDeleteId(announcement.id) : undefined}
+                />
+              ))}
+            </section>
+          )}
+
           <section className="space-y-3">
             <div className="flex items-center justify-between gap-3">
               <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-muted-foreground">Publicados</h2>
