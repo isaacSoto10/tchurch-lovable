@@ -1,0 +1,1380 @@
+import { ApiError, apiFetch } from "@/lib/api";
+import type { PresentationService } from "@/lib/servicePresentation";
+import {
+  normalizePresentationWorkspace,
+  type PresentationTargetRole,
+  type PresentationWorkspace,
+} from "@/lib/presentationWorkspace";
+
+export const PRESENTATION_LIVE_SCHEMA_VERSION = 2 as const;
+export const PRESENTATION_CONTROLLER_LEASE_MS = 30_000;
+export const PRESENTATION_HEARTBEAT_MS = 10_000;
+export const PRESENTATION_POLL_MS = 1_100;
+export const PRESENTATION_BACKGROUND_POLL_MS = 8_000;
+export const MAX_OFFLINE_PRESENTATION_COMMANDS = 100;
+export const MAX_STAGE_MESSAGE_LENGTH = 160;
+
+const CLIENT_ID_KEY = "tchurch_live_installation_client_id";
+const ACTIVE_CACHE_IDENTITY_KEY = "tchurch_live_active_cache_identity";
+const FALLBACK_PACKAGES_KEY = "tchurch_live_packages_v1";
+const FALLBACK_OFFLINE_KEY = "tchurch_live_offline_v1";
+const LIVE_DB_NAME = "tchurch_live";
+const LIVE_DB_VERSION = 1;
+const PACKAGE_STORE = "packages";
+const OFFLINE_STORE = "offline_states";
+
+export type PresentationLiveView = "operator" | "stage" | "remote" | "audience";
+export type PresentationPrivateLiveView = Exclude<PresentationLiveView, "audience">;
+export type PresentationSessionStatus = "live" | "ended";
+export type PresentationTimerStatus = "running" | "paused";
+export type PresentationNetworkState = "online" | "offline" | "reconnecting" | "diverged";
+
+export type PresentationLiveViewer =
+  | {
+      view: "audience";
+      canEdit: false;
+      canStart: false;
+      canControl: false;
+      canForceTakeover: false;
+    }
+  | {
+      view: PresentationPrivateLiveView;
+      roles: PresentationTargetRole[];
+      canEdit: boolean;
+      canStart: boolean;
+      canControl: boolean;
+      canForceTakeover: boolean;
+    };
+
+export type PresentationController = {
+  clientId: string;
+  displayName: string;
+  leaseExpiresAt: string;
+  ownedByViewer: boolean;
+};
+
+export type PresentationPresence = {
+  clientId: string;
+  displayName: string;
+  view: PresentationPrivateLiveView;
+  lastSeenAt: string;
+  controlRequestedAt: string | null;
+};
+
+export type PresentationCursor = {
+  itemId: string | null;
+  itemIndex: number;
+  stepId: string | null;
+  stepIndex: number;
+  partIndex: number;
+  sectionAnchorId: string | null;
+};
+
+export type PresentationDisplay = {
+  blackout: boolean;
+  chordsVisible: boolean;
+};
+
+export type PresentationTimer = {
+  status: PresentationTimerStatus;
+  plannedSeconds: number;
+  elapsedSeconds: number;
+  overrunSeconds: number;
+  startedAt: string | null;
+  pausedAt: string | null;
+  accumulatedPausedMs: number;
+};
+
+export type PresentationServiceTimer = PresentationTimer & {
+  remainingSeconds: number;
+  projectedEndAt: string | null;
+};
+
+export type PresentationItemTimer = PresentationTimer & {
+  itemId: string | null;
+};
+
+export type PresentationCountdown = {
+  durationSeconds: number;
+  targetAt: string;
+  remainingSeconds: number;
+};
+
+export type PresentationTiming = {
+  service: PresentationServiceTimer;
+  item: PresentationItemTimer;
+  countdown: PresentationCountdown | null;
+};
+
+export type PresentationStageMessage = {
+  id: string;
+  body: string;
+  tone: "info" | "urgent";
+  roles: PresentationTargetRole[];
+  sentAt: string;
+  expiresAt: string;
+};
+
+export type PresentationSession = {
+  id: string;
+  status: PresentationSessionStatus;
+  revision: number;
+  startedAt: string;
+  endedAt: string | null;
+  controller: PresentationController | null;
+  presence?: PresentationPresence[];
+  cursor: PresentationCursor;
+  display: PresentationDisplay;
+  timing: PresentationTiming;
+  messages: PresentationStageMessage[];
+  lastCommand: {
+    id: string;
+    type: PresentationCommandType;
+    at: string;
+  } | null;
+};
+
+export type PresentationLiveSnapshot = {
+  schemaVersion: 2;
+  serviceId: string;
+  serviceVersion: string;
+  serverNow: string;
+  viewer: PresentationLiveViewer;
+  session: PresentationSession | null;
+  /** Local receipt time used only to project server clocks between revisions. */
+  receivedAtMs: number;
+};
+
+export type PresentationPlannedTiming = {
+  serviceSeconds: number;
+  itemSecondsById: Record<string, number>;
+};
+
+export type PresentationPackageLiveSeed = {
+  cursor: PresentationCursor;
+  display: PresentationDisplay;
+  timing: PresentationTiming;
+  countdown: PresentationCountdown | null;
+};
+
+export type PresentationPackage = {
+  schemaVersion: 2;
+  packageId: string;
+  generatedAt: string;
+  scope: {
+    accountId: string;
+    churchId: string;
+    view: PresentationPrivateLiveView;
+    roleFingerprint: string;
+  };
+  serviceVersion: string;
+  service: PresentationService;
+  presentation: PresentationWorkspace;
+  plannedTiming: PresentationPlannedTiming;
+  liveSeed: PresentationPackageLiveSeed;
+  checksum: string;
+};
+
+export type PresentationCommandType =
+  | "start_session"
+  | "end_session"
+  | "heartbeat"
+  | "claim_control"
+  | "request_control"
+  | "handoff_control"
+  | "release_control"
+  | "next"
+  | "previous"
+  | "jump"
+  | "set_blackout"
+  | "set_chords"
+  | "timer_start"
+  | "timer_pause"
+  | "timer_reset"
+  | "countdown_set"
+  | "countdown_clear"
+  | "stage_message_send"
+  | "stage_message_dismiss"
+  | "offline_reconcile";
+
+export type PresentationOfflineCommandType =
+  | "next"
+  | "previous"
+  | "jump"
+  | "set_blackout"
+  | "set_chords"
+  | "timer_start"
+  | "timer_pause"
+  | "timer_reset"
+  | "countdown_set"
+  | "countdown_clear";
+
+export type PresentationCommandPayloads = {
+  start_session: Record<string, never>;
+  end_session: Record<string, never>;
+  heartbeat: Record<string, never>;
+  claim_control: { force?: boolean };
+  request_control: Record<string, never>;
+  handoff_control: { targetClientId: string };
+  release_control: Record<string, never>;
+  next: Record<string, never>;
+  previous: Record<string, never>;
+  jump: { itemId: string; stepId?: string | null; partIndex?: number };
+  set_blackout: { blackout: boolean };
+  set_chords: { chordsVisible: boolean };
+  timer_start: { scope: "service" | "item" };
+  timer_pause: { scope: "service" | "item" };
+  timer_reset: { scope: "service" | "item" };
+  countdown_set: { durationSeconds: number };
+  countdown_clear: Record<string, never>;
+  stage_message_send: {
+    body: string;
+    tone: "info" | "urgent";
+    lifetimeSeconds: number;
+    roles: PresentationTargetRole[];
+  };
+  stage_message_dismiss: { messageId: string };
+  offline_reconcile: {
+    baseRevision: number;
+    commands: PresentationQueuedCommand[];
+  };
+};
+
+export type PresentationQueuedCommand<T extends PresentationOfflineCommandType = PresentationOfflineCommandType> = {
+  commandId: string;
+  type: T;
+  payload: PresentationCommandPayloads[T];
+};
+
+export type PresentationCommandRequest<T extends PresentationCommandType = PresentationCommandType> = {
+  schemaVersion: 2;
+  clientId: string;
+  clientName: string;
+  commandId: string;
+  expectedRevision?: number;
+  type: T;
+  payload: PresentationCommandPayloads[T];
+};
+
+export type PresentationOfflineStep = {
+  itemId: string;
+  stepId: string | null;
+  partIndex: number;
+  sectionAnchorId: string | null;
+};
+
+export type PresentationOfflineContext = {
+  steps: PresentationOfflineStep[];
+  plannedTiming: PresentationPlannedTiming;
+};
+
+export type PresentationCacheScope = {
+  accountId: string;
+  churchId: string;
+  serviceId: string;
+  view: PresentationPrivateLiveView;
+  roles: PresentationTargetRole[];
+};
+
+export type CachedPresentationPackage = {
+  key: string;
+  accountId: string;
+  churchId: string;
+  serviceId: string;
+  view: PresentationPrivateLiveView;
+  roleFingerprint: string;
+  savedAt: string;
+  package: PresentationPackage;
+};
+
+type StoredPresentationPackage = Omit<CachedPresentationPackage, "package"> & {
+  rawPackage: unknown;
+};
+
+export type PresentationOfflineState = {
+  key: string;
+  packageKey: string;
+  accountId: string;
+  churchId: string;
+  serviceId: string;
+  view: PresentationPrivateLiveView;
+  roleFingerprint: string;
+  packageId: string;
+  baseRevision: number;
+  localSnapshot: PresentationLiveSnapshot;
+  commands: PresentationQueuedCommand[];
+  updatedAt: string;
+};
+
+const PRIVATE_VIEWS = new Set<PresentationPrivateLiveView>(["operator", "stage", "remote"]);
+const TARGET_ROLES = new Set<PresentationTargetRole>([
+  "worship_leader",
+  "band",
+  "vocals",
+  "av",
+  "speaker",
+  "operator",
+  "stage",
+  "all",
+]);
+const COMMAND_TYPES = new Set<PresentationCommandType>([
+  "start_session",
+  "end_session",
+  "heartbeat",
+  "claim_control",
+  "request_control",
+  "handoff_control",
+  "release_control",
+  "next",
+  "previous",
+  "jump",
+  "set_blackout",
+  "set_chords",
+  "timer_start",
+  "timer_pause",
+  "timer_reset",
+  "countdown_set",
+  "countdown_clear",
+  "stage_message_send",
+  "stage_message_dismiss",
+  "offline_reconcile",
+]);
+const OFFLINE_COMMAND_TYPES = new Set<PresentationOfflineCommandType>([
+  "next",
+  "previous",
+  "jump",
+  "set_blackout",
+  "set_chords",
+  "timer_start",
+  "timer_pause",
+  "timer_reset",
+  "countdown_set",
+  "countdown_clear",
+]);
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function stringValue(value: unknown, fallback = "") {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function nullableString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function finiteNumber(value: unknown, fallback = 0) {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function nonNegativeNumber(value: unknown, fallback = 0) {
+  return Math.max(0, finiteNumber(value, fallback));
+}
+
+function integer(value: unknown, fallback = 0) {
+  return Math.max(0, Math.floor(finiteNumber(value, fallback)));
+}
+
+function isoValue(value: unknown, fallback: string | null = null) {
+  const text = nullableString(value);
+  return text && Number.isFinite(Date.parse(text)) ? text : fallback;
+}
+
+function normalizeRole(value: unknown): PresentationTargetRole | null {
+  const token = String(value || "").trim().toLowerCase();
+  return TARGET_ROLES.has(token as PresentationTargetRole) ? token as PresentationTargetRole : null;
+}
+
+function normalizeRoles(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map(normalizeRole).filter((role): role is PresentationTargetRole => Boolean(role)))];
+}
+
+function normalizeView(value: unknown, fallback: PresentationLiveView): PresentationLiveView {
+  return value === "operator" || value === "stage" || value === "remote" || value === "audience" ? value : fallback;
+}
+
+function normalizeCursor(value: unknown): PresentationCursor {
+  const raw = recordValue(value);
+  return {
+    itemId: nullableString(raw?.itemId),
+    itemIndex: integer(raw?.itemIndex),
+    stepId: nullableString(raw?.stepId),
+    stepIndex: integer(raw?.stepIndex),
+    partIndex: integer(raw?.partIndex),
+    sectionAnchorId: nullableString(raw?.sectionAnchorId),
+  };
+}
+
+function normalizeDisplay(value: unknown): PresentationDisplay {
+  const raw = recordValue(value);
+  return {
+    blackout: raw?.blackout === true,
+    chordsVisible: raw?.chordsVisible !== false,
+  };
+}
+
+function normalizeTimer(value: unknown): PresentationTimer {
+  const raw = recordValue(value);
+  return {
+    status: raw?.status === "paused" ? "paused" : "running",
+    plannedSeconds: nonNegativeNumber(raw?.plannedSeconds),
+    elapsedSeconds: nonNegativeNumber(raw?.elapsedSeconds),
+    overrunSeconds: nonNegativeNumber(raw?.overrunSeconds),
+    startedAt: isoValue(raw?.startedAt),
+    pausedAt: isoValue(raw?.pausedAt),
+    accumulatedPausedMs: nonNegativeNumber(raw?.accumulatedPausedMs),
+  };
+}
+
+function normalizeTiming(value: unknown): PresentationTiming {
+  const raw = recordValue(value);
+  const serviceRaw = recordValue(raw?.service);
+  const itemRaw = recordValue(raw?.item);
+  const countdownRaw = recordValue(raw?.countdown);
+  const service = normalizeTimer(serviceRaw);
+  const item = normalizeTimer(itemRaw);
+  const targetAt = isoValue(countdownRaw?.targetAt);
+  return {
+    service: {
+      ...service,
+      remainingSeconds: nonNegativeNumber(serviceRaw?.remainingSeconds, Math.max(0, service.plannedSeconds - service.elapsedSeconds)),
+      projectedEndAt: isoValue(serviceRaw?.projectedEndAt),
+    },
+    item: {
+      ...item,
+      itemId: nullableString(itemRaw?.itemId),
+    },
+    countdown: countdownRaw && targetAt ? {
+      durationSeconds: nonNegativeNumber(countdownRaw.durationSeconds),
+      targetAt,
+      remainingSeconds: nonNegativeNumber(countdownRaw.remainingSeconds),
+    } : null,
+  };
+}
+
+function normalizeController(value: unknown, clientId?: string): PresentationController | null {
+  const raw = recordValue(value);
+  const controllerClientId = nullableString(raw?.clientId);
+  const leaseExpiresAt = isoValue(raw?.leaseExpiresAt);
+  if (!raw || !controllerClientId || !leaseExpiresAt) return null;
+  return {
+    clientId: controllerClientId,
+    displayName: stringValue(raw.displayName, "Otro dispositivo"),
+    leaseExpiresAt,
+    ownedByViewer: raw.ownedByViewer === true || Boolean(clientId && controllerClientId === clientId),
+  };
+}
+
+function normalizePresence(value: unknown): PresentationPresence[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((candidate) => {
+    const raw = recordValue(candidate);
+    const clientId = nullableString(raw?.clientId);
+    const lastSeenAt = isoValue(raw?.lastSeenAt);
+    const view = normalizeView(raw?.view, "stage");
+    if (!raw || !clientId || !lastSeenAt || view === "audience") return [];
+    return [{
+      clientId,
+      displayName: stringValue(raw.displayName, "Dispositivo"),
+      view,
+      lastSeenAt,
+      controlRequestedAt: isoValue(raw.controlRequestedAt),
+    }];
+  }).slice(0, 50);
+}
+
+function rolesCanSeeMessage(messageRoles: PresentationTargetRole[], viewerRoles: PresentationTargetRole[]) {
+  if (!messageRoles.length || messageRoles.includes("all") || viewerRoles.includes("all")) return true;
+  const viewers = new Set(viewerRoles);
+  return messageRoles.some((role) => viewers.has(role));
+}
+
+function normalizeMessages(value: unknown, viewer: PresentationLiveViewer, serverNow: string): PresentationStageMessage[] {
+  if (viewer.view === "audience" || !Array.isArray(value)) return [];
+  const nowMs = Date.parse(serverNow);
+  return value.flatMap((candidate) => {
+    const raw = recordValue(candidate);
+    const id = nullableString(raw?.id);
+    const body = stringValue(raw?.body).slice(0, MAX_STAGE_MESSAGE_LENGTH);
+    const sentAt = isoValue(raw?.sentAt);
+    const expiresAt = isoValue(raw?.expiresAt);
+    const roles = normalizeRoles(raw?.roles);
+    if (!raw || !id || !body || !sentAt || !expiresAt || Date.parse(expiresAt) <= nowMs) return [];
+    if (!rolesCanSeeMessage(roles, viewer.roles)) return [];
+    return [{ id, body, tone: raw.tone === "urgent" ? "urgent" as const : "info" as const, roles, sentAt, expiresAt }];
+  });
+}
+
+export function getPresentationViewerRoles(viewer: PresentationLiveViewer | null | undefined) {
+  return viewer && viewer.view !== "audience" ? viewer.roles : [];
+}
+
+export function normalizePresentationLiveSnapshot(
+  value: unknown,
+  requestedView: PresentationLiveView,
+  clientId?: string,
+  receivedAtMs = Date.now(),
+): PresentationLiveSnapshot {
+  const raw = recordValue(value);
+  if (!raw) throw new Error("La sesión en vivo devolvió una respuesta inválida.");
+  const viewerRaw = recordValue(raw.viewer);
+  const view = normalizeView(viewerRaw?.view, requestedView);
+  const viewer: PresentationLiveViewer = view === "audience" ? {
+    view,
+    canEdit: false,
+    canStart: false,
+    canControl: false,
+    canForceTakeover: false,
+  } : {
+    view,
+    roles: normalizeRoles(viewerRaw?.roles),
+    canEdit: viewerRaw?.canEdit === true,
+    canStart: viewerRaw?.canStart === true,
+    canControl: viewerRaw?.canControl === true,
+    canForceTakeover: viewerRaw?.canForceTakeover === true,
+  };
+  const serverNow = isoValue(raw.serverNow, new Date(receivedAtMs).toISOString())!;
+  const sessionRaw = recordValue(raw.session);
+  let session: PresentationSession | null = null;
+
+  if (sessionRaw) {
+    const timing = normalizeTiming(sessionRaw.timing);
+    const lastCommandRaw = recordValue(sessionRaw.lastCommand);
+    const lastCommandType = lastCommandRaw && COMMAND_TYPES.has(lastCommandRaw.type as PresentationCommandType)
+      ? lastCommandRaw.type as PresentationCommandType
+      : null;
+    session = {
+      id: stringValue(sessionRaw.id),
+      status: sessionRaw.status === "ended" ? "ended" : "live",
+      revision: integer(sessionRaw.revision),
+      startedAt: isoValue(sessionRaw.startedAt, serverNow)!,
+      endedAt: isoValue(sessionRaw.endedAt),
+      controller: normalizeController(sessionRaw.controller, clientId),
+      ...(view === "operator" || view === "remote" ? { presence: normalizePresence(sessionRaw.presence) } : {}),
+      cursor: normalizeCursor(sessionRaw.cursor),
+      display: normalizeDisplay(sessionRaw.display),
+      timing,
+      messages: normalizeMessages(sessionRaw.messages, viewer, serverNow),
+      lastCommand: lastCommandRaw && lastCommandType ? {
+        id: stringValue(lastCommandRaw.id),
+        type: lastCommandType,
+        at: isoValue(lastCommandRaw.at, serverNow)!,
+      } : null,
+    };
+
+    if (view === "audience") {
+      session.controller = null;
+      session.messages = [];
+      delete session.presence;
+    }
+  }
+
+  return {
+    schemaVersion: PRESENTATION_LIVE_SCHEMA_VERSION,
+    serviceId: stringValue(raw.serviceId),
+    serviceVersion: stringValue(raw.serviceVersion),
+    serverNow,
+    viewer,
+    session,
+    receivedAtMs,
+  };
+}
+
+function projectedElapsed(timer: PresentationTimer, serverNowMs: number) {
+  const startedAtMs = timer.startedAt ? Date.parse(timer.startedAt) : Number.NaN;
+  if (!Number.isFinite(startedAtMs)) return timer.elapsedSeconds;
+  const effectiveNowMs = timer.status === "paused" && timer.pausedAt
+    ? Date.parse(timer.pausedAt)
+    : serverNowMs;
+  return Math.max(0, (effectiveNowMs - startedAtMs - timer.accumulatedPausedMs) / 1_000);
+}
+
+export function projectPresentationTiming(snapshot: PresentationLiveSnapshot | null, localNowMs = Date.now()): PresentationTiming | null {
+  const timing = snapshot?.session?.timing;
+  if (!snapshot || !timing) return null;
+  const serverNowAtReceipt = Date.parse(snapshot.serverNow);
+  const projectedServerNow = Number.isFinite(serverNowAtReceipt)
+    ? serverNowAtReceipt + Math.max(0, localNowMs - snapshot.receivedAtMs)
+    : localNowMs;
+  const serviceElapsed = projectedElapsed(timing.service, projectedServerNow);
+  const itemElapsed = projectedElapsed(timing.item, projectedServerNow);
+  const serviceRemaining = Math.max(0, timing.service.plannedSeconds - serviceElapsed);
+  const countdownRemaining = timing.countdown
+    ? Math.max(0, (Date.parse(timing.countdown.targetAt) - projectedServerNow) / 1_000)
+    : 0;
+
+  return {
+    service: {
+      ...timing.service,
+      elapsedSeconds: serviceElapsed,
+      remainingSeconds: serviceRemaining,
+      overrunSeconds: Math.max(0, serviceElapsed - timing.service.plannedSeconds),
+      projectedEndAt: timing.service.projectedEndAt,
+    },
+    item: {
+      ...timing.item,
+      elapsedSeconds: itemElapsed,
+      overrunSeconds: Math.max(0, itemElapsed - timing.item.plannedSeconds),
+    },
+    countdown: timing.countdown ? {
+      ...timing.countdown,
+      remainingSeconds: countdownRemaining,
+    } : null,
+  };
+}
+
+export function getPresentationClientId(storage: Pick<Storage, "getItem" | "setItem"> = localStorage) {
+  const saved = storage.getItem(CLIENT_ID_KEY)?.trim();
+  if (saved) return saved;
+  const id = createPresentationId();
+  storage.setItem(CLIENT_ID_KEY, id);
+  return id;
+}
+
+export function formatPresentationUuidV4(randomBytes: ArrayLike<number>) {
+  const bytes = Uint8Array.from({ length: 16 }, (_, index) => Number(randomBytes[index] || 0) & 0xff);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+export function createPresentationId() {
+  const cryptoApi = typeof globalThis !== "undefined"
+    ? globalThis.crypto as Crypto & { randomUUID?: () => string }
+    : undefined;
+  if (cryptoApi?.randomUUID) return cryptoApi.randomUUID();
+  const bytes = new Uint8Array(16);
+  if (cryptoApi?.getRandomValues) {
+    cryptoApi.getRandomValues(bytes);
+  } else {
+    for (let index = 0; index < bytes.length; index += 1) bytes[index] = Math.floor(Math.random() * 256);
+  }
+  return formatPresentationUuidV4(bytes);
+}
+
+export function getPresentationClientName() {
+  if (typeof navigator === "undefined") return "Tchurch Live";
+  const platform = `${navigator.userAgent || ""} ${navigator.platform || ""}`;
+  if (/iPad|Macintosh.*Mobile/i.test(platform)) return "Tchurch iPad";
+  if (/iPhone/i.test(platform)) return "Tchurch iPhone";
+  return "Tchurch Live";
+}
+
+export function presentationSessionPath(
+  serviceId: string,
+  view: PresentationLiveView,
+  clientId: string,
+  sinceRevision?: number,
+) {
+  const query = new URLSearchParams({ view, clientId });
+  if (typeof sinceRevision === "number") query.set("sinceRevision", String(Math.max(0, Math.floor(sinceRevision))));
+  return `/services/${encodeURIComponent(serviceId)}/presentation-session?${query.toString()}`;
+}
+
+export async function fetchPresentationLiveSnapshot(
+  serviceId: string,
+  view: PresentationLiveView,
+  clientId: string,
+  sinceRevision?: number,
+) {
+  const raw = await apiFetch<unknown>(presentationSessionPath(serviceId, view, clientId, sinceRevision), { cache: "no-store" });
+  return raw === undefined ? null : normalizePresentationLiveSnapshot(raw, view, clientId);
+}
+
+export async function sendPresentationCommand<T extends PresentationCommandType>(
+  serviceId: string,
+  request: PresentationCommandRequest<T>,
+  view: PresentationLiveView,
+) {
+  const raw = await apiFetch<unknown>(`/services/${encodeURIComponent(serviceId)}/presentation-session?view=${view}`, {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
+  const responseRaw = recordValue(raw);
+  const snapshotRaw = responseRaw?.snapshot || responseRaw?.current || raw;
+  return normalizePresentationLiveSnapshot(snapshotRaw, view, request.clientId);
+}
+
+function normalizePresentationService(value: unknown): PresentationService {
+  const raw = recordValue(value);
+  const id = nullableString(raw?.id);
+  const title = nullableString(raw?.title);
+  const date = isoValue(raw?.date);
+  if (!raw || !id || !title || !date) throw new Error("El paquete offline no contiene un servicio válido.");
+  const items = Array.isArray(raw.items) ? raw.items.flatMap((candidate) => {
+    const item = recordValue(candidate);
+    const itemId = nullableString(item?.id);
+    if (!item || !itemId) return [];
+    return [{
+      id: itemId,
+      title: stringValue(item.title, "Elemento"),
+      type: stringValue(item.type, "other"),
+      position: integer(item.position),
+      duration: typeof item.duration === "number" && Number.isFinite(item.duration) ? item.duration : null,
+      details: recordValue(item.details),
+      song: recordValue(item.song) as PresentationService["items"][number]["song"],
+    }];
+  }) : [];
+  return {
+    id,
+    title,
+    date,
+    type: stringValue(raw.type, "service"),
+    notes: nullableString(raw.notes),
+    items: items.sort((a, b) => a.position - b.position),
+    assignments: Array.isArray(raw.assignments) ? raw.assignments as PresentationService["assignments"] : undefined,
+  };
+}
+
+export function normalizePresentationPackage(value: unknown, view: PresentationPrivateLiveView): PresentationPackage {
+  const raw = recordValue(value);
+  const packageId = nullableString(raw?.packageId);
+  const checksum = nullableString(raw?.checksum);
+  const generatedAt = isoValue(raw?.generatedAt);
+  const serviceVersion = nullableString(raw?.serviceVersion);
+  const scopeRaw = recordValue(raw?.scope);
+  const scopeView = PRIVATE_VIEWS.has(scopeRaw?.view as PresentationPrivateLiveView)
+    ? scopeRaw?.view as PresentationPrivateLiveView
+    : null;
+  const scopeAccountId = nullableString(scopeRaw?.accountId);
+  const scopeChurchId = nullableString(scopeRaw?.churchId);
+  const scopeRoleFingerprint = nullableString(scopeRaw?.roleFingerprint);
+  if (
+    !raw ||
+    raw.schemaVersion !== PRESENTATION_LIVE_SCHEMA_VERSION ||
+    !packageId?.startsWith("sha256:") ||
+    !checksum?.startsWith("sha256:") ||
+    !generatedAt ||
+    !serviceVersion ||
+    !scopeRaw ||
+    !scopeAccountId ||
+    !scopeChurchId ||
+    !scopeView ||
+    !scopeRoleFingerprint
+  ) {
+    throw new Error("Tchurch recibió un paquete offline inválido.");
+  }
+  const service = normalizePresentationService(raw.service);
+  const presentationView = view === "operator" ? "operator" : "stage";
+  const presentation = normalizePresentationWorkspace(raw.presentation, service, presentationView);
+  const timingRaw = recordValue(raw.plannedTiming);
+  const itemSecondsRaw = recordValue(timingRaw?.itemSecondsById);
+  const itemSecondsById = Object.fromEntries(
+    Object.entries(itemSecondsRaw || {}).flatMap(([itemId, seconds]) =>
+      typeof seconds === "number" && Number.isFinite(seconds) && seconds >= 0 ? [[itemId, seconds]] : []
+    ),
+  );
+  const liveSeedRaw = recordValue(raw.liveSeed);
+  if (!liveSeedRaw) throw new Error("El paquete offline no contiene el estado inicial en vivo.");
+  const timing = normalizeTiming({
+    ...recordValue(liveSeedRaw.timing),
+    countdown: liveSeedRaw.countdown,
+  });
+  return {
+    schemaVersion: PRESENTATION_LIVE_SCHEMA_VERSION,
+    packageId,
+    generatedAt,
+    scope: {
+      accountId: scopeAccountId,
+      churchId: scopeChurchId,
+      view: scopeView,
+      roleFingerprint: scopeRoleFingerprint,
+    },
+    serviceVersion,
+    service,
+    presentation,
+    plannedTiming: {
+      serviceSeconds: nonNegativeNumber(timingRaw?.serviceSeconds),
+      itemSecondsById,
+    },
+    liveSeed: {
+      cursor: normalizeCursor(liveSeedRaw.cursor),
+      display: normalizeDisplay(liveSeedRaw.display),
+      timing,
+      countdown: timing.countdown,
+    },
+    checksum,
+  };
+}
+
+function stableCanonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableCanonicalJson).join(",")}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableCanonicalJson(record[key])}`).join(",")}}`;
+}
+
+export function canonicalPresentationPackageJson(value: unknown) {
+  const raw = recordValue(value);
+  if (!raw) throw new Error("Tchurch recibió un paquete offline inválido.");
+  return stableCanonicalJson({
+    schemaVersion: raw.schemaVersion,
+    scope: raw.scope,
+    serviceVersion: raw.serviceVersion,
+    service: raw.service,
+    presentation: raw.presentation,
+    plannedTiming: raw.plannedTiming,
+    liveSeed: raw.liveSeed,
+  });
+}
+
+export async function computePresentationPackageDigest(value: unknown) {
+  const cryptoApi = typeof globalThis !== "undefined" ? globalThis.crypto : undefined;
+  if (!cryptoApi?.subtle) return null;
+  const encoded = new TextEncoder().encode(canonicalPresentationPackageJson(value));
+  const hash = await cryptoApi.subtle.digest("SHA-256", encoded);
+  return `sha256:${Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+export async function verifyPresentationPackageIntegrity(value: unknown) {
+  const raw = recordValue(value);
+  const packageId = nullableString(raw?.packageId);
+  const checksum = nullableString(raw?.checksum);
+  if (!packageId || !checksum || packageId !== checksum || !/^sha256:[0-9a-f]{64}$/.test(packageId)) return false;
+  const digest = await computePresentationPackageDigest(value);
+  return digest !== null && digest === packageId;
+}
+
+const verifiedPackageSources = new WeakMap<PresentationPackage, unknown>();
+
+export async function fetchPresentationPackage(serviceId: string, view: PresentationPrivateLiveView) {
+  const raw = await apiFetch<unknown>(
+    `/services/${encodeURIComponent(serviceId)}/presentation-package?view=${view}`,
+    { cache: "no-store" },
+  );
+  const normalized = normalizePresentationPackage(raw, view);
+  const digest = await computePresentationPackageDigest(raw);
+  if (digest !== null && (digest !== normalized.packageId || normalized.packageId !== normalized.checksum)) {
+    throw new Error("No se pudo verificar la integridad del paquete offline. No se guardó contenido privado.");
+  }
+  if (digest !== null) verifiedPackageSources.set(normalized, raw);
+  return normalized;
+}
+
+export function buildPresentationCommand<T extends PresentationCommandType>(
+  clientId: string,
+  clientName: string,
+  type: T,
+  payload: PresentationCommandPayloads[T],
+  expectedRevision?: number,
+  commandId = createPresentationId(),
+): PresentationCommandRequest<T> {
+  return {
+    schemaVersion: PRESENTATION_LIVE_SCHEMA_VERSION,
+    clientId,
+    clientName,
+    commandId,
+    ...(typeof expectedRevision === "number" ? { expectedRevision } : {}),
+    type,
+    payload,
+  };
+}
+
+export function isOfflinePresentationCommand(type: PresentationCommandType): type is PresentationOfflineCommandType {
+  return OFFLINE_COMMAND_TYPES.has(type as PresentationOfflineCommandType);
+}
+
+function projectSnapshotAt(snapshot: PresentationLiveSnapshot, nowMs: number) {
+  const timing = projectPresentationTiming(snapshot, nowMs);
+  if (!snapshot.session || !timing) return snapshot;
+  return {
+    ...snapshot,
+    serverNow: new Date(Date.parse(snapshot.serverNow) + Math.max(0, nowMs - snapshot.receivedAtMs)).toISOString(),
+    receivedAtMs: nowMs,
+    session: { ...snapshot.session, timing },
+  };
+}
+
+function startTimer(timer: PresentationTimer, now: string): PresentationTimer {
+  if (!timer.startedAt) return { ...timer, status: "running", startedAt: now, pausedAt: null, accumulatedPausedMs: 0, elapsedSeconds: 0, overrunSeconds: 0 };
+  const pausedFor = timer.pausedAt ? Math.max(0, Date.parse(now) - Date.parse(timer.pausedAt)) : 0;
+  return {
+    ...timer,
+    status: "running",
+    pausedAt: null,
+    accumulatedPausedMs: timer.accumulatedPausedMs + pausedFor,
+  };
+}
+
+function pauseTimer(timer: PresentationTimer, now: string): PresentationTimer {
+  return timer.status === "paused" ? timer : { ...timer, status: "paused", pausedAt: now };
+}
+
+function resetTimer(timer: PresentationTimer): PresentationTimer {
+  return { ...timer, status: "paused", elapsedSeconds: 0, overrunSeconds: 0, startedAt: null, pausedAt: null, accumulatedPausedMs: 0 };
+}
+
+function withTimerUpdate(
+  timing: PresentationTiming,
+  scope: "service" | "item",
+  update: (timer: PresentationTimer) => PresentationTimer,
+): PresentationTiming {
+  if (scope === "service") {
+    const next = update(timing.service);
+    return {
+      ...timing,
+      service: {
+        ...timing.service,
+        ...next,
+        remainingSeconds: Math.max(0, next.plannedSeconds - next.elapsedSeconds),
+        projectedEndAt: timing.service.projectedEndAt,
+      },
+    };
+  }
+  return { ...timing, item: { ...timing.item, ...update(timing.item) } };
+}
+
+function moveOfflineCursor(
+  cursor: PresentationCursor,
+  type: "next" | "previous" | "jump",
+  payload: unknown,
+  context: PresentationOfflineContext,
+) {
+  if (!context.steps.length) return cursor;
+  let nextIndex = Math.max(0, Math.min(cursor.stepIndex, context.steps.length - 1));
+  if (type === "next") nextIndex = Math.min(context.steps.length - 1, nextIndex + 1);
+  if (type === "previous") nextIndex = Math.max(0, nextIndex - 1);
+  if (type === "jump") {
+    const jump = payload as PresentationCommandPayloads["jump"];
+    const found = context.steps.findIndex((step) =>
+      step.itemId === jump.itemId &&
+      (jump.stepId == null || step.stepId === jump.stepId) &&
+      (typeof jump.partIndex !== "number" || step.partIndex === jump.partIndex)
+    );
+    if (found >= 0) nextIndex = found;
+  }
+  const step = context.steps[nextIndex];
+  return {
+    itemId: step.itemId,
+    itemIndex: new Set(context.steps.slice(0, nextIndex + 1).map((candidate) => candidate.itemId)).size - 1,
+    stepId: step.stepId,
+    stepIndex: nextIndex,
+    partIndex: step.partIndex,
+    sectionAnchorId: step.sectionAnchorId,
+  };
+}
+
+export function resolvePresentationCursorIndex(
+  cursor: PresentationCursor,
+  steps: PresentationOfflineStep[],
+) {
+  if (!steps.length) return 0;
+  const exact = steps.findIndex((step) =>
+    step.itemId === cursor.itemId &&
+    step.stepId === cursor.stepId &&
+    step.partIndex === cursor.partIndex
+  );
+  if (exact >= 0) return exact;
+  const sameStepIndexes = steps.flatMap((step, index) =>
+    step.itemId === cursor.itemId && step.stepId === cursor.stepId ? [index] : []
+  );
+  if (sameStepIndexes.length) return sameStepIndexes[Math.min(cursor.partIndex, sameStepIndexes.length - 1)];
+  if (cursor.sectionAnchorId) {
+    const bySection = steps.findIndex((step) => step.itemId === cursor.itemId && step.sectionAnchorId === cursor.sectionAnchorId);
+    if (bySection >= 0) return bySection;
+  }
+  const byItem = steps.findIndex((step) => step.itemId === cursor.itemId);
+  return byItem >= 0 ? byItem : 0;
+}
+
+export function applyOfflinePresentationCommand<T extends PresentationOfflineCommandType>(
+  snapshot: PresentationLiveSnapshot,
+  command: PresentationQueuedCommand<T>,
+  context: PresentationOfflineContext,
+  nowMs = Date.now(),
+): PresentationLiveSnapshot {
+  const projected = projectSnapshotAt(snapshot, nowMs);
+  if (!projected.session) return projected;
+  const session = projected.session;
+  let cursor = session.cursor;
+  let display = session.display;
+  let timing = session.timing;
+  const now = projected.serverNow;
+
+  if (command.type === "next" || command.type === "previous" || command.type === "jump") {
+    const previousItemId = cursor.itemId;
+    cursor = moveOfflineCursor(cursor, command.type, command.payload, context);
+    if (cursor.itemId !== previousItemId) {
+      const plannedSeconds = context.plannedTiming.itemSecondsById[cursor.itemId || ""] || 0;
+      timing = {
+        ...timing,
+        item: {
+          itemId: cursor.itemId,
+          status: timing.service.status,
+          plannedSeconds,
+          elapsedSeconds: 0,
+          overrunSeconds: 0,
+          startedAt: now,
+          pausedAt: timing.service.status === "paused" ? now : null,
+          accumulatedPausedMs: 0,
+        },
+      };
+    }
+  } else if (command.type === "set_blackout") {
+    display = { ...display, blackout: (command.payload as PresentationCommandPayloads["set_blackout"]).blackout };
+  } else if (command.type === "set_chords") {
+    display = { ...display, chordsVisible: (command.payload as PresentationCommandPayloads["set_chords"]).chordsVisible };
+  } else if (command.type === "timer_start") {
+    timing = withTimerUpdate(timing, (command.payload as PresentationCommandPayloads["timer_start"]).scope, (timer) => startTimer(timer, now));
+  } else if (command.type === "timer_pause") {
+    timing = withTimerUpdate(timing, (command.payload as PresentationCommandPayloads["timer_pause"]).scope, (timer) => pauseTimer(timer, now));
+  } else if (command.type === "timer_reset") {
+    timing = withTimerUpdate(timing, (command.payload as PresentationCommandPayloads["timer_reset"]).scope, resetTimer);
+  } else if (command.type === "countdown_set") {
+    const durationSeconds = Math.max(5, Math.min(86_400, Math.floor((command.payload as PresentationCommandPayloads["countdown_set"]).durationSeconds)));
+    timing = {
+      ...timing,
+      countdown: { durationSeconds, remainingSeconds: durationSeconds, targetAt: new Date(Date.parse(now) + durationSeconds * 1_000).toISOString() },
+    };
+  } else if (command.type === "countdown_clear") {
+    timing = { ...timing, countdown: null };
+  }
+
+  return {
+    ...projected,
+    session: {
+      ...session,
+      cursor,
+      display,
+      timing,
+      lastCommand: { id: command.commandId, type: command.type, at: now },
+    },
+  };
+}
+
+export function queueOfflinePresentationCommand<T extends PresentationOfflineCommandType>(
+  state: PresentationOfflineState,
+  command: PresentationQueuedCommand<T>,
+  context: PresentationOfflineContext,
+  nowMs = Date.now(),
+): PresentationOfflineState {
+  if (!state.localSnapshot.session?.controller?.ownedByViewer) {
+    throw new Error("Este dispositivo no tenía el control cuando se perdió la conexión.");
+  }
+  if (state.commands.length >= MAX_OFFLINE_PRESENTATION_COMMANDS) {
+    throw new Error("La cola offline llegó a 100 acciones. Reconecta antes de continuar.");
+  }
+  const commands = [...state.commands, command];
+  return {
+    ...state,
+    localSnapshot: applyOfflinePresentationCommand(state.localSnapshot, command, context, nowMs),
+    commands,
+    updatedAt: new Date(nowMs).toISOString(),
+  };
+}
+
+export function buildOfflineReconcileCommand(
+  state: PresentationOfflineState,
+  clientId: string,
+  clientName: string,
+) {
+  if (!state.commands.length) throw new Error("No hay acciones offline pendientes.");
+  return buildPresentationCommand(
+    clientId,
+    clientName,
+    "offline_reconcile",
+    { baseRevision: state.baseRevision, commands: state.commands.slice(0, MAX_OFFLINE_PRESENTATION_COMMANDS) },
+    state.baseRevision,
+  );
+}
+
+export function presentationRoleFingerprint(roles: PresentationTargetRole[]) {
+  return [...new Set(roles)].sort().join(",") || "none";
+}
+
+export function presentationPackageCacheKey(scope: PresentationCacheScope) {
+  return [scope.accountId, scope.churchId, scope.serviceId, scope.view, presentationRoleFingerprint(scope.roles)]
+    .map((part) => encodeURIComponent(part))
+    .join("::");
+}
+
+export function createPresentationOfflineState(
+  cachedPackage: CachedPresentationPackage,
+  snapshot: PresentationLiveSnapshot,
+): PresentationOfflineState {
+  if (!snapshot.session) throw new Error("No hay una sesión activa para continuar offline.");
+  return {
+    key: cachedPackage.key,
+    packageKey: cachedPackage.key,
+    accountId: cachedPackage.accountId,
+    churchId: cachedPackage.churchId,
+    serviceId: cachedPackage.serviceId,
+    view: cachedPackage.view,
+    roleFingerprint: cachedPackage.roleFingerprint,
+    packageId: cachedPackage.package.packageId,
+    baseRevision: snapshot.session.revision,
+    localSnapshot: snapshot,
+    commands: [],
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function hasIndexedDb() {
+  return typeof indexedDB !== "undefined";
+}
+
+function requestPromise<T>(request: IDBRequest<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+function transactionPromise(transaction: IDBTransaction): Promise<void> {
+  return new Promise((resolve, reject) => {
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
+  });
+}
+
+function openLiveDb() {
+  return new Promise<IDBDatabase>((resolve, reject) => {
+    if (!hasIndexedDb()) {
+      reject(new Error("IndexedDB is unavailable"));
+      return;
+    }
+    const request = indexedDB.open(LIVE_DB_NAME, LIVE_DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(PACKAGE_STORE)) db.createObjectStore(PACKAGE_STORE, { keyPath: "key" });
+      if (!db.objectStoreNames.contains(OFFLINE_STORE)) db.createObjectStore(OFFLINE_STORE, { keyPath: "key" });
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+function readFallbackRecords<T>(key: string): T[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key) || "[]");
+    return Array.isArray(parsed) ? parsed as T[] : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeFallbackRecord<T extends { key: string }>(storageKey: string, record: T) {
+  const records = readFallbackRecords<T>(storageKey).filter((candidate) => candidate.key !== record.key);
+  localStorage.setItem(storageKey, JSON.stringify([...records, record]));
+}
+
+async function putLiveRecord<T extends { key: string }>(storeName: string, fallbackKey: string, record: T) {
+  if (!hasIndexedDb()) {
+    writeFallbackRecord(fallbackKey, record);
+    return;
+  }
+  const db = await openLiveDb();
+  try {
+    const transaction = db.transaction(storeName, "readwrite");
+    const done = transactionPromise(transaction);
+    transaction.objectStore(storeName).put(record);
+    await done;
+  } finally {
+    db.close();
+  }
+}
+
+async function getAllLiveRecords<T>(storeName: string, fallbackKey: string): Promise<T[]> {
+  if (!hasIndexedDb()) return readFallbackRecords<T>(fallbackKey);
+  const db = await openLiveDb();
+  try {
+    const transaction = db.transaction(storeName, "readonly");
+    const done = transactionPromise(transaction);
+    const records = await requestPromise<T[]>(transaction.objectStore(storeName).getAll());
+    await done;
+    return records;
+  } finally {
+    db.close();
+  }
+}
+
+async function deleteLiveRecord(storeName: string, fallbackKey: string, key: string) {
+  if (!hasIndexedDb()) {
+    localStorage.setItem(fallbackKey, JSON.stringify(readFallbackRecords<{ key: string }>(fallbackKey).filter((record) => record.key !== key)));
+    return;
+  }
+  const db = await openLiveDb();
+  try {
+    const transaction = db.transaction(storeName, "readwrite");
+    const done = transactionPromise(transaction);
+    transaction.objectStore(storeName).delete(key);
+    await done;
+  } finally {
+    db.close();
+  }
+}
+
+export async function clearPresentationLiveCache() {
+  localStorage.removeItem(FALLBACK_PACKAGES_KEY);
+  localStorage.removeItem(FALLBACK_OFFLINE_KEY);
+  if (!hasIndexedDb()) return;
+  const db = await openLiveDb();
+  try {
+    const transaction = db.transaction([PACKAGE_STORE, OFFLINE_STORE], "readwrite");
+    const done = transactionPromise(transaction);
+    transaction.objectStore(PACKAGE_STORE).clear();
+    transaction.objectStore(OFFLINE_STORE).clear();
+    await done;
+  } finally {
+    db.close();
+  }
+}
+
+export async function activatePresentationCacheIdentity(accountId: string, churchId: string) {
+  const identity = `${accountId}::${churchId}`;
+  const previous = localStorage.getItem(ACTIVE_CACHE_IDENTITY_KEY);
+  if (previous && previous !== identity) await clearPresentationLiveCache();
+  localStorage.setItem(ACTIVE_CACHE_IDENTITY_KEY, identity);
+}
+
+export async function savePresentationPackage(scope: PresentationCacheScope, presentationPackage: PresentationPackage) {
+  await activatePresentationCacheIdentity(scope.accountId, scope.churchId);
+  const rawPackage = verifiedPackageSources.get(presentationPackage) || presentationPackage;
+  const digest = await computePresentationPackageDigest(rawPackage);
+  if (digest === null) {
+    throw new Error("WebCrypto no está disponible; el paquete privado se mantiene sólo en memoria.");
+  }
+  const rawRecord = recordValue(rawPackage);
+  if (digest !== rawRecord?.packageId || rawRecord?.packageId !== rawRecord?.checksum) {
+    throw new Error("No se guardó el paquete porque su firma de contenido no coincide.");
+  }
+  const expectedRoleFingerprint = presentationRoleFingerprint(scope.roles);
+  if (
+    presentationPackage.scope.accountId !== scope.accountId ||
+    presentationPackage.scope.churchId !== scope.churchId ||
+    presentationPackage.scope.view !== scope.view ||
+    presentationPackage.scope.roleFingerprint !== expectedRoleFingerprint ||
+    presentationPackage.service.id !== scope.serviceId
+  ) {
+    throw new Error("No se guardó el paquete porque su alcance privado no coincide con la sesión actual.");
+  }
+  const key = presentationPackageCacheKey(scope);
+  const record: CachedPresentationPackage = {
+    key,
+    accountId: scope.accountId,
+    churchId: scope.churchId,
+    serviceId: scope.serviceId,
+    view: scope.view,
+    roleFingerprint: presentationRoleFingerprint(scope.roles),
+    savedAt: new Date().toISOString(),
+    package: presentationPackage,
+  };
+  const stored: StoredPresentationPackage = {
+    key: record.key,
+    accountId: record.accountId,
+    churchId: record.churchId,
+    serviceId: record.serviceId,
+    view: record.view,
+    roleFingerprint: record.roleFingerprint,
+    savedAt: record.savedAt,
+    rawPackage,
+  };
+  await putLiveRecord(PACKAGE_STORE, FALLBACK_PACKAGES_KEY, stored);
+  return record;
+}
+
+export async function loadPresentationPackage(scope: PresentationCacheScope) {
+  const key = presentationPackageCacheKey(scope);
+  const records = await getAllLiveRecords<StoredPresentationPackage>(PACKAGE_STORE, FALLBACK_PACKAGES_KEY);
+  const cached = records.find((record) => record.key === key);
+  if (!cached) return null;
+  try {
+    if (!await verifyPresentationPackageIntegrity(cached.rawPackage)) throw new Error("Checksum mismatch");
+    return {
+      key: cached.key,
+      accountId: cached.accountId,
+      churchId: cached.churchId,
+      serviceId: cached.serviceId,
+      view: cached.view,
+      roleFingerprint: cached.roleFingerprint,
+      savedAt: cached.savedAt,
+      package: normalizePresentationPackage(cached.rawPackage, scope.view),
+    };
+  } catch {
+    await deleteLiveRecord(PACKAGE_STORE, FALLBACK_PACKAGES_KEY, cached.key);
+    return null;
+  }
+}
+
+export async function loadLatestPresentationPackageForIdentity(
+  accountId: string,
+  churchId: string,
+  serviceId: string,
+  views: PresentationPrivateLiveView[],
+) {
+  await activatePresentationCacheIdentity(accountId, churchId);
+  const allowedViews = new Set(views);
+  const records = await getAllLiveRecords<StoredPresentationPackage>(PACKAGE_STORE, FALLBACK_PACKAGES_KEY);
+  const candidates = records
+    .filter((record) =>
+      record.accountId === accountId &&
+      record.churchId === churchId &&
+      record.serviceId === serviceId &&
+      allowedViews.has(record.view)
+    )
+    .sort((a, b) => b.savedAt.localeCompare(a.savedAt));
+  for (const cached of candidates) {
+    try {
+      if (!await verifyPresentationPackageIntegrity(cached.rawPackage)) throw new Error("Checksum mismatch");
+      return {
+        key: cached.key,
+        accountId: cached.accountId,
+        churchId: cached.churchId,
+        serviceId: cached.serviceId,
+        view: cached.view,
+        roleFingerprint: cached.roleFingerprint,
+        savedAt: cached.savedAt,
+        package: normalizePresentationPackage(cached.rawPackage, cached.view),
+      };
+    } catch {
+      await deleteLiveRecord(PACKAGE_STORE, FALLBACK_PACKAGES_KEY, cached.key);
+    }
+  }
+  return null;
+}
+
+export async function savePresentationOfflineState(state: PresentationOfflineState) {
+  await putLiveRecord(OFFLINE_STORE, FALLBACK_OFFLINE_KEY, state);
+  return state;
+}
+
+export async function loadPresentationOfflineState(packageKey: string) {
+  const records = await getAllLiveRecords<PresentationOfflineState>(OFFLINE_STORE, FALLBACK_OFFLINE_KEY);
+  return records.find((record) => record.key === packageKey) || null;
+}
+
+export function removePresentationOfflineState(packageKey: string) {
+  return deleteLiveRecord(OFFLINE_STORE, FALLBACK_OFFLINE_KEY, packageKey);
+}
+
+export function getPresentationApiErrorCode(error: unknown) {
+  if (!(error instanceof ApiError)) return null;
+  const body = recordValue(error.body);
+  return stringValue(body?.error) || stringValue(body?.code) || null;
+}
+
+export function isPresentationAuthorizationError(error: unknown) {
+  return error instanceof ApiError && (error.status === 401 || error.status === 403);
+}
+
+export function getPresentationConflictSnapshot(
+  error: unknown,
+  view: PresentationLiveView,
+  clientId: string,
+) {
+  if (!(error instanceof ApiError)) return null;
+  const body = recordValue(error.body);
+  const raw = body?.current || body?.snapshot;
+  if (!raw) return null;
+  try {
+    return normalizePresentationLiveSnapshot(raw, view, clientId);
+  } catch {
+    return null;
+  }
+}

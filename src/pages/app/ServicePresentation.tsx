@@ -5,6 +5,16 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ApiError, apiFetch } from "@/lib/api";
 import { PresentationWorkspaceEditor } from "@/components/presentation/PresentationWorkspaceEditor";
+import {
+  LiveConnectionBadge,
+  PresentationLiveNotice,
+  PresentationOwnershipControls,
+  PresentationRemoteSurface,
+  PresentationStageMessages,
+  PresentationTimingPanel,
+} from "@/components/presentation/PresentationLiveControls";
+import { usePresentationLive } from "@/hooks/usePresentationLive";
+import { useAppAuth } from "@/hooks/useAppAuth";
 import { useChurch } from "@/providers/ChurchProvider";
 import {
   buildServicePresentationSlides,
@@ -30,6 +40,7 @@ import {
   type PresentationWorkspace,
   type PresentationWorkspaceItem,
 } from "@/lib/presentationWorkspace";
+import { resolvePresentationCursorIndex, type PresentationPrivateLiveView } from "@/lib/presentationLive";
 
 type UserMe = {
   id: string;
@@ -192,6 +203,12 @@ function formatPresentationSectionLabel(label: string) {
   if (normalized.startsWith("outro") || normalized.startsWith("final") || normalized.startsWith("ending")) return `Final${suffix}`;
 
   return label;
+}
+
+function formatLiveDuration(value: number | null | undefined) {
+  const total = Math.max(0, Math.round(value || 0));
+  const minutes = Math.floor(total / 60);
+  return `${minutes}:${String(total % 60).padStart(2, "0")}`;
 }
 
 function getChordTokenLeft(column: number, columns: number) {
@@ -503,6 +520,7 @@ export default function ServicePresentation() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { selectedChurch } = useChurch();
+  const { userId: authenticatedUserId } = useAppAuth();
   const isTabletPresentation = useTabletPresentationLayout();
   const clock = usePresentationClock();
   const [service, setService] = useState<PresentationService | null>(null);
@@ -516,7 +534,7 @@ export default function ServicePresentation() {
   const [showChords, setShowChords] = useState(true);
   const [songModeOverride, setSongModeOverride] = useState<PresentationSongMode | null>(null);
   const [songZoomLevel, setSongZoomLevel] = useState(0);
-  const [surface, setSurface] = useState<"operator" | "stage">("stage");
+  const [surface, setSurface] = useState<"operator" | "stage" | "remote">("stage");
   const [blackout, setBlackout] = useState(false);
   const [historyCount, setHistoryCount] = useState(0);
   const [showRundown, setShowRundown] = useState(false);
@@ -527,6 +545,7 @@ export default function ServicePresentation() {
     goNext: () => undefined,
     goPrevious: () => undefined,
     undo: () => undefined,
+    toggleBlackout: () => undefined,
     exit: () => undefined,
   });
   const surfaceInitializedRef = useRef(false);
@@ -588,13 +607,6 @@ export default function ServicePresentation() {
     return () => { active = false; };
   }, [id, selectedChurch?.role]);
 
-  useEffect(() => {
-    if (!workspace || surfaceInitializedRef.current) return;
-    surfaceInitializedRef.current = true;
-    const canOperate = workspace.viewer.canEdit || workspace.viewer.roles.includes("operator");
-    setSurface(isTabletPresentation && canOperate ? "operator" : "stage");
-  }, [isTabletPresentation, workspace]);
-
   const presentationLayout: PresentationLayout = isTabletPresentation ? "tablet" : "phone";
   const defaultSongMode = getDefaultPresentationSongMode(presentationLayout);
   const songMode = songModeOverride || defaultSongMode;
@@ -604,14 +616,43 @@ export default function ServicePresentation() {
     [presentationLayout, service, songMode, workspace],
   );
   const runSteps = useMemo(() => buildPresentationRunSteps(slides, songMode), [slides, songMode]);
+  const liveRunSteps = useMemo(() => {
+    const partCounts = new Map<string, number>();
+    return runSteps.map((step) => {
+      const stepId = step.sectionSequenceId;
+      const key = `${step.itemId}::${stepId || "cue"}`;
+      const partIndex = partCounts.get(key) || 0;
+      partCounts.set(key, partIndex + 1);
+      return { itemId: step.itemId, stepId, partIndex, sectionAnchorId: step.sectionAnchorId };
+    });
+  }, [runSteps]);
+  const preferredLiveView: PresentationPrivateLiveView = selectedChurch?.role === "ADMIN" || selectedChurch?.role === "PLANNER" ? "operator" : "remote";
+  const offlineContext = useMemo(() => {
+    const itemSecondsById = Object.fromEntries((service?.items || []).map((item) => [item.id, Math.max(0, Number(item.duration || 0) * 60)]));
+    return {
+      steps: liveRunSteps,
+      plannedTiming: {
+        serviceSeconds: Object.values(itemSecondsById).reduce((sum, seconds) => sum + seconds, 0),
+        itemSecondsById,
+      },
+    };
+  }, [liveRunSteps, service?.items]);
+  const live = usePresentationLive({
+    serviceId: id,
+    preferredView: preferredLiveView,
+    churchId: selectedChurch?.id,
+    accountId: authenticatedUserId,
+    offlineContext,
+    enabled: Boolean(id && selectedChurch?.id && authenticatedUserId),
+  });
   const localCanPresent = canUseServicePresentation(service, selectedChurch?.role, currentUserId, currentUserEmail);
-  const canPresent = canEnterPresentationWorkspace(workspace, localCanPresent);
+  const canPresent = Boolean(live.snapshot || live.presentationPackage) || canEnterPresentationWorkspace(workspace, localCanPresent);
   const safeStepIndex = runSteps.length ? Math.min(activeStepIndex, runSteps.length - 1) : 0;
   const currentStep = runSteps[safeStepIndex];
   const nextStep = runSteps[safeStepIndex + 1] || null;
   const currentSlide = currentStep ? slides[currentStep.slideIndex] : null;
   const currentWorkspaceItem = currentStep ? getWorkspaceItem(workspace, currentStep.itemId) : null;
-  const viewerRoles = workspace?.viewer.roles || [];
+  const viewerRoles = useMemo(() => workspace?.viewer.roles || [], [workspace?.viewer.roles]);
   const stageAnnotations = useMemo(() => {
     if (!currentWorkspaceItem) return [];
     return currentWorkspaceItem.annotations.filter((annotation) =>
@@ -632,7 +673,42 @@ export default function ServicePresentation() {
     () => [...new Set([...(workspace?.legacyNotes || []), ...(currentWorkspaceItem?.legacyNotes || [])])],
     [currentWorkspaceItem?.legacyNotes, workspace?.legacyNotes],
   );
-  const effectiveSurface = isTabletPresentation ? surface : "stage";
+  const effectiveSurface = surface === "remote" ? "remote" : isTabletPresentation ? surface : "stage";
+  const liveControllerOwned = Boolean(live.snapshot?.session?.controller?.ownedByViewer && live.controllerLeaseActive);
+  const liveCanMutate = liveControllerOwned && !live.commandPending && live.networkState !== "diverged";
+
+  useEffect(() => {
+    const cached = live.presentationPackage;
+    if (!cached || (service && live.networkState === "online")) return;
+    setService(cached.service);
+    setWorkspace(cached.presentation);
+    setLoadError(null);
+    setLoading(false);
+  }, [live.networkState, live.presentationPackage, service]);
+
+  useEffect(() => {
+    const liveSession = live.snapshot?.session;
+    if (!liveSession) return;
+    setActiveStepIndex(resolvePresentationCursorIndex(liveSession.cursor, liveRunSteps));
+    setBlackout(liveSession.display.blackout);
+    setShowChords(liveSession.display.chordsVisible);
+  }, [live.snapshot?.session, liveRunSteps]);
+
+  useEffect(() => {
+    if (surfaceInitializedRef.current || live.loading) return;
+    if (live.snapshot) {
+      surfaceInitializedRef.current = true;
+      if (!isTabletPresentation && live.snapshot.viewer.canControl) setSurface("remote");
+      else if (isTabletPresentation && live.activeView === "operator") setSurface("operator");
+      else setSurface("stage");
+      return;
+    }
+    if (workspace) {
+      surfaceInitializedRef.current = true;
+      const canOperate = workspace.viewer.canEdit || workspace.viewer.roles.includes("operator");
+      setSurface(isTabletPresentation && canOperate ? "operator" : "stage");
+    }
+  }, [isTabletPresentation, live.activeView, live.loading, live.snapshot, workspace]);
 
   useEffect(() => {
     if (!runSteps.length) {
@@ -645,6 +721,13 @@ export default function ServicePresentation() {
   function goToStep(index: number, recordHistory = true) {
     const nextIndex = Math.max(0, Math.min(index, Math.max(runSteps.length - 1, 0)));
     if (nextIndex === safeStepIndex) return;
+    if (live.snapshot?.session) {
+      if (!liveCanMutate) return;
+      const target = runSteps[nextIndex];
+      const liveTarget = liveRunSteps[nextIndex];
+      if (target && liveTarget) void live.sendCommand("jump", { itemId: target.itemId, stepId: liveTarget.stepId, partIndex: liveTarget.partIndex }).catch(() => undefined);
+      return;
+    }
     if (recordHistory && currentStep) {
       historyRef.current = [...historyRef.current.slice(-29), currentStep.id];
       setHistoryCount(historyRef.current.length);
@@ -653,14 +736,40 @@ export default function ServicePresentation() {
   }
 
   function goNext() {
+    if (live.snapshot?.session) {
+      if (liveCanMutate && safeStepIndex < runSteps.length - 1) {
+        const targetLiveStep = liveRunSteps[safeStepIndex + 1];
+        if (targetLiveStep) {
+          void live.sendCommand("jump", { itemId: targetLiveStep.itemId, stepId: targetLiveStep.stepId, partIndex: targetLiveStep.partIndex }).catch(() => undefined);
+        } else {
+          void live.sendCommand("next", {}).catch(() => undefined);
+        }
+      }
+      return;
+    }
     goToStep(safeStepIndex + 1);
   }
 
   function goPrevious() {
+    if (live.snapshot?.session) {
+      if (liveCanMutate && safeStepIndex > 0) {
+        const targetLiveStep = liveRunSteps[safeStepIndex - 1];
+        if (targetLiveStep) {
+          void live.sendCommand("jump", { itemId: targetLiveStep.itemId, stepId: targetLiveStep.stepId, partIndex: targetLiveStep.partIndex }).catch(() => undefined);
+        } else {
+          void live.sendCommand("previous", {}).catch(() => undefined);
+        }
+      }
+      return;
+    }
     goToStep(safeStepIndex - 1);
   }
 
   function undoNavigation() {
+    if (live.snapshot?.session) {
+      goPrevious();
+      return;
+    }
     while (historyRef.current.length) {
       const previousId = historyRef.current.pop();
       const previousIndex = runSteps.findIndex((step) => step.id === previousId);
@@ -672,10 +781,27 @@ export default function ServicePresentation() {
     setHistoryCount(historyRef.current.length);
   }
 
+  function toggleBlackout() {
+    if (live.snapshot?.session) {
+      if (liveCanMutate) void live.sendCommand("set_blackout", { blackout: !blackout }).catch(() => undefined);
+      return;
+    }
+    setBlackout((current) => !current);
+  }
+
+  function toggleChords() {
+    if (live.snapshot?.session) {
+      if (liveCanMutate) void live.sendCommand("set_chords", { chordsVisible: !showChords }).catch(() => undefined);
+      return;
+    }
+    setShowChords((current) => !current);
+  }
+
   keyboardActionsRef.current = {
     goNext,
     goPrevious,
     undo: undoNavigation,
+    toggleBlackout,
     exit: () => navigate(`/app/services/${id}`),
   };
 
@@ -691,7 +817,7 @@ export default function ServicePresentation() {
         keyboardActionsRef.current.goPrevious();
       } else if (event.key.toLowerCase() === "b") {
         event.preventDefault();
-        setBlackout((current) => !current);
+        keyboardActionsRef.current.toggleBlackout();
       } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
         event.preventDefault();
         keyboardActionsRef.current.undo();
@@ -803,7 +929,7 @@ export default function ServicePresentation() {
 
   const exitToService = () => navigate(`/app/services/${id}`);
 
-  if (loading) {
+  if (loading || live.loading) {
     return (
       <div className="fixed inset-0 z-50 flex min-h-svh items-center justify-center bg-[#050508] text-white">
         <div className="flex flex-col items-center gap-4"><Loader2 className="h-9 w-9 animate-spin text-violet-300" /><p className="text-sm font-bold uppercase tracking-[0.24em] text-slate-400">Preparando Tchurch Live</p></div>
@@ -811,10 +937,10 @@ export default function ServicePresentation() {
     );
   }
 
-  if (loadError || !service) {
+  if (live.error || loadError || !service) {
     return (
       <div className="fixed inset-0 z-50 flex min-h-svh items-center justify-center bg-[#050508] p-6 text-white">
-        <div className="max-w-md rounded-[2rem] border border-white/10 bg-white/[0.05] p-8 text-center"><X className="mx-auto mb-4 h-9 w-9 text-red-300" /><h1 className="text-2xl font-black">No se pudo abrir la presentación</h1><p className="mt-2 text-slate-300">{loadError || "Servicio no encontrado."}</p><Button className="mt-6 min-h-11 rounded-2xl" onClick={() => navigate("/app/services")}>Volver a servicios</Button></div>
+        <div className="max-w-md rounded-[2rem] border border-white/10 bg-white/[0.05] p-8 text-center"><X className="mx-auto mb-4 h-9 w-9 text-red-300" /><h1 className="text-2xl font-black">No se pudo abrir la presentación</h1><p className="mt-2 text-slate-300">{live.error || loadError || "Servicio no encontrado."}</p><Button className="mt-6 min-h-11 rounded-2xl" onClick={() => navigate("/app/services")}>Volver a servicios</Button></div>
       </div>
     );
   }
@@ -837,6 +963,7 @@ export default function ServicePresentation() {
       onPointerUp={isTabletPresentation ? handleTabletPointerUp : undefined}
       onPointerCancel={isTabletPresentation ? suppressNextTabletClick : undefined}
     >
+      <PresentationStageMessages messages={live.messages} canDismiss={liveCanMutate} onCommand={live.sendCommand} />
       {runSteps.length === 0 ? (
         <div className="flex h-full items-center justify-center px-6 text-center"><div><Music className="mx-auto mb-4 h-12 w-12 text-violet-200" /><h1 className="text-3xl font-black">Este servicio todavía no tiene elementos.</h1><p className="mt-2 text-slate-300">Agrega canciones o cues antes de abrirlo en modo presentación.</p></div></div>
       ) : currentSlide?.kind === "song" ? (
@@ -859,30 +986,54 @@ export default function ServicePresentation() {
       <header className="relative z-40 flex min-h-16 shrink-0 items-center gap-2 border-b border-white/[0.07] px-3 py-2 sm:px-5" onClick={stopStageEvent}>
         <Button variant="ghost" className="h-11 shrink-0 rounded-xl border border-white/10 bg-white/[0.08] px-3 font-bold text-white hover:bg-white/[0.15] hover:text-white" onClick={exitToService}><ArrowLeft className="h-4 w-4" /><span className="hidden sm:inline">Salir</span></Button>
         <div className="hidden min-w-0 flex-1 sm:block"><p className="truncate text-sm font-black">{service.title}</p><p className="truncate text-[10px] text-slate-400">{formatServiceDate(service.date)}</p></div>
-        <div className="pointer-events-none absolute left-1/2 top-1/2 max-w-[26vw] -translate-x-1/2 -translate-y-1/2 text-center sm:hidden"><p className="truncate text-lg font-black">{currentStep?.sectionLabel || currentSlide?.title || service.title}</p></div>
-
-        {isTabletPresentation && (
-          <div className="ml-auto hidden h-11 overflow-hidden rounded-xl border border-white/10 bg-white/[0.08] md:flex">
-            <button type="button" aria-pressed={effectiveSurface === "operator"} className={`px-3 text-xs font-black ${effectiveSurface === "operator" ? "bg-violet-500 text-white" : "text-slate-300"}`} onClick={() => setSurface("operator")}>Operador</button>
-            <button type="button" aria-pressed={effectiveSurface === "stage"} className={`border-l border-white/10 px-3 text-xs font-black ${effectiveSurface === "stage" ? "bg-violet-500 text-white" : "text-slate-300"}`} onClick={() => setSurface("stage")}>Escenario</button>
-          </div>
-        )}
-
-        <div className={`${isTabletPresentation ? "" : "ml-auto"} flex shrink-0 items-center gap-1.5`}>
-          {workspace?.viewer.canEdit && <Button variant="ghost" className="h-11 rounded-xl border border-white/10 bg-white/[0.08] px-3 text-white hover:bg-white/[0.15] hover:text-white" onClick={() => setShowEditor(true)}><Settings2 className="h-4 w-4" /><span className="hidden lg:inline">Preparar</span></Button>}
-          <Button variant="ghost" aria-pressed={blackout} className={`h-11 rounded-xl border px-3 text-white hover:text-white ${blackout ? "border-red-400/50 bg-red-500/20 hover:bg-red-500/25" : "border-white/10 bg-white/[0.08] hover:bg-white/[0.15]"}`} onClick={() => setBlackout((current) => !current)}><EyeOff className="h-4 w-4" /><span className="hidden xl:inline">Negro</span></Button>
-          <Button variant="ghost" className="hidden h-11 rounded-xl border border-white/10 bg-white/[0.08] px-3 text-white hover:bg-white/[0.15] hover:text-white sm:flex" disabled={!historyCount} onClick={undoNavigation}><Undo2 className="h-4 w-4" /><span className="hidden xl:inline">Deshacer</span></Button>
-          {currentSlide?.kind === "song" && <Button variant="ghost" aria-pressed={showChords} className="h-11 rounded-xl border border-white/10 bg-white/[0.08] px-3 text-white hover:bg-white/[0.15] hover:text-white" onClick={() => setShowChords((current) => !current)}>{showChords ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}<span className="hidden xl:inline">Acordes</span></Button>}
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          {workspace?.viewer.canEdit && <Button variant="ghost" aria-label="Preparar presentación" className="hidden h-11 rounded-xl border border-white/10 bg-white/[0.08] px-3 text-white hover:bg-white/[0.15] hover:text-white md:flex" onClick={() => setShowEditor(true)}><Settings2 className="h-4 w-4" /><span className="hidden lg:inline">Preparar</span></Button>}
+          <Button
+            variant="ghost"
+            aria-label={blackout ? "Restaurar salida de presentación" : "Poner salida de presentación en negro"}
+            aria-pressed={blackout}
+            className={`h-11 rounded-xl border px-2 text-[11px] font-black text-white hover:text-white sm:px-3 sm:text-xs ${blackout ? "border-red-400/60 bg-red-500/30 hover:bg-red-500/40" : "border-white/10 bg-black/70 hover:bg-black"}`}
+            disabled={Boolean(live.snapshot?.session) && !liveCanMutate}
+            onClick={toggleBlackout}
+          >{blackout ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}<span>{blackout ? "Restaurar" : "Salida en negro"}</span></Button>
+          <Button variant="ghost" className="hidden h-11 rounded-xl border border-white/10 bg-white/[0.08] px-3 text-white hover:bg-white/[0.15] hover:text-white sm:flex" disabled={live.snapshot?.session ? !liveCanMutate || safeStepIndex === 0 : !historyCount} onClick={undoNavigation}><Undo2 className="h-4 w-4" /><span className="hidden xl:inline">Atrás</span></Button>
+          {currentSlide?.kind === "song" && <Button
+            variant="ghost"
+            aria-label={showChords ? "Ocultar acordes" : "Mostrar acordes"}
+            aria-pressed={showChords}
+            className={`h-11 min-w-[5.5rem] rounded-xl border px-2 text-xs font-black text-white hover:text-white sm:px-3 ${showChords ? "border-emerald-300/25 bg-emerald-300/10 hover:bg-emerald-300/15" : "border-white/10 bg-white/[0.05] hover:bg-white/10"}`}
+            disabled={Boolean(live.snapshot?.session) && !liveCanMutate}
+            onClick={toggleChords}
+          >{showChords ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}<span>Acordes</span><span className="text-[9px] opacity-70">{showChords ? "sí" : "no"}</span></Button>}
           <div className="flex h-11 min-w-14 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.08] px-2 text-xs font-black tabular-nums sm:px-3"><Clock3 className="hidden h-4 w-4 text-violet-200 sm:block" /><span><span className="block leading-none">{clock}</span><span className="mt-1 block text-center text-[8px] leading-none text-slate-400 sm:hidden">{runSteps.length ? safeStepIndex + 1 : 0}/{runSteps.length}</span></span></div>
           <div className="hidden h-11 items-center rounded-xl border border-white/10 bg-white/[0.08] px-3 text-xs font-black tabular-nums sm:flex">{runSteps.length ? safeStepIndex + 1 : 0}/{runSteps.length}</div>
         </div>
       </header>
+
+      <div className="relative z-40 flex min-h-12 shrink-0 items-center gap-2 border-b border-white/[0.07] bg-black/20 px-3 py-1.5 sm:px-5" onClick={stopStageEvent}>
+        <LiveConnectionBadge networkState={live.networkState} queueCount={live.offlineQueueCount} />
+        <div className="hidden min-w-0 flex-1 lg:block"><PresentationOwnershipControls snapshot={live.snapshot} controllerLeaseActive={live.controllerLeaseActive} pending={live.commandPending} onCommand={live.sendCommand} compact /></div>
+        <div className="ml-auto flex h-11 overflow-hidden rounded-xl border border-white/10 bg-white/[0.06]">
+          {isTabletPresentation && <button type="button" aria-pressed={effectiveSurface === "operator"} className={`min-w-20 px-3 text-xs font-black ${effectiveSurface === "operator" ? "bg-violet-500 text-white" : "text-slate-300"}`} onClick={() => setSurface("operator")}>Operador</button>}
+          <button type="button" aria-pressed={effectiveSurface === "stage"} className={`min-w-20 border-l border-white/10 px-3 text-xs font-black ${effectiveSurface === "stage" ? "bg-violet-500 text-white" : "text-slate-300"}`} onClick={() => setSurface("stage")}>Escenario</button>
+          {live.snapshot?.viewer.canControl && <button type="button" aria-pressed={effectiveSurface === "remote"} className={`min-w-20 border-l border-white/10 px-3 text-xs font-black ${effectiveSurface === "remote" ? "bg-violet-500 text-white" : "text-slate-300"}`} onClick={() => setSurface("remote")}>Control</button>}
+        </div>
+      </div>
 
       {workspaceNotice && (
         <div className="relative z-30 flex shrink-0 items-center justify-between gap-3 border-b border-amber-300/20 bg-amber-300/10 px-4 py-2 text-xs font-semibold text-amber-100" onClick={stopStageEvent}>
           <span className="truncate">{workspaceNotice}</span><button type="button" className="min-h-8 shrink-0 px-2 font-black" onClick={() => setWorkspaceNotice(null)}>Cerrar</button>
         </div>
       )}
+
+      <PresentationLiveNotice
+        notice={live.notice}
+        networkState={live.networkState}
+        queueCount={live.offlineQueueCount}
+        onClose={live.clearNotice}
+        onReconcile={live.reconcileOffline}
+        onDiscard={live.discardOfflineChanges}
+      />
 
       {currentSlide?.kind === "song" && (
         <div className="relative z-30 flex shrink-0 items-center justify-center gap-2 border-b border-white/[0.05] px-3 py-2" onClick={stopStageEvent}>
@@ -899,7 +1050,30 @@ export default function ServicePresentation() {
         </div>
       )}
 
-      {effectiveSurface === "operator" ? (
+      {effectiveSurface === "stage" && live.timing && (
+        <div className="relative z-30 grid shrink-0 grid-cols-3 border-b border-white/[0.06] bg-black/25" role="timer" aria-label="Tiempos del servicio">
+          <div className="px-3 py-2 text-center"><span className="block text-[9px] font-black uppercase tracking-[0.14em] text-slate-500">Servicio</span><span className={`mt-0.5 block text-sm font-black tabular-nums ${live.timing.service.overrunSeconds ? "text-red-300" : "text-white"}`}>{live.timing.service.overrunSeconds ? `+${formatLiveDuration(live.timing.service.overrunSeconds)}` : formatLiveDuration(live.timing.service.elapsedSeconds)}</span></div>
+          <div className="border-x border-white/[0.06] px-3 py-2 text-center"><span className="block text-[9px] font-black uppercase tracking-[0.14em] text-slate-500">Elemento</span><span className={`mt-0.5 block text-sm font-black tabular-nums ${live.timing.item.overrunSeconds ? "text-red-300" : "text-white"}`}>{live.timing.item.overrunSeconds ? `+${formatLiveDuration(live.timing.item.overrunSeconds)}` : formatLiveDuration(live.timing.item.elapsedSeconds)}</span></div>
+          <div className="px-3 py-2 text-center"><span className="block text-[9px] font-black uppercase tracking-[0.14em] text-slate-500">Cuenta</span><span className={`mt-0.5 block text-sm font-black tabular-nums ${live.timing.countdown && live.timing.countdown.remainingSeconds <= 10 ? "text-amber-200" : "text-white"}`}>{live.timing.countdown ? formatLiveDuration(live.timing.countdown.remainingSeconds) : "—"}</span></div>
+        </div>
+      )}
+
+      {effectiveSurface === "remote" ? (
+        <PresentationRemoteSurface
+          snapshot={live.snapshot}
+          activeView={live.activeView}
+          controllerLeaseActive={live.controllerLeaseActive}
+          timing={live.timing}
+          steps={runSteps}
+          liveSteps={liveRunSteps}
+          activeIndex={safeStepIndex}
+          nextLabel={nextStep?.sectionLabel || nextStep?.title || "Fin del servicio"}
+          blackout={blackout}
+          chordsVisible={showChords}
+          pending={live.commandPending || live.networkState === "diverged"}
+          onCommand={live.sendCommand}
+        />
+      ) : effectiveSurface === "operator" ? (
         <main className="relative z-10 grid min-h-0 flex-1 grid-cols-[12rem_minmax(20rem,1fr)_15rem] overflow-hidden xl:grid-cols-[16rem_minmax(0,1fr)_19rem]">
           <aside className="min-h-0 overflow-y-auto border-r border-white/10 bg-black/20 p-3" onClick={stopStageEvent}>
             <div className="mb-3 flex items-center justify-between"><div><p className="text-[10px] font-black uppercase tracking-[0.18em] text-violet-200">Orden</p><p className="text-sm font-black">Servicio</p></div><Badge className="rounded-lg bg-white/10 text-white hover:bg-white/10">{runSteps.length}</Badge></div>
@@ -908,13 +1082,15 @@ export default function ServicePresentation() {
           <section className="min-h-0 overflow-hidden border-r border-white/10 bg-black/15">{stageOutput}</section>
           <aside className="min-h-0 overflow-y-auto bg-black/20 p-4" onClick={stopStageEvent}>
             <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-violet-200">Ahora</p><h2 className="mt-1 truncate text-lg font-black">{currentStep?.sectionLabel || currentStep?.title || "Sin contenido"}</h2><p className="truncate text-xs text-slate-400">{currentStep?.title}</p></div><span className="text-lg font-black tabular-nums text-white">{clock}</span></div>
+            <div className="mt-3"><PresentationOwnershipControls snapshot={live.snapshot} controllerLeaseActive={live.controllerLeaseActive} pending={live.commandPending} onCommand={live.sendCommand} /></div>
             <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.05] p-3"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Siguiente</p><p className="mt-1 truncate text-sm font-black">{nextStep?.sectionLabel || nextStep?.title || "Fin del servicio"}</p><p className="truncate text-xs text-slate-400">{nextStep?.title}</p></div>
+            <div className="mt-4"><PresentationTimingPanel timing={live.timing} canControl={liveCanMutate} pending={live.commandPending} onCommand={live.sendCommand} compact /></div>
             <div className="mt-4"><p className="mb-2 text-[10px] font-black uppercase tracking-[0.18em] text-violet-200">Notas del equipo</p><AnnotationList annotations={operatorAnnotations} emptyLabel="Sin indicaciones en este momento." /></div>
             {currentLegacyNotes.length ? <div className="mt-4 space-y-2"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Notas anteriores</p>{currentLegacyNotes.map((note, index) => <p key={`${note}-${index}`} className="rounded-xl bg-white/[0.05] p-3 text-xs leading-5 text-slate-300">{note}</p>)}</div> : null}
             <div className="sticky bottom-0 mt-5 grid grid-cols-[3rem_minmax(0,1fr)_3rem] gap-2 bg-[#08070d]/95 py-3">
-              <Button variant="ghost" className="h-12 rounded-xl bg-white/10 text-white hover:bg-white/15 hover:text-white" disabled={safeStepIndex === 0} onClick={goPrevious}><ChevronLeft className="h-5 w-5" /></Button>
-              <Button className="h-12 rounded-xl bg-violet-500 font-black hover:bg-violet-400" disabled={safeStepIndex >= runSteps.length - 1} onClick={goNext}>Siguiente</Button>
-              <Button variant="ghost" className="h-12 rounded-xl bg-white/10 text-white hover:bg-white/15 hover:text-white" disabled={!historyCount} onClick={undoNavigation}><Undo2 className="h-5 w-5" /></Button>
+              <Button variant="ghost" className="h-12 rounded-xl bg-white/10 text-white hover:bg-white/15 hover:text-white" disabled={safeStepIndex === 0 || Boolean(live.snapshot?.session) && !liveCanMutate} onClick={goPrevious}><ChevronLeft className="h-5 w-5" /></Button>
+              <Button className="h-12 rounded-xl bg-violet-500 font-black hover:bg-violet-400" disabled={safeStepIndex >= runSteps.length - 1 || Boolean(live.snapshot?.session) && !liveCanMutate} onClick={goNext}>Siguiente</Button>
+              <Button variant="ghost" aria-label="Abrir control remoto" className="h-12 rounded-xl bg-white/10 text-white hover:bg-white/15 hover:text-white" onClick={() => setSurface("remote")}><Settings2 className="h-5 w-5" /></Button>
             </div>
           </aside>
         </main>
@@ -935,9 +1111,9 @@ export default function ServicePresentation() {
 
       {effectiveSurface === "stage" && (
         <footer className="relative z-30 flex shrink-0 items-center gap-2 border-t border-white/[0.07] px-3 py-2 sm:px-5" onClick={stopStageEvent}>
-          <Button variant="ghost" className="h-12 w-12 shrink-0 rounded-xl bg-white/10 text-white hover:bg-white/15 hover:text-white" disabled={safeStepIndex === 0} onClick={goPrevious}><ChevronLeft className="h-5 w-5" /></Button>
+          <Button variant="ghost" className="h-12 w-12 shrink-0 rounded-xl bg-white/10 text-white hover:bg-white/15 hover:text-white" disabled={safeStepIndex === 0 || Boolean(live.snapshot?.session) && !liveCanMutate} onClick={goPrevious}><ChevronLeft className="h-5 w-5" /></Button>
           <button type="button" className="min-h-12 min-w-0 flex-1 rounded-xl border border-white/10 bg-white/[0.06] px-3 py-2 text-center" onClick={() => setShowRundown(true)}><span className="block truncate text-[9px] font-black uppercase tracking-[0.18em] text-slate-500">Siguiente</span><span className="block truncate text-sm font-black text-white">{nextStep?.sectionLabel || nextStep?.title || "Fin del servicio"}</span>{!isTabletPresentation && (stageAnnotations[0]?.body || currentLegacyNotes[0]) ? <span className="mt-0.5 block truncate text-[10px] font-semibold text-amber-200">{stageAnnotations[0]?.body || currentLegacyNotes[0]}</span> : null}</button>
-          <Button variant="ghost" className="h-12 w-12 shrink-0 rounded-xl bg-white/10 text-white hover:bg-white/15 hover:text-white" disabled={safeStepIndex >= runSteps.length - 1} onClick={goNext}><ChevronRight className="h-5 w-5" /></Button>
+          <Button variant="ghost" className="h-12 w-12 shrink-0 rounded-xl bg-white/10 text-white hover:bg-white/15 hover:text-white" disabled={safeStepIndex >= runSteps.length - 1 || Boolean(live.snapshot?.session) && !liveCanMutate} onClick={goNext}><ChevronRight className="h-5 w-5" /></Button>
         </footer>
       )}
 
