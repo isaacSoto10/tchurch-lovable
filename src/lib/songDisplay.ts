@@ -40,28 +40,36 @@ export type ChordProDisplayLine =
 
 const SECTION_LABELS: Record<string, string> = {
   intro: "Intro",
+  soi: "Intro",
   introduccion: "Intro",
   "introducción": "Intro",
   verse: "Verse",
   v: "Verse",
+  sov: "Verse",
+  "start of verse": "Verse",
   verso: "Verse",
   estrofa: "Verse",
   chorus: "Chorus",
   c: "Chorus",
+  soc: "Chorus",
+  "start of chorus": "Chorus",
   coro: "Chorus",
   bridge: "Bridge",
   b: "Bridge",
+  sob: "Bridge",
+  "start of bridge": "Bridge",
   puente: "Bridge",
   "pre-chorus": "Pre-Chorus",
   "pre chorus": "Pre-Chorus",
   prechorus: "Pre-Chorus",
   pc: "Pre-Chorus",
+  sopc: "Pre-Chorus",
   precoro: "Pre-Chorus",
   "pre coro": "Pre-Chorus",
   "pre-coro": "Pre-Chorus",
   interlude: "Interlude",
   interludio: "Interlude",
-  instrumental: "Instrumental",
+  instrumental: "Interlude",
   solo: "Interlude",
   tag: "Tag",
   outro: "Outro",
@@ -70,23 +78,43 @@ const SECTION_LABELS: Record<string, string> = {
 };
 
 const METADATA_KEYS = new Set(["title", "artist", "key", "tempo", "capo", "time", "t", "a", "k"]);
+const END_DIRECTIVE_KEYS = new Set([
+  "eoi",
+  "end_of_intro",
+  "eov",
+  "end_of_verse",
+  "eopc",
+  "end_of_prechorus",
+  "eoc",
+  "end_of_chorus",
+  "eob",
+  "end_of_bridge",
+]);
 
 function normalizeLabel(value: string) {
   return value
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[_-]/g, " ")
+    .replace(/[^a-zA-Z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
 }
 
+function getDirectiveHeadingValue(raw: string) {
+  const labelAttribute = raw.match(/\blabel\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s]+))/i);
+  return (labelAttribute?.[1] || labelAttribute?.[2] || labelAttribute?.[3] || raw).trim();
+}
+
 function getDirectiveLabel(raw: string) {
-  const normalized = normalizeLabel(raw.replace(/\d+$/g, "").trim());
+  const cleaned = getDirectiveHeadingValue(raw).replace(/\s*:\s*$/, "").trim();
+  const normalizedWithNumber = normalizeLabel(cleaned);
+  const number = normalizedWithNumber.match(/(?:^|\s)(\d+)$/)?.[1];
+  const normalized = normalizedWithNumber.replace(/\s+\d+$/, "");
   const section = SECTION_LABELS[normalized];
   if (!section) return null;
 
-  const number = raw.match(/(\d+)$/)?.[1];
   return number && number !== "1" ? `${section} ${number}` : section;
 }
 
@@ -204,7 +232,7 @@ export function chordProToDisplayLines(value: string | null | undefined, maxLine
   if (!value) return [];
 
   const lines: ChordProDisplayLine[] = [];
-  for (const rawLine of value.replace(/\r\n/g, "\n").split("\n")) {
+  for (const rawLine of value.replace(/\r\n?/g, "\n").split("\n")) {
     if (lines.length >= maxLines) break;
 
     const contentLine = rawLine.trimEnd();
@@ -222,12 +250,30 @@ export function chordProToDisplayLines(value: string | null | undefined, maxLine
 
     const directive = trimmed.match(/^\{([^}:]+)(?::\s*(.*))?\}$/);
     if (directive) {
-      const key = directive[1].toLowerCase();
+      const key = directive[1].trim().toLowerCase().replace(/\s+/g, "_");
       if (METADATA_KEYS.has(key)) continue;
+      if (END_DIRECTIVE_KEYS.has(key) || key.startsWith("end_of_")) continue;
+
+      if (key === "start_of_section") {
+        const sectionHeading = getDirectiveLabel(directive[2] || "");
+        if (sectionHeading) lines.push({ kind: "section", label: sectionHeading });
+        continue;
+      }
+
+      if (key === "comment" || key === "c") {
+        const commentHeading = getDirectiveLabel(directive[2] || "");
+        if (commentHeading) lines.push({ kind: "section", label: commentHeading });
+        continue;
+      }
 
       const sectionLabel = getDirectiveLabel(key);
       if (sectionLabel) {
-        lines.push({ kind: "section", label: sectionLabel });
+        const payloadLabel = getDirectiveLabel(directive[2] || "");
+        const explicitNumber = payloadLabel?.match(/\s(\d+)$/)?.[1];
+        lines.push({
+          kind: "section",
+          label: explicitNumber ? `${sectionLabel.replace(/\s+\d+$/, "")} ${explicitNumber}` : sectionLabel,
+        });
       }
       continue;
     }

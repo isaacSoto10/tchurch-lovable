@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type TouchEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, ChevronLeft, ChevronRight, Eye, EyeOff, ListMusic, Loader2, Minus, Music, Plus, Sparkles, X } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Clock3, Eye, EyeOff, ListMusic, Loader2, Minus, Music, Pencil, Plus, RotateCcw, Settings2, Sparkles, Undo2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { apiFetch } from "@/lib/api";
+import { ApiError, apiFetch } from "@/lib/api";
+import { PresentationWorkspaceEditor } from "@/components/presentation/PresentationWorkspaceEditor";
 import { useChurch } from "@/providers/ChurchProvider";
 import {
   buildServicePresentationSlides,
+  buildPresentationRunSteps,
   canUseServicePresentation,
   getDefaultPresentationSongMode,
   type PresentationLayout,
@@ -15,6 +17,19 @@ import {
   type PresentationSongMode,
 } from "@/lib/servicePresentation";
 import { formatServiceDate } from "@/lib/serviceDates";
+import {
+  fetchPresentationWorkspace,
+  fetchPresentationWorkspaceForPreferredView,
+  canEnterPresentationWorkspace,
+  getWorkspaceItem,
+  isPresentationAnnotationVisible,
+  normalizePresentationWorkspace,
+  savePresentationWorkspaceItem,
+  type PresentationAnnotation,
+  type PresentationTargetRole,
+  type PresentationWorkspace,
+  type PresentationWorkspaceItem,
+} from "@/lib/presentationWorkspace";
 
 type UserMe = {
   id: string;
@@ -198,16 +213,27 @@ function SongSlide({
   layout,
   songMode,
   zoomScale,
+  activeSequenceId,
 }: {
   slide: Extract<PresentationSlide, { kind: "song" }>;
   showChords: boolean;
   layout: PresentationLayout;
   songMode: PresentationSongMode;
   zoomScale: number;
+  activeSequenceId?: string | null;
 }) {
   const isTabletLayout = layout === "tablet";
   const allowsVerticalScroll = songMode === "scroll" || zoomScale > 1 || !isTabletLayout;
   const [chartBodyRef, chartSize] = useMeasuredElement<HTMLDivElement>();
+  useEffect(() => {
+    if (!activeSequenceId || songMode !== "scroll") return;
+    const root = chartBodyRef.current;
+    const target = Array.from(root?.querySelectorAll<HTMLElement>("[data-presentation-sequence]") || [])
+      .find((element) => element.dataset.presentationSequence === activeSequenceId);
+    if (!target) return;
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    target.scrollIntoView({ block: "start", behavior: reduceMotion ? "auto" : "smooth" });
+  }, [activeSequenceId, chartBodyRef, songMode]);
   const chartMetrics = useMemo(() => {
     return slide.lines.reduce(
       (metrics, line) => {
@@ -286,8 +312,12 @@ function SongSlide({
               const SectionIcon = normalizeSectionLabel(label).includes("coro") ? Sparkles : ListMusic;
 
               return (
-                <div key={index} className={`${index > 0 ? "mt-3 border-t border-white/10 pt-3" : ""} pb-1`}>
-                  <span className="inline-flex items-center gap-2 rounded-xl border border-violet-300/20 bg-violet-500/[0.18] px-3 py-1.5 text-[11px] font-black uppercase tracking-[0.18em] text-violet-200 shadow-lg shadow-violet-950/20 sm:px-4 sm:text-xs sm:tracking-[0.24em]">
+                <div
+                  key={index}
+                  data-presentation-sequence={line.sectionSequenceId}
+                  className={`${index > 0 ? "mt-3 border-t border-white/10 pt-3" : ""} scroll-mt-2 pb-1`}
+                >
+                  <span className={`inline-flex items-center gap-2 rounded-xl border px-3 py-1.5 text-[11px] font-black uppercase tracking-[0.18em] shadow-lg sm:px-4 sm:text-xs sm:tracking-[0.24em] ${line.sectionSequenceId === activeSequenceId ? "border-amber-300/60 bg-amber-400/20 text-amber-100 shadow-amber-950/20" : "border-violet-300/20 bg-violet-500/[0.18] text-violet-200 shadow-violet-950/20"}`}>
                     <SectionIcon className="h-3.5 w-3.5" />
                     {label}
                   </span>
@@ -399,20 +429,107 @@ function CueSlide({ slide }: { slide: Extract<PresentationSlide, { kind: "cue" }
   );
 }
 
+const ANNOTATION_LABELS: Record<PresentationAnnotation["category"], string> = {
+  note: "Nota",
+  direction: "Dirección",
+  musical: "Musical",
+  technical: "Técnica",
+  transition: "Transición",
+  safety: "Seguridad",
+};
+
+function usePresentationClock() {
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 15_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  return new Intl.DateTimeFormat("es", { hour: "numeric", minute: "2-digit" }).format(now);
+}
+
+function AnnotationList({ annotations, emptyLabel }: { annotations: PresentationAnnotation[]; emptyLabel: string }) {
+  if (!annotations.length) {
+    return <p className="rounded-2xl border border-dashed border-white/15 px-4 py-5 text-center text-sm text-slate-400">{emptyLabel}</p>;
+  }
+
+  return (
+    <div className="space-y-2">
+      {annotations.map((annotation) => (
+        <div key={annotation.id} className={`rounded-2xl border px-4 py-3 ${annotation.category === "safety" ? "border-amber-300/35 bg-amber-300/10" : "border-white/10 bg-white/[0.07]"}`}>
+          <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+            <span className={`text-[10px] font-black uppercase tracking-[0.15em] ${annotation.category === "safety" ? "text-amber-200" : "text-violet-200"}`}>{ANNOTATION_LABELS[annotation.category]}</span>
+            {annotation.roles.slice(0, 3).map((role) => <span key={role} className="rounded-md bg-black/25 px-1.5 py-0.5 text-[9px] font-bold uppercase text-slate-300">{role.replace("_", " ")}</span>)}
+          </div>
+          <p className="text-sm font-semibold leading-5 text-white">{annotation.body}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function RundownList({
+  steps,
+  activeIndex,
+  onSelect,
+}: {
+  steps: ReturnType<typeof buildPresentationRunSteps>;
+  activeIndex: number;
+  onSelect: (index: number) => void;
+}) {
+  return (
+    <div className="space-y-1.5">
+      {steps.map((step, index) => (
+        <button
+          key={step.id}
+          type="button"
+          aria-current={index === activeIndex ? "step" : undefined}
+          className={`flex min-h-12 w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors ${index === activeIndex ? "bg-violet-500 text-white shadow-lg shadow-violet-950/30" : "bg-white/[0.05] text-slate-300 hover:bg-white/10"}`}
+          onClick={() => onSelect(index)}
+        >
+          <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[11px] font-black ${index === activeIndex ? "bg-white/15 text-white" : "bg-black/25 text-slate-400"}`}>{index + 1}</span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-xs font-black">{step.title}</span>
+            <span className={`block truncate text-[10px] font-semibold uppercase tracking-[0.12em] ${index === activeIndex ? "text-violet-100" : "text-slate-500"}`}>{step.sectionLabel || "Cue"}</span>
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export default function ServicePresentation() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { selectedChurch } = useChurch();
+  const isTabletPresentation = useTabletPresentationLayout();
+  const clock = usePresentationClock();
   const [service, setService] = useState<PresentationService | null>(null);
+  const [workspace, setWorkspace] = useState<PresentationWorkspace | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [slideIndex, setSlideIndex] = useState(0);
+  const [workspaceNotice, setWorkspaceNotice] = useState<string | null>(null);
+  const [activeStepIndex, setActiveStepIndex] = useState(0);
   const [showChords, setShowChords] = useState(true);
   const [songModeOverride, setSongModeOverride] = useState<PresentationSongMode | null>(null);
   const [songZoomLevel, setSongZoomLevel] = useState(0);
-  const isTabletPresentation = useTabletPresentationLayout();
+  const [surface, setSurface] = useState<"operator" | "stage">("stage");
+  const [blackout, setBlackout] = useState(false);
+  const [historyCount, setHistoryCount] = useState(0);
+  const [showRundown, setShowRundown] = useState(false);
+  const [showEditor, setShowEditor] = useState(false);
+  const [savingWorkspace, setSavingWorkspace] = useState(false);
+  const historyRef = useRef<string[]>([]);
+  const keyboardActionsRef = useRef({
+    goNext: () => undefined,
+    goPrevious: () => undefined,
+    undo: () => undefined,
+    exit: () => undefined,
+  });
+  const surfaceInitializedRef = useRef(false);
   const touchStartXRef = useRef<number | null>(null);
   const swipeHandledRef = useRef(false);
   const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -423,24 +540,42 @@ export default function ServicePresentation() {
   useEffect(() => {
     if (!id) return;
     let active = true;
+    surfaceInitializedRef.current = false;
 
     async function loadPresentation() {
       setLoading(true);
       setLoadError(null);
+      setWorkspaceNotice(null);
 
       try {
         const [serviceData, userData] = await Promise.all([
-          apiFetch<PresentationService>(`/services/${id}`),
+          apiFetch<PresentationService>(`/services/${id}`, { cache: "no-store" }),
           apiFetch<UserMe>("/users/me").catch(() => null),
         ]);
-
         if (!active) return;
-        setService({
+
+        const normalizedService = {
           ...serviceData,
           items: [...(serviceData.items || [])].sort((a, b) => a.position - b.position),
-        });
+        };
+        setService(normalizedService);
         setCurrentUserId(userData?.id || null);
         setCurrentUserEmail(userData?.email?.trim().toLowerCase() || null);
+
+        const preferredView = selectedChurch?.role === "ADMIN" || selectedChurch?.role === "PLANNER" ? "editor" : "operator";
+        try {
+          const loadedWorkspace = await fetchPresentationWorkspaceForPreferredView(normalizedService, preferredView, selectedChurch?.role);
+          if (active) setWorkspace(loadedWorkspace);
+        } catch (workspaceError) {
+          if (workspaceError instanceof ApiError && (workspaceError.status === 401 || workspaceError.status === 403)) {
+            throw workspaceError;
+          }
+          console.warn("Tchurch Live usará el arreglo derivado:", workspaceError);
+          if (active) {
+            setWorkspace(normalizePresentationWorkspace(null, normalizedService, "stage", null));
+            setWorkspaceNotice("Las notas guardadas no están disponibles ahora. La presentación sigue con el arreglo de la canción.");
+          }
+        }
       } catch (error) {
         console.error("No se pudo cargar la presentación:", error);
         if (active) setLoadError(error instanceof Error ? error.message : "No se pudo cargar la presentación");
@@ -450,70 +585,140 @@ export default function ServicePresentation() {
     }
 
     void loadPresentation();
+    return () => { active = false; };
+  }, [id, selectedChurch?.role]);
 
-    return () => {
-      active = false;
-    };
-  }, [id]);
+  useEffect(() => {
+    if (!workspace || surfaceInitializedRef.current) return;
+    surfaceInitializedRef.current = true;
+    const canOperate = workspace.viewer.canEdit || workspace.viewer.roles.includes("operator");
+    setSurface(isTabletPresentation && canOperate ? "operator" : "stage");
+  }, [isTabletPresentation, workspace]);
 
   const presentationLayout: PresentationLayout = isTabletPresentation ? "tablet" : "phone";
   const defaultSongMode = getDefaultPresentationSongMode(presentationLayout);
   const songMode = songModeOverride || defaultSongMode;
   const songZoomScale = getSongZoomScale(songZoomLevel);
   const slides = useMemo(
-    () => service ? buildServicePresentationSlides(service, { layout: presentationLayout, songMode }) : [],
-    [presentationLayout, service, songMode]
+    () => service ? buildServicePresentationSlides(service, { layout: presentationLayout, songMode, workspace }) : [],
+    [presentationLayout, service, songMode, workspace],
   );
-  const canPresent = canUseServicePresentation(service, selectedChurch?.role, currentUserId, currentUserEmail);
-  const activeSlideIndex = slides.length ? Math.min(slideIndex, slides.length - 1) : 0;
-  const currentSlide = slides[activeSlideIndex];
+  const runSteps = useMemo(() => buildPresentationRunSteps(slides, songMode), [slides, songMode]);
+  const localCanPresent = canUseServicePresentation(service, selectedChurch?.role, currentUserId, currentUserEmail);
+  const canPresent = canEnterPresentationWorkspace(workspace, localCanPresent);
+  const safeStepIndex = runSteps.length ? Math.min(activeStepIndex, runSteps.length - 1) : 0;
+  const currentStep = runSteps[safeStepIndex];
+  const nextStep = runSteps[safeStepIndex + 1] || null;
+  const currentSlide = currentStep ? slides[currentStep.slideIndex] : null;
+  const currentWorkspaceItem = currentStep ? getWorkspaceItem(workspace, currentStep.itemId) : null;
+  const viewerRoles = workspace?.viewer.roles || [];
+  const stageAnnotations = useMemo(() => {
+    if (!currentWorkspaceItem) return [];
+    return currentWorkspaceItem.annotations.filter((annotation) =>
+      !currentWorkspaceItem.reconciliation.unresolvedAnnotationIds.includes(annotation.id) &&
+      (annotation.sectionAnchorId === null || annotation.sectionAnchorId === currentStep?.sectionAnchorId) &&
+      isPresentationAnnotationVisible(annotation, "stage", viewerRoles, workspace?.viewer.canEdit)
+    );
+  }, [currentStep?.sectionAnchorId, currentWorkspaceItem, viewerRoles, workspace?.viewer.canEdit]);
+  const operatorAnnotations = useMemo(() => {
+    if (!currentWorkspaceItem) return [];
+    return currentWorkspaceItem.annotations.filter((annotation) =>
+      !currentWorkspaceItem.reconciliation.unresolvedAnnotationIds.includes(annotation.id) &&
+      (annotation.sectionAnchorId === null || annotation.sectionAnchorId === currentStep?.sectionAnchorId) &&
+      isPresentationAnnotationVisible(annotation, "operator", viewerRoles, workspace?.viewer.canEdit)
+    );
+  }, [currentStep?.sectionAnchorId, currentWorkspaceItem, viewerRoles, workspace?.viewer.canEdit]);
+  const currentLegacyNotes = useMemo(
+    () => [...new Set([...(workspace?.legacyNotes || []), ...(currentWorkspaceItem?.legacyNotes || [])])],
+    [currentWorkspaceItem?.legacyNotes, workspace?.legacyNotes],
+  );
+  const effectiveSurface = isTabletPresentation ? surface : "stage";
 
   useEffect(() => {
-    if (slides.length === 0) {
-      setSlideIndex(0);
+    if (!runSteps.length) {
+      setActiveStepIndex(0);
       return;
     }
-    if (slideIndex > slides.length - 1) setSlideIndex(slides.length - 1);
-  }, [slideIndex, slides.length]);
+    if (activeStepIndex > runSteps.length - 1) setActiveStepIndex(runSteps.length - 1);
+  }, [activeStepIndex, runSteps.length]);
+
+  function goToStep(index: number, recordHistory = true) {
+    const nextIndex = Math.max(0, Math.min(index, Math.max(runSteps.length - 1, 0)));
+    if (nextIndex === safeStepIndex) return;
+    if (recordHistory && currentStep) {
+      historyRef.current = [...historyRef.current.slice(-29), currentStep.id];
+      setHistoryCount(historyRef.current.length);
+    }
+    setActiveStepIndex(nextIndex);
+  }
+
+  function goNext() {
+    goToStep(safeStepIndex + 1);
+  }
+
+  function goPrevious() {
+    goToStep(safeStepIndex - 1);
+  }
+
+  function undoNavigation() {
+    while (historyRef.current.length) {
+      const previousId = historyRef.current.pop();
+      const previousIndex = runSteps.findIndex((step) => step.id === previousId);
+      if (previousIndex >= 0) {
+        setActiveStepIndex(previousIndex);
+        break;
+      }
+    }
+    setHistoryCount(historyRef.current.length);
+  }
+
+  keyboardActionsRef.current = {
+    goNext,
+    goPrevious,
+    undo: undoNavigation,
+    exit: () => navigate(`/app/services/${id}`),
+  };
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
+      const target = event.target;
+      if (target instanceof HTMLElement && (target.closest("input, textarea, select, [role=dialog]") || target.isContentEditable)) return;
       if (event.key === "ArrowRight" || event.key === " ") {
         event.preventDefault();
-        setSlideIndex((current) => Math.min(current + 1, Math.max(slides.length - 1, 0)));
-      }
-      if (event.key === "ArrowLeft") {
+        keyboardActionsRef.current.goNext();
+      } else if (event.key === "ArrowLeft") {
         event.preventDefault();
-        setSlideIndex((current) => Math.max(current - 1, 0));
-      }
-      if (event.key === "Escape") {
-        navigate(`/app/services/${id}`);
+        keyboardActionsRef.current.goPrevious();
+      } else if (event.key.toLowerCase() === "b") {
+        event.preventDefault();
+        setBlackout((current) => !current);
+      } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        keyboardActionsRef.current.undo();
+      } else if (event.key === "Escape") {
+        keyboardActionsRef.current.exit();
       }
     }
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [id, navigate, slides.length]);
-
-  function goNext() {
-    setSlideIndex((current) => Math.min(current + 1, Math.max(slides.length - 1, 0)));
-  }
-
-  function goPrevious() {
-    setSlideIndex((current) => Math.max(current - 1, 0));
-  }
+  }, []);
 
   function changeSongMode(nextMode: PresentationSongMode) {
     setSongModeOverride(nextMode);
-
-    if (!service || !currentSlide) {
-      setSlideIndex(0);
+    if (!service || !currentStep) {
+      setActiveStepIndex(0);
       return;
     }
-
-    const nextSlides = buildServicePresentationSlides(service, { layout: presentationLayout, songMode: nextMode });
-    const nextSlideIndex = nextSlides.findIndex((slide) => slide.itemId === currentSlide.itemId);
-    setSlideIndex(nextSlideIndex >= 0 ? nextSlideIndex : 0);
+    const nextSlides = buildServicePresentationSlides(service, { layout: presentationLayout, songMode: nextMode, workspace });
+    const nextSteps = buildPresentationRunSteps(nextSlides, nextMode);
+    const nextIndex = nextSteps.findIndex((step) =>
+      step.itemId === currentStep.itemId &&
+      (step.sectionAnchorId === currentStep.sectionAnchorId || !currentStep.sectionAnchorId)
+    );
+    setActiveStepIndex(nextIndex >= 0 ? nextIndex : 0);
+    historyRef.current = [];
+    setHistoryCount(0);
   }
 
   function changeSongZoom(delta: number) {
@@ -525,17 +730,13 @@ export default function ServicePresentation() {
       swipeHandledRef.current = false;
       return;
     }
-
-    const midpoint = window.innerWidth / 2;
-    if (event.clientX >= midpoint) goNext();
+    if (event.clientX >= window.innerWidth / 2) goNext();
     else goPrevious();
   }
 
   function suppressNextTabletClick() {
     suppressClickRef.current = true;
-    window.setTimeout(() => {
-      suppressClickRef.current = false;
-    }, 350);
+    window.setTimeout(() => { suppressClickRef.current = false; }, 350);
   }
 
   function handleTabletPointerDown(event: PointerEvent<HTMLDivElement>) {
@@ -545,38 +746,20 @@ export default function ServicePresentation() {
   function handleTabletPointerUp(event: PointerEvent<HTMLDivElement>) {
     const start = pointerStartRef.current;
     pointerStartRef.current = null;
-    if (!start) return;
-
-    const distance = Math.hypot(event.clientX - start.x, event.clientY - start.y);
-    if (distance > 12) suppressNextTabletClick();
-  }
-
-  function handleTabletPointerCancel() {
-    pointerStartRef.current = null;
-    suppressNextTabletClick();
-  }
-
-  function handleTabletStageClick() {
-    if (suppressClickRef.current) {
-      suppressClickRef.current = false;
-      return;
-    }
-
-    goNext();
+    if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) > 12) suppressNextTabletClick();
   }
 
   function handleStageClick(event: MouseEvent<HTMLDivElement>) {
     if (isTabletPresentation) {
-      handleTabletStageClick();
+      if (suppressClickRef.current) suppressClickRef.current = false;
+      else goNext();
       return;
     }
-
     handlePhoneStageClick(event);
   }
 
   function handleTouchStart(event: TouchEvent<HTMLDivElement>) {
-    if (isTabletPresentation) return;
-    touchStartXRef.current = event.touches[0]?.clientX ?? null;
+    if (!isTabletPresentation) touchStartXRef.current = event.touches[0]?.clientX ?? null;
   }
 
   function handleTouchEnd(event: TouchEvent<HTMLDivElement>) {
@@ -584,14 +767,34 @@ export default function ServicePresentation() {
     const startX = touchStartXRef.current;
     const endX = event.changedTouches[0]?.clientX ?? null;
     touchStartXRef.current = null;
-    if (startX === null || endX === null) return;
-
-    const delta = endX - startX;
-    if (Math.abs(delta) < 48) return;
-
+    if (startX === null || endX === null || Math.abs(endX - startX) < 48) return;
     swipeHandledRef.current = true;
-    if (delta < 0) goNext();
+    if (endX < startX) goNext();
     else goPrevious();
+  }
+
+  async function saveWorkspaceItem(item: PresentationWorkspaceItem) {
+    if (!service) return;
+    setSavingWorkspace(true);
+    setWorkspaceNotice(null);
+    try {
+      await savePresentationWorkspaceItem(service.id, item);
+      const refreshed = await fetchPresentationWorkspace(service, "editor", selectedChurch?.role);
+      setWorkspace(refreshed);
+      setWorkspaceNotice("Arreglo y notas guardados.");
+      setShowEditor(false);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        const refreshed = await fetchPresentationWorkspace(service, "editor", selectedChurch?.role).catch(() => null);
+        if (refreshed) setWorkspace(refreshed);
+        setWorkspaceNotice("Otra persona actualizó esta canción. Recargamos la versión más reciente para que revises tus cambios.");
+        setShowEditor(false);
+      } else {
+        setWorkspaceNotice(error instanceof Error ? error.message : "No se pudieron guardar las notas.");
+      }
+    } finally {
+      setSavingWorkspace(false);
+    }
   }
 
   function stopStageEvent(event: MouseEvent<HTMLElement>) {
@@ -599,16 +802,11 @@ export default function ServicePresentation() {
   }
 
   const exitToService = () => navigate(`/app/services/${id}`);
-  const stageClassName = "fixed inset-0 z-50 flex min-h-svh flex-col overflow-hidden bg-[radial-gradient(circle_at_top_left,#2f1e6a_0%,#090912_34%,#020204_100%)] text-white";
-  const stageMainClassName = "relative z-10 min-h-0 flex-1 overflow-hidden";
 
   if (loading) {
     return (
       <div className="fixed inset-0 z-50 flex min-h-svh items-center justify-center bg-[#050508] text-white">
-        <div className="flex flex-col items-center gap-4">
-          <Loader2 className="h-9 w-9 animate-spin text-violet-300" />
-          <p className="text-sm font-bold uppercase tracking-[0.24em] text-slate-400">Preparando presentación</p>
-        </div>
+        <div className="flex flex-col items-center gap-4"><Loader2 className="h-9 w-9 animate-spin text-violet-300" /><p className="text-sm font-bold uppercase tracking-[0.24em] text-slate-400">Preparando Tchurch Live</p></div>
       </div>
     );
   }
@@ -616,12 +814,7 @@ export default function ServicePresentation() {
   if (loadError || !service) {
     return (
       <div className="fixed inset-0 z-50 flex min-h-svh items-center justify-center bg-[#050508] p-6 text-white">
-        <div className="max-w-md rounded-[2rem] border border-white/10 bg-white/[0.05] p-8 text-center">
-          <X className="mx-auto mb-4 h-9 w-9 text-red-300" />
-          <h1 className="text-2xl font-black">No se pudo abrir la presentación</h1>
-          <p className="mt-2 text-slate-300">{loadError || "Servicio no encontrado."}</p>
-          <Button className="mt-6 rounded-2xl" onClick={() => navigate("/app/services")}>Volver a servicios</Button>
-        </div>
+        <div className="max-w-md rounded-[2rem] border border-white/10 bg-white/[0.05] p-8 text-center"><X className="mx-auto mb-4 h-9 w-9 text-red-300" /><h1 className="text-2xl font-black">No se pudo abrir la presentación</h1><p className="mt-2 text-slate-300">{loadError || "Servicio no encontrado."}</p><Button className="mt-6 min-h-11 rounded-2xl" onClick={() => navigate("/app/services")}>Volver a servicios</Button></div>
       </div>
     );
   }
@@ -629,154 +822,137 @@ export default function ServicePresentation() {
   if (!canPresent) {
     return (
       <div className="fixed inset-0 z-50 flex min-h-svh items-center justify-center bg-[#050508] p-6 text-white">
-        <div className="max-w-lg rounded-[2rem] border border-white/10 bg-white/[0.05] p-8 text-center">
-          <EyeOff className="mx-auto mb-4 h-10 w-10 text-violet-200" />
-          <h1 className="text-3xl font-black">Presentación no disponible</h1>
-          <p className="mt-3 text-slate-300">
-            Solo administradores, planificadores o músicos asignados pueden abrir este modo para el servicio.
-          </p>
-          <Button className="mt-6 rounded-2xl" onClick={exitToService}>Volver al servicio</Button>
-        </div>
+        <div className="max-w-lg rounded-[2rem] border border-white/10 bg-white/[0.05] p-8 text-center"><EyeOff className="mx-auto mb-4 h-10 w-10 text-violet-200" /><h1 className="text-3xl font-black">Presentación no disponible</h1><p className="mt-3 text-slate-300">Solo administradores, planificadores o músicos asignados pueden abrir este modo para el servicio.</p><Button className="mt-6 min-h-11 rounded-2xl" onClick={exitToService}>Volver al servicio</Button></div>
       </div>
     );
   }
 
-  return (
+  const stageOutput = (
     <div
-      className={stageClassName}
-      style={{ paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}
+      className="relative h-full min-h-0 overflow-hidden"
       onClick={handleStageClick}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
       onPointerDown={isTabletPresentation ? handleTabletPointerDown : undefined}
       onPointerUp={isTabletPresentation ? handleTabletPointerUp : undefined}
-      onPointerCancel={isTabletPresentation ? handleTabletPointerCancel : undefined}
+      onPointerCancel={isTabletPresentation ? suppressNextTabletClick : undefined}
     >
+      {runSteps.length === 0 ? (
+        <div className="flex h-full items-center justify-center px-6 text-center"><div><Music className="mx-auto mb-4 h-12 w-12 text-violet-200" /><h1 className="text-3xl font-black">Este servicio todavía no tiene elementos.</h1><p className="mt-2 text-slate-300">Agrega canciones o cues antes de abrirlo en modo presentación.</p></div></div>
+      ) : currentSlide?.kind === "song" ? (
+        <SongSlide slide={currentSlide} showChords={showChords} layout={presentationLayout} songMode={songMode} zoomScale={songZoomScale} activeSequenceId={currentStep?.sectionSequenceId} />
+      ) : currentSlide ? (
+        <CueSlide slide={currentSlide} />
+      ) : null}
+      {blackout && (
+        <div className="absolute inset-0 z-30 flex items-center justify-center bg-black" onClick={stopStageEvent}>
+          <div className="text-center"><EyeOff className="mx-auto h-9 w-9 text-slate-600" /><p className="mt-3 text-xs font-black uppercase tracking-[0.22em] text-slate-600">Salida en negro</p></div>
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex min-h-svh flex-col overflow-hidden bg-[radial-gradient(circle_at_top_left,#2f1e6a_0%,#090912_34%,#020204_100%)] text-white" style={{ paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}>
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(120deg,rgba(255,255,255,0.08),transparent_35%,rgba(124,58,237,0.12))]" />
 
-      <header className="relative z-10 flex h-16 shrink-0 items-center justify-between gap-2 px-4 py-2 sm:h-auto sm:px-6 sm:py-2.5" onClick={stopStageEvent}>
-        <Button variant="ghost" className="h-10 shrink-0 rounded-2xl border border-white/10 bg-white/10 px-3 text-sm font-bold text-white shadow-lg shadow-black/20 hover:bg-white/[0.15] hover:text-white sm:h-10 sm:px-4" onClick={exitToService}>
-          <ArrowLeft className="h-4 w-4" />
-          Salir
-        </Button>
-        <div className="hidden min-w-0 flex-1 sm:block">
-          <p className="truncate text-xs font-black text-white sm:text-sm">{service.title}</p>
-          <p className="truncate text-[10px] text-slate-400 sm:text-xs">{formatServiceDate(service.date)}</p>
-        </div>
-        <div className="pointer-events-none absolute left-1/2 top-1/2 min-w-0 max-w-[38vw] -translate-x-1/2 -translate-y-1/2 text-center sm:hidden">
-          <p className="truncate text-xl font-black leading-none tracking-tight text-white">
-            {currentSlide?.title || service.title}
-          </p>
-        </div>
-        <div className="ml-auto flex shrink-0 items-center gap-1.5">
-          {currentSlide?.kind === "song" && (
-            <Button
-              variant="ghost"
-              className="h-10 rounded-2xl border border-white/10 bg-white/10 px-3 text-sm font-bold text-white shadow-lg shadow-black/20 hover:bg-white/[0.15] hover:text-white sm:h-10 sm:px-4"
-              onClick={() => setShowChords((current) => !current)}
-            >
-              {showChords ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
-              Acordes
-            </Button>
-          )}
-          <div className="flex h-10 items-center rounded-2xl border border-white/10 bg-white/10 px-3 text-sm font-black text-white shadow-lg shadow-black/20 sm:px-4">
-            {slides.length ? activeSlideIndex + 1 : 0} / {slides.length}
+      <header className="relative z-40 flex min-h-16 shrink-0 items-center gap-2 border-b border-white/[0.07] px-3 py-2 sm:px-5" onClick={stopStageEvent}>
+        <Button variant="ghost" className="h-11 shrink-0 rounded-xl border border-white/10 bg-white/[0.08] px-3 font-bold text-white hover:bg-white/[0.15] hover:text-white" onClick={exitToService}><ArrowLeft className="h-4 w-4" /><span className="hidden sm:inline">Salir</span></Button>
+        <div className="hidden min-w-0 flex-1 sm:block"><p className="truncate text-sm font-black">{service.title}</p><p className="truncate text-[10px] text-slate-400">{formatServiceDate(service.date)}</p></div>
+        <div className="pointer-events-none absolute left-1/2 top-1/2 max-w-[26vw] -translate-x-1/2 -translate-y-1/2 text-center sm:hidden"><p className="truncate text-lg font-black">{currentStep?.sectionLabel || currentSlide?.title || service.title}</p></div>
+
+        {isTabletPresentation && (
+          <div className="ml-auto hidden h-11 overflow-hidden rounded-xl border border-white/10 bg-white/[0.08] md:flex">
+            <button type="button" aria-pressed={effectiveSurface === "operator"} className={`px-3 text-xs font-black ${effectiveSurface === "operator" ? "bg-violet-500 text-white" : "text-slate-300"}`} onClick={() => setSurface("operator")}>Operador</button>
+            <button type="button" aria-pressed={effectiveSurface === "stage"} className={`border-l border-white/10 px-3 text-xs font-black ${effectiveSurface === "stage" ? "bg-violet-500 text-white" : "text-slate-300"}`} onClick={() => setSurface("stage")}>Escenario</button>
           </div>
+        )}
+
+        <div className={`${isTabletPresentation ? "" : "ml-auto"} flex shrink-0 items-center gap-1.5`}>
+          {workspace?.viewer.canEdit && <Button variant="ghost" className="h-11 rounded-xl border border-white/10 bg-white/[0.08] px-3 text-white hover:bg-white/[0.15] hover:text-white" onClick={() => setShowEditor(true)}><Settings2 className="h-4 w-4" /><span className="hidden lg:inline">Preparar</span></Button>}
+          <Button variant="ghost" aria-pressed={blackout} className={`h-11 rounded-xl border px-3 text-white hover:text-white ${blackout ? "border-red-400/50 bg-red-500/20 hover:bg-red-500/25" : "border-white/10 bg-white/[0.08] hover:bg-white/[0.15]"}`} onClick={() => setBlackout((current) => !current)}><EyeOff className="h-4 w-4" /><span className="hidden xl:inline">Negro</span></Button>
+          <Button variant="ghost" className="hidden h-11 rounded-xl border border-white/10 bg-white/[0.08] px-3 text-white hover:bg-white/[0.15] hover:text-white sm:flex" disabled={!historyCount} onClick={undoNavigation}><Undo2 className="h-4 w-4" /><span className="hidden xl:inline">Deshacer</span></Button>
+          {currentSlide?.kind === "song" && <Button variant="ghost" aria-pressed={showChords} className="h-11 rounded-xl border border-white/10 bg-white/[0.08] px-3 text-white hover:bg-white/[0.15] hover:text-white" onClick={() => setShowChords((current) => !current)}>{showChords ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}<span className="hidden xl:inline">Acordes</span></Button>}
+          <div className="flex h-11 min-w-14 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.08] px-2 text-xs font-black tabular-nums sm:px-3"><Clock3 className="hidden h-4 w-4 text-violet-200 sm:block" /><span><span className="block leading-none">{clock}</span><span className="mt-1 block text-center text-[8px] leading-none text-slate-400 sm:hidden">{runSteps.length ? safeStepIndex + 1 : 0}/{runSteps.length}</span></span></div>
+          <div className="hidden h-11 items-center rounded-xl border border-white/10 bg-white/[0.08] px-3 text-xs font-black tabular-nums sm:flex">{runSteps.length ? safeStepIndex + 1 : 0}/{runSteps.length}</div>
         </div>
       </header>
 
-      {currentSlide?.kind === "song" && (
-        <div className="relative z-10 flex shrink-0 flex-wrap items-center justify-center gap-2 px-4 pb-2 sm:px-6" onClick={stopStageEvent}>
-          <div className="flex h-11 overflow-hidden rounded-2xl border border-white/10 bg-white/10 shadow-lg shadow-black/20">
-            <Button
-              type="button"
-              variant="ghost"
-              aria-pressed={songMode === "scroll"}
-              title="Cancion completa"
-              className={`h-11 rounded-none px-3 text-xs font-black text-white hover:bg-white/[0.15] hover:text-white sm:px-4 ${songMode === "scroll" ? "bg-violet-500 text-white hover:bg-violet-500" : ""}`}
-              onClick={() => changeSongMode("scroll")}
-            >
-              Hoja
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              aria-pressed={songMode === "paged"}
-              title="Diapositivas"
-              className={`h-11 rounded-none border-l border-white/10 px-3 text-xs font-black text-white hover:bg-white/[0.15] hover:text-white sm:px-4 ${songMode === "paged" ? "bg-violet-500 text-white hover:bg-violet-500" : ""}`}
-              onClick={() => changeSongMode("paged")}
-            >
-              Slides
-            </Button>
-          </div>
-          <div className="flex h-11 items-center overflow-hidden rounded-2xl border border-white/10 bg-white/10 shadow-lg shadow-black/20">
-            <Button
-              type="button"
-              variant="ghost"
-              aria-label="Reducir letra"
-              title="Reducir letra"
-              className="h-11 w-11 rounded-none text-white hover:bg-white/[0.15] hover:text-white disabled:opacity-35"
-              onClick={() => changeSongZoom(-1)}
-              disabled={songZoomLevel <= MIN_SONG_ZOOM_LEVEL}
-            >
-              <Minus className="h-4 w-4" />
-            </Button>
-            <span className="min-w-12 px-1 text-center text-xs font-black tabular-nums text-white">
-              {Math.round(songZoomScale * 100)}%
-            </span>
-            <Button
-              type="button"
-              variant="ghost"
-              aria-label="Aumentar letra"
-              title="Aumentar letra"
-              className="h-11 w-11 rounded-none text-white hover:bg-white/[0.15] hover:text-white disabled:opacity-35"
-              onClick={() => changeSongZoom(1)}
-              disabled={songZoomLevel >= MAX_SONG_ZOOM_LEVEL}
-            >
-              <Plus className="h-4 w-4" />
-            </Button>
-          </div>
+      {workspaceNotice && (
+        <div className="relative z-30 flex shrink-0 items-center justify-between gap-3 border-b border-amber-300/20 bg-amber-300/10 px-4 py-2 text-xs font-semibold text-amber-100" onClick={stopStageEvent}>
+          <span className="truncate">{workspaceNotice}</span><button type="button" className="min-h-8 shrink-0 px-2 font-black" onClick={() => setWorkspaceNotice(null)}>Cerrar</button>
         </div>
       )}
 
-      <main className={stageMainClassName}>
-        {slides.length === 0 ? (
-          <div className="flex h-full items-center justify-center px-6 text-center">
-            <div>
-              <Music className="mx-auto mb-4 h-12 w-12 text-violet-200" />
-              <h1 className="text-3xl font-black">Este servicio todavía no tiene elementos.</h1>
-              <p className="mt-2 text-slate-300">Agrega canciones o cues antes de abrirlo en modo presentación.</p>
-            </div>
+      {currentSlide?.kind === "song" && (
+        <div className="relative z-30 flex shrink-0 items-center justify-center gap-2 border-b border-white/[0.05] px-3 py-2" onClick={stopStageEvent}>
+          <div className="flex h-11 overflow-hidden rounded-xl border border-white/10 bg-white/[0.08]">
+            <Button type="button" variant="ghost" aria-pressed={songMode === "scroll"} className={`h-11 rounded-none px-3 text-xs font-black text-white hover:text-white ${songMode === "scroll" ? "bg-violet-500 hover:bg-violet-500" : "hover:bg-white/10"}`} onClick={() => changeSongMode("scroll")}>Hoja</Button>
+            <Button type="button" variant="ghost" aria-pressed={songMode === "paged"} className={`h-11 rounded-none border-l border-white/10 px-3 text-xs font-black text-white hover:text-white ${songMode === "paged" ? "bg-violet-500 hover:bg-violet-500" : "hover:bg-white/10"}`} onClick={() => changeSongMode("paged")}>Slides</Button>
           </div>
-        ) : currentSlide?.kind === "song" ? (
-          <SongSlide slide={currentSlide} showChords={showChords} layout={presentationLayout} songMode={songMode} zoomScale={songZoomScale} />
-        ) : currentSlide ? (
-          <CueSlide slide={currentSlide} />
-        ) : null}
-      </main>
-
-      <footer className={`relative z-10 hidden items-center gap-3 px-4 py-2 sm:flex sm:px-6 ${isTabletPresentation ? "shrink-0" : ""}`} onClick={stopStageEvent}>
-        <Button
-          variant="ghost"
-          className="h-12 w-12 rounded-full bg-white/10 text-white hover:bg-white/15 hover:text-white"
-          onClick={goPrevious}
-          disabled={activeSlideIndex === 0}
-        >
-          <ChevronLeft className="h-5 w-5" />
-        </Button>
-        <div className="min-w-0 flex-1 rounded-full border border-white/10 bg-white/[0.06] px-4 py-3 text-center">
-          <p className="truncate text-xs font-bold uppercase tracking-[0.22em] text-slate-400">Siguiente</p>
-          <p className="truncate text-sm font-black text-white">{currentSlide?.nextTitle || "Fin del servicio"}</p>
+          <div className="flex h-11 items-center overflow-hidden rounded-xl border border-white/10 bg-white/[0.08]">
+            <Button type="button" variant="ghost" aria-label="Reducir letra" className="h-11 w-11 rounded-none text-white hover:bg-white/10 hover:text-white" disabled={songZoomLevel <= MIN_SONG_ZOOM_LEVEL} onClick={() => changeSongZoom(-1)}><Minus className="h-4 w-4" /></Button>
+            <span className="min-w-12 text-center text-xs font-black tabular-nums">{Math.round(songZoomScale * 100)}%</span>
+            <Button type="button" variant="ghost" aria-label="Aumentar letra" className="h-11 w-11 rounded-none text-white hover:bg-white/10 hover:text-white" disabled={songZoomLevel >= MAX_SONG_ZOOM_LEVEL} onClick={() => changeSongZoom(1)}><Plus className="h-4 w-4" /></Button>
+          </div>
+          <Button type="button" variant="ghost" className="h-11 rounded-xl border border-white/10 bg-white/[0.08] px-3 text-white hover:bg-white/[0.15] hover:text-white sm:hidden" onClick={() => setShowRundown(true)}><ListMusic className="h-4 w-4" /><span className="sr-only">Abrir orden</span></Button>
         </div>
-        <Button
-          variant="ghost"
-          className="h-12 w-12 rounded-full bg-white/10 text-white hover:bg-white/15 hover:text-white"
-          onClick={goNext}
-          disabled={activeSlideIndex >= slides.length - 1}
-        >
-          <ChevronRight className="h-5 w-5" />
-        </Button>
-      </footer>
+      )}
+
+      {effectiveSurface === "operator" ? (
+        <main className="relative z-10 grid min-h-0 flex-1 grid-cols-[12rem_minmax(20rem,1fr)_15rem] overflow-hidden xl:grid-cols-[16rem_minmax(0,1fr)_19rem]">
+          <aside className="min-h-0 overflow-y-auto border-r border-white/10 bg-black/20 p-3" onClick={stopStageEvent}>
+            <div className="mb-3 flex items-center justify-between"><div><p className="text-[10px] font-black uppercase tracking-[0.18em] text-violet-200">Orden</p><p className="text-sm font-black">Servicio</p></div><Badge className="rounded-lg bg-white/10 text-white hover:bg-white/10">{runSteps.length}</Badge></div>
+            <RundownList steps={runSteps} activeIndex={safeStepIndex} onSelect={goToStep} />
+          </aside>
+          <section className="min-h-0 overflow-hidden border-r border-white/10 bg-black/15">{stageOutput}</section>
+          <aside className="min-h-0 overflow-y-auto bg-black/20 p-4" onClick={stopStageEvent}>
+            <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-violet-200">Ahora</p><h2 className="mt-1 truncate text-lg font-black">{currentStep?.sectionLabel || currentStep?.title || "Sin contenido"}</h2><p className="truncate text-xs text-slate-400">{currentStep?.title}</p></div><span className="text-lg font-black tabular-nums text-white">{clock}</span></div>
+            <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.05] p-3"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Siguiente</p><p className="mt-1 truncate text-sm font-black">{nextStep?.sectionLabel || nextStep?.title || "Fin del servicio"}</p><p className="truncate text-xs text-slate-400">{nextStep?.title}</p></div>
+            <div className="mt-4"><p className="mb-2 text-[10px] font-black uppercase tracking-[0.18em] text-violet-200">Notas del equipo</p><AnnotationList annotations={operatorAnnotations} emptyLabel="Sin indicaciones en este momento." /></div>
+            {currentLegacyNotes.length ? <div className="mt-4 space-y-2"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Notas anteriores</p>{currentLegacyNotes.map((note, index) => <p key={`${note}-${index}`} className="rounded-xl bg-white/[0.05] p-3 text-xs leading-5 text-slate-300">{note}</p>)}</div> : null}
+            <div className="sticky bottom-0 mt-5 grid grid-cols-[3rem_minmax(0,1fr)_3rem] gap-2 bg-[#08070d]/95 py-3">
+              <Button variant="ghost" className="h-12 rounded-xl bg-white/10 text-white hover:bg-white/15 hover:text-white" disabled={safeStepIndex === 0} onClick={goPrevious}><ChevronLeft className="h-5 w-5" /></Button>
+              <Button className="h-12 rounded-xl bg-violet-500 font-black hover:bg-violet-400" disabled={safeStepIndex >= runSteps.length - 1} onClick={goNext}>Siguiente</Button>
+              <Button variant="ghost" className="h-12 rounded-xl bg-white/10 text-white hover:bg-white/15 hover:text-white" disabled={!historyCount} onClick={undoNavigation}><Undo2 className="h-5 w-5" /></Button>
+            </div>
+          </aside>
+        </main>
+      ) : (
+        <main className={`relative z-10 grid min-h-0 flex-1 overflow-hidden ${isTabletPresentation ? "grid-cols-[minmax(0,1fr)_15rem] xl:grid-cols-[minmax(0,1fr)_18rem]" : "grid-cols-1"}`}>
+          <section className="min-h-0 overflow-hidden">{stageOutput}</section>
+          {isTabletPresentation && (
+            <aside className="min-h-0 overflow-y-auto border-l border-white/10 bg-black/25 p-4" onClick={stopStageEvent}>
+              <div className="flex items-center justify-between gap-3"><div><p className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-200">Ahora</p><h2 className="mt-1 text-xl font-black">{currentStep?.sectionLabel || currentStep?.title}</h2></div><span className="text-lg font-black tabular-nums">{clock}</span></div>
+              <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.05] p-3"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Siguiente</p><p className="mt-1 text-sm font-black">{nextStep?.sectionLabel || nextStep?.title || "Fin del servicio"}</p></div>
+              <div className="mt-4"><p className="mb-2 text-[10px] font-black uppercase tracking-[0.18em] text-violet-200">Para ti</p><AnnotationList annotations={stageAnnotations} emptyLabel="Sin notas en esta sección." /></div>
+              {currentLegacyNotes.length ? <div className="mt-4 space-y-2"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Notas anteriores</p>{currentLegacyNotes.map((note, index) => <p key={`${note}-${index}`} className="rounded-xl bg-white/[0.05] p-3 text-xs leading-5 text-slate-300">{note}</p>)}</div> : null}
+              <Button variant="outline" className="mt-4 h-11 w-full rounded-xl border-white/10 bg-white/[0.06] text-white hover:bg-white/10 hover:text-white" onClick={() => setShowRundown(true)}><ListMusic className="h-4 w-4" /> Salto rápido</Button>
+            </aside>
+          )}
+        </main>
+      )}
+
+      {effectiveSurface === "stage" && (
+        <footer className="relative z-30 flex shrink-0 items-center gap-2 border-t border-white/[0.07] px-3 py-2 sm:px-5" onClick={stopStageEvent}>
+          <Button variant="ghost" className="h-12 w-12 shrink-0 rounded-xl bg-white/10 text-white hover:bg-white/15 hover:text-white" disabled={safeStepIndex === 0} onClick={goPrevious}><ChevronLeft className="h-5 w-5" /></Button>
+          <button type="button" className="min-h-12 min-w-0 flex-1 rounded-xl border border-white/10 bg-white/[0.06] px-3 py-2 text-center" onClick={() => setShowRundown(true)}><span className="block truncate text-[9px] font-black uppercase tracking-[0.18em] text-slate-500">Siguiente</span><span className="block truncate text-sm font-black text-white">{nextStep?.sectionLabel || nextStep?.title || "Fin del servicio"}</span>{!isTabletPresentation && (stageAnnotations[0]?.body || currentLegacyNotes[0]) ? <span className="mt-0.5 block truncate text-[10px] font-semibold text-amber-200">{stageAnnotations[0]?.body || currentLegacyNotes[0]}</span> : null}</button>
+          <Button variant="ghost" className="h-12 w-12 shrink-0 rounded-xl bg-white/10 text-white hover:bg-white/15 hover:text-white" disabled={safeStepIndex >= runSteps.length - 1} onClick={goNext}><ChevronRight className="h-5 w-5" /></Button>
+        </footer>
+      )}
+
+      {showRundown && (
+        <div role="dialog" aria-modal="true" aria-label="Salto rápido" className="fixed inset-0 z-[70] flex justify-end bg-black/70" onClick={() => setShowRundown(false)}>
+          <aside className="h-full w-full max-w-sm overflow-y-auto border-l border-white/10 bg-[#0b0a11] p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-[calc(1rem+env(safe-area-inset-top))]" onClick={stopStageEvent}>
+            <div className="mb-4 flex items-center justify-between"><div><p className="text-[10px] font-black uppercase tracking-[0.18em] text-violet-200">Salto rápido</p><h2 className="text-xl font-black">Orden del servicio</h2></div><Button variant="ghost" size="icon" className="h-11 w-11 rounded-xl text-white hover:bg-white/10 hover:text-white" onClick={() => setShowRundown(false)}><X className="h-5 w-5" /></Button></div>
+            <RundownList steps={runSteps} activeIndex={safeStepIndex} onSelect={(index) => { goToStep(index); setShowRundown(false); }} />
+          </aside>
+        </div>
+      )}
+
+      {workspace && (
+        <PresentationWorkspaceEditor open={showEditor} onOpenChange={setShowEditor} service={service} workspace={workspace} saving={savingWorkspace} onSave={saveWorkspaceItem} />
+      )}
     </div>
   );
 }

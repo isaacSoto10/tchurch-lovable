@@ -1,5 +1,4 @@
 import {
-  chordProToDisplayLines,
   getPrimaryArrangement,
   getSongChordPro,
   getSongDisplayKey,
@@ -8,6 +7,12 @@ import {
   type SongLike,
 } from "./songDisplay";
 import { normalizeKey, transposeChordPro } from "./musicUtils";
+import {
+  derivePresentationSections,
+  getWorkspaceItem,
+  type PresentationWorkspace,
+  type PresentationWorkspaceItem,
+} from "./presentationWorkspace";
 
 export type PresentationAssignment = {
   id: string;
@@ -36,6 +41,12 @@ export type PresentationService = {
   assignments?: PresentationAssignment[];
 };
 
+export type PresentationDisplayLine = ChordProDisplayLine & {
+  sectionAnchorId?: string;
+  sectionSequenceId?: string;
+  sectionLabel?: string;
+};
+
 export type PresentationSlide =
   | {
       id: string;
@@ -47,7 +58,11 @@ export type PresentationSlide =
       key?: string | null;
       bpm?: number | null;
       meter?: string | null;
-      lines: ChordProDisplayLine[];
+      lines: PresentationDisplayLine[];
+      arrangementId: string | null;
+      sectionAnchorIds: string[];
+      sectionSequenceIds: string[];
+      sectionLabels: string[];
       maxColumns: number;
       part: number;
       totalParts: number;
@@ -72,6 +87,20 @@ export type PresentationSongMode = "paged" | "scroll";
 type BuildServicePresentationSlidesOptions = {
   layout?: PresentationLayout;
   songMode?: PresentationSongMode;
+  workspace?: PresentationWorkspace | null;
+};
+
+export type PresentationRunStep = {
+  id: string;
+  kind: "song-section" | "cue";
+  slideIndex: number;
+  itemId: string;
+  title: string;
+  sectionAnchorId: string | null;
+  sectionSequenceId: string | null;
+  sectionLabel: string | null;
+  page: number;
+  totalPages: number;
 };
 
 type PlanningNoteKey = "vocals" | "band" | "audioVisual" | "person";
@@ -127,13 +156,19 @@ function getServiceItemKey(item: PresentationServiceItem) {
   return normalizeKey(savedKey) || normalizeKey(getSongDisplayKey(item.song)) || null;
 }
 
-function getOriginalSongKey(item: PresentationServiceItem) {
-  return normalizeKey(getSongDisplayKey(item.song)) || null;
+function getArrangement(item: PresentationServiceItem, arrangementId?: string | null) {
+  return item.song?.arrangements?.find((arrangement) => arrangement.id === arrangementId) || getPrimaryArrangement(item.song);
 }
 
-function getDisplayChordPro(item: PresentationServiceItem) {
-  const chordPro = getSongChordPro(item.song);
-  const originalKey = getOriginalSongKey(item);
+function getOriginalSongKey(item: PresentationServiceItem, arrangementId?: string | null) {
+  const arrangement = getArrangement(item, arrangementId);
+  return normalizeKey(arrangement?.key) || normalizeKey(getSongDisplayKey(item.song)) || null;
+}
+
+function getDisplayChordPro(item: PresentationServiceItem, arrangementId?: string | null) {
+  const arrangement = getArrangement(item, arrangementId);
+  const chordPro = arrangement?.lyrics || getSongChordPro(item.song);
+  const originalKey = getOriginalSongKey(item, arrangementId);
   const selectedKey = getServiceItemKey(item);
 
   if (!chordPro || !originalKey || !selectedKey || originalKey === selectedKey) {
@@ -143,14 +178,14 @@ function getDisplayChordPro(item: PresentationServiceItem) {
   return transposeChordPro(chordPro, originalKey, selectedKey);
 }
 
-function splitSongLines(lines: ChordProDisplayLine[], layout: PresentationLayout) {
-  const chunks: ChordProDisplayLine[][] = [];
-  let current: ChordProDisplayLine[] = [];
+function splitSongLines(lines: PresentationDisplayLine[], layout: PresentationLayout): PresentationDisplayLine[][] {
+  const chunks: PresentationDisplayLine[][] = [];
+  let current: PresentationDisplayLine[] = [];
   let currentRows = 0;
   const maxRows = layout === "phone" ? MAX_PHONE_RENDERED_ROWS_PER_SONG_SLIDE : MAX_TABLET_RENDERED_ROWS_PER_SONG_SLIDE;
   const sectionBreakThreshold = layout === "phone" ? 0.55 : 0.68;
 
-  function lineRows(line: ChordProDisplayLine) {
+  function lineRows(line: PresentationDisplayLine) {
     if (line.kind === "blank") return 0.5;
     if (line.kind === "section" || line.kind === "meta") return 0.85;
 
@@ -161,7 +196,7 @@ function splitSongLines(lines: ChordProDisplayLine[], layout: PresentationLayout
     return 0.5;
   }
 
-  function hasMusicLine(chunk: ChordProDisplayLine[]) {
+  function hasMusicLine(chunk: PresentationDisplayLine[]) {
     return chunk.some((line) => line.kind === "line");
   }
 
@@ -254,13 +289,13 @@ function trimSharedLeadingColumns(chords: string, lyrics: string) {
   return { chords: chords.slice(sharedColumns), lyrics: lyrics.slice(sharedColumns) };
 }
 
-function splitWideDisplayLine(line: ChordProDisplayLine, maxColumns = CHART_WRAP_COLUMNS): ChordProDisplayLine[] {
+function splitWideDisplayLine(line: PresentationDisplayLine, maxColumns = CHART_WRAP_COLUMNS): PresentationDisplayLine[] {
   if (line.kind !== "line") return [line];
 
   const width = Math.max(line.chords.length, line.lyrics.length);
   if (width <= maxColumns) return [line];
 
-  const segments: ChordProDisplayLine[] = [];
+  const segments: PresentationDisplayLine[] = [];
   let start = 0;
 
   while (start < width) {
@@ -271,7 +306,12 @@ function splitWideDisplayLine(line: ChordProDisplayLine, maxColumns = CHART_WRAP
       line.lyrics.slice(start, end).trimEnd()
     );
     if (chords.trim() || lyrics.trim()) {
-      segments.push({ kind: "line", chords, lyrics });
+      segments.push({
+        ...line,
+        kind: "line",
+        chords,
+        lyrics,
+      });
     }
     start = end;
   }
@@ -302,20 +342,82 @@ function buildSongSlides(
   item: PresentationServiceItem,
   itemIndex: number,
   layout: PresentationLayout,
-  songMode: PresentationSongMode
+  songMode: PresentationSongMode,
+  workspaceItem: PresentationWorkspaceItem | null,
 ): PresentationSlide[] {
-  const arrangement = getPrimaryArrangement(item.song);
-  const chordPro = getDisplayChordPro(item);
-  const displayLines = chordProToDisplayLines(chordPro, 500);
-  const chartLines = displayLines.flatMap((line) => splitWideDisplayLine(line, layout === "tablet" ? TABLET_CHART_WRAP_COLUMNS : CHART_WRAP_COLUMNS));
+  const arrangement = getArrangement(item, workspaceItem?.arrangementId);
+  const arrangementId = workspaceItem?.arrangementId || arrangement?.id || null;
+  const chordPro = getDisplayChordPro(item, arrangementId);
+  const derivedSections = derivePresentationSections(item.id, arrangementId, chordPro);
+  const sourceSections = workspaceItem?.source.sections || [];
+  const matchedSections = derivedSections.map((section) => {
+    const source = sourceSections.find((candidate) =>
+      (candidate.semanticKey === section.semanticKey || candidate.type === section.type) &&
+      candidate.ordinal === section.ordinal
+    );
+    return source ? { ...section, ...source, lines: section.lines } : section;
+  });
+  const sectionsByAnchor = new Map(matchedSections.map((section) => [section.anchorId, section]));
+  const fallbackSequence = matchedSections.map((section, index) => ({
+    id: `${item.id}-${section.anchorId}-${index}`,
+    sectionAnchorId: section.anchorId,
+    sourceFingerprint: section.fingerprint,
+    label: section.label,
+    position: index,
+  }));
+  const unresolvedStepIds = new Set(workspaceItem?.reconciliation.unresolvedStepIds || []);
+  const requestedSequence = workspaceItem
+    ? workspaceItem.sequence.filter((entry) => !unresolvedStepIds.has(entry.id))
+    : fallbackSequence;
+  const arrangedSections = requestedSequence.flatMap((entry) => {
+    const section = sectionsByAnchor.get(entry.sectionAnchorId);
+    if (!section) return [];
+    const decoratedLines = section.lines.map((line) => ({
+      ...line,
+      sectionAnchorId: section.anchorId,
+      sectionSequenceId: entry.id,
+      sectionLabel: entry.label || section.label,
+    } as PresentationDisplayLine));
+    return [{ entry, section, lines: decoratedLines }];
+  });
+  const effectiveSections = arrangedSections;
+  if (!effectiveSections.length) {
+    return [{
+      id: `${item.id}-review`,
+      kind: "cue",
+      itemId: item.id,
+      itemIndex,
+      title: item.song?.title || item.title,
+      subtitle: "Revisión requerida",
+      type: "Revisión",
+      duration: item.duration,
+      notes: ["Las secciones de esta canción están pendientes de reconciliación y no se enviarán al escenario."],
+    }];
+  }
+  const wrappedSections = effectiveSections.map((entry) => ({
+    ...entry,
+    lines: entry.lines.flatMap((line) => splitWideDisplayLine(line, layout === "tablet" ? TABLET_CHART_WRAP_COLUMNS : CHART_WRAP_COLUMNS)),
+  }));
+  const chartLines = wrappedSections.flatMap((section) => section.lines);
   const maxColumns = Math.max(
     18,
     ...chartLines.map((line) => line.kind === "line" ? Math.max(line.chords.length, line.lyrics.length) : 0)
   );
-  const chunks = songMode === "scroll" ? [chartLines] : splitSongLines(chartLines, layout);
+  const chunks = songMode === "scroll"
+    ? [chartLines]
+    : wrappedSections.flatMap((section) => splitSongLines(section.lines, layout));
   const key = getServiceItemKey(item);
 
-  return chunks.map((lines, chunkIndex) => ({
+  return chunks.map((rawLines, chunkIndex) => {
+    const lines = rawLines.length ? rawLines : [{
+      kind: "line" as const,
+      chords: "",
+      lyrics: "Esta canción todavía no tiene acordes guardados.",
+    }];
+    const sectionAnchorIds = [...new Set(lines.map((line) => line.sectionAnchorId).filter((value): value is string => Boolean(value)))];
+    const sectionSequenceIds = [...new Set(lines.map((line) => line.sectionSequenceId).filter((value): value is string => Boolean(value)))];
+    const sectionLabels = [...new Set(lines.map((line) => line.sectionLabel).filter((value): value is string => Boolean(value)))];
+    return {
     id: songMode === "scroll" ? `${item.id}-song-scroll` : `${item.id}-song-${chunkIndex}`,
     kind: "song" as const,
     itemId: item.id,
@@ -325,11 +427,16 @@ function buildSongSlides(
     key,
     bpm: arrangement?.bpm || item.song?.bpm || null,
     meter: arrangement?.meter || item.song?.meter || null,
+    arrangementId,
     lines,
+    sectionAnchorIds,
+    sectionSequenceIds,
+    sectionLabels,
     maxColumns,
     part: chunkIndex + 1,
     totalParts: chunks.length,
-  }));
+    };
+  });
 }
 
 function buildCueSlide(item: PresentationServiceItem, itemIndex: number): PresentationSlide {
@@ -355,7 +462,9 @@ export function buildServicePresentationSlides(
   const songMode = options.songMode || getDefaultPresentationSongMode(layout);
   const sortedItems = [...(service.items || [])].sort((a, b) => a.position - b.position);
   const slides = sortedItems.flatMap((item, index) => {
-    if (isSongItemType(item.type) && item.song) return buildSongSlides(item, index + 1, layout, songMode);
+    if (isSongItemType(item.type) && item.song) {
+      return buildSongSlides(item, index + 1, layout, songMode, getWorkspaceItem(options.workspace, item.id));
+    }
     return [buildCueSlide(item, index + 1)];
   });
 
@@ -363,6 +472,63 @@ export function buildServicePresentationSlides(
     ...slide,
     nextTitle: slides[index + 1]?.title,
   }));
+}
+
+export function buildPresentationRunSteps(
+  slides: PresentationSlide[],
+  songMode: PresentationSongMode,
+): PresentationRunStep[] {
+  const steps: PresentationRunStep[] = [];
+  slides.forEach((slide, slideIndex) => {
+    if (slide.kind === "cue") {
+      steps.push({
+        id: slide.id,
+        kind: "cue",
+        slideIndex,
+        itemId: slide.itemId,
+        title: slide.title,
+        sectionAnchorId: null,
+        sectionSequenceId: null,
+        sectionLabel: null,
+        page: 1,
+        totalPages: 1,
+      });
+      return;
+    }
+
+    if (songMode === "scroll" && slide.sectionSequenceIds.length) {
+      slide.sectionSequenceIds.forEach((sequenceId, index) => {
+        const sectionLine = slide.lines.find((line) => line.sectionSequenceId === sequenceId);
+        steps.push({
+          id: `${slide.id}-${sequenceId}`,
+          kind: "song-section",
+          slideIndex,
+          itemId: slide.itemId,
+          title: slide.title,
+          sectionAnchorId: sectionLine?.sectionAnchorId || slide.sectionAnchorIds[0] || null,
+          sectionSequenceId: sequenceId,
+          sectionLabel: sectionLine?.sectionLabel || slide.sectionLabels[index] || slide.sectionLabels[0] || "Canción",
+          page: index + 1,
+          totalPages: slide.sectionSequenceIds.length,
+        });
+      });
+      return;
+    }
+
+    steps.push({
+      id: slide.id,
+      kind: "song-section",
+      slideIndex,
+      itemId: slide.itemId,
+      title: slide.title,
+      sectionAnchorId: slide.sectionAnchorIds[0] || null,
+      sectionSequenceId: slide.sectionSequenceIds[0] || null,
+      sectionLabel: slide.sectionLabels[0] || "Canción",
+      page: slide.part,
+      totalPages: slide.totalParts,
+    });
+  });
+  return steps;
 }
 
 export function canUseServicePresentation(

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildServicePresentationSlides, type PresentationService } from "./servicePresentation";
+import { buildPresentationRunSteps, buildServicePresentationSlides, type PresentationService } from "./servicePresentation";
+import { derivePresentationWorkspaceItem, type PresentationWorkspace } from "./presentationWorkspace";
 
 const PRESENTATION_WRAP_COLUMNS = 34;
 const TABLET_PRESENTATION_WRAP_COLUMNS = 64;
@@ -187,5 +188,82 @@ describe("buildServicePresentationSlides", () => {
     expect(songSlides.length).toBeGreaterThan(1);
     expect(songSlides.every((slide) => estimateRenderedRows(slide) <= 15)).toBe(true);
     expect(songSlides[0].lines.some((line) => (line.kind === "section" || line.kind === "meta") && /pre-coro/i.test(line.label))).toBe(false);
+  });
+
+  it("runs a repeated service-specific section map as distinct operator steps", () => {
+    const configuredService = buildService("{verse}\n[C]Verso\n{chorus}\n[F]Coro");
+    const item = derivePresentationWorkspaceItem(configuredService.items[0]);
+    const chorus = item.source.sections.find((section) => section.semanticKey === "chorus")!;
+    item.sequence = [
+      { id: "chorus-1", sectionAnchorId: chorus.anchorId, sourceFingerprint: chorus.fingerprint, label: "Coro", position: 0 },
+      { id: "chorus-2", sectionAnchorId: chorus.anchorId, sourceFingerprint: chorus.fingerprint, label: "Coro · repetir", position: 1 },
+    ];
+    const workspace: PresentationWorkspace = {
+      schemaVersion: 1,
+      serviceId: configuredService.id,
+      serviceVersion: "v1",
+      viewer: { view: "operator", churchRole: "PLANNER", roles: ["operator"], canEdit: true },
+      items: [item],
+      legacyNotes: [],
+      source: "api",
+    };
+
+    const slides = buildServicePresentationSlides(configuredService, { layout: "tablet", songMode: "scroll", workspace });
+    const steps = buildPresentationRunSteps(slides, "scroll");
+
+    expect(slides).toHaveLength(1);
+    expect(steps.map((step) => step.sectionSequenceId)).toEqual(["chorus-1", "chorus-2"]);
+    expect(steps.map((step) => step.sectionLabel)).toEqual(["Coro", "Coro · repetir"]);
+  });
+
+  it("renders the selected arrangement and transposes it to the service key", () => {
+    const configuredService = buildService("[C]Arreglo original");
+    configuredService.items[0].details = { serviceKey: "E" };
+    configuredService.items[0].song!.arrangements = [
+      { id: "arr-c", name: "Original", key: "C", lyrics: "[C]Arreglo original" },
+      { id: "arr-d", name: "Domingo", key: "D", lyrics: "[D]Arreglo del domingo" },
+    ];
+    const item = derivePresentationWorkspaceItem(configuredService.items[0], "arr-d");
+    const workspace: PresentationWorkspace = {
+      schemaVersion: 1,
+      serviceId: configuredService.id,
+      serviceVersion: "v1",
+      viewer: { view: "stage", churchRole: "MEMBER", roles: ["band"], canEdit: false },
+      items: [item],
+      legacyNotes: [],
+      source: "api",
+    };
+
+    const songSlide = buildServicePresentationSlides(configuredService, { workspace })[0];
+    expect(songSlide.kind).toBe("song");
+    if (songSlide.kind !== "song") return;
+    const musicLine = songSlide.lines.find((line) => line.kind === "line");
+    expect(songSlide.arrangementId).toBe("arr-d");
+    expect(songSlide.key).toBe("E");
+    expect(musicLine).toMatchObject({ chords: "E", lyrics: "Arreglo del domingo" });
+  });
+
+  it("keeps an all-unresolved song recoverable without rendering uncertain lyrics", () => {
+    const configuredService = buildService("{verse}\n[C]Verso\n{chorus}\n[F]Coro");
+    const item = derivePresentationWorkspaceItem(configuredService.items[0]);
+    item.reconciliation = {
+      status: "needs_review",
+      unresolvedAnnotationIds: [],
+      unresolvedStepIds: item.sequence.map((entry) => entry.id),
+    };
+    const workspace: PresentationWorkspace = {
+      schemaVersion: 1,
+      serviceId: configuredService.id,
+      serviceVersion: "v2",
+      viewer: { view: "editor", churchRole: "PLANNER", roles: ["all"], canEdit: true },
+      items: [item],
+      legacyNotes: [],
+      source: "api",
+    };
+
+    const slides = buildServicePresentationSlides(configuredService, { layout: "phone", songMode: "paged", workspace });
+    expect(slides).toHaveLength(1);
+    expect(slides[0]).toMatchObject({ kind: "cue", itemId: "item-1", subtitle: "Revisión requerida" });
+    expect(slides.filter((slide) => slide.kind === "song")).toEqual([]);
   });
 });
