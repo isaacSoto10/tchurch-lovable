@@ -119,10 +119,11 @@ async function getSigningKey(privateKey) {
 
 async function createJwt({ keyId, issuerId, privateKey }) {
   const header = { kid: keyId, typ: "JWT", alg: "ES256" };
+  const now = Math.floor(Date.now() / 1000);
   const payload = {
     aud: "appstoreconnect-v1",
-    iss: issuerId,
-    exp: Date.now() / 1000 + 5 * 60,
+    exp: now + 5 * 60,
+    ...(issuerId ? { iss: issuerId } : { sub: "user", iat: now }),
   };
   const encoded = `${base64url(JSON.stringify(header))}.${base64url(
     JSON.stringify(payload),
@@ -152,7 +153,9 @@ const manualTargetIsStale =
 const config = {
   appId: required("ASC_APP_ID"),
   keyId: required("ASC_KEY_ID"),
-  issuerId: required("ASC_ISSUER_ID"),
+  // Team API keys use `iss`; individual API keys use `sub=user` and don't
+  // have an issuer ID.
+  issuerId: env("ASC_ISSUER_ID", "").trim(),
   privateKey: loadPrivateKey(),
   platform: env("ASC_PLATFORM", "IOS"),
   buildLookback: Number(env("ASC_BUILD_LOOKBACK", "20")),
@@ -160,6 +163,7 @@ const config = {
   replaceInReview: bool("ASC_REPLACE_IN_REVIEW", true),
   submitForReview: bool("ASC_SUBMIT_FOR_REVIEW", true),
   betaReview: bool("ASC_BETA_REVIEW", true),
+  distributeInternal: bool("ASC_DISTRIBUTE_INTERNAL", false),
   expireSupersededBetaBuild: bool("ASC_EXPIRE_SUPERSEDED_BETA_BUILD", true),
   targetMarketingVersion: manualTargetIsStale
     ? repositoryMarketingVersion
@@ -571,6 +575,79 @@ async function submitBetaReview(build) {
   }
 }
 
+async function listInternalBetaGroups(buildId = "") {
+  const query = buildId
+    ? params({
+        include: "betaGroups",
+        "fields[builds]": "version,betaGroups",
+        "fields[betaGroups]": "name,isInternalGroup,hasAccessToAllBuilds",
+        "limit[betaGroups]": 50,
+      })
+    : params({
+        "fields[betaGroups]": "name,isInternalGroup,hasAccessToAllBuilds",
+        limit: 200,
+      });
+  const payload = await request(
+    "GET",
+    buildId
+      ? `/builds/${buildId}?${query}`
+      : `/apps/${config.appId}/betaGroups?${query}`,
+  );
+  const groups = buildId
+    ? (payload.included ?? []).filter((item) => item.type === "betaGroups")
+    : (payload.data ?? []);
+  return groups.filter(
+    (group) => group.attributes?.isInternalGroup === true,
+  );
+}
+
+async function addBuildToBetaGroup(groupId, buildId) {
+  await request("POST", `/betaGroups/${groupId}/relationships/builds`, {
+    data: [{ type: "builds", id: buildId }],
+  });
+}
+
+async function distributeToInternalBetaGroups(build) {
+  const internalGroups = await listInternalBetaGroups();
+  const associatedGroups = await listInternalBetaGroups(build.id);
+  const associatedIds = new Set(associatedGroups.map((group) => group.id));
+  const pendingGroups = internalGroups.filter(
+    (group) =>
+      !associatedIds.has(group.id) &&
+      group.attributes?.hasAccessToAllBuilds !== true,
+  );
+  const availableGroupCount = internalGroups.length - pendingGroups.length;
+
+  log(
+    `TestFlight internal access: ${availableGroupCount}/${internalGroups.length} group(s) already have build ${build.buildNumber}.`,
+  );
+
+  if (!config.distributeInternal) {
+    log("ASC_DISTRIBUTE_INTERNAL=false; skipping internal TestFlight distribution.");
+    return;
+  }
+
+  if (internalGroups.length === 0) {
+    throw new Error(
+      "No internal TestFlight groups exist for this app; cannot distribute the build safely.",
+    );
+  }
+
+  for (const group of pendingGroups) {
+    if (config.dryRun) {
+      log(`DRY RUN: would add build ${build.buildNumber} to an internal beta group.`);
+    } else {
+      await addBuildToBetaGroup(group.id, build.id);
+    }
+  }
+
+  log(
+    config.dryRun
+      ? `DRY RUN: would make build ${build.buildNumber} available to ${pendingGroups.length} additional internal group(s).`
+      : `Build ${build.buildNumber} is available to all ${internalGroups.length} internal TestFlight group(s).`,
+  );
+}
+
 async function createBetaReviewSubmission(buildId) {
   await request("POST", "/betaAppReviewSubmissions", {
     data: {
@@ -635,6 +712,7 @@ async function main() {
       "ASC_SUBMIT_FOR_REVIEW=false; skipping App Store version changes and public review submission.",
     );
   }
+  await distributeToInternalBetaGroups(latestBuild);
   await submitBetaReview(latestBuild);
 
   log(

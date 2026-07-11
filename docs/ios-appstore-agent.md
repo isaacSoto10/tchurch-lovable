@@ -18,7 +18,9 @@ This repo includes a daily App Store Connect agent that looks for the latest val
 
 - `ASC_APP_ID`: App Store Connect app id, for example `6762327867`.
 - `ASC_KEY_ID`: App Store Connect API key id.
-- `ASC_ISSUER_ID`: App Store Connect issuer id.
+- `ASC_ISSUER_ID`: App Store Connect issuer id for a team API key. Omit it
+  for an individual API key; the agent will generate the required `sub=user`
+  token instead.
 - `ASC_PRIVATE_KEY`: The full `.p8` private key text. Store it as a secret with newlines preserved, or escaped as `\n`.
 
 ## Optional environment variables
@@ -26,6 +28,8 @@ This repo includes a daily App Store Connect agent that looks for the latest val
 - `ASC_DRY_RUN`: `true` to print planned actions without changing App Store Connect.
 - `ASC_SUBMIT_FOR_REVIEW`: `true` to attempt App Store review submission.
 - `ASC_BETA_REVIEW`: `true` to submit the newest build for beta review.
+- `ASC_DISTRIBUTE_INTERNAL`: `true` to add the selected build to every existing
+  internal TestFlight group. The agent never creates groups or testers.
 - `ASC_REPLACE_IN_REVIEW`: `true` to remove an existing App Store submission before replacing its build.
 - `ASC_EXPIRE_SUPERSEDED_BETA_BUILD`: `true` to expire an older beta build when Apple blocks the new beta review.
 - `ASC_BUILD_LOOKBACK`: Number of recent builds to inspect. Default is `20`.
