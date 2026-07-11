@@ -32,3 +32,32 @@ export function getMobileNavHeightCss() {
 export function getMobileNavContentClearanceCss() {
   return MOBILE_NAV_CONTENT_CLEARANCE_CSS;
 }
+
+type KeyboardViewportState = {
+  innerHeight: number;
+  viewportHeight: number;
+  viewportOffsetTop: number;
+  viewportScale?: number;
+  activeElement: Element | null;
+};
+
+export function isKeyboardEditableElement(element: Element | null) {
+  if (!(element instanceof HTMLElement)) return false;
+  if (element.isContentEditable) return true;
+  if (!element.matches("input, textarea, select")) return false;
+
+  const field = element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
+  return !field.disabled && !field.hasAttribute("readonly");
+}
+
+export function isMobileKeyboardOpen({
+  innerHeight,
+  viewportHeight,
+  viewportOffsetTop,
+  viewportScale = 1,
+  activeElement,
+}: KeyboardViewportState) {
+  if (Math.abs(viewportScale - 1) > 0.01) return false;
+  const occludedHeight = Math.max(0, innerHeight - viewportHeight - viewportOffsetTop);
+  return occludedHeight > 120 && isKeyboardEditableElement(activeElement);
+}

@@ -13,6 +13,7 @@ import {
   getMobilePageBottomBuffer,
   getMobileNavSafeBottom,
   getMobileNavReservedSpace,
+  isMobileKeyboardOpen,
 } from "./mobileNavLayout";
 
 function expectOrder(source: string, labels: string[]) {
@@ -60,6 +61,7 @@ describe("mobile nav layout", () => {
     expect(source).toContain("var(--app-safe-area-bottom, var(--tchurch-mobile-safe-bottom, 22px))");
     expect(source).toContain("h-[3.75rem]");
     expect(source).toContain("window.visualViewport");
+    expect(source).toContain("isMobileKeyboardOpen");
     expect(source).toContain('viewport.addEventListener("resize", update)');
     expect(source).toContain("showShortcutBar && !keyboardOpen");
     expect(source).toContain("<ChatDock keyboardOpen={keyboardOpen} hasBottomNav={showShortcutBar} />");
@@ -67,6 +69,38 @@ describe("mobile nav layout", () => {
     const sidebarCloseIndex = source.indexOf("</SidebarInset>");
     const navIndex = source.indexOf('data-testid="mobile-bottom-nav"');
     expect(navIndex).toBeGreaterThan(sidebarCloseIndex);
+  });
+
+  it("does not mistake browser viewport resize or zoom for an open keyboard", () => {
+    expect(isMobileKeyboardOpen({
+      innerHeight: 900,
+      viewportHeight: 620,
+      viewportOffsetTop: 0,
+      viewportScale: 1,
+      activeElement: document.body,
+    })).toBe(false);
+
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    input.focus();
+
+    expect(isMobileKeyboardOpen({
+      innerHeight: 900,
+      viewportHeight: 620,
+      viewportOffsetTop: 0,
+      viewportScale: 1,
+      activeElement: document.activeElement,
+    })).toBe(true);
+
+    expect(isMobileKeyboardOpen({
+      innerHeight: 900,
+      viewportHeight: 620,
+      viewportOffsetTop: 0,
+      viewportScale: 1.25,
+      activeElement: document.activeElement,
+    })).toBe(false);
+
+    input.remove();
   });
 
   it("keeps mobile pages clear of the fixed bottom navigation", () => {

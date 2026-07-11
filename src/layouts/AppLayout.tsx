@@ -16,6 +16,7 @@ import {
   getMobileNavReservedSpace,
   getMobileNavSafeBottom,
   getMobilePageBottomBuffer,
+  isMobileKeyboardOpen,
 } from "@/lib/mobileNavLayout";
 import { preloadAppRoute } from "@/lib/appRoutePreloaders";
 import { getPrimaryNavigationGroup, type PrimaryNavigationGroup } from "@/lib/appNavigation";
@@ -95,17 +96,35 @@ function AppLayoutInner() {
   useEffect(() => {
     const viewport = window.visualViewport;
     if (!viewport) return undefined;
+    let focusFrame: number | null = null;
     const update = () => {
-      const occluded = Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop);
-      setKeyboardOpen(occluded > 120);
+      setKeyboardOpen(isMobileKeyboardOpen({
+        innerHeight: window.innerHeight,
+        viewportHeight: viewport.height,
+        viewportOffsetTop: viewport.offsetTop,
+        viewportScale: viewport.scale,
+        activeElement: document.activeElement,
+      }));
       setVisualHeight(Math.round(viewport.height));
+    };
+    const updateAfterFocusChange = () => {
+      if (focusFrame !== null) window.cancelAnimationFrame(focusFrame);
+      focusFrame = window.requestAnimationFrame(() => {
+        focusFrame = null;
+        update();
+      });
     };
     update();
     viewport.addEventListener("resize", update);
     viewport.addEventListener("scroll", update);
+    window.addEventListener("focusin", updateAfterFocusChange);
+    window.addEventListener("focusout", updateAfterFocusChange);
     return () => {
+      if (focusFrame !== null) window.cancelAnimationFrame(focusFrame);
       viewport.removeEventListener("resize", update);
       viewport.removeEventListener("scroll", update);
+      window.removeEventListener("focusin", updateAfterFocusChange);
+      window.removeEventListener("focusout", updateAfterFocusChange);
     };
   }, []);
 

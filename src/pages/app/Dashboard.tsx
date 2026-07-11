@@ -149,6 +149,30 @@ async function safeDashboardFetch<T>(
   }
 }
 
+type DashboardFetchResult<T> = {
+  data: T;
+  ok: boolean;
+};
+
+async function safeDashboardFetchResult<T>(
+  label: string,
+  request: () => Promise<T>,
+  fallback: T,
+): Promise<DashboardFetchResult<T>> {
+  try {
+    return { data: await request(), ok: true };
+  } catch (error) {
+    console.warn(`[Panel] No se pudo cargar ${label}:`, error);
+    return { data: fallback, ok: false };
+  }
+}
+
+function getStartOfLocalDayTime(reference = new Date()) {
+  const start = new Date(reference);
+  start.setHours(0, 0, 0, 0);
+  return start.getTime();
+}
+
 function statusLabel(status: string) {
   if (status === "completed") return "completado";
   return "confirmado";
@@ -319,9 +343,9 @@ export default function Dashboard() {
       }
 
       try {
-        const [statsData, servicesData, eventsData, announcementsData, ministriesData, assignmentsData, mediaData] = await Promise.all([
+        const [statsData, servicesResult, eventsData, announcementsData, ministriesData, assignmentsData, mediaData] = await Promise.all([
           safeDashboardFetch("stats", () => fetchApi("/dashboard/stats"), null),
-          safeDashboardFetch("services", () => fetchApi(DASHBOARD_SERVICES_PATH), []),
+          safeDashboardFetchResult<unknown>("services", () => fetchApi(DASHBOARD_SERVICES_PATH), []),
           safeDashboardFetch("events", () => fetchApi(DASHBOARD_EVENTS_PATH), []),
           safeDashboardFetch("announcements", () => fetchApi("/announcements"), []),
           safeDashboardFetch("ministries", () => fetchApi("/my-ministries"), []),
@@ -344,16 +368,21 @@ export default function Dashboard() {
             .filter(Boolean)
         );
 
-        const now = Date.now();
-        const svcItems: TimelineItem[] = (Array.isArray(servicesData) ? servicesData : [])
+        const startOfToday = getStartOfLocalDayTime();
+        const servicesData = servicesResult.data;
+        const cachedServiceItems = cachedSnapshot?.timeline
+          .filter((item) => item._type === "service" && (getItemTime(item.date) ?? 0) >= startOfToday)
+          .slice(0, DASHBOARD_SERVICE_PREVIEW_LIMIT) || [];
+        const svcItems: TimelineItem[] = servicesResult.ok ? (Array.isArray(servicesData) ? servicesData : [])
           .filter((s: Record<string, unknown>) => {
             const time = getItemTime(s.date);
-            if (time == null || time < now) return false;
-            if (!isPlanner && assignedServiceIds.size === 0) return false;
-            if (!isPlanner && !assignedServiceIds.has(s.id as string)) return false;
-            return true;
+            return time != null && time >= startOfToday;
           })
           .sort((a: Record<string, unknown>, b: Record<string, unknown>) => {
+            if (!isPlanner) {
+              const assignmentPriority = Number(assignedServiceIds.has(b.id as string)) - Number(assignedServiceIds.has(a.id as string));
+              if (assignmentPriority !== 0) return assignmentPriority;
+            }
             return (getItemTime(a.date) ?? Number.POSITIVE_INFINITY) - (getItemTime(b.date) ?? Number.POSITIVE_INFINITY);
           })
           .slice(0, DASHBOARD_SERVICE_PREVIEW_LIMIT)
@@ -364,12 +393,12 @@ export default function Dashboard() {
             date: s.date as string,
             status: s.status as string,
             type: s.type as string,
-          }));
+          })) : cachedServiceItems;
 
         const evtItems: TimelineItem[] = (Array.isArray(eventsData) ? eventsData : [])
           .filter((e: Record<string, unknown>) => {
             const time = getItemTime(e.date);
-            return time != null && time >= now;
+            return time != null && time >= startOfToday;
           })
           .map((e: Record<string, unknown>) => ({
             id: e.id as string,
@@ -494,7 +523,7 @@ export default function Dashboard() {
   const comingUpItems = timeline.filter((item) => (parseServiceDate(item.date)?.getTime() || 0) > endOfSunday.getTime());
   const pendingAssignments = assignments
     .filter((assignment) => (assignment.responseStatus || (assignment.confirmed ? "accepted" : "pending")) === "pending")
-    .filter((assignment) => assignment.service?.date && (parseServiceDate(assignment.service.date)?.getTime() || 0) >= Date.now())
+    .filter((assignment) => assignment.service?.date && (parseServiceDate(assignment.service.date)?.getTime() || 0) >= getStartOfLocalDayTime())
     .slice(0, 5);
 
   const statItems = stats
