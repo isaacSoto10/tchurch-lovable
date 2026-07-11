@@ -1,4 +1,4 @@
-import { Suspense, useCallback, useEffect, useRef, type CSSProperties, type TouchEvent, type UIEvent } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type TouchEvent, type UIEvent } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { CalendarDays, Home, ListChecks, Menu, Users } from "lucide-react";
 import { AppSidebar } from "../components/AppSidebar";
@@ -19,6 +19,7 @@ import {
 } from "@/lib/mobileNavLayout";
 import { preloadAppRoute } from "@/lib/appRoutePreloaders";
 import { getPrimaryNavigationGroup, type PrimaryNavigationGroup } from "@/lib/appNavigation";
+import { ChatDock } from "@/components/ChatDock";
 
 const mobileNavItems: ReadonlyArray<{
   label: string;
@@ -39,6 +40,7 @@ const PAGE_BOTTOM_BUFFER_VAR = "--tchurch-mobile-page-bottom-buffer";
 const NAV_HEIGHT_VAR = "--tchurch-mobile-nav-height";
 const CONTENT_CLEARANCE_VAR = "--tchurch-mobile-content-clearance";
 const MOBILE_CONTENT_CLEARANCE = "var(--tchurch-mobile-content-clearance, var(--tchurch-mobile-nav-reserved, 8rem))";
+const MOBILE_CONTENT_WITH_CHAT_CLEARANCE = `calc(${MOBILE_CONTENT_CLEARANCE} + 3.75rem)`;
 
 const mobileNavGeometryStyle = {
   [SAFE_BOTTOM_VAR]: `${getMobileNavSafeBottom()}px`,
@@ -77,6 +79,9 @@ function AppLayoutInner() {
   const location = useLocation();
   const activePrimaryGroup = getPrimaryNavigationGroup(location.pathname);
   const routeKey = `${location.pathname}${location.search}`;
+  const isMessagesRoute = location.pathname === "/app/messages";
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const [visualHeight, setVisualHeight] = useState<number | null>(null);
   const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);
   const contentScrollRef = useRef<HTMLDivElement | null>(null);
@@ -86,6 +91,29 @@ function AppLayoutInner() {
 
   usePushNotifications();
   useEventCheckInQueueSync();
+
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return undefined;
+    const update = () => {
+      const occluded = Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop);
+      setKeyboardOpen(occluded > 120);
+      setVisualHeight(Math.round(viewport.height));
+    };
+    update();
+    viewport.addEventListener("resize", update);
+    viewport.addEventListener("scroll", update);
+    return () => {
+      viewport.removeEventListener("resize", update);
+      viewport.removeEventListener("scroll", update);
+    };
+  }, []);
+
+  const shellStyle = useMemo(() => ({
+    ...(showShortcutBar ? mobileNavGeometryStyle : {}),
+    ...(visualHeight ? { "--app-visual-height": `${visualHeight}px` } : {}),
+    ...(keyboardOpen && visualHeight ? { height: `${visualHeight}px`, maxHeight: `${visualHeight}px` } : {}),
+  }) as CSSProperties, [keyboardOpen, showShortcutBar, visualHeight]);
 
   useEffect(() => {
     activeRouteKeyRef.current = routeKey;
@@ -151,7 +179,7 @@ function AppLayoutInner() {
         "flex w-full flex-1 overflow-x-clip bg-background",
         showShortcutBar ? "h-svh max-h-svh min-h-0 overflow-hidden overscroll-none" : "min-h-svh",
       ].join(" ")}
-      style={showShortcutBar ? mobileNavGeometryStyle : undefined}
+      style={shellStyle}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
@@ -184,13 +212,14 @@ function AppLayoutInner() {
           ref={contentScrollRef}
           onScroll={handleContentScroll}
           className={[
-            "mx-auto flex w-full min-w-0 flex-1 flex-col overflow-x-clip px-3 pb-4 pt-4 sm:px-4 md:max-w-[1120px] md:px-5 lg:px-6 xl:max-w-[1320px] xl:px-8",
-            showShortcutBar ? "min-h-0 overflow-y-auto overscroll-y-contain" : "",
+            "mx-auto flex w-full min-w-0 flex-1 flex-col overflow-x-clip md:max-w-[1120px] xl:max-w-[1320px]",
+            isMessagesRoute ? "min-h-0 overflow-hidden p-0 lg:px-6 lg:pb-4 lg:pt-4" : "px-3 pb-4 pt-4 sm:px-4 md:px-5 lg:px-6 xl:px-8",
+            showShortcutBar && !isMessagesRoute ? "min-h-0 overflow-y-auto overscroll-y-contain" : "",
           ].join(" ")}
           style={{
             paddingTop: useCompactNavigation ? undefined : "max(var(--app-safe-area-top), 1.5rem)",
-            paddingBottom: showShortcutBar ? MOBILE_CONTENT_CLEARANCE : undefined,
-            scrollPaddingBottom: showShortcutBar ? MOBILE_CONTENT_CLEARANCE : undefined,
+            paddingBottom: showShortcutBar ? (keyboardOpen ? 0 : isMessagesRoute ? MOBILE_CONTENT_CLEARANCE : MOBILE_CONTENT_WITH_CHAT_CLEARANCE) : undefined,
+            scrollPaddingBottom: showShortcutBar ? (keyboardOpen ? 0 : isMessagesRoute ? MOBILE_CONTENT_CLEARANCE : MOBILE_CONTENT_WITH_CHAT_CLEARANCE) : undefined,
           }}
         >
           {!useCompactNavigation ? (
@@ -204,14 +233,15 @@ function AppLayoutInner() {
               <NotificationBell />
             </div>
           ) : null}
-          <div key={routeKey} data-route-content className="min-w-0">
+          <div key={routeKey} data-route-content className={isMessagesRoute ? "h-full min-h-0 min-w-0" : "min-w-0"}>
             <Suspense fallback={<RouteContentFallback />}>
               <Outlet />
             </Suspense>
           </div>
         </div>
       </SidebarInset>
-      {showShortcutBar ? (
+      <ChatDock keyboardOpen={keyboardOpen} hasBottomNav={showShortcutBar} />
+      {showShortcutBar && !keyboardOpen ? (
         <nav
           data-testid="mobile-bottom-nav"
           className="pointer-events-none fixed inset-x-0 bottom-0 z-30 bg-card"

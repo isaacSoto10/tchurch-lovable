@@ -7,6 +7,8 @@ import {
   markMessageDeleted,
   normalizeChannel,
   normalizeMessage,
+  parseMessagesRealtimeFrame,
+  shouldStickToMessageBottom,
   upsertMessage,
   withLocalReaction,
 } from "./messages";
@@ -110,11 +112,56 @@ describe("messages helpers", () => {
     ).toBe("wss://www.tchurchapp.com/api/realtime/messages?token=abc&channelId=channel-1");
 
     expect(
+      buildMessagesRealtimeUrl("https://www.tchurchapp.com/api", { websocketUrl: "https://worker.example/realtime/messages", token: "signed" }, "channel-1"),
+    ).toBe("wss://worker.example/realtime/messages?token=signed&channelId=channel-1");
+
+    expect(
       buildMessagesRealtimeUrl("http://localhost:3000/api", { token: "abc" }, "channel-1"),
     ).toBe("ws://localhost:3000/api/realtime/messages?token=abc&channelId=channel-1");
 
     expect(
       buildMessagesRealtimeUrl("http://localhost:3000/api", { enabled: false, token: "abc" }, "channel-1"),
     ).toBeNull();
+  });
+
+  it("parses nested worker message events", () => {
+    expect(parseMessagesRealtimeFrame(JSON.stringify({
+      type: "message.event",
+      event: {
+        type: "message.created",
+        channelId: "channel-1",
+        messageId: "message-1",
+        actorUserId: "user-2",
+      },
+    }))).toEqual({
+      kind: "message-event",
+      channelId: "channel-1",
+      eventType: "message.created",
+      messageId: "message-1",
+      actorUserId: "user-2",
+    });
+  });
+
+  it("parses typing and presence frames without persisting them as messages", () => {
+    expect(parseMessagesRealtimeFrame({
+      type: "typing.updated",
+      channelId: "channel-1",
+      userId: "user-2",
+      displayName: "Ana",
+      isTyping: true,
+      expiresAt: "2026-07-11T12:00:06.000Z",
+    })).toMatchObject({ kind: "typing", channelId: "channel-1", isTyping: true });
+
+    expect(parseMessagesRealtimeFrame({
+      type: "presence.snapshot",
+      users: [{ userId: "user-2", displayName: "Ana", status: "online" }],
+    })).toMatchObject({ kind: "presence-snapshot", participants: [{ userId: "user-2", status: "online" }] });
+  });
+
+  it("sticks only for initial loads, outgoing messages, or a reader already near the bottom", () => {
+    expect(shouldStickToMessageBottom({ distanceFromBottom: 400, isInitialLoad: true })).toBe(true);
+    expect(shouldStickToMessageBottom({ distanceFromBottom: 400, outgoing: true })).toBe(true);
+    expect(shouldStickToMessageBottom({ distanceFromBottom: 72 })).toBe(true);
+    expect(shouldStickToMessageBottom({ distanceFromBottom: 240 })).toBe(false);
   });
 });

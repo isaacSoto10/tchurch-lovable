@@ -20,6 +20,7 @@ import { MinistryFinance } from "@/components/MinistryFinance";
 import { MinistryResources } from "@/components/MinistryResources";
 import { useToast } from "@/components/ui/use-toast";
 import { readSessionSnapshot, sessionSnapshotKey, writeSessionSnapshot } from "@/lib/sessionSnapshots";
+import { openChatDock } from "@/lib/chatDock";
 
 type Tab = "members" | "join-requests" | "announcements" | "resources" | "finance";
 
@@ -413,7 +414,7 @@ export default function MinistryDetail() {
 
   function openCommunicationChannel() {
     if (!id) return;
-    navigate(`/app/messages?ministryId=${encodeURIComponent(id)}`);
+    openChatDock({ ministryId: id });
   }
 
   if (loading) {
@@ -461,7 +462,7 @@ export default function MinistryDetail() {
   const resourceCount = ministry.stats?.resourceCount ?? 0;
   const requestBadgeCount = joinRequests.length || pendingCount;
   const tabTriggerClass =
-    "group min-h-[4.25rem] w-full justify-start whitespace-normal rounded-2xl border border-zinc-200 bg-white px-3 py-3 text-left shadow-sm transition data-[state=active]:border-primary/70 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-md";
+    "group min-h-12 min-w-[8.75rem] flex-1 justify-start whitespace-normal rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-left shadow-sm transition data-[state=active]:border-primary/60 data-[state=active]:bg-primary/10 data-[state=active]:text-primary";
   const tabIconClass = "mt-0.5 h-4 w-4 shrink-0 text-zinc-500 group-data-[state=active]:text-primary";
   const tabMetaClass = "mt-1 block text-[11px] font-medium leading-tight text-zinc-500";
 
@@ -472,7 +473,7 @@ export default function MinistryDetail() {
       className="mobile-page min-h-full bg-zinc-50"
     >
       {/* Header */}
-      <div className="bg-white border-b border-zinc-200 sticky top-0 z-10">
+      <div className="sticky top-0 z-10 border-b border-zinc-200 bg-white/95 backdrop-blur">
         <div className="flex items-center gap-3 px-4 py-3">
           <button
             type="button"
@@ -493,18 +494,18 @@ export default function MinistryDetail() {
               )}
             </div>
           </div>
-          {canManage && (
-            <Button variant="ghost" size="sm" onClick={() => setShowEditMinistry(true)}>
-              Edit
-            </Button>
-          )}
+          <Button variant="outline" size="sm" className="min-h-11 shrink-0 gap-2" onClick={openCommunicationChannel}>
+            <MessageCircle className="h-4 w-4" />
+            <span className="hidden sm:inline">Chat</span>
+          </Button>
+          {canManage && <Button variant="ghost" size="sm" className="min-h-11" onClick={() => setShowEditMinistry(true)}>Editar</Button>}
         </div>
 
         {/* Tabs */}
         <div className="px-4 pb-3">
           <TabsList
             aria-label="Ministry sections"
-            className="grid h-auto w-full grid-cols-2 gap-2 rounded-none bg-transparent p-0 text-zinc-600"
+            className="flex h-auto w-full justify-start gap-2 overflow-x-auto rounded-none bg-transparent p-0 pb-1 text-zinc-600"
           >
             <TabsTrigger
               value="members"
@@ -514,8 +515,8 @@ export default function MinistryDetail() {
               <span className="flex w-full items-start gap-2">
                 <Users className={tabIconClass} aria-hidden="true" />
                 <span className="min-w-0">
-                  <span className="block text-sm font-semibold leading-tight">Members</span>
-                  <span className={tabMetaClass}>{memberCount} active</span>
+                  <span className="block text-sm font-semibold leading-tight">Personas</span>
+                  <span className={tabMetaClass}>{memberCount} activas</span>
                 </span>
               </span>
             </TabsTrigger>
@@ -529,7 +530,7 @@ export default function MinistryDetail() {
                   <UserPlus className={tabIconClass} aria-hidden="true" />
                   <span className="min-w-0 flex-1">
                     <span className="flex items-center gap-2">
-                      <span className="block text-sm font-semibold leading-tight">Requests</span>
+                      <span className="block text-sm font-semibold leading-tight">Solicitudes</span>
                       {requestBadgeCount > 0 && (
                         <span
                           aria-label={`${requestBadgeCount} pending requests`}
@@ -539,7 +540,7 @@ export default function MinistryDetail() {
                         </span>
                       )}
                     </span>
-                    <span className={tabMetaClass}>{requestBadgeCount > 0 ? "Needs review" : "No pending"}</span>
+                    <span className={tabMetaClass}>{requestBadgeCount > 0 ? "Por revisar" : "Al día"}</span>
                   </span>
                 </span>
               </TabsTrigger>
@@ -552,8 +553,8 @@ export default function MinistryDetail() {
               <span className="flex w-full items-start gap-2">
                 <Megaphone className={tabIconClass} aria-hidden="true" />
                 <span className="min-w-0">
-                  <span className="block text-sm font-semibold leading-tight">Announcements</span>
-                  <span className={tabMetaClass}>Updates</span>
+                  <span className="block text-sm font-semibold leading-tight">Anuncios</span>
+                  <span className={tabMetaClass}>Novedades</span>
                 </span>
               </span>
             </TabsTrigger>
@@ -566,8 +567,8 @@ export default function MinistryDetail() {
               <span className="flex w-full items-start gap-2">
                 <MessageCircle className={tabIconClass} aria-hidden="true" />
                 <span className="min-w-0">
-                  <span className="block text-sm font-semibold leading-tight">Messages</span>
-                  <span className={tabMetaClass}>Team channel</span>
+                  <span className="block text-sm font-semibold leading-tight">Chat</span>
+                  <span className={tabMetaClass}>Canal del equipo</span>
                 </span>
               </span>
             </button>
@@ -579,8 +580,8 @@ export default function MinistryDetail() {
               <span className="flex w-full items-start gap-2">
                 <FileText className={tabIconClass} aria-hidden="true" />
                 <span className="min-w-0">
-                  <span className="block text-sm font-semibold leading-tight">Resources</span>
-                  <span className={tabMetaClass}>{resourceCount} items</span>
+                  <span className="block text-sm font-semibold leading-tight">Recursos</span>
+                  <span className={tabMetaClass}>{resourceCount} elementos</span>
                 </span>
               </span>
             </TabsTrigger>
@@ -607,7 +608,7 @@ export default function MinistryDetail() {
           <CardContent className="space-y-4 p-4">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Ministry overview</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-primary">Tu ministerio</p>
                 <h2 className="mt-1 text-base font-semibold text-zinc-950">{ministry.name}</h2>
                 <p className="mt-1 text-sm leading-6 text-zinc-600">
                   {ministry.description || "A place for people, resources, announcements, and ministry-specific coordination."}
@@ -632,6 +633,12 @@ export default function MinistryDetail() {
                 <p className="text-[0.7rem] font-medium text-muted-foreground">Resources</p>
               </div>
             </div>
+            {isMember && (
+              <Button type="button" variant="outline" className="h-11 w-full justify-between border-primary/20 bg-primary/5 text-primary" onClick={openCommunicationChannel}>
+                <span className="flex items-center gap-2"><MessageCircle className="h-4 w-4" /> Continuar conversación</span>
+                <span aria-hidden="true">→</span>
+              </Button>
+            )}
           </CardContent>
         </Card>
 

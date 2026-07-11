@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Search, Pencil, Trash2, ArrowLeft, Users, Megaphone, FolderOpen, UserPlus, X, Calendar, Clock, ShieldCheck } from "lucide-react";
+import { Plus, Search, Pencil, Trash2, ArrowLeft, Users, Megaphone, FolderOpen, UserPlus, X, Calendar, Clock, ShieldCheck, MessageCircle, ChevronRight } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
 import { useChurch } from "@/providers/ChurchProvider";
@@ -14,6 +14,7 @@ import { MinistryResources } from "@/components/MinistryResources";
 import { getChurchId } from "@/lib/api";
 import { preloadAppRoute } from "@/lib/appRoutePreloaders";
 import { readSessionSnapshot, sessionSnapshotKey, writeSessionSnapshot } from "@/lib/sessionSnapshots";
+import { openChatDock } from "@/lib/chatDock";
 import {
   Dialog,
   DialogContent,
@@ -739,12 +740,22 @@ export default function Ministries() {
     return (
       <Card
         key={m.id}
-        className="cursor-pointer transition-shadow hover:shadow-md"
+        role="link"
+        tabIndex={0}
+        aria-label={`Abrir ministerio ${m.name}`}
+        className="group relative cursor-pointer overflow-hidden border-zinc-200 bg-white shadow-[0_1px_2px_rgba(24,24,27,0.04)] transition hover:border-primary/30 hover:shadow-[0_10px_28px_rgba(24,24,27,0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
         onClick={() => navigate(`/app/ministries/${m.id}`)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            navigate(`/app/ministries/${m.id}`);
+          }
+        }}
         onFocus={() => preloadAppRoute(`/app/ministries/${m.id}`)}
         onPointerEnter={() => preloadAppRoute(`/app/ministries/${m.id}`)}
       >
-        <CardContent className="flex items-start gap-4 p-4 sm:p-5">
+        <span className="absolute inset-y-0 left-0 w-1" style={{ backgroundColor: m.color || "hsl(var(--primary))" }} aria-hidden="true" />
+        <CardContent className="flex items-start gap-3 p-4 pl-5 sm:gap-4 sm:p-5 sm:pl-6">
           <div
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl"
             style={{ backgroundColor: m.color ? `${m.color}18` : "#f1f5f9" }}
@@ -780,13 +791,26 @@ export default function Ministries() {
                 </span>
               )}
             </div>
+            {isMine && (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  openChatDock({ ministryId: m.id });
+                }}
+                className="mt-3 flex min-h-11 items-center gap-2 rounded-xl border border-primary/20 bg-primary/5 px-3 text-xs font-semibold text-primary transition hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              >
+                <MessageCircle className="h-4 w-4" /> Abrir chat del equipo
+              </button>
+            )}
           </div>
-          <div className="flex shrink-0 gap-1" onClick={(e) => e.stopPropagation()}>
+          <div className="flex shrink-0 items-center gap-1" onClick={(e) => e.stopPropagation()}>
             {isAdmin && (
               <Button variant="ghost" size="sm" aria-label={`Edit ${m.name}`} onClick={() => openEditDialog(m)}>
                 <Pencil className="h-4 w-4" />
               </Button>
             )}
+            {!isAdmin && <ChevronRight className="h-5 w-5 text-zinc-300 transition group-hover:translate-x-0.5 group-hover:text-primary" aria-hidden="true" />}
             {isAdmin && (
               <AlertDialog open={deleteId === m.id} onOpenChange={(open) => !open && setDeleteId(null)}>
                 <AlertDialogTrigger asChild>
@@ -816,40 +840,43 @@ export default function Ministries() {
 
   return (
     <div className="mobile-page">
-      <div className="mb-5 space-y-4">
+      <div className="mb-6 space-y-4">
+        <div className="rounded-2xl border border-primary/15 bg-primary/[0.045] p-4 sm:p-5">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <h1 className="text-2xl font-bold text-zinc-950">Ministries</h1>
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">Comunidad</p>
+            <h1 className="mt-1 text-2xl font-bold tracking-tight text-zinc-950">Ministerios</h1>
             <p className="mt-1 text-sm leading-6 text-muted-foreground">
-              Find teams in your church, view their leaders and resources, and request to join when you are ready.
+              Encuentra tu equipo, coordina el servicio y mantén la conversación cerca.
             </p>
           </div>
           {isAdmin && (
             <Button size="sm" onClick={openNewDialog} className="shrink-0">
-              <Plus className="h-4 w-4" /> New
+              <Plus className="h-4 w-4" /> Nuevo
             </Button>
           )}
         </div>
 
-        <div className="grid grid-cols-3 gap-2 text-center">
-          <div className="rounded-xl border border-zinc-200 bg-white px-2 py-3">
+        <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+          <div className="rounded-xl border border-white/80 bg-white px-2 py-3 shadow-sm">
             <p className="text-lg font-semibold text-zinc-950">{ministries.length}</p>
-            <p className="text-[0.7rem] font-medium text-muted-foreground">Ministries</p>
+            <p className="text-[0.7rem] font-medium text-muted-foreground">Ministerios</p>
           </div>
-          <div className="rounded-xl border border-zinc-200 bg-white px-2 py-3">
+          <div className="rounded-xl border border-white/80 bg-white px-2 py-3 shadow-sm">
             <p className="text-lg font-semibold text-zinc-950">{totalMembers}</p>
-            <p className="text-[0.7rem] font-medium text-muted-foreground">Members</p>
+            <p className="text-[0.7rem] font-medium text-muted-foreground">Personas</p>
           </div>
-          <div className="rounded-xl border border-zinc-200 bg-white px-2 py-3">
-            <p className="text-lg font-semibold text-zinc-950">{totalLeaders}</p>
-            <p className="text-[0.7rem] font-medium text-muted-foreground">Leaders</p>
+          <div className="rounded-xl border border-white/80 bg-white px-2 py-3 shadow-sm">
+            <p className="text-lg font-semibold text-zinc-950">{myMinistries.length}</p>
+            <p className="text-[0.7rem] font-medium text-muted-foreground">Mis equipos</p>
           </div>
+        </div>
         </div>
 
         <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="Search ministries..."
+            placeholder="Buscar ministerios…"
             className="h-11 pl-9"
             value={search}
             onChange={(e) => setSearch(e.target.value)}

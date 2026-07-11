@@ -4,6 +4,7 @@ import {
   AlertCircle,
   ArrowLeft,
   CheckCheck,
+  ChevronDown,
   Clock3,
   Download,
   Edit3,
@@ -51,6 +52,8 @@ import {
   normalizeChannels,
   normalizeMessage,
   normalizeMessages,
+  parseMessagesRealtimeFrame,
+  shouldStickToMessageBottom,
   upsertMessage,
   withLocalReaction,
   type MessageAttachment,
@@ -58,6 +61,8 @@ import {
   type MessageChannelType,
   type MessageRecord,
   type RealtimeTokenResponse,
+  type PresenceParticipant,
+  type TypingParticipant,
 } from "@/lib/messages";
 import { readSessionSnapshot, sessionSnapshotKey, writeSessionSnapshot } from "@/lib/sessionSnapshots";
 import { useChurch } from "@/providers/ChurchProvider";
@@ -207,6 +212,10 @@ export default function Messages() {
   const [channelError, setChannelError] = useState("");
   const [messageError, setMessageError] = useState("");
   const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>("idle");
+  const [typingByChannel, setTypingByChannel] = useState<Record<string, TypingParticipant[]>>({});
+  const [presenceByUser, setPresenceByUser] = useState<Record<string, PresenceParticipant>>({});
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [newMessagesBelow, setNewMessagesBelow] = useState(0);
   const [newChannelOpen, setNewChannelOpen] = useState(false);
   const [newChannelName, setNewChannelName] = useState("");
   const [newChannelDesc, setNewChannelDesc] = useState("");
@@ -215,7 +224,13 @@ export default function Messages() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const messageScrollRef = useRef<HTMLDivElement | null>(null);
-  const streamEndRef = useRef<HTMLDivElement | null>(null);
+  const websocketRef = useRef<WebSocket | null>(null);
+  const wasNearBottomRef = useRef(true);
+  const initialLoadChannelRef = useRef<string | null>(null);
+  const previousMessageCountRef = useRef(0);
+  const typingStopTimerRef = useRef<number | null>(null);
+  const typingStartedAtRef = useRef(0);
+  const failedMessagesRef = useRef(new Map<string, { channelId: string; content: string; files: File[]; clientId: string }>());
   const requestedChannelRef = useRef<string | null>(
     requestedChannelId || requestedParamFromLocation("channelId") || requestedParamFromLocation("channel")
   );
@@ -229,6 +244,10 @@ export default function Messages() {
     [channels, selectedChannelId],
   );
   const messages = selectedChannelId ? messagesByChannel[selectedChannelId] || [] : [];
+  const typingParticipants = selectedChannelId
+    ? (typingByChannel[selectedChannelId] || []).filter((participant) => participant.userId !== currentUserId)
+    : [];
+  const onlineCount = Object.values(presenceByUser).filter((participant) => participant.status === "online").length;
   const canCreateChannels = selectedChurch?.role === "ADMIN";
   const canModerateSelected = Boolean(selectedChannel?.canModerate || selectedChurch?.role === "ADMIN");
   const composerIsReadOnly = Boolean(selectedChannel && !selectedChannel.canPost && !editingMessage);
@@ -350,63 +369,99 @@ export default function Messages() {
   }, [loadChannels]);
 
   useEffect(() => {
+    fetchApi<{ id?: string }>("/users/me")
+      .then((user) => setCurrentUserId(user?.id || null))
+      .catch(() => setCurrentUserId(null));
+  }, [fetchApi]);
+
+  useEffect(() => {
     if (!selectedChannelId) return;
     setComposer("");
     setPendingFiles([]);
     setEditingMessage(null);
+    setNewMessagesBelow(0);
+    wasNearBottomRef.current = true;
+    initialLoadChannelRef.current = selectedChannelId;
+    previousMessageCountRef.current = 0;
     loadMessages(selectedChannelId);
     markChannelRead(selectedChannelId);
   }, [loadMessages, markChannelRead, selectedChannelId]);
 
   useEffect(() => {
-    if (!messages.length || loadingMessages) return;
+    if (loadingMessages) return;
+    const scrollport = messageScrollRef.current;
+    if (!scrollport) return;
+    const previousCount = previousMessageCountRef.current;
+    const addedCount = Math.max(0, messages.length - previousCount);
+    previousMessageCountRef.current = messages.length;
+    if (!messages.length) return;
+    const distanceFromBottom = scrollport.scrollHeight - scrollport.scrollTop - scrollport.clientHeight;
+    const latest = messages[messages.length - 1];
+    const isInitialLoad = initialLoadChannelRef.current === selectedChannelId;
+    const shouldStick = shouldStickToMessageBottom({
+      distanceFromBottom,
+      isInitialLoad,
+      outgoing: latest?.isMine || latest?.deliveryStatus === "sending",
+    });
     const frameId = window.requestAnimationFrame(() => {
-      streamEndRef.current?.scrollIntoView({ block: "end" });
-      const scrollport = messageScrollRef.current;
-      if (scrollport) scrollport.scrollTop = scrollport.scrollHeight;
+      if (shouldStick) {
+        scrollport.scrollTo({ top: scrollport.scrollHeight, behavior: isInitialLoad ? "auto" : "smooth" });
+        wasNearBottomRef.current = true;
+        setNewMessagesBelow(0);
+      } else if (addedCount > 0) {
+        setNewMessagesBelow((count) => count + addedCount);
+      }
+      initialLoadChannelRef.current = null;
     });
     return () => window.cancelAnimationFrame(frameId);
-  }, [loadingMessages, messages.length]);
+  }, [loadingMessages, messages, selectedChannelId]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const now = Date.now();
+      setTypingByChannel((current) => {
+        let changed = false;
+        const next = Object.fromEntries(Object.entries(current).map(([channelId, participants]) => {
+          const active = participants.filter((participant) => !participant.expiresAt || new Date(participant.expiresAt).getTime() > now);
+          if (active.length !== participants.length) changed = true;
+          return [channelId, active];
+        }));
+        return changed ? next : current;
+      });
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const applyRealtimePayload = useCallback(
     (rawPayload: string, fallbackChannelId: string) => {
-      let payload: unknown;
-      try {
-        payload = JSON.parse(rawPayload);
-      } catch {
+      const frame = parseMessagesRealtimeFrame(rawPayload);
+      if (frame.kind === "message-event") {
+        loadChannels(true);
+        if (frame.channelId === fallbackChannelId && frame.eventType !== "channel.read") {
+          loadMessages(frame.channelId, true);
+        }
         return;
       }
-
-      if (!isRecord(payload)) return;
-      if (Array.isArray(payload.channels)) setChannels(normalizeChannels(payload.channels));
-      if (isRecord(payload.channel)) mergeChannel(normalizeChannel(payload.channel));
-
-      const eventType = String(payload.type || payload.event || "");
-      const messagePayload = isRecord(payload.message) ? payload.message : null;
-      const channelId = String(
-        payload.channelId ||
-          messagePayload?.channelId ||
-          (isRecord(payload.channel) ? payload.channel.id : "") ||
-          fallbackChannelId,
-      );
-
-      if (Array.isArray(payload.messages) && channelId) {
-        setMessagesByChannel((current) => ({ ...current, [channelId]: normalizeMessages(payload.messages) }));
+      if (frame.kind === "typing") {
+        setTypingByChannel((current) => {
+          const participants = current[frame.channelId] || [];
+          const withoutUser = participants.filter((participant) => participant.userId !== frame.participant.userId);
+          return {
+            ...current,
+            [frame.channelId]: frame.isTyping ? [...withoutUser, frame.participant] : withoutUser,
+          };
+        });
+        return;
       }
-
-      if (messagePayload && channelId) {
-        const message = normalizeMessage({ ...messagePayload, channelId });
-        setMessagesForChannel(channelId, (current) => upsertMessage(current, message));
-        setChannels((current) =>
-          current.map((channel) => (channel.id === channelId ? updateChannelFromMessage(channel, message, false) : channel)),
-        );
+      if (frame.kind === "presence-snapshot") {
+        setPresenceByUser(Object.fromEntries(frame.participants.map((participant) => [participant.userId, participant])));
+        return;
       }
-
-      if (eventType.includes("deleted") && channelId && typeof payload.messageId === "string") {
-        loadMessages(channelId, true);
+      if (frame.kind === "presence-updated") {
+        setPresenceByUser((current) => ({ ...current, [frame.participant.userId]: frame.participant }));
       }
     },
-    [loadMessages, mergeChannel, setMessagesForChannel],
+    [loadChannels, loadMessages],
   );
 
   useEffect(() => {
@@ -419,6 +474,8 @@ export default function Messages() {
     let socket: WebSocket | null = null;
     let pollId: number | null = null;
     let timeoutId: number | null = null;
+    let reconnectId: number | null = null;
+    let heartbeatId: number | null = null;
 
     const stopPolling = () => {
       if (pollId !== null) {
@@ -452,6 +509,7 @@ export default function Messages() {
         }
 
         socket = new WebSocket(url);
+        websocketRef.current = socket;
         timeoutId = window.setTimeout(() => {
           if (socket && socket.readyState !== WebSocket.OPEN) {
             socket.close();
@@ -464,11 +522,25 @@ export default function Messages() {
           if (timeoutId !== null) window.clearTimeout(timeoutId);
           stopPolling();
           setRealtimeStatus("live");
+          socket?.send(JSON.stringify({ type: "subscribe", channelId: selectedChannelId }));
+          socket?.send(JSON.stringify({ type: "presence.heartbeat" }));
+          heartbeatId = window.setInterval(() => {
+            if (socket?.readyState === WebSocket.OPEN) {
+              socket.send(JSON.stringify({ type: "presence.heartbeat" }));
+              socket.send(JSON.stringify({ type: "ping" }));
+            }
+          }, 20000);
         };
         socket.onmessage = (event) => applyRealtimePayload(String(event.data), selectedChannelId);
         socket.onerror = () => socket?.close();
         socket.onclose = () => {
-          if (!stopped) startPolling();
+          websocketRef.current = null;
+          if (heartbeatId !== null) window.clearInterval(heartbeatId);
+          heartbeatId = null;
+          if (!stopped) {
+            startPolling();
+            reconnectId = window.setTimeout(connectRealtime, 2500);
+          }
         };
       } catch {
         startPolling();
@@ -481,9 +553,39 @@ export default function Messages() {
       stopped = true;
       stopPolling();
       if (timeoutId !== null) window.clearTimeout(timeoutId);
+      if (reconnectId !== null) window.clearTimeout(reconnectId);
+      if (heartbeatId !== null) window.clearInterval(heartbeatId);
+      if (typingStopTimerRef.current !== null) window.clearTimeout(typingStopTimerRef.current);
       socket?.close();
+      websocketRef.current = null;
     };
   }, [applyRealtimePayload, fetchRealtimeToken, loadChannels, loadMessages, selectedChannelId]);
+
+  const notifyTyping = useCallback((value: string) => {
+    setComposer(value);
+    if (!selectedChannelId || editingMessage) return;
+    const socket = websocketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+
+    if (!value.trim()) {
+      socket.send(JSON.stringify({ type: "typing.stop", channelId: selectedChannelId }));
+      if (typingStopTimerRef.current !== null) window.clearTimeout(typingStopTimerRef.current);
+      typingStopTimerRef.current = null;
+      return;
+    }
+
+    const now = Date.now();
+    if (now - typingStartedAtRef.current > 2500) {
+      socket.send(JSON.stringify({ type: "typing.start", channelId: selectedChannelId }));
+      typingStartedAtRef.current = now;
+    }
+    if (typingStopTimerRef.current !== null) window.clearTimeout(typingStopTimerRef.current);
+    typingStopTimerRef.current = window.setTimeout(() => {
+      if (websocketRef.current?.readyState === WebSocket.OPEN) {
+        websocketRef.current.send(JSON.stringify({ type: "typing.stop", channelId: selectedChannelId }));
+      }
+    }, 1400);
+  }, [editingMessage, selectedChannelId]);
 
   async function handleCreateChannel() {
     if (!newChannelName.trim() || creatingChannel) return;
@@ -542,17 +644,71 @@ export default function Messages() {
     return attachments;
   }
 
+  async function deliverPendingMessage(pending: {
+    channelId: string;
+    content: string;
+    files: File[];
+    clientId: string;
+    temporaryId: string;
+  }) {
+    setSending(true);
+    setMessageError("");
+    setMessagesForChannel(pending.channelId, (current) =>
+      current.map((message) => message.id === pending.temporaryId ? { ...message, deliveryStatus: "sending" } : message),
+    );
+
+    try {
+      const registeredAttachments = await registerAttachments(pending.channelId, pending.files);
+      const result = await fetchApi<unknown>(`/channels/${encodeURIComponent(pending.channelId)}/messages`, {
+        method: "POST",
+        body: JSON.stringify({
+          content: pending.content,
+          clientId: pending.clientId,
+          attachments: registeredAttachments.map((attachment) => attachment.id),
+        }),
+      });
+      const payload = messagePayloadFromResponse(result);
+      const created = normalizeMessage({
+        ...payload,
+        channelId: pending.channelId,
+        deliveryStatus: "sent",
+        attachments: Array.isArray(payload.attachments) ? payload.attachments : registeredAttachments.map(attachmentFromRegistration),
+      });
+      setMessagesForChannel(pending.channelId, (current) =>
+        upsertMessage(current.filter((message) => message.id !== pending.temporaryId), created),
+      );
+      setChannels((current) =>
+        current.map((channel) => (channel.id === pending.channelId ? updateChannelFromMessage(channel, created, true) : channel)),
+      );
+      failedMessagesRef.current.delete(pending.temporaryId);
+    } catch (error) {
+      failedMessagesRef.current.set(pending.temporaryId, pending);
+      setMessagesForChannel(pending.channelId, (current) =>
+        current.map((message) => message.id === pending.temporaryId ? { ...message, deliveryStatus: "failed" } : message),
+      );
+      setMessageError(errorMessage(error, "Failed to send message"));
+    } finally {
+      setSending(false);
+    }
+  }
+
+  function retryMessage(message: MessageRecord) {
+    const pending = failedMessagesRef.current.get(message.id);
+    if (!pending || sending) return;
+    void deliverPendingMessage({ ...pending, temporaryId: message.id });
+  }
+
   async function handleComposerSubmit(event: FormEvent) {
     event.preventDefault();
     if (!selectedChannel || !canSubmit) return;
 
     const content = composer.trim();
     const files = pendingFiles;
-    setSending(true);
     setMessageError("");
 
     try {
       if (editingMessage) {
+        setSending(true);
         const result = await fetchApi<unknown>(
           `/channels/${encodeURIComponent(selectedChannel.id)}/messages/${encodeURIComponent(editingMessage.id)}`,
           { method: "PATCH", body: JSON.stringify({ content }) },
@@ -570,28 +726,32 @@ export default function Messages() {
         toast({ title: "Message updated" });
         return;
       }
-
-      const registeredAttachments = await registerAttachments(selectedChannel.id, files);
-      const result = await fetchApi<unknown>(`/channels/${encodeURIComponent(selectedChannel.id)}/messages`, {
-        method: "POST",
-        body: JSON.stringify({
-          content,
-          clientId: createClientId(),
-          attachments: registeredAttachments.map((attachment) => attachment.id),
-        }),
-      });
-      const payload = messagePayloadFromResponse(result);
-      const created = normalizeMessage({
-        ...payload,
+      const clientId = createClientId();
+      const temporaryId = `pending-${clientId}`;
+      const optimistic = normalizeMessage({
+        id: temporaryId,
+        clientId,
         channelId: selectedChannel.id,
-        attachments: Array.isArray(payload.attachments) ? payload.attachments : registeredAttachments.map(attachmentFromRegistration),
+        content,
+        userId: currentUserId || "me",
+        authorName: "Tú",
+        createdAt: new Date().toISOString(),
+        isMine: true,
+        canEdit: false,
+        canDelete: false,
+        deliveryStatus: "sending",
+        attachments: files.map((file, index) => ({
+          id: `${temporaryId}-attachment-${index}`,
+          name: file.name,
+          contentType: file.type,
+          size: file.size,
+        })),
       });
-      setMessagesForChannel(selectedChannel.id, (current) => upsertMessage(current, created));
-      setChannels((current) =>
-        current.map((channel) => (channel.id === selectedChannel.id ? updateChannelFromMessage(channel, created, true) : channel)),
-      );
+      setMessagesForChannel(selectedChannel.id, (current) => upsertMessage(current, optimistic));
       setComposer("");
       setPendingFiles([]);
+      websocketRef.current?.send(JSON.stringify({ type: "typing.stop", channelId: selectedChannel.id }));
+      void deliverPendingMessage({ channelId: selectedChannel.id, content, files, clientId, temporaryId });
     } catch (error) {
       if (optionalEndpointUnavailable(error) && editingMessage) {
         setMessageError("Editing messages is not available from the API yet.");
@@ -599,7 +759,7 @@ export default function Messages() {
         setMessageError(errorMessage(error, "Failed to send message"));
       }
     } finally {
-      setSending(false);
+      if (editingMessage) setSending(false);
     }
   }
 
@@ -669,8 +829,8 @@ export default function Messages() {
   const readOnlyReason = selectedChannel?.readOnlyReason || DEFAULT_READ_ONLY_REASON;
 
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 pb-[calc(var(--tchurch-mobile-content-clearance,var(--tchurch-mobile-nav-reserved,7rem))_+_1rem)] lg:pb-2">
-      <header className="flex flex-wrap items-start justify-between gap-3">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col gap-3 lg:gap-4">
+      <header className="hidden flex-wrap items-start justify-between gap-3 lg:flex">
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">
             <MessageCircle className="h-4 w-4 text-primary" />
@@ -748,7 +908,7 @@ export default function Messages() {
         </div>
       )}
 
-      <section className="grid overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm lg:min-h-[min(720px,calc(100svh-12rem))] lg:grid-cols-[21rem_minmax(0,1fr)]">
+      <section className="grid min-h-0 flex-1 overflow-hidden border-zinc-200 bg-white lg:grid-cols-[21rem_minmax(0,1fr)] lg:rounded-2xl lg:border lg:shadow-sm">
         <aside className={selectedChannel ? "hidden border-r border-zinc-200 bg-zinc-50/70 lg:block" : "block border-r border-zinc-200 bg-zinc-50/70"}>
           <div className="flex items-center justify-between border-b border-zinc-200 px-4 py-3">
             <h2 className="text-sm font-bold text-zinc-950">Channels</h2>
@@ -765,10 +925,17 @@ export default function Messages() {
           />
         </aside>
 
-        <main className={selectedChannel ? "flex min-h-[calc(100svh_-_var(--tchurch-mobile-content-clearance,var(--tchurch-mobile-nav-reserved,7rem))_-_7rem)] min-w-0 flex-col lg:min-h-0" : "hidden min-w-0 lg:flex lg:flex-col"}>
+        <main className={selectedChannel ? "flex min-h-0 min-w-0 flex-col" : "hidden min-w-0 lg:flex lg:flex-col"}>
           {selectedChannel ? (
             <>
-              <ThreadHeader channel={selectedChannel} canModerate={canModerateSelected} locale={locale} onBack={() => setSelectedChannelId(null)} />
+              <ThreadHeader
+                channel={selectedChannel}
+                canModerate={canModerateSelected}
+                locale={locale}
+                onlineCount={onlineCount}
+                typingNames={typingParticipants.map((participant) => participant.displayName)}
+                onBack={() => setSelectedChannelId(null)}
+              />
               {selectedChannel.type === "announcement" && !selectedChannel.canPost && (
                 <div className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">
                   <LockKeyhole className="mr-2 inline h-4 w-4" />
@@ -777,7 +944,13 @@ export default function Messages() {
               )}
               <div
                 ref={messageScrollRef}
-                className="min-h-0 flex-1 scroll-pb-6 overflow-y-auto bg-zinc-50/50 px-3 py-4 sm:px-4"
+                onScroll={(event) => {
+                  const scrollport = event.currentTarget;
+                  const distance = scrollport.scrollHeight - scrollport.scrollTop - scrollport.clientHeight;
+                  wasNearBottomRef.current = distance <= 96;
+                  if (wasNearBottomRef.current) setNewMessagesBelow(0);
+                }}
+                className="relative min-h-0 flex-1 scroll-pb-6 overflow-y-auto overscroll-y-contain bg-[#f8f7f5] px-3 py-4 sm:px-4"
               >
                 {messageError && (
                   <div className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-800">
@@ -797,14 +970,33 @@ export default function Messages() {
                         onEdit={startEditing}
                         onDelete={handleDeleteMessage}
                         onReact={handleReaction}
+                        onRetry={retryMessage}
                       />
                     ))}
-                    <div ref={streamEndRef} />
                   </div>
                 ) : (
                   <EmptyThread canPost={selectedChannel.canPost} />
                 )}
+                {newMessagesBelow > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      messageScrollRef.current?.scrollTo({ top: messageScrollRef.current.scrollHeight, behavior: "smooth" });
+                      setNewMessagesBelow(0);
+                    }}
+                    className="sticky bottom-2 left-1/2 z-10 mx-auto mt-3 flex min-h-11 -translate-x-0 items-center gap-2 rounded-full bg-zinc-950 px-4 text-xs font-semibold text-white shadow-lg"
+                  >
+                    <ChevronDown className="h-4 w-4" />
+                    {newMessagesBelow} {newMessagesBelow === 1 ? "mensaje nuevo" : "mensajes nuevos"}
+                  </button>
+                )}
               </div>
+              {typingParticipants.length > 0 && (
+                <div className="flex min-h-8 items-center gap-2 border-t border-zinc-100 bg-white px-4 text-xs font-medium text-zinc-500" role="status" aria-live="polite">
+                  <span className="flex gap-1" aria-hidden="true"><i className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" /><i className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary [animation-delay:150ms]" /><i className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary [animation-delay:300ms]" /></span>
+                  {typingParticipants.length === 1 ? `${typingParticipants[0].displayName} está escribiendo…` : `${typingParticipants.length} personas están escribiendo…`}
+                </div>
+              )}
               <Composer
                 channel={selectedChannel}
                 composer={composer}
@@ -817,7 +1009,7 @@ export default function Messages() {
                 composerRef={composerRef}
                 fileInputRef={fileInputRef}
                 onSubmit={handleComposerSubmit}
-                onChange={setComposer}
+                onChange={notifyTyping}
                 onFileChange={handleFileChange}
                 onRemoveFile={(index) => setPendingFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))}
                 onCancelEdit={() => {
@@ -943,11 +1135,15 @@ function ThreadHeader({
   channel,
   canModerate,
   locale,
+  onlineCount,
+  typingNames,
   onBack,
 }: {
   channel: MessageChannel;
   canModerate: boolean;
   locale: "en" | "es";
+  onlineCount: number;
+  typingNames: string[];
   onBack: () => void;
 }) {
   const Icon = channelIcon(channel.type);
@@ -979,8 +1175,12 @@ function ThreadHeader({
           <h2 className="mt-1 truncate text-lg font-bold text-zinc-950">{channel.name}</h2>
           <p className="mt-0.5 line-clamp-2 text-sm text-muted-foreground">{channel.description || getChannelPreview(channel)}</p>
           <p className="mt-1 flex items-center gap-1.5 text-xs font-medium text-zinc-500">
-            <CheckCheck className="h-3.5 w-3.5" />
-            {channel.messageCount} messages · {formatLastActivity(channel.lastMessageAt, new Date(), locale)}
+            <span className={`h-2 w-2 rounded-full ${onlineCount > 0 ? "bg-emerald-500" : "bg-zinc-300"}`} />
+            {typingNames.length > 0
+              ? `${typingNames[0]} está escribiendo…`
+              : onlineCount > 0
+                ? `${onlineCount} en línea`
+                : `${channel.messageCount} mensajes · ${formatLastActivity(channel.lastMessageAt, new Date(), locale)}`}
           </p>
         </div>
       </div>
@@ -1111,6 +1311,7 @@ function MessageBubble({
   onEdit,
   onDelete,
   onReact,
+  onRetry,
 }: {
   message: MessageRecord;
   locale: "en" | "es";
@@ -1118,6 +1319,7 @@ function MessageBubble({
   onEdit: (message: MessageRecord) => void;
   onDelete: (message: MessageRecord) => void;
   onReact: (message: MessageRecord, emoji: string) => void;
+  onRetry: (message: MessageRecord) => void;
 }) {
   const mine = message.isMine;
   const deleted = Boolean(message.deletedAt);
@@ -1142,6 +1344,8 @@ function MessageBubble({
           <span className="truncate text-xs font-bold text-zinc-700">{message.authorName}</span>
           <span className="shrink-0 text-[11px] font-medium text-zinc-500">{formatMessageTime(message.createdAt, locale)}</span>
           {isMessageEdited(message) && <span className="text-[11px] font-medium text-zinc-400">Edited</span>}
+          {mine && message.deliveryStatus === "sending" && <span className="text-[11px] font-medium text-zinc-400">Enviando…</span>}
+          {mine && message.deliveryStatus === "sent" && <CheckCheck className="h-3.5 w-3.5 text-primary/70" aria-label="Enviado" />}
         </div>
         <div className={`flex items-start gap-1.5 ${mine ? "flex-row-reverse" : ""}`}>
           <div
@@ -1236,6 +1440,15 @@ function MessageBubble({
               )}
             </div>
           </div>
+        )}
+        {message.deliveryStatus === "failed" && (
+          <button
+            type="button"
+            onClick={() => onRetry(message)}
+            className={`mt-1 min-h-11 rounded-lg px-2 text-xs font-semibold text-rose-700 underline-offset-2 hover:underline ${mine ? "ml-auto" : "mr-auto"}`}
+          >
+            No se envió · Reintentar
+          </button>
         )}
       </div>
     </div>

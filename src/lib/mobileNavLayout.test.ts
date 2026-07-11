@@ -45,7 +45,7 @@ describe("mobile nav layout", () => {
     expect(MOBILE_NAV_CONTENT_CLEARANCE_CSS).toContain("--tchurch-mobile-nav-height");
   });
 
-  it("keeps AppLayout nav geometry independent from viewport scroll changes", () => {
+  it("keeps AppLayout nav geometry stable while adapting to the native keyboard viewport", () => {
     const source = readFileSync(`${process.cwd()}/src/layouts/AppLayout.tsx`, "utf8");
 
     expect(source).toContain("mobileNavGeometryStyle");
@@ -54,11 +54,15 @@ describe("mobile nav layout", () => {
     expect(source).toContain('data-testid={showShortcutBar ? "mobile-content-scrollport" : undefined}');
     expect(source).toContain('data-testid="mobile-bottom-nav"');
     expect(source).toContain("scrollPaddingBottom");
-    expect(source).toContain("paddingBottom: showShortcutBar ? MOBILE_CONTENT_CLEARANCE : undefined");
+    expect(source).toContain("MOBILE_CONTENT_WITH_CHAT_CLEARANCE");
+    expect(source).toContain("keyboardOpen ? 0");
+    expect(source).toContain("isMessagesRoute ? MOBILE_CONTENT_CLEARANCE : MOBILE_CONTENT_WITH_CHAT_CLEARANCE");
     expect(source).toContain("var(--app-safe-area-bottom, var(--tchurch-mobile-safe-bottom, 22px))");
     expect(source).toContain("h-[3.75rem]");
-    expect(source).not.toContain("visualViewport");
-    expect(source).not.toContain('addEventListener("scroll"');
+    expect(source).toContain("window.visualViewport");
+    expect(source).toContain('viewport.addEventListener("resize", update)');
+    expect(source).toContain("showShortcutBar && !keyboardOpen");
+    expect(source).toContain("<ChatDock keyboardOpen={keyboardOpen} hasBottomNav={showShortcutBar} />");
 
     const sidebarCloseIndex = source.indexOf("</SidebarInset>");
     const navIndex = source.indexOf('data-testid="mobile-bottom-nav"');

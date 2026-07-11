@@ -15,6 +15,8 @@ export type MessageReaction = {
   reactedByMe: boolean;
 };
 
+export type MessageDeliveryStatus = "sending" | "sent" | "failed";
+
 export type MessageRecord = {
   id: string;
   channelId: string | null;
@@ -33,7 +35,34 @@ export type MessageRecord = {
   canDelete: boolean;
   attachments: MessageAttachment[];
   reactions: MessageReaction[];
+  clientId: string | null;
+  deliveryStatus: MessageDeliveryStatus;
 };
+
+export type TypingParticipant = {
+  userId: string;
+  displayName: string;
+  imageUrl: string | null;
+  expiresAt: string | null;
+};
+
+export type PresenceParticipant = {
+  userId: string;
+  displayName: string;
+  imageUrl: string | null;
+  status: "online" | "offline";
+  lastSeenAt: string | null;
+};
+
+export type MessagesRealtimeFrame =
+  | { kind: "ready" }
+  | { kind: "subscribed" }
+  | { kind: "pong" }
+  | { kind: "message-event"; channelId: string; eventType: string; messageId: string | null; actorUserId: string | null }
+  | { kind: "typing"; channelId: string; participant: TypingParticipant; isTyping: boolean }
+  | { kind: "presence-snapshot"; participants: PresenceParticipant[] }
+  | { kind: "presence-updated"; participant: PresenceParticipant }
+  | { kind: "unknown" };
 
 export type MessageChannel = {
   id: string;
@@ -213,7 +242,95 @@ export function normalizeMessage(value: unknown): MessageRecord {
     canDelete: asBoolean(raw.canDelete, isMine && !isDeleted),
     attachments: Array.isArray(raw.attachments) ? raw.attachments.map(normalizeAttachment) : [],
     reactions: normalizeReactions(raw.reactions),
+    clientId: asNullableString(raw.clientId),
+    deliveryStatus:
+      raw.deliveryStatus === "sending" || raw.deliveryStatus === "failed"
+        ? raw.deliveryStatus
+        : "sent",
   };
+}
+
+function normalizePresenceParticipant(value: unknown): PresenceParticipant | null {
+  const raw = asRecord(value);
+  const userId = asString(raw.userId);
+  if (!userId) return null;
+  return {
+    userId,
+    displayName: asString(raw.displayName, "Member"),
+    imageUrl: asNullableString(raw.imageUrl),
+    status: raw.status === "offline" ? "offline" : "online",
+    lastSeenAt: asNullableString(raw.lastSeenAt),
+  };
+}
+
+export function parseMessagesRealtimeFrame(value: unknown): MessagesRealtimeFrame {
+  const raw = typeof value === "string"
+    ? (() => {
+        try {
+          return asRecord(JSON.parse(value));
+        } catch {
+          return {};
+        }
+      })()
+    : asRecord(value);
+  const type = asString(raw.type);
+
+  if (type === "ready") return { kind: "ready" };
+  if (type === "subscribed") return { kind: "subscribed" };
+  if (type === "pong") return { kind: "pong" };
+
+  if (type === "message.event") {
+    const event = asRecord(raw.event);
+    const channelId = asString(event.channelId);
+    if (!channelId) return { kind: "unknown" };
+    return {
+      kind: "message-event",
+      channelId,
+      eventType: asString(event.type),
+      messageId: asNullableString(event.messageId),
+      actorUserId: asNullableString(event.actorUserId),
+    };
+  }
+
+  if (type === "typing.updated") {
+    const channelId = asString(raw.channelId);
+    const userId = asString(raw.userId);
+    if (!channelId || !userId) return { kind: "unknown" };
+    return {
+      kind: "typing",
+      channelId,
+      isTyping: asBoolean(raw.isTyping),
+      participant: {
+        userId,
+        displayName: asString(raw.displayName, "Member"),
+        imageUrl: asNullableString(raw.imageUrl),
+        expiresAt: asNullableString(raw.expiresAt),
+      },
+    };
+  }
+
+  if (type === "presence.snapshot") {
+    const users = Array.isArray(raw.users) ? raw.users : [];
+    return {
+      kind: "presence-snapshot",
+      participants: users.map(normalizePresenceParticipant).filter((item): item is PresenceParticipant => Boolean(item)),
+    };
+  }
+
+  if (type === "presence.updated") {
+    const participant = normalizePresenceParticipant(raw.user || raw);
+    return participant ? { kind: "presence-updated", participant } : { kind: "unknown" };
+  }
+
+  return { kind: "unknown" };
+}
+
+export function shouldStickToMessageBottom(options: {
+  distanceFromBottom: number;
+  isInitialLoad?: boolean;
+  outgoing?: boolean;
+}) {
+  return Boolean(options.isInitialLoad || options.outgoing || options.distanceFromBottom <= 96);
 }
 
 export function normalizeMessages(value: unknown): MessageRecord[] {
@@ -334,6 +451,8 @@ export function buildMessagesRealtimeUrl(
     const url = new URL(explicitUrl, apiBase.replace(/\/api\/?$/, "/"));
     if (url.protocol === "http:") url.protocol = "ws:";
     if (url.protocol === "https:") url.protocol = "wss:";
+    const token = asString(tokenResponse.token);
+    if (token && !url.searchParams.has("token")) url.searchParams.set("token", token);
     if (channelId && !url.searchParams.has("channelId")) {
       url.searchParams.set("channelId", channelId);
     }
