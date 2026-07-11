@@ -32,6 +32,14 @@ This repo includes a daily App Store Connect agent that looks for the latest val
 - `ASC_TARGET_MARKETING_VERSION`: Optional App Store version filter. The 4.0 workflow sets this to `4.0` so older build trains are not promoted by accident.
 - `ASC_TARGET_BUILD_NUMBER`: Optional build-number filter. The 4.0 workflow pins this to `400` so later CI-only builds cannot replace the build that was submitted to review.
 
+For a manual dispatch, if the workflow's marketing-version pin is stale, the
+agent fails over to the newest valid build for the version in `package.json`.
+This is intentional because Xcode Cloud owns the uploaded build counter. A
+scheduled run with a stale marketing-version pin fails closed instead of
+promoting a different release. When `ASC_SUBMIT_FOR_REVIEW=false`, the agent
+does not create, attach, replace, or submit an App Store version; TestFlight
+beta review remains independently controlled by `ASC_BETA_REVIEW`.
+
 ## Manual commands
 
 Dry run:

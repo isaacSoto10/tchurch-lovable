@@ -61,6 +61,17 @@ function required(name) {
   return value;
 }
 
+function packageMarketingVersion() {
+  try {
+    const packageJson = JSON.parse(
+      readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+    );
+    return typeof packageJson.version === "string" ? packageJson.version.trim() : "";
+  } catch {
+    return "";
+  }
+}
+
 function loadPrivateKey() {
   const inline = env("ASC_PRIVATE_KEY");
   const path = env("ASC_PRIVATE_KEY_PATH");
@@ -125,6 +136,19 @@ async function createJwt({ keyId, issuerId, privateKey }) {
   return `${encoded}.${base64url(signature)}`;
 }
 
+const configuredTargetMarketingVersion = env(
+  "ASC_TARGET_MARKETING_VERSION",
+  "",
+).trim();
+const configuredTargetBuildNumber = env("ASC_TARGET_BUILD_NUMBER", "").trim();
+const repositoryMarketingVersion = packageMarketingVersion();
+const githubEventName = env("GITHUB_EVENT_NAME", "").trim();
+const manualTargetIsStale =
+  githubEventName === "workflow_dispatch" &&
+  repositoryMarketingVersion &&
+  configuredTargetMarketingVersion &&
+  configuredTargetMarketingVersion !== repositoryMarketingVersion;
+
 const config = {
   appId: required("ASC_APP_ID"),
   keyId: required("ASC_KEY_ID"),
@@ -137,8 +161,13 @@ const config = {
   submitForReview: bool("ASC_SUBMIT_FOR_REVIEW", true),
   betaReview: bool("ASC_BETA_REVIEW", true),
   expireSupersededBetaBuild: bool("ASC_EXPIRE_SUPERSEDED_BETA_BUILD", true),
-  targetMarketingVersion: env("ASC_TARGET_MARKETING_VERSION", "").trim(),
-  targetBuildNumber: env("ASC_TARGET_BUILD_NUMBER", "").trim(),
+  targetMarketingVersion: manualTargetIsStale
+    ? repositoryMarketingVersion
+    : configuredTargetMarketingVersion,
+  // Xcode Cloud owns the uploaded build number. When a manually dispatched
+  // workflow is pinned to an older release train, select the newest valid
+  // build from the current package version instead of guessing that counter.
+  targetBuildNumber: manualTargetIsStale ? "" : configuredTargetBuildNumber,
   force: bool("ASC_FORCE", false),
 };
 
@@ -563,6 +592,23 @@ function log(message) {
 }
 
 async function main() {
+  if (
+    githubEventName === "schedule" &&
+    repositoryMarketingVersion &&
+    configuredTargetMarketingVersion &&
+    configuredTargetMarketingVersion !== repositoryMarketingVersion
+  ) {
+    throw new Error(
+      `Refusing scheduled deployment because workflow target ${configuredTargetMarketingVersion} does not match package version ${repositoryMarketingVersion}.`,
+    );
+  }
+
+  if (manualTargetIsStale) {
+    log(
+      `Manual safety override: stale workflow target ${configuredTargetMarketingVersion} (${configuredTargetBuildNumber || "latest"}) replaced with latest valid ${repositoryMarketingVersion} build.`,
+    );
+  }
+
   log(
     `Starting. dryRun=${config.dryRun}; platform=${config.platform}; app=${config.appId}; targetVersion=${config.targetMarketingVersion || "latest"}; targetBuild=${config.targetBuildNumber || "latest"}.`,
   );
@@ -581,7 +627,14 @@ async function main() {
     `Latest valid build: ${latestBuild.marketingVersion} (${latestBuild.buildNumber}), uploaded ${latestBuild.uploadedDate}.`,
   );
 
-  const appStoreResult = await ensureAppStoreDeployment(latestBuild);
+  let appStoreResult = { state: "skipped", versionId: null };
+  if (config.submitForReview) {
+    appStoreResult = await ensureAppStoreDeployment(latestBuild);
+  } else {
+    log(
+      "ASC_SUBMIT_FOR_REVIEW=false; skipping App Store version changes and public review submission.",
+    );
+  }
   await submitBetaReview(latestBuild);
 
   log(
