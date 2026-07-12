@@ -14,13 +14,22 @@ import {
   getPresentationApiErrorCode,
   getPresentationClientId,
   getPresentationConflictSnapshot,
+  loadLatestPresentationPackageForIdentity,
+  loadPresentationOfflineState,
+  loadPresentationPackage,
   normalizePresentationLiveSnapshot,
   normalizePresentationPackage,
+  presentationPackageMatchesLiveViewer,
   presentationPackageCacheKey,
   presentationRoleFingerprint,
+  presentationSessionPath,
+  presentationWorkspaceMatchesLiveViewer,
   projectPresentationTiming,
+  purgePresentationCacheForViewerDowngrade,
   queueOfflinePresentationCommand,
   resolvePresentationCursorIndex,
+  savePresentationPackage,
+  savePresentationOfflineState,
   isPresentationAuthorizationError,
   verifyPresentationPackageIntegrity,
   type CachedPresentationPackage,
@@ -38,6 +47,7 @@ function snapshotRaw(view: "operator" | "stage" | "remote" | "audience" = "stage
     schemaVersion: 2,
     serviceId: "service-1",
     serviceVersion: "svc-v2",
+    viewerVersion: "sha256:viewer-operator",
     serverNow,
     viewer: view === "audience" ? {
       view,
@@ -64,7 +74,7 @@ function snapshotRaw(view: "operator" | "stage" | "remote" | "audience" = "stage
         clientId: "client-1",
         displayName: "Booth iPad",
         leaseExpiresAt: "2026-07-11T18:30:30.000Z",
-        ownedByViewer: false,
+        ownedByViewer: true,
       },
       presence: [{
         clientId: "remote-1",
@@ -78,6 +88,7 @@ function snapshotRaw(view: "operator" | "stage" | "remote" | "audience" = "stage
         itemIndex: 0,
         stepId: "step-1",
         stepIndex: 0,
+        partIndex: 0,
         sectionAnchorId: "section-1",
       },
       display: { blackout: false, chordsVisible: true },
@@ -215,6 +226,17 @@ describe("Tchurch Live Stage 2 contract", () => {
     expect(PRESENTATION_POLL_MS).toBeLessThanOrEqual(1_250);
   });
 
+  it("round-trips viewerVersion on quiet polls while omitting it for a legacy snapshot", () => {
+    const versioned = presentationSessionPath("service-1", "stage", "client-1", 14, "sha256:viewer-stage");
+    expect(versioned).toContain("sinceRevision=14");
+    expect(versioned).toContain("viewerVersion=sha256%3Aviewer-stage");
+    expect(presentationSessionPath("service-1", "stage", "client-1", 14, "")).not.toContain("viewerVersion");
+
+    const legacy = snapshotRaw("stage");
+    delete (legacy as { viewerVersion?: string }).viewerVersion;
+    expect(normalizePresentationLiveSnapshot(legacy, "stage", "client-1").viewerVersion).toBe("");
+  });
+
   it("treats the server viewer as authoritative and removes audience-only secrets", () => {
     const normalized = normalizePresentationLiveSnapshot(snapshotRaw("audience"), "operator", "client-1");
 
@@ -229,6 +251,15 @@ describe("Tchurch Live Stage 2 contract", () => {
     expect(normalized.session?.controller).toBeNull();
     expect(normalized.session?.messages).toEqual([]);
     expect(normalized.session).not.toHaveProperty("presence");
+  });
+
+  it("never infers controller ownership from a matching installation client ID", () => {
+    const raw = snapshotRaw("operator");
+    raw.session.controller.ownedByViewer = false;
+    raw.session.controller.clientId = "client-1";
+
+    const normalized = normalizePresentationLiveSnapshot(raw, "operator", "client-1");
+    expect(normalized.session?.controller).toMatchObject({ clientId: "client-1", ownedByViewer: false });
   });
 
   it("defensively removes expired and wrong-role stage messages", () => {
@@ -259,6 +290,17 @@ describe("Tchurch Live Stage 2 contract", () => {
     raw.session.timing.service.projectedEndAt = "2026-07-11T19:07:30.000Z";
     const snapshot = normalizePresentationLiveSnapshot(raw, "operator", "client-1", Date.parse(serverNow));
     expect(projectPresentationTiming(snapshot, Date.parse(serverNow) + 15_000)?.service.projectedEndAt).toBe("2026-07-11T19:07:30.000Z");
+  });
+
+  it("moves projected end only by new current-item overrun since the snapshot", () => {
+    const raw = snapshotRaw("operator");
+    raw.session.timing.item.startedAt = "2026-07-11T18:24:00.000Z";
+    raw.session.timing.item.elapsedSeconds = 360;
+    raw.session.timing.item.overrunSeconds = 60;
+    raw.session.timing.service.projectedEndAt = "2026-07-11T19:07:30.000Z";
+    const snapshot = normalizePresentationLiveSnapshot(raw, "operator", "client-1", Date.parse(serverNow));
+
+    expect(projectPresentationTiming(snapshot, Date.parse(serverNow) + 15_000)?.service.projectedEndAt).toBe("2026-07-11T19:07:45.000Z");
   });
 
   it("does not advance paused clocks", () => {
@@ -353,6 +395,163 @@ describe("Tchurch Live Stage 2 contract", () => {
     expect(localStorage.getItem("tchurch_live_packages_v1")).toBeNull();
   });
 
+  it("rejects a cryptographically valid package when cached metadata and signed scope disagree", async () => {
+    const source = cachedPackage().package;
+    const digest = await computePresentationPackageDigest(source);
+    expect(digest).toBeTruthy();
+    if (!digest) return;
+    const valid = { ...source, packageId: digest, checksum: digest };
+    await savePresentationPackage({
+      accountId: "account-1",
+      churchId: "church-1",
+      serviceId: "service-1",
+      view: "operator",
+      roles: ["operator"],
+    }, valid);
+
+    const crossScopeSource = {
+      ...source,
+      scope: { ...source.scope, churchId: "church-2" },
+    };
+    const crossScopeDigest = await computePresentationPackageDigest(crossScopeSource);
+    expect(crossScopeDigest).toBeTruthy();
+    if (!crossScopeDigest) return;
+    const records = JSON.parse(localStorage.getItem("tchurch_live_packages_v1") || "[]");
+    records[0].rawPackage = {
+      ...crossScopeSource,
+      packageId: crossScopeDigest,
+      checksum: crossScopeDigest,
+    };
+    localStorage.setItem("tchurch_live_packages_v1", JSON.stringify(records));
+
+    expect(await loadLatestPresentationPackageForIdentity(
+      "account-1",
+      "church-1",
+      "service-1",
+      ["operator"],
+      "operator",
+    )).toBeNull();
+  });
+
+  it("uses a trusted expected role fingerprint when restoring an offline package", async () => {
+    const source = cachedPackage().package;
+    const digest = await computePresentationPackageDigest(source);
+    expect(digest).toBeTruthy();
+    if (!digest) return;
+    await savePresentationPackage({
+      accountId: "account-1",
+      churchId: "church-1",
+      serviceId: "service-1",
+      view: "operator",
+      roles: ["operator"],
+    }, { ...source, packageId: digest, checksum: digest });
+
+    expect(await loadLatestPresentationPackageForIdentity(
+      "account-1",
+      "church-1",
+      "service-1",
+      ["operator"],
+      "worship_leader",
+    )).toBeNull();
+    expect(await loadLatestPresentationPackageForIdentity(
+      "account-1",
+      "church-1",
+      "service-1",
+      ["operator"],
+      "operator",
+    )).not.toBeNull();
+  });
+
+  it("purges editor caches and offline drafts before saving an assigned-view downgrade", async () => {
+    const editorSource = cachedPackage().package;
+    const editorDigest = await computePresentationPackageDigest(editorSource);
+    expect(editorDigest).toBeTruthy();
+    if (!editorDigest) return;
+    const editorCached = await savePresentationPackage({
+      accountId: "account-1",
+      churchId: "church-1",
+      serviceId: "service-1",
+      view: "operator",
+      roles: ["operator"],
+    }, { ...editorSource, packageId: editorDigest, checksum: editorDigest });
+    await savePresentationOfflineState(createPresentationOfflineState(editorCached, liveSnapshot("operator")));
+
+    const assignedRoles = ["stage", "worship_leader"] as const;
+    await purgePresentationCacheForViewerDowngrade({
+      accountId: "account-1",
+      churchId: "church-1",
+      serviceId: "service-1",
+      view: "remote",
+      roles: [...assignedRoles],
+    });
+    expect(await loadPresentationPackage({
+      accountId: "account-1",
+      churchId: "church-1",
+      serviceId: "service-1",
+      view: "operator",
+      roles: ["operator"],
+    })).toBeNull();
+    expect(await loadPresentationOfflineState(editorCached.key)).toBeNull();
+
+    const assignedSource = {
+      ...editorSource,
+      scope: {
+        ...editorSource.scope,
+        view: "remote" as const,
+        roleFingerprint: presentationRoleFingerprint([...assignedRoles]),
+      },
+      presentation: {
+        ...editorSource.presentation,
+        viewer: {
+          ...editorSource.presentation.viewer,
+          view: "stage" as const,
+          churchRole: "MUSICIAN",
+          roles: [...assignedRoles],
+          canEdit: false,
+        },
+      },
+    };
+    const assignedDigest = await computePresentationPackageDigest(assignedSource);
+    expect(assignedDigest).toBeTruthy();
+    if (!assignedDigest) return;
+    await savePresentationPackage({
+      accountId: "account-1",
+      churchId: "church-1",
+      serviceId: "service-1",
+      view: "remote",
+      roles: [...assignedRoles],
+    }, { ...assignedSource, packageId: assignedDigest, checksum: assignedDigest });
+    expect(await loadLatestPresentationPackageForIdentity(
+      "account-1",
+      "church-1",
+      "service-1",
+      ["operator", "remote", "stage"],
+      presentationRoleFingerprint([...assignedRoles]),
+    )).toMatchObject({ view: "remote", roleFingerprint: "stage,worship_leader" });
+  });
+
+  it("fails closed on a role change even when the session revision is unchanged", () => {
+    const previous = liveSnapshot("operator");
+    const changedRaw = snapshotRaw("remote");
+    changedRaw.session.revision = previous.session!.revision;
+    changedRaw.viewerVersion = "sha256:viewer-assigned";
+    changedRaw.viewer.roles = ["stage", "worship_leader"];
+    changedRaw.viewer.canEdit = false;
+    changedRaw.viewer.canStart = false;
+    changedRaw.viewer.canForceTakeover = false;
+    const changed = normalizePresentationLiveSnapshot(changedRaw, "remote", "client-1");
+    const editorWorkspace = cachedPackage().package.presentation;
+
+    expect(changed.session?.revision).toBe(previous.session?.revision);
+    expect(changed.viewerVersion).not.toBe(previous.viewerVersion);
+    expect(presentationWorkspaceMatchesLiveViewer(editorWorkspace, changed.viewer)).toBe(false);
+    expect(presentationPackageMatchesLiveViewer(cachedPackage().package, changed.viewer, {
+      accountId: "account-1",
+      churchId: "church-1",
+      serviceId: "service-1",
+    })).toBe(false);
+  });
+
   it("continues navigation, display, timers and countdown locally without claiming cloud sync", () => {
     const snapshot = liveSnapshot("operator");
     const next = applyOfflinePresentationCommand(snapshot, {
@@ -384,7 +583,7 @@ describe("Tchurch Live Stage 2 contract", () => {
       payload: { itemId: "item-2", stepId: null },
     }, offlineContext, Date.parse(serverNow) + 2_000);
 
-    expect(jumped.session?.cursor).toMatchObject({ itemId: "item-2", stepId: null, stepIndex: 2, partIndex: 0 });
+    expect(jumped.session?.cursor).toMatchObject({ itemId: "item-2", stepId: null, stepIndex: 0, partIndex: 0 });
     expect(jumped.session?.timing.item).toMatchObject({ itemId: "item-2", plannedSeconds: 180, elapsedSeconds: 0 });
   });
 
@@ -464,5 +663,42 @@ describe("Tchurch Live Stage 2 contract", () => {
     expect(resolvePresentationCursorIndex({ itemId: "item-1", itemIndex: 0, stepId: "verse-1", stepIndex: 0, partIndex: 1, sectionAnchorId: "verse" }, steps)).toBe(1);
     expect(resolvePresentationCursorIndex({ itemId: "item-1", itemIndex: 0, stepId: "verse-1", stepIndex: 0, partIndex: 99, sectionAnchorId: "verse" }, steps)).toBe(1);
     expect(resolvePresentationCursorIndex({ itemId: "item-2", itemIndex: 1, stepId: "missing", stepIndex: 0, partIndex: 0, sectionAnchorId: "chorus" }, steps)).toBe(2);
+  });
+
+  it("uses the exact rendered part as the offline next/previous origin", () => {
+    const context: PresentationOfflineContext = {
+      steps: [
+        { itemId: "item-1", stepId: "verse-1", partIndex: 0, sectionAnchorId: "verse" },
+        { itemId: "item-1", stepId: "verse-1", partIndex: 1, sectionAnchorId: "verse" },
+        { itemId: "item-1", stepId: "chorus-1", partIndex: 0, sectionAnchorId: "chorus" },
+        { itemId: "item-2", stepId: null, partIndex: 0, sectionAnchorId: null },
+      ],
+      plannedTiming: offlineContext.plannedTiming,
+    };
+    const raw = snapshotRaw("operator");
+    raw.session.cursor = {
+      itemId: "item-1",
+      itemIndex: 0,
+      stepId: "verse-1",
+      stepIndex: 0,
+      partIndex: 1,
+      sectionAnchorId: "verse",
+    };
+    const snapshot = normalizePresentationLiveSnapshot(raw, "operator", "client-1", Date.parse(serverNow));
+    const next = applyOfflinePresentationCommand(snapshot, { commandId: "next-part", type: "next", payload: {} }, context);
+    expect(next.session?.cursor).toMatchObject({ itemId: "item-1", stepId: "chorus-1", stepIndex: 1, partIndex: 0 });
+
+    const cueRaw = snapshotRaw("operator");
+    cueRaw.session.cursor = {
+      itemId: "item-2",
+      itemIndex: 1,
+      stepId: null,
+      stepIndex: 0,
+      partIndex: 0,
+      sectionAnchorId: null,
+    };
+    const cue = normalizePresentationLiveSnapshot(cueRaw, "operator", "client-1", Date.parse(serverNow));
+    const previous = applyOfflinePresentationCommand(cue, { commandId: "previous-part", type: "previous", payload: {} }, context);
+    expect(previous.session?.cursor).toMatchObject({ itemId: "item-1", stepId: "chorus-1", stepIndex: 1, partIndex: 0 });
   });
 });

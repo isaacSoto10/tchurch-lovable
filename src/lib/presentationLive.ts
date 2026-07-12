@@ -138,6 +138,8 @@ export type PresentationLiveSnapshot = {
   schemaVersion: 2;
   serviceId: string;
   serviceVersion: string;
+  /** Opaque authorization/view fingerprint. Empty only while rolling against a legacy backend. */
+  viewerVersion: string;
   serverNow: string;
   viewer: PresentationLiveViewer;
   session: PresentationSession | null;
@@ -456,7 +458,7 @@ function normalizeTiming(value: unknown): PresentationTiming {
   };
 }
 
-function normalizeController(value: unknown, clientId?: string): PresentationController | null {
+function normalizeController(value: unknown): PresentationController | null {
   const raw = recordValue(value);
   const controllerClientId = nullableString(raw?.clientId);
   const leaseExpiresAt = isoValue(raw?.leaseExpiresAt);
@@ -465,7 +467,7 @@ function normalizeController(value: unknown, clientId?: string): PresentationCon
     clientId: controllerClientId,
     displayName: stringValue(raw.displayName, "Otro dispositivo"),
     leaseExpiresAt,
-    ownedByViewer: raw.ownedByViewer === true || Boolean(clientId && controllerClientId === clientId),
+    ownedByViewer: raw.ownedByViewer === true,
   };
 }
 
@@ -553,7 +555,7 @@ export function normalizePresentationLiveSnapshot(
       revision: integer(sessionRaw.revision),
       startedAt: isoValue(sessionRaw.startedAt, serverNow)!,
       endedAt: isoValue(sessionRaw.endedAt),
-      controller: normalizeController(sessionRaw.controller, clientId),
+      controller: normalizeController(sessionRaw.controller),
       ...(view === "operator" || view === "remote" ? { presence: normalizePresence(sessionRaw.presence) } : {}),
       cursor: normalizeCursor(sessionRaw.cursor),
       display: normalizeDisplay(sessionRaw.display),
@@ -577,6 +579,7 @@ export function normalizePresentationLiveSnapshot(
     schemaVersion: PRESENTATION_LIVE_SCHEMA_VERSION,
     serviceId: stringValue(raw.serviceId),
     serviceVersion: stringValue(raw.serviceVersion),
+    viewerVersion: stringValue(raw.viewerVersion),
     serverNow,
     viewer,
     session,
@@ -603,6 +606,22 @@ export function projectPresentationTiming(snapshot: PresentationLiveSnapshot | n
   const serviceElapsed = projectedElapsed(timing.service, projectedServerNow);
   const itemElapsed = projectedElapsed(timing.item, projectedServerNow);
   const serviceRemaining = Math.max(0, timing.service.plannedSeconds - serviceElapsed);
+  const itemOverrun = Math.max(0, itemElapsed - timing.item.plannedSeconds);
+  const itemElapsedAtReceipt = projectedElapsed(
+    timing.item,
+    Number.isFinite(serverNowAtReceipt) ? serverNowAtReceipt : projectedServerNow,
+  );
+  const itemOverrunAtReceipt = Math.max(
+    timing.item.overrunSeconds,
+    itemElapsedAtReceipt - timing.item.plannedSeconds,
+  );
+  const incrementalItemOverrun = Math.max(0, itemOverrun - itemOverrunAtReceipt);
+  const baseProjectedEndMs = timing.service.projectedEndAt
+    ? Date.parse(timing.service.projectedEndAt)
+    : Number.NaN;
+  const projectedEndAt = Number.isFinite(baseProjectedEndMs)
+    ? new Date(baseProjectedEndMs + incrementalItemOverrun * 1_000).toISOString()
+    : timing.service.projectedEndAt;
   const countdownRemaining = timing.countdown
     ? Math.max(0, (Date.parse(timing.countdown.targetAt) - projectedServerNow) / 1_000)
     : 0;
@@ -613,12 +632,12 @@ export function projectPresentationTiming(snapshot: PresentationLiveSnapshot | n
       elapsedSeconds: serviceElapsed,
       remainingSeconds: serviceRemaining,
       overrunSeconds: Math.max(0, serviceElapsed - timing.service.plannedSeconds),
-      projectedEndAt: timing.service.projectedEndAt,
+      projectedEndAt,
     },
     item: {
       ...timing.item,
       elapsedSeconds: itemElapsed,
-      overrunSeconds: Math.max(0, itemElapsed - timing.item.plannedSeconds),
+      overrunSeconds: itemOverrun,
     },
     countdown: timing.countdown ? {
       ...timing.countdown,
@@ -670,9 +689,11 @@ export function presentationSessionPath(
   view: PresentationLiveView,
   clientId: string,
   sinceRevision?: number,
+  viewerVersion?: string,
 ) {
   const query = new URLSearchParams({ view, clientId });
   if (typeof sinceRevision === "number") query.set("sinceRevision", String(Math.max(0, Math.floor(sinceRevision))));
+  if (viewerVersion?.trim()) query.set("viewerVersion", viewerVersion.trim());
   return `/services/${encodeURIComponent(serviceId)}/presentation-session?${query.toString()}`;
 }
 
@@ -681,8 +702,9 @@ export async function fetchPresentationLiveSnapshot(
   view: PresentationLiveView,
   clientId: string,
   sinceRevision?: number,
+  viewerVersion?: string,
 ) {
-  const raw = await apiFetch<unknown>(presentationSessionPath(serviceId, view, clientId, sinceRevision), { cache: "no-store" });
+  const raw = await apiFetch<unknown>(presentationSessionPath(serviceId, view, clientId, sinceRevision, viewerVersion), { cache: "no-store" });
   return raw === undefined ? null : normalizePresentationLiveSnapshot(raw, view, clientId);
 }
 
@@ -936,7 +958,7 @@ function moveOfflineCursor(
   context: PresentationOfflineContext,
 ) {
   if (!context.steps.length) return cursor;
-  let nextIndex = Math.max(0, Math.min(cursor.stepIndex, context.steps.length - 1));
+  let nextIndex = resolvePresentationCursorIndex(cursor, context.steps);
   if (type === "next") nextIndex = Math.min(context.steps.length - 1, nextIndex + 1);
   if (type === "previous") nextIndex = Math.max(0, nextIndex - 1);
   if (type === "jump") {
@@ -949,11 +971,16 @@ function moveOfflineCursor(
     if (found >= 0) nextIndex = found;
   }
   const step = context.steps[nextIndex];
+  const itemStepIds = new Set<string>();
+  for (const candidate of context.steps.slice(0, nextIndex + 1)) {
+    if (candidate.itemId !== step.itemId) continue;
+    itemStepIds.add(candidate.stepId || "__cue__");
+  }
   return {
     itemId: step.itemId,
     itemIndex: new Set(context.steps.slice(0, nextIndex + 1).map((candidate) => candidate.itemId)).size - 1,
     stepId: step.stepId,
-    stepIndex: nextIndex,
+    stepIndex: Math.max(0, itemStepIds.size - 1),
     partIndex: step.partIndex,
     sectionAnchorId: step.sectionAnchorId,
   };
@@ -1087,6 +1114,29 @@ export function presentationRoleFingerprint(roles: PresentationTargetRole[]) {
   return [...new Set(roles)].sort().join(",") || "none";
 }
 
+export function presentationWorkspaceMatchesLiveViewer(
+  workspace: PresentationWorkspace | null | undefined,
+  viewer: PresentationLiveViewer | null | undefined,
+) {
+  if (!workspace || !viewer || viewer.view === "audience") return false;
+  return workspace.viewer.canEdit === viewer.canEdit
+    && presentationRoleFingerprint(workspace.viewer.roles) === presentationRoleFingerprint(viewer.roles);
+}
+
+export function presentationPackageMatchesLiveViewer(
+  presentationPackage: PresentationPackage | null | undefined,
+  viewer: PresentationLiveViewer | null | undefined,
+  scope: { accountId: string; churchId: string; serviceId: string },
+) {
+  if (!presentationPackage || !viewer || viewer.view === "audience") return false;
+  return presentationPackage.scope.accountId === scope.accountId
+    && presentationPackage.scope.churchId === scope.churchId
+    && presentationPackage.service.id === scope.serviceId
+    && presentationPackage.scope.view === viewer.view
+    && presentationPackage.scope.roleFingerprint === presentationRoleFingerprint(viewer.roles)
+    && presentationWorkspaceMatchesLiveViewer(presentationPackage.presentation, viewer);
+}
+
 export function presentationPackageCacheKey(scope: PresentationCacheScope) {
   return [scope.accountId, scope.churchId, scope.serviceId, scope.view, presentationRoleFingerprint(scope.roles)]
     .map((part) => encodeURIComponent(part))
@@ -1210,7 +1260,9 @@ async function deleteLiveRecord(storeName: string, fallbackKey: string, key: str
   }
 }
 
-export async function clearPresentationLiveCache() {
+let presentationLiveCacheReset: Promise<void> = Promise.resolve();
+
+async function clearPresentationLiveCacheStorage() {
   localStorage.removeItem(FALLBACK_PACKAGES_KEY);
   localStorage.removeItem(FALLBACK_OFFLINE_KEY);
   if (!hasIndexedDb()) return;
@@ -1226,7 +1278,46 @@ export async function clearPresentationLiveCache() {
   }
 }
 
+export function clearPresentationLiveCache() {
+  const reset = presentationLiveCacheReset
+    .catch(() => undefined)
+    .then(clearPresentationLiveCacheStorage);
+  presentationLiveCacheReset = reset.catch(() => undefined);
+  return reset;
+}
+
+export async function purgePresentationCacheForViewerDowngrade(scope: PresentationCacheScope) {
+  await activatePresentationCacheIdentity(scope.accountId, scope.churchId);
+  const expectedRoleFingerprint = presentationRoleFingerprint(scope.roles);
+  const packageRecords = await getAllLiveRecords<StoredPresentationPackage>(PACKAGE_STORE, FALLBACK_PACKAGES_KEY);
+  const offlineRecords = await getAllLiveRecords<PresentationOfflineState>(OFFLINE_STORE, FALLBACK_OFFLINE_KEY);
+  const stalePackageKeys = new Set(
+    packageRecords
+      .filter((record) =>
+        record.accountId === scope.accountId
+        && record.churchId === scope.churchId
+        && record.serviceId === scope.serviceId
+        && (record.view === "operator" || record.roleFingerprint !== expectedRoleFingerprint)
+      )
+      .map((record) => record.key),
+  );
+
+  for (const key of stalePackageKeys) {
+    await deleteLiveRecord(PACKAGE_STORE, FALLBACK_PACKAGES_KEY, key);
+  }
+  for (const record of offlineRecords) {
+    const staleScope = record.accountId === scope.accountId
+      && record.churchId === scope.churchId
+      && record.serviceId === scope.serviceId
+      && (record.view === "operator" || record.roleFingerprint !== expectedRoleFingerprint);
+    if (staleScope || stalePackageKeys.has(record.key)) {
+      await deleteLiveRecord(OFFLINE_STORE, FALLBACK_OFFLINE_KEY, record.key);
+    }
+  }
+}
+
 export async function activatePresentationCacheIdentity(accountId: string, churchId: string) {
+  await presentationLiveCacheReset;
   const identity = `${accountId}::${churchId}`;
   const previous = localStorage.getItem(ACTIVE_CACHE_IDENTITY_KEY);
   if (previous && previous !== identity) await clearPresentationLiveCache();
@@ -1279,6 +1370,10 @@ export async function savePresentationPackage(scope: PresentationCacheScope, pre
   return record;
 }
 
+export function removePresentationPackage(packageKey: string) {
+  return deleteLiveRecord(PACKAGE_STORE, FALLBACK_PACKAGES_KEY, packageKey);
+}
+
 export async function loadPresentationPackage(scope: PresentationCacheScope) {
   const key = presentationPackageCacheKey(scope);
   const records = await getAllLiveRecords<StoredPresentationPackage>(PACKAGE_STORE, FALLBACK_PACKAGES_KEY);
@@ -1286,6 +1381,22 @@ export async function loadPresentationPackage(scope: PresentationCacheScope) {
   if (!cached) return null;
   try {
     if (!await verifyPresentationPackageIntegrity(cached.rawPackage)) throw new Error("Checksum mismatch");
+    const presentationPackage = normalizePresentationPackage(cached.rawPackage, scope.view);
+    const expectedRoleFingerprint = presentationRoleFingerprint(scope.roles);
+    if (
+      cached.accountId !== presentationPackage.scope.accountId ||
+      cached.churchId !== presentationPackage.scope.churchId ||
+      cached.serviceId !== presentationPackage.service.id ||
+      cached.view !== presentationPackage.scope.view ||
+      cached.roleFingerprint !== presentationPackage.scope.roleFingerprint ||
+      presentationPackage.scope.accountId !== scope.accountId ||
+      presentationPackage.scope.churchId !== scope.churchId ||
+      presentationPackage.service.id !== scope.serviceId ||
+      presentationPackage.scope.view !== scope.view ||
+      presentationPackage.scope.roleFingerprint !== expectedRoleFingerprint
+    ) {
+      throw new Error("Scope mismatch");
+    }
     return {
       key: cached.key,
       accountId: cached.accountId,
@@ -1294,7 +1405,7 @@ export async function loadPresentationPackage(scope: PresentationCacheScope) {
       view: cached.view,
       roleFingerprint: cached.roleFingerprint,
       savedAt: cached.savedAt,
-      package: normalizePresentationPackage(cached.rawPackage, scope.view),
+      package: presentationPackage,
     };
   } catch {
     await deleteLiveRecord(PACKAGE_STORE, FALLBACK_PACKAGES_KEY, cached.key);
@@ -1307,6 +1418,7 @@ export async function loadLatestPresentationPackageForIdentity(
   churchId: string,
   serviceId: string,
   views: PresentationPrivateLiveView[],
+  expectedRoleFingerprint?: string,
 ) {
   await activatePresentationCacheIdentity(accountId, churchId);
   const allowedViews = new Set(views);
@@ -1316,12 +1428,28 @@ export async function loadLatestPresentationPackageForIdentity(
       record.accountId === accountId &&
       record.churchId === churchId &&
       record.serviceId === serviceId &&
-      allowedViews.has(record.view)
+      allowedViews.has(record.view) &&
+      (!expectedRoleFingerprint || record.roleFingerprint === expectedRoleFingerprint)
     )
     .sort((a, b) => b.savedAt.localeCompare(a.savedAt));
   for (const cached of candidates) {
     try {
       if (!await verifyPresentationPackageIntegrity(cached.rawPackage)) throw new Error("Checksum mismatch");
+      const presentationPackage = normalizePresentationPackage(cached.rawPackage, cached.view);
+      if (
+        cached.accountId !== presentationPackage.scope.accountId ||
+        cached.churchId !== presentationPackage.scope.churchId ||
+        cached.serviceId !== presentationPackage.service.id ||
+        cached.view !== presentationPackage.scope.view ||
+        cached.roleFingerprint !== presentationPackage.scope.roleFingerprint ||
+        presentationPackage.scope.accountId !== accountId ||
+        presentationPackage.scope.churchId !== churchId ||
+        presentationPackage.service.id !== serviceId ||
+        !allowedViews.has(presentationPackage.scope.view) ||
+        (expectedRoleFingerprint && presentationPackage.scope.roleFingerprint !== expectedRoleFingerprint)
+      ) {
+        throw new Error("Scope mismatch");
+      }
       return {
         key: cached.key,
         accountId: cached.accountId,
@@ -1330,7 +1458,7 @@ export async function loadLatestPresentationPackageForIdentity(
         view: cached.view,
         roleFingerprint: cached.roleFingerprint,
         savedAt: cached.savedAt,
-        package: normalizePresentationPackage(cached.rawPackage, cached.view),
+        package: presentationPackage,
       };
     } catch {
       await deleteLiveRecord(PACKAGE_STORE, FALLBACK_PACKAGES_KEY, cached.key);

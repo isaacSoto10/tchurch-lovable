@@ -127,8 +127,8 @@ export function PresentationLiveNotice({
     >
       {diverged ? <AlertTriangle className="h-4 w-4 shrink-0" /> : local ? <Unplug className="h-4 w-4 shrink-0" /> : <RefreshCw className="h-4 w-4 shrink-0" />}
       <span className="min-w-[12rem] flex-1">{notice || (diverged ? "Debes elegir entre la copia local y el estado oficial." : local ? "Modo local: todavía no está sincronizado con la nube." : "Actualizando la sesión…")}</span>
-      {local && queueCount > 0 && <Button size="sm" className="min-h-10 rounded-xl bg-amber-100 text-amber-950 hover:bg-white" onClick={() => run(onReconcile)}>Reintentar</Button>}
-      {diverged && <Button size="sm" variant="outline" className="min-h-10 rounded-xl border-red-100/30 bg-black/15 text-white hover:bg-black/25 hover:text-white" onClick={() => run(onDiscard)}>Usar servidor</Button>}
+      {local && queueCount > 0 && <Button size="sm" className="min-h-11 rounded-xl bg-amber-100 text-amber-950 hover:bg-white" onClick={() => run(onReconcile)}>Reintentar</Button>}
+      {diverged && <Button size="sm" variant="outline" className="min-h-11 rounded-xl border-red-100/30 bg-black/15 text-white hover:bg-black/25 hover:text-white" onClick={() => run(onDiscard)}>Usar servidor</Button>}
       {notice && !diverged && <button type="button" aria-label="Cerrar aviso" className="flex h-11 w-11 items-center justify-center rounded-xl hover:bg-white/10" onClick={onClose}><X className="h-4 w-4" /></button>}
     </div>
   );
@@ -155,7 +155,7 @@ export function PresentationOwnershipControls({
 
   if (!session) {
     return viewer.canStart ? (
-      <Button className={`${compact ? "h-10" : "h-12"} rounded-xl bg-emerald-500 font-black text-emerald-950 hover:bg-emerald-400`} disabled={pending} onClick={() => run(() => onCommand("start_session", {}))}>
+      <Button className={`${compact ? "h-11" : "h-12"} rounded-xl bg-emerald-500 font-black text-emerald-950 hover:bg-emerald-400`} disabled={pending} onClick={() => run(() => onCommand("start_session", {}))}>
         {pending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Radio className="h-4 w-4" />} Iniciar sesión
       </Button>
     ) : <span className="inline-flex min-h-10 items-center rounded-xl bg-white/[0.06] px-3 text-xs font-bold text-slate-400">Esperando al operador</span>;
@@ -174,7 +174,7 @@ export function PresentationOwnershipControls({
 
   if (!controller || !controllerLeaseActive) {
     return (
-      <Button className={`${compact ? "h-10" : "h-12"} rounded-xl bg-violet-500 font-black hover:bg-violet-400`} disabled={pending} onClick={() => run(() => onCommand("claim_control", {}))}>
+      <Button className={`${compact ? "h-11" : "h-12"} rounded-xl bg-violet-500 font-black hover:bg-violet-400`} disabled={pending} onClick={() => run(() => onCommand("claim_control", {}))}>
         <Hand className="h-4 w-4" /> Tomar control
       </Button>
     );
@@ -374,7 +374,7 @@ export function PresentationRemoteSurface({
 
         <aside className="space-y-4">
           {owned && <StageMessageComposer pending={pending} onCommand={onCommand} />}
-          {owned && presence.length > 0 && <div className="rounded-2xl border border-white/10 bg-black/20 p-3"><p className="text-[10px] font-black uppercase tracking-[0.17em] text-slate-500">Dispositivos presentes</p><div className="mt-2 space-y-2">{presence.map((candidate) => <div key={candidate.clientId} className="flex min-h-12 items-center gap-2 rounded-xl bg-white/[0.05] px-3"><span className={`h-2.5 w-2.5 rounded-full ${candidate.controlRequestedAt ? "bg-amber-300" : "bg-emerald-300"}`} /><span className="min-w-0 flex-1 truncate text-xs font-bold">{candidate.displayName}</span>{candidate.controlRequestedAt && <Badge className="bg-amber-300/15 text-amber-100 hover:bg-amber-300/15">Solicita</Badge>}<Button size="sm" variant="ghost" className="min-h-10 rounded-xl text-violet-100 hover:bg-violet-300/10 hover:text-white" disabled={pending} onClick={() => run(() => onCommand("handoff_control", { targetClientId: candidate.clientId }))}>Entregar</Button></div>)}</div></div>}
+          {owned && presence.length > 0 && <div className="rounded-2xl border border-white/10 bg-black/20 p-3"><p className="text-[10px] font-black uppercase tracking-[0.17em] text-slate-500">Dispositivos presentes</p><div className="mt-2 space-y-2">{presence.map((candidate) => <div key={candidate.clientId} className="flex min-h-12 items-center gap-2 rounded-xl bg-white/[0.05] px-3"><span className={`h-2.5 w-2.5 rounded-full ${candidate.controlRequestedAt ? "bg-amber-300" : "bg-emerald-300"}`} /><span className="min-w-0 flex-1 truncate text-xs font-bold">{candidate.displayName}</span>{candidate.controlRequestedAt && <Badge className="bg-amber-300/15 text-amber-100 hover:bg-amber-300/15">Solicita</Badge>}<Button size="sm" variant="ghost" className="min-h-11 rounded-xl text-violet-100 hover:bg-violet-300/10 hover:text-white" disabled={pending} onClick={() => run(() => onCommand("handoff_control", { targetClientId: candidate.clientId }))}>Entregar</Button></div>)}</div></div>}
           {session && snapshot?.viewer.canStart && <Button variant="ghost" className="h-12 w-full rounded-2xl border border-red-300/15 text-red-200 hover:bg-red-300/10 hover:text-red-100" disabled={pending || !owned} onClick={() => run(() => onCommand("end_session", {}))}>Finalizar sesión en vivo</Button>}
         </aside>
       </div>

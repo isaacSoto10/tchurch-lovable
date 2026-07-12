@@ -1,8 +1,10 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
   LiveConnectionBadge,
   PresentationLiveNotice,
+  PresentationOwnershipControls,
   PresentationRemoteSurface,
   PresentationStageMessages,
   type PresentationLiveCommandSender,
@@ -52,6 +54,7 @@ function snapshot(owned = true): PresentationLiveSnapshot {
     schemaVersion: 2,
     serviceId: "service-1",
     serviceVersion: "svc-v2",
+    viewerVersion: "sha256:viewer-operator",
     serverNow: "2026-07-11T19:00:00.000Z",
     receivedAtMs: Date.parse("2026-07-11T19:00:00.000Z"),
     viewer: { view: "operator", roles: ["operator"], canEdit: true, canStart: true, canControl: true, canForceTakeover: true },
@@ -142,7 +145,9 @@ describe("Tchurch Live controls", () => {
     expect(screen.getByText("Solicita")).toBeInTheDocument();
     expect(screen.getByText("+1:40")).toBeInTheDocument();
     expect(screen.getByText("0:08")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Entregar" }));
+    const handoff = screen.getByRole("button", { name: "Entregar" });
+    expect(handoff.className).toContain("min-h-11");
+    fireEvent.click(handoff);
     expect(onCommand).toHaveBeenCalledWith("handoff_control", { targetClientId: "pastor-phone" });
   });
 
@@ -158,8 +163,23 @@ describe("Tchurch Live controls", () => {
     const discard = vi.fn(async () => undefined);
     const { rerender } = render(<LiveConnectionBadge networkState="offline" queueCount={3} />);
     expect(screen.getByLabelText("Modo local, 3 cambios pendientes")).toHaveTextContent("Local · 3");
+    rerender(<PresentationLiveNotice notice="Cambios locales pendientes." networkState="offline" queueCount={3} onClose={() => undefined} onReconcile={reconcile} onDiscard={discard} />);
+    expect(screen.getByRole("button", { name: "Reintentar" }).className).toContain("min-h-11");
     rerender(<PresentationLiveNotice notice="La sesión cambió en otro dispositivo." networkState="diverged" queueCount={3} onClose={() => undefined} onReconcile={reconcile} onDiscard={discard} />);
-    fireEvent.click(screen.getByRole("button", { name: "Usar servidor" }));
+    const useServer = screen.getByRole("button", { name: "Usar servidor" });
+    expect(useServer.className).toContain("min-h-11");
+    fireEvent.click(useServer);
     expect(discard).toHaveBeenCalledOnce();
+  });
+
+  it("keeps compact ownership and workspace notice actions at least 44px tall", () => {
+    const idle = { ...snapshot(), session: null };
+    const onCommand = vi.fn(async () => undefined) as unknown as PresentationLiveCommandSender;
+    render(<PresentationOwnershipControls snapshot={idle} controllerLeaseActive={false} pending={false} onCommand={onCommand} compact />);
+    expect(screen.getByRole("button", { name: "Iniciar sesión" }).className).toContain("h-11");
+
+    const source = readFileSync(`${process.cwd()}/src/pages/app/ServicePresentation.tsx`, "utf8");
+    expect(source).toContain('className="min-h-11 shrink-0 rounded-xl px-3 font-black"');
+    expect(source.indexOf("if (live.error || loadError)")).toBeLessThan(source.indexOf("if (loading || live.loading || workspaceScopeMismatch)"));
   });
 });

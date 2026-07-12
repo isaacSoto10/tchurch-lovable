@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type TouchEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type TouchEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, ChevronLeft, ChevronRight, Clock3, Eye, EyeOff, ListMusic, Loader2, Minus, Music, Pencil, Plus, RotateCcw, Settings2, Sparkles, Undo2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -40,7 +40,12 @@ import {
   type PresentationWorkspace,
   type PresentationWorkspaceItem,
 } from "@/lib/presentationWorkspace";
-import { resolvePresentationCursorIndex, type PresentationPrivateLiveView } from "@/lib/presentationLive";
+import {
+  presentationPackageMatchesLiveViewer,
+  presentationWorkspaceMatchesLiveViewer,
+  resolvePresentationCursorIndex,
+  type PresentationPrivateLiveView,
+} from "@/lib/presentationLive";
 
 type UserMe = {
   id: string;
@@ -553,13 +558,38 @@ export default function ServicePresentation() {
   const swipeHandledRef = useRef(false);
   const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
   const suppressClickRef = useRef(false);
+  const presentationLoadGenerationRef = useRef(0);
+  const presentationLoadIdentity = [
+    id || "no-service",
+    authenticatedUserId || "signed-out",
+    selectedChurch?.id || "no-church",
+    selectedChurch?.role || "no-role",
+  ].join("::");
 
   useWakeLock();
 
-  useEffect(() => {
-    if (!id) return;
-    let active = true;
+  useLayoutEffect(() => {
+    presentationLoadGenerationRef.current += 1;
     surfaceInitializedRef.current = false;
+    historyRef.current = [];
+    setService(null);
+    setWorkspace(null);
+    setCurrentUserId(null);
+    setCurrentUserEmail(null);
+    setLoading(Boolean(id));
+    setLoadError(null);
+    setWorkspaceNotice(null);
+    setActiveStepIndex(0);
+    setHistoryCount(0);
+    setShowEditor(false);
+    setSavingWorkspace(false);
+  }, [presentationLoadIdentity, id]);
+
+  useEffect(() => {
+    if (!id) return undefined;
+    const generation = presentationLoadGenerationRef.current;
+    let active = true;
+    const isCurrentLoad = () => active && generation === presentationLoadGenerationRef.current;
 
     async function loadPresentation() {
       setLoading(true);
@@ -571,7 +601,7 @@ export default function ServicePresentation() {
           apiFetch<PresentationService>(`/services/${id}`, { cache: "no-store" }),
           apiFetch<UserMe>("/users/me").catch(() => null),
         ]);
-        if (!active) return;
+        if (!isCurrentLoad()) return;
 
         const normalizedService = {
           ...serviceData,
@@ -584,28 +614,29 @@ export default function ServicePresentation() {
         const preferredView = selectedChurch?.role === "ADMIN" || selectedChurch?.role === "PLANNER" ? "editor" : "operator";
         try {
           const loadedWorkspace = await fetchPresentationWorkspaceForPreferredView(normalizedService, preferredView, selectedChurch?.role);
-          if (active) setWorkspace(loadedWorkspace);
+          if (isCurrentLoad()) setWorkspace(loadedWorkspace);
         } catch (workspaceError) {
+          if (!isCurrentLoad()) return;
           if (workspaceError instanceof ApiError && (workspaceError.status === 401 || workspaceError.status === 403)) {
             throw workspaceError;
           }
           console.warn("Tchurch Live usará el arreglo derivado:", workspaceError);
-          if (active) {
+          if (isCurrentLoad()) {
             setWorkspace(normalizePresentationWorkspace(null, normalizedService, "stage", null));
             setWorkspaceNotice("Las notas guardadas no están disponibles ahora. La presentación sigue con el arreglo de la canción.");
           }
         }
       } catch (error) {
         console.error("No se pudo cargar la presentación:", error);
-        if (active) setLoadError(error instanceof Error ? error.message : "No se pudo cargar la presentación");
+        if (isCurrentLoad()) setLoadError(error instanceof Error ? error.message : "No se pudo cargar la presentación");
       } finally {
-        if (active) setLoading(false);
+        if (isCurrentLoad()) setLoading(false);
       }
     }
 
     void loadPresentation();
     return () => { active = false; };
-  }, [id, selectedChurch?.role]);
+  }, [authenticatedUserId, id, selectedChurch?.id, selectedChurch?.role]);
 
   const presentationLayout: PresentationLayout = isTabletPresentation ? "tablet" : "phone";
   const defaultSongMode = getDefaultPresentationSongMode(presentationLayout);
@@ -645,6 +676,33 @@ export default function ServicePresentation() {
     offlineContext,
     enabled: Boolean(id && selectedChurch?.id && authenticatedUserId),
   });
+  const authoritativePrivateViewer = live.snapshot?.viewer.view !== "audience" ? live.snapshot?.viewer : null;
+  const workspaceScopeMismatch = Boolean(
+    workspace
+    && authoritativePrivateViewer
+    && !presentationWorkspaceMatchesLiveViewer(workspace, authoritativePrivateViewer),
+  );
+  const verifiedReplacementPackage = Boolean(
+    live.presentationPackage
+    && authoritativePrivateViewer
+    && id
+    && selectedChurch?.id
+    && authenticatedUserId
+    && presentationPackageMatchesLiveViewer(live.presentationPackage, authoritativePrivateViewer, {
+      accountId: authenticatedUserId,
+      churchId: selectedChurch.id,
+      serviceId: id,
+    }),
+  );
+  const packageMatchesCurrentIdentity = Boolean(
+    live.presentationPackage
+    && id
+    && selectedChurch?.id
+    && authenticatedUserId
+    && live.presentationPackage.scope.accountId === authenticatedUserId
+    && live.presentationPackage.scope.churchId === selectedChurch.id
+    && live.presentationPackage.service.id === id
+  );
   const localCanPresent = canUseServicePresentation(service, selectedChurch?.role, currentUserId, currentUserEmail);
   const canPresent = Boolean(live.snapshot || live.presentationPackage) || canEnterPresentationWorkspace(workspace, localCanPresent);
   const safeStepIndex = runSteps.length ? Math.min(activeStepIndex, runSteps.length - 1) : 0;
@@ -678,13 +736,21 @@ export default function ServicePresentation() {
   const liveCanMutate = liveControllerOwned && !live.commandPending && live.networkState !== "diverged";
 
   useEffect(() => {
+    if (!workspaceScopeMismatch || !verifiedReplacementPackage || !live.presentationPackage) return;
+    setService(live.presentationPackage.service);
+    setWorkspace(live.presentationPackage.presentation);
+    setLoadError(null);
+    setLoading(false);
+  }, [live.presentationPackage, verifiedReplacementPackage, workspaceScopeMismatch]);
+
+  useEffect(() => {
     const cached = live.presentationPackage;
-    if (!cached || (service && live.networkState === "online")) return;
+    if (!cached || !packageMatchesCurrentIdentity || (service && live.networkState === "online")) return;
     setService(cached.service);
     setWorkspace(cached.presentation);
     setLoadError(null);
     setLoading(false);
-  }, [live.networkState, live.presentationPackage, service]);
+  }, [live.networkState, live.presentationPackage, packageMatchesCurrentIdentity, service]);
 
   useEffect(() => {
     const liveSession = live.snapshot?.session;
@@ -929,7 +995,15 @@ export default function ServicePresentation() {
 
   const exitToService = () => navigate(`/app/services/${id}`);
 
-  if (loading || live.loading) {
+  if (live.error || loadError) {
+    return (
+      <div className="fixed inset-0 z-50 flex min-h-svh items-center justify-center bg-[#050508] p-6 text-white">
+        <div className="max-w-md rounded-[2rem] border border-white/10 bg-white/[0.05] p-8 text-center"><X className="mx-auto mb-4 h-9 w-9 text-red-300" /><h1 className="text-2xl font-black">No se pudo abrir la presentación</h1><p className="mt-2 text-slate-300">{live.error || loadError}</p><Button className="mt-6 min-h-11 rounded-2xl" onClick={() => navigate("/app/services")}>Volver a servicios</Button></div>
+      </div>
+    );
+  }
+
+  if (loading || live.loading || workspaceScopeMismatch) {
     return (
       <div className="fixed inset-0 z-50 flex min-h-svh items-center justify-center bg-[#050508] text-white">
         <div className="flex flex-col items-center gap-4"><Loader2 className="h-9 w-9 animate-spin text-violet-300" /><p className="text-sm font-bold uppercase tracking-[0.24em] text-slate-400">Preparando Tchurch Live</p></div>
@@ -937,10 +1011,10 @@ export default function ServicePresentation() {
     );
   }
 
-  if (live.error || loadError || !service) {
+  if (!service) {
     return (
       <div className="fixed inset-0 z-50 flex min-h-svh items-center justify-center bg-[#050508] p-6 text-white">
-        <div className="max-w-md rounded-[2rem] border border-white/10 bg-white/[0.05] p-8 text-center"><X className="mx-auto mb-4 h-9 w-9 text-red-300" /><h1 className="text-2xl font-black">No se pudo abrir la presentación</h1><p className="mt-2 text-slate-300">{live.error || loadError || "Servicio no encontrado."}</p><Button className="mt-6 min-h-11 rounded-2xl" onClick={() => navigate("/app/services")}>Volver a servicios</Button></div>
+        <div className="max-w-md rounded-[2rem] border border-white/10 bg-white/[0.05] p-8 text-center"><X className="mx-auto mb-4 h-9 w-9 text-red-300" /><h1 className="text-2xl font-black">No se pudo abrir la presentación</h1><p className="mt-2 text-slate-300">Servicio no encontrado.</p><Button className="mt-6 min-h-11 rounded-2xl" onClick={() => navigate("/app/services")}>Volver a servicios</Button></div>
       </div>
     );
   }
@@ -1022,7 +1096,7 @@ export default function ServicePresentation() {
 
       {workspaceNotice && (
         <div className="relative z-30 flex shrink-0 items-center justify-between gap-3 border-b border-amber-300/20 bg-amber-300/10 px-4 py-2 text-xs font-semibold text-amber-100" onClick={stopStageEvent}>
-          <span className="truncate">{workspaceNotice}</span><button type="button" className="min-h-8 shrink-0 px-2 font-black" onClick={() => setWorkspaceNotice(null)}>Cerrar</button>
+          <span className="truncate">{workspaceNotice}</span><button type="button" className="min-h-11 shrink-0 rounded-xl px-3 font-black" onClick={() => setWorkspaceNotice(null)}>Cerrar</button>
         </div>
       )}
 
