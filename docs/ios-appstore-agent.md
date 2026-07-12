@@ -1,18 +1,18 @@
 # iOS App Store Agent
 
-This repo includes a daily App Store Connect agent that looks for the latest valid iOS build and promotes it.
+This repo includes an App Store Connect agent that looks for the latest valid iOS build. Scheduled runs are read-only; every release action requires an explicit manual dispatch.
 
-## What it does
+## What it can do
 
-- Runs every day from GitHub Actions.
+- Runs a read-only audit every day from GitHub Actions.
 - Reads the latest valid, unexpired build from App Store Connect.
 - Detects the build marketing version from the build pre-release version.
-- Creates the matching iOS App Store version if it does not exist.
-- Replaces an older build in the same version when `ASC_REPLACE_IN_REVIEW=true`.
-- Assigns the latest build to the App Store version.
-- Attempts App Store review submission through the public App Store Connect API.
-- Submits the latest build for TestFlight beta review.
-- Expires superseded beta builds if Apple blocks beta review because an older build in the same train is already waiting.
+- When explicitly enabled, creates the matching iOS App Store version if it does not exist.
+- Replaces an older build in the same version only when `ASC_REPLACE_IN_REVIEW=true`.
+- Assigns the latest build to the App Store version only when App Store review is enabled.
+- Attempts App Store review submission through the public App Store Connect API only when explicitly enabled.
+- Submits the latest build for TestFlight beta review only when explicitly enabled.
+- Expires superseded beta builds only when explicitly enabled and Apple blocks beta review because an older build in the same train is already waiting.
 
 ## Required GitHub secrets
 
@@ -33,8 +33,8 @@ This repo includes a daily App Store Connect agent that looks for the latest val
 - `ASC_REPLACE_IN_REVIEW`: `true` to remove an existing App Store submission before replacing its build.
 - `ASC_EXPIRE_SUPERSEDED_BETA_BUILD`: `true` to expire an older beta build when Apple blocks the new beta review.
 - `ASC_BUILD_LOOKBACK`: Number of recent builds to inspect. Default is `20`.
-- `ASC_TARGET_MARKETING_VERSION`: Optional App Store version filter. The 4.0 workflow sets this to `4.0` so older build trains are not promoted by accident.
-- `ASC_TARGET_BUILD_NUMBER`: Optional build-number filter. The 4.0 workflow pins this to `400` so later CI-only builds cannot replace the build that was submitted to review.
+- `ASC_TARGET_MARKETING_VERSION`: Optional App Store version filter. The Stage 2 workflow pins this to `4.0.7` so another release train cannot be promoted by accident.
+- `ASC_TARGET_BUILD_NUMBER`: Optional build-number filter. The Stage 2 workflow pins this to `199` so later CI-only builds cannot replace the tested build.
 
 For a manual dispatch, if the workflow's marketing-version pin is stale, the
 agent fails over to the newest valid build for the version in `package.json`.
@@ -43,6 +43,12 @@ scheduled run with a stale marketing-version pin fails closed instead of
 promoting a different release. When `ASC_SUBMIT_FOR_REVIEW=false`, the agent
 does not create, attach, replace, or submit an App Store version; TestFlight
 beta review remains independently controlled by `ASC_BETA_REVIEW`.
+
+The workflow defaults to `dry_run=true`, with App Store review, external beta
+review, replacement, expiration, and internal distribution disabled. To ship
+only to existing internal TestFlight groups, first run those defaults as an
+audit. Then manually dispatch again with `dry_run=false` and
+`distribute_internal=true`, leaving both review inputs disabled.
 
 ## Manual commands
 
@@ -53,20 +59,33 @@ ASC_APP_ID=6762327867 \
 ASC_KEY_ID=... \
 ASC_ISSUER_ID=... \
 ASC_PRIVATE_KEY_PATH=/path/to/AuthKey_XXXX.p8 \
+ASC_TARGET_MARKETING_VERSION=4.0.7 \
+ASC_TARGET_BUILD_NUMBER=199 \
 ASC_DRY_RUN=true \
 npm run appstore:ios-agent
 ```
 
-Real run:
+Internal TestFlight distribution after reviewing the dry run:
 
 ```bash
 ASC_APP_ID=6762327867 \
 ASC_KEY_ID=... \
 ASC_ISSUER_ID=... \
 ASC_PRIVATE_KEY_PATH=/path/to/AuthKey_XXXX.p8 \
+ASC_TARGET_MARKETING_VERSION=4.0.7 \
+ASC_TARGET_BUILD_NUMBER=199 \
 ASC_DRY_RUN=false \
+ASC_SUBMIT_FOR_REVIEW=false \
+ASC_BETA_REVIEW=false \
+ASC_DISTRIBUTE_INTERNAL=true \
+ASC_REPLACE_IN_REVIEW=false \
+ASC_EXPIRE_SUPERSEDED_BETA_BUILD=false \
 npm run appstore:ios-agent
 ```
+
+Direct script execution is also read-only by default. App Store review and
+external beta review require their corresponding environment variables to be
+set explicitly to `true`.
 
 ## Important limitation
 

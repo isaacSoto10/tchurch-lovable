@@ -159,12 +159,12 @@ const config = {
   privateKey: loadPrivateKey(),
   platform: env("ASC_PLATFORM", "IOS"),
   buildLookback: Number(env("ASC_BUILD_LOOKBACK", "20")),
-  dryRun: bool("ASC_DRY_RUN", false),
-  replaceInReview: bool("ASC_REPLACE_IN_REVIEW", true),
-  submitForReview: bool("ASC_SUBMIT_FOR_REVIEW", true),
-  betaReview: bool("ASC_BETA_REVIEW", true),
+  dryRun: bool("ASC_DRY_RUN", true),
+  replaceInReview: bool("ASC_REPLACE_IN_REVIEW", false),
+  submitForReview: bool("ASC_SUBMIT_FOR_REVIEW", false),
+  betaReview: bool("ASC_BETA_REVIEW", false),
   distributeInternal: bool("ASC_DISTRIBUTE_INTERNAL", false),
-  expireSupersededBetaBuild: bool("ASC_EXPIRE_SUPERSEDED_BETA_BUILD", true),
+  expireSupersededBetaBuild: bool("ASC_EXPIRE_SUPERSEDED_BETA_BUILD", false),
   targetMarketingVersion: manualTargetIsStale
     ? repositoryMarketingVersion
     : configuredTargetMarketingVersion,
