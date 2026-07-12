@@ -1,4 +1,5 @@
 import { apiFetch, eventCollectionPath } from "@/lib/api";
+import { devotionalsCollectionPath } from "@/lib/devotionalsPagination";
 import { getMobileAuthSession, isNativeMobileAuth } from "@/lib/mobileAuth";
 
 const CHURCH_ID_KEY = "tchurch_church_id";
@@ -34,7 +35,7 @@ function warmupPaths(churchId: string) {
     "/songs?limit=400&sort=lastUsed",
     eventCollectionPath("limit=120"),
     "/announcements?includePending=1&limit=40",
-    "/devotionals?includeDrafts=1",
+    devotionalsCollectionPath(1),
     "/service-media?limit=140",
     "/live-destinations",
     "/ministries",

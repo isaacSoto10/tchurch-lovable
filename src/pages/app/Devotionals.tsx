@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BookOpen, CheckCircle, Loader2, Pencil, PlayCircle, Plus, Trash2 } from "lucide-react";
+import { BookOpen, CheckCircle, ChevronLeft, ChevronRight, Loader2, Pencil, PlayCircle, Plus, Trash2 } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -8,6 +9,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/use-toast";
 import { useApi } from "@/hooks/useApi";
 import { getChurchId } from "@/lib/api";
+import {
+  DEVOTIONALS_PAGE_SIZE,
+  DevotionalsPagination,
+  devotionalPageAfterDeletion,
+  devotionalsCollectionPath,
+  normalizeDevotionalsPagination,
+  parseDevotionalsPage,
+} from "@/lib/devotionalsPagination";
 import { readSessionSnapshot, sessionSnapshotKey, writeSessionSnapshot } from "@/lib/sessionSnapshots";
 import { getYoutubeEmbedUrl } from "@/lib/youtube";
 
@@ -33,6 +42,7 @@ interface Devotional {
 
 interface DevotionalsResponse {
   devotionals?: Devotional[];
+  pagination?: Partial<DevotionalsPagination>;
   permissions?: {
     canManage?: boolean;
   };
@@ -52,15 +62,30 @@ type DevotionalsSnapshot = {
   devotionals: Devotional[];
   ministries: Ministry[];
   canManage: boolean;
+  pagination: DevotionalsPagination;
 };
 
-const DEVOTIONALS_SNAPSHOT_PREFIX = "tchurch_ios_devotionals_snapshot_v1";
+const DEVOTIONALS_SNAPSHOT_PREFIX = "tchurch_ios_devotionals_snapshot_v2";
 
 function isDevotionalsSnapshot(data: unknown): data is DevotionalsSnapshot {
   if (!data || typeof data !== "object") return false;
   const snapshot = data as Partial<DevotionalsSnapshot>;
-  return Array.isArray(snapshot.devotionals) && Array.isArray(snapshot.ministries) && typeof snapshot.canManage === "boolean";
+  return Array.isArray(snapshot.devotionals) &&
+    Array.isArray(snapshot.ministries) &&
+    typeof snapshot.canManage === "boolean" &&
+    Boolean(snapshot.pagination) &&
+    Number.isInteger(snapshot.pagination?.page) &&
+    snapshot.pagination?.page === 1;
 }
+
+const initialPagination: DevotionalsPagination = {
+  page: 1,
+  pageSize: DEVOTIONALS_PAGE_SIZE,
+  total: 0,
+  totalPages: 1,
+  hasPrevious: false,
+  hasNext: false,
+};
 
 const emptyForm = {
   title: "",
@@ -91,19 +116,25 @@ function authorName(devotional: Devotional) {
 export default function Devotionals() {
   const { fetchApi } = useApi();
   const { toast } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const page = parseDevotionalsPage(searchParams.get("page"));
   const [devotionals, setDevotionals] = useState<Devotional[]>([]);
   const [ministries, setMinistries] = useState<Ministry[]>([]);
   const [canManage, setCanManage] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [markingId, setMarkingId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
-  const loadedOnceRef = useRef(false);
+  const [pagination, setPagination] = useState<DevotionalsPagination>(initialPagination);
+  const requestSequenceRef = useRef(0);
+  const paginationNavigationRef = useRef(false);
+  const listStartRef = useRef<HTMLDivElement | null>(null);
 
   const published = useMemo(() => devotionals.filter((devotional) => devotional.status === "published"), [devotionals]);
-  const todayDevotional = published[0] || devotionals[0] || null;
+  const todayDevotional = page === 1 ? published[0] || devotionals[0] || null : null;
   const pastDevotionals = devotionals.filter((devotional) => devotional.id !== todayDevotional?.id);
   const snapshotKey = sessionSnapshotKey(DEVOTIONALS_SNAPSHOT_PREFIX, getChurchId());
 
@@ -111,48 +142,99 @@ export default function Devotionals() {
     setDevotionals(snapshot.devotionals);
     setMinistries(snapshot.ministries);
     setCanManage(snapshot.canManage);
-    loadedOnceRef.current = true;
+    setPagination(snapshot.pagination);
   }, []);
 
-  const loadDevotionals = useCallback(async () => {
-    const snapshot = readSessionSnapshot<DevotionalsSnapshot>(snapshotKey, { validate: isDevotionalsSnapshot });
+  const loadDevotionals = useCallback(async (requestedPage: number) => {
+    const requestSequence = ++requestSequenceRef.current;
+    const snapshot = requestedPage === 1
+      ? readSessionSnapshot<DevotionalsSnapshot>(snapshotKey, { validate: isDevotionalsSnapshot })
+      : null;
     if (snapshot) {
       applyDevotionalsData(snapshot.data);
       setLoading(false);
-    } else if (!loadedOnceRef.current) {
+    } else {
       setLoading(true);
+      setDevotionals([]);
     }
 
     try {
+      setLoadError(null);
       const [devotionalsResult, ministriesResult] = await Promise.allSettled([
-        fetchApi<DevotionalsResponse>("/devotionals?includeDrafts=1"),
+        fetchApi<DevotionalsResponse>(devotionalsCollectionPath(requestedPage)),
         fetchApi<MyMinistriesResponse>("/my-ministries"),
       ]);
 
       if (devotionalsResult.status === "rejected") throw devotionalsResult.reason;
+      if (requestSequence !== requestSequenceRef.current) return;
+
+      const nextDevotionals = Array.isArray(devotionalsResult.value.devotionals)
+        ? devotionalsResult.value.devotionals.slice(0, DEVOTIONALS_PAGE_SIZE)
+        : [];
+      const nextPagination = normalizeDevotionalsPagination(
+        devotionalsResult.value.pagination,
+        requestedPage,
+        nextDevotionals.length,
+      );
 
       const nextSnapshot = {
-        devotionals: Array.isArray(devotionalsResult.value.devotionals) ? devotionalsResult.value.devotionals : [],
+        devotionals: nextDevotionals,
         ministries: ministriesResult.status === "fulfilled"
           ? Array.isArray(ministriesResult.value.ministries) ? ministriesResult.value.ministries : []
           : snapshot?.data.ministries || [],
         canManage: Boolean(devotionalsResult.value.permissions?.canManage),
+        pagination: nextPagination,
       };
       applyDevotionalsData(nextSnapshot);
-      writeSessionSnapshot(snapshotKey, nextSnapshot);
+      if (nextPagination.page === 1) writeSessionSnapshot(snapshotKey, nextSnapshot);
+
+      if (nextPagination.page !== requestedPage) {
+        setSearchParams((current) => {
+          const next = new URLSearchParams(current);
+          next.set("page", String(nextPagination.page));
+          return next;
+        }, { replace: true });
+      }
     } catch (error) {
+      if (requestSequence !== requestSequenceRef.current) return;
+      const message = error instanceof Error ? error.message : "No se pudieron cargar los devocionales";
+      setLoadError(message);
       toast({
-        title: error instanceof Error ? error.message : "No se pudieron cargar los devocionales",
+        title: message,
         variant: "destructive",
       });
     } finally {
-      setLoading(false);
+      if (requestSequence === requestSequenceRef.current) setLoading(false);
     }
-  }, [applyDevotionalsData, fetchApi, snapshotKey, toast]);
+  }, [applyDevotionalsData, fetchApi, setSearchParams, snapshotKey, toast]);
 
   useEffect(() => {
-    loadDevotionals();
-  }, [loadDevotionals]);
+    if (searchParams.get("page") !== String(page)) {
+      setSearchParams((current) => {
+        const next = new URLSearchParams(current);
+        next.set("page", String(page));
+        return next;
+      }, { replace: true });
+      return;
+    }
+
+    void loadDevotionals(page);
+    if (paginationNavigationRef.current) {
+      paginationNavigationRef.current = false;
+      window.requestAnimationFrame(() => listStartRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    }
+  }, [loadDevotionals, page, searchParams, setSearchParams]);
+
+  const goToPage = useCallback((nextPage: number) => {
+    const safePage = Math.max(1, nextPage);
+    if (safePage === page) return;
+    paginationNavigationRef.current = true;
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.set("page", String(safePage));
+      return next;
+    });
+  }, [page, setSearchParams]);
 
   function resetForm() {
     setForm({ ...emptyForm, publishDate: new Date().toISOString().slice(0, 10) });
@@ -202,7 +284,8 @@ export default function Devotionals() {
       });
       resetForm();
       toast({ title: editingId ? "Devocional actualizado" : "Devocional guardado" });
-      await loadDevotionals();
+      if (page === 1) await loadDevotionals(1);
+      else goToPage(1);
     } catch (error) {
       toast({
         title: error instanceof Error ? error.message : "No se pudo guardar el devocional",
@@ -217,11 +300,20 @@ export default function Devotionals() {
     setMarkingId(id);
     try {
       const data = await fetchApi<{ readAt?: string }>(`/devotionals/${id}/read`, { method: "POST" });
-      setDevotionals((current) =>
-        current.map((devotional) =>
+      setDevotionals((current) => {
+        const nextDevotionals = current.map((devotional) =>
           devotional.id === id ? { ...devotional, readAt: data.readAt || new Date().toISOString() } : devotional
-        )
-      );
+        );
+        if (page === 1) {
+          writeSessionSnapshot(snapshotKey, {
+            devotionals: nextDevotionals,
+            ministries,
+            canManage,
+            pagination,
+          });
+        }
+        return nextDevotionals;
+      });
     } catch (error) {
       toast({
         title: error instanceof Error ? error.message : "No se pudo marcar como leído",
@@ -236,8 +328,10 @@ export default function Devotionals() {
     if (!window.confirm("¿Eliminar este devocional?")) return;
     try {
       await fetchApi(`/devotionals/${id}`, { method: "DELETE" });
-      setDevotionals((current) => current.filter((devotional) => devotional.id !== id));
       toast({ title: "Devocional eliminado" });
+      const targetPage = devotionalPageAfterDeletion(pagination);
+      if (targetPage !== page) goToPage(targetPage);
+      else await loadDevotionals(page);
     } catch (error) {
       toast({
         title: error instanceof Error ? error.message : "No se pudo eliminar",
@@ -405,7 +499,19 @@ export default function Devotionals() {
         </Card>
       )}
 
-      {devotionals.length === 0 ? (
+      <div ref={listStartRef} className="scroll-mt-4" />
+
+      {loadError && devotionals.length === 0 ? (
+        <Card className="app-card">
+          <CardContent className="p-8 text-center">
+            <p className="font-bold">No se pudieron cargar los devocionales</p>
+            <p className="mt-1 text-sm text-muted-foreground">Revisa tu conexión e intenta nuevamente.</p>
+            <Button className="mt-4 min-h-11" variant="outline" onClick={() => void loadDevotionals(page)}>
+              Reintentar
+            </Button>
+          </CardContent>
+        </Card>
+      ) : devotionals.length === 0 ? (
         <Card className="app-card">
           <CardContent className="p-8 text-center">
             <BookOpen className="mx-auto mb-3 h-9 w-9 text-muted-foreground/50" />
@@ -418,11 +524,41 @@ export default function Devotionals() {
           {todayDevotional && renderDevotional(todayDevotional, true)}
           {pastDevotionals.length > 0 && (
             <div className="space-y-3">
-              <p className="text-sm font-bold text-muted-foreground">Anteriores</p>
+              <p className="text-sm font-bold text-muted-foreground">{page === 1 ? "Anteriores" : "Historial"}</p>
               {pastDevotionals.map((devotional) => renderDevotional(devotional))}
             </div>
           )}
         </div>
+      )}
+
+      {!loadError && pagination.totalPages > 1 && (
+        <nav className="grid grid-cols-[1fr_auto_1fr] items-center gap-2" aria-label="Paginación de devocionales / Devotionals pagination">
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11 justify-self-start rounded-xl px-3"
+            disabled={!pagination.hasPrevious || loading}
+            onClick={() => goToPage(page - 1)}
+            aria-label="Página anterior / Previous page"
+          >
+            <ChevronLeft className="mr-1 h-4 w-4" aria-hidden="true" />
+            Anterior
+          </Button>
+          <p className="text-center text-sm font-semibold text-muted-foreground" aria-live="polite">
+            Página {pagination.page} de {pagination.totalPages}
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11 justify-self-end rounded-xl px-3"
+            disabled={!pagination.hasNext || loading}
+            onClick={() => goToPage(page + 1)}
+            aria-label="Página siguiente / Next page"
+          >
+            Siguiente
+            <ChevronRight className="ml-1 h-4 w-4" aria-hidden="true" />
+          </Button>
+        </nav>
       )}
     </div>
   );
