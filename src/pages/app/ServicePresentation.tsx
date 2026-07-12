@@ -1,10 +1,12 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type TouchEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, ChevronLeft, ChevronRight, Clock3, Eye, EyeOff, ListMusic, Loader2, Minus, Music, Pencil, Plus, RotateCcw, Settings2, Sparkles, Undo2, X } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Clock3, Eye, EyeOff, ListMusic, Loader2, Minus, MonitorPlay, Music, Pause, Pencil, Play, Plus, RotateCcw, Settings2, Sparkles, Square, Undo2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ApiError, apiFetch } from "@/lib/api";
 import { PresentationWorkspaceEditor } from "@/components/presentation/PresentationWorkspaceEditor";
+import { PresentationAudienceOutput } from "@/components/presentation/PresentationAudienceOutput";
+import { PresentationOutputManager } from "@/components/presentation/PresentationOutputManager";
 import {
   LiveConnectionBadge,
   PresentationLiveNotice,
@@ -18,6 +20,7 @@ import { useAppAuth } from "@/hooks/useAppAuth";
 import { useChurch } from "@/providers/ChurchProvider";
 import {
   buildServicePresentationSlides,
+  buildAudiencePreviewSlide,
   buildPresentationRunSteps,
   canUseServicePresentation,
   getDefaultPresentationSongMode,
@@ -26,6 +29,16 @@ import {
   type PresentationSlide,
   type PresentationSongMode,
 } from "@/lib/servicePresentation";
+import {
+  DEFAULT_PRESENTATION_STAGE_LAYOUTS,
+  presentationStageRoleForViewer,
+  projectPresentationPlaybackPosition,
+  resolvePresentationAnnouncementSlideId,
+  type PresentationOutputConfig,
+  type PresentationMediaPlayback,
+  type PresentationStageMode,
+} from "@/lib/presentationOutput";
+import { fetchPresentationOutputConfig } from "@/lib/presentationOutputApi";
 import { formatServiceDate } from "@/lib/serviceDates";
 import {
   fetchPresentationWorkspace,
@@ -236,6 +249,7 @@ function SongSlide({
   songMode,
   zoomScale,
   activeSequenceId,
+  stageMode,
 }: {
   slide: Extract<PresentationSlide, { kind: "song" }>;
   showChords: boolean;
@@ -243,10 +257,16 @@ function SongSlide({
   songMode: PresentationSongMode;
   zoomScale: number;
   activeSequenceId?: string | null;
+  stageMode: PresentationStageMode;
 }) {
   const isTabletLayout = layout === "tablet";
   const allowsVerticalScroll = songMode === "scroll" || zoomScale > 1 || !isTabletLayout;
   const [chartBodyRef, chartSize] = useMeasuredElement<HTMLDivElement>();
+  const displayLines = useMemo(() => {
+    if (stageMode !== "confidence" || !activeSequenceId) return slide.lines;
+    const confidenceLines = slide.lines.filter((line) => line.sectionSequenceId === activeSequenceId);
+    return confidenceLines.length ? confidenceLines : slide.lines;
+  }, [activeSequenceId, slide.lines, stageMode]);
   useEffect(() => {
     if (!activeSequenceId || songMode !== "scroll") return;
     const root = chartBodyRef.current;
@@ -257,7 +277,7 @@ function SongSlide({
     target.scrollIntoView({ block: "start", behavior: reduceMotion ? "auto" : "smooth" });
   }, [activeSequenceId, chartBodyRef, songMode]);
   const chartMetrics = useMemo(() => {
-    return slide.lines.reduce(
+    return displayLines.reduce(
       (metrics, line) => {
         if (line.kind === "blank") {
           return { ...metrics, rows: metrics.rows + 0.28 };
@@ -275,7 +295,7 @@ function SongSlide({
       },
       { maxColumns: Math.max(18, slide.maxColumns), rows: 0 }
     );
-  }, [showChords, slide.lines, slide.maxColumns]);
+  }, [displayLines, showChords, slide.maxColumns]);
   const fallbackWidth = typeof window === "undefined" ? 360 : Math.max(window.innerWidth - 40, 320);
   const fallbackHeight = typeof window === "undefined" ? 620 : Math.max(window.innerHeight - 118, 420);
   const chartWidth = chartSize.width || fallbackWidth;
@@ -327,7 +347,7 @@ function SongSlide({
           style={allowsVerticalScroll ? { WebkitOverflowScrolling: "touch" } : undefined}
           onClick={songMode === "scroll" ? (event) => event.stopPropagation() : undefined}
         >
-          {slide.lines.map((line, index) => {
+          {displayLines.map((line, index) => {
             if (line.kind === "blank") return <div key={index} className="h-2" />;
             if (line.kind === "section" || line.kind === "meta") {
               const label = formatPresentationSectionLabel(line.label);
@@ -424,10 +444,11 @@ function SongSlide({
   );
 }
 
-function CueSlide({ slide }: { slide: Extract<PresentationSlide, { kind: "cue" }> }) {
+function CueSlide({ slide, fontScale, mode, showNotes }: { slide: Extract<PresentationSlide, { kind: "cue" }>; fontScale: number; mode: PresentationStageMode; showNotes: boolean }) {
+  const titleSize = mode === "confidence" ? "text-[clamp(3rem,14vw,7rem)]" : mode === "production" ? "text-[clamp(2rem,8vw,4rem)]" : "text-[clamp(2.5rem,12vw,5.75rem)]";
   return (
-    <div className="mx-auto flex h-full w-full max-w-4xl flex-col justify-center px-5 py-3 sm:px-10">
-      <div className="rounded-[2rem] border border-white/10 bg-white/[0.05] p-6 shadow-2xl shadow-black/40 sm:p-12">
+    <div className="mx-auto flex h-full w-full max-w-4xl flex-col justify-center px-5 py-3 sm:px-10" data-stage-layout-mode={mode}>
+      <div className={`rounded-[2rem] border border-white/10 bg-white/[0.05] p-6 shadow-2xl shadow-black/40 sm:p-12 ${mode === "speaker" ? "border-l-4 border-l-amber-300/70" : ""}`} style={fontScale === 1 ? undefined : { transform: `scale(${fontScale})` }}>
         <div className="mb-7 flex flex-wrap items-center gap-3">
           <span className="rounded-full bg-violet-500/15 px-3 py-1 text-xs font-black uppercase tracking-[0.28em] text-violet-200">
             {slide.itemIndex}. {slide.subtitle}
@@ -435,9 +456,9 @@ function CueSlide({ slide }: { slide: Extract<PresentationSlide, { kind: "cue" }
           {slide.duration && <Badge className="rounded-full bg-white/10 text-white hover:bg-white/10">{slide.duration} min</Badge>}
         </div>
 
-        <h1 className="text-[clamp(2.5rem,12vw,5.75rem)] font-black leading-none tracking-tight text-white">{slide.title}</h1>
+        <h1 className={`${titleSize} font-black leading-none tracking-tight text-white`}>{slide.title}</h1>
 
-        {slide.notes.length > 0 && (
+        {showNotes && slide.notes.length > 0 && (
           <div className="mt-9 grid gap-3">
             {slide.notes.map((note, index) => (
               <div key={`${note}-${index}`} className="rounded-3xl border border-white/10 bg-black/25 px-5 py-4 text-xl font-semibold leading-snug text-slate-100 sm:text-2xl">
@@ -471,6 +492,19 @@ function usePresentationClock() {
   return new Intl.DateTimeFormat("es", { hour: "numeric", minute: "2-digit" }).format(now);
 }
 
+function useProjectionClock(active: boolean) {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!active) return undefined;
+    setNowMs(Date.now());
+    const timer = window.setInterval(() => setNowMs(Date.now()), 500);
+    return () => window.clearInterval(timer);
+  }, [active]);
+
+  return nowMs;
+}
+
 function AnnotationList({ annotations, emptyLabel }: { annotations: PresentationAnnotation[]; emptyLabel: string }) {
   if (!annotations.length) {
     return <p className="rounded-2xl border border-dashed border-white/15 px-4 py-5 text-center text-sm text-slate-400">{emptyLabel}</p>;
@@ -487,6 +521,65 @@ function AnnotationList({ annotations, emptyLabel }: { annotations: Presentation
           <p className="text-sm font-semibold leading-5 text-white">{annotation.body}</p>
         </div>
       ))}
+    </div>
+  );
+}
+
+function PresentationMediaControls({
+  slide,
+  playback,
+  serverNow,
+  receivedAtMs,
+  pending,
+  canControl,
+  onPlay,
+  onPause,
+  onSeek,
+  onRestart,
+  onStop,
+}: {
+  slide: Extract<PresentationSlide, { kind: "content" }>;
+  playback: PresentationMediaPlayback | null;
+  serverNow: string;
+  receivedAtMs: number;
+  pending: boolean;
+  canControl: boolean;
+  onPlay: (positionMs: number) => void;
+  onPause: () => void;
+  onSeek: (positionMs: number) => void;
+  onRestart: () => void;
+  onStop: () => void;
+}) {
+  const audience = slide.audienceSlide;
+  const mediaKind = audience.kind === "video" || audience.kind === "audio" || audience.kind === "announcement" ? audience.kind : null;
+  const matches = Boolean(mediaKind && playback?.itemId === slide.itemId && playback.slideId === audience.id && playback.kind === mediaKind);
+  const projected = matches ? projectPresentationPlaybackPosition(playback, serverNow, receivedAtMs, Date.now()) : 0;
+  const maximumMs = audience.kind === "video" || audience.kind === "audio"
+    ? audience.durationMs || 3_600_000
+    : audience.kind === "announcement"
+      ? audience.durationSeconds * 1_000
+      : 0;
+  const [seekMs, setSeekMs] = useState(projected);
+
+  useEffect(() => {
+    setSeekMs(matches ? projectPresentationPlaybackPosition(playback, serverNow, receivedAtMs, Date.now()) : 0);
+  }, [matches, playback, receivedAtMs, serverNow]);
+  if (!mediaKind) return null;
+  const disabled = pending || !canControl;
+  const playing = matches && playback?.status === "playing";
+
+  return (
+    <div className="mt-4 rounded-2xl border border-amber-300/15 bg-amber-300/[0.06] p-3">
+      <div className="flex items-center justify-between gap-3"><div><p className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-200">Reproducción</p><p className="mt-1 text-xs text-slate-400">{mediaKind === "announcement" ? "Intervalo del anuncio" : mediaKind === "video" ? "Video de audiencia" : "Audio de audiencia"}</p></div><span className="text-xs font-black tabular-nums">{formatLiveDuration(seekMs / 1_000)}</span></div>
+      <input type="range" min={0} max={Math.max(1_000, maximumMs)} step={1_000} value={Math.min(seekMs, Math.max(1_000, maximumMs))} onChange={(event) => setSeekMs(Number(event.target.value))} className="mt-3 h-8 w-full accent-amber-300" aria-label="Posición del contenido" disabled={disabled || !matches} />
+      <div className="mt-2 grid grid-cols-5 gap-1.5">
+        <Button type="button" variant="ghost" size="icon" className="h-11 w-full rounded-xl bg-white/[0.07] text-white hover:bg-white/10 hover:text-white" disabled={disabled} onClick={() => onPlay(matches ? projected : 0)} aria-label="Reproducir"><Play className="h-4 w-4" /></Button>
+        <Button type="button" variant="ghost" size="icon" className="h-11 w-full rounded-xl bg-white/[0.07] text-white hover:bg-white/10 hover:text-white" disabled={disabled || !playing} onClick={onPause} aria-label="Pausar"><Pause className="h-4 w-4" /></Button>
+        <Button type="button" variant="ghost" size="icon" className="h-11 w-full rounded-xl bg-white/[0.07] text-white hover:bg-white/10 hover:text-white" disabled={disabled || !matches} onClick={() => onSeek(seekMs)} aria-label="Buscar posición"><Clock3 className="h-4 w-4" /></Button>
+        <Button type="button" variant="ghost" size="icon" className="h-11 w-full rounded-xl bg-white/[0.07] text-white hover:bg-white/10 hover:text-white" disabled={disabled || !matches} onClick={onRestart} aria-label="Reiniciar"><RotateCcw className="h-4 w-4" /></Button>
+        <Button type="button" variant="ghost" size="icon" className="h-11 w-full rounded-xl bg-white/[0.07] text-white hover:bg-white/10 hover:text-white" disabled={disabled || !matches} onClick={onStop} aria-label="Detener"><Square className="h-4 w-4" /></Button>
+      </div>
+      {!canControl ? <p className="mt-2 text-[10px] text-slate-500">Toma el control y conéctate para manejar medios.</p> : null}
     </div>
   );
 }
@@ -544,6 +637,8 @@ export default function ServicePresentation() {
   const [historyCount, setHistoryCount] = useState(0);
   const [showRundown, setShowRundown] = useState(false);
   const [showEditor, setShowEditor] = useState(false);
+  const [showOutputManager, setShowOutputManager] = useState(false);
+  const [outputConfig, setOutputConfig] = useState<PresentationOutputConfig | null>(null);
   const [savingWorkspace, setSavingWorkspace] = useState(false);
   const historyRef = useRef<string[]>([]);
   const keyboardActionsRef = useRef({
@@ -582,6 +677,8 @@ export default function ServicePresentation() {
     setActiveStepIndex(0);
     setHistoryCount(0);
     setShowEditor(false);
+    setShowOutputManager(false);
+    setOutputConfig(null);
     setSavingWorkspace(false);
   }, [presentationLoadIdentity, id]);
 
@@ -637,6 +734,18 @@ export default function ServicePresentation() {
     void loadPresentation();
     return () => { active = false; };
   }, [authenticatedUserId, id, selectedChurch?.id, selectedChurch?.role]);
+
+  useEffect(() => {
+    if (!id || !workspace?.viewer.canEdit) {
+      setOutputConfig(null);
+      return;
+    }
+    let active = true;
+    void fetchPresentationOutputConfig(id)
+      .then((next) => { if (active) setOutputConfig(next); })
+      .catch(() => { if (active) setOutputConfig(null); });
+    return () => { active = false; };
+  }, [id, workspace?.viewer.canEdit]);
 
   const presentationLayout: PresentationLayout = isTabletPresentation ? "tablet" : "phone";
   const defaultSongMode = getDefaultPresentationSongMode(presentationLayout);
@@ -709,29 +818,78 @@ export default function ServicePresentation() {
   const currentStep = runSteps[safeStepIndex];
   const nextStep = runSteps[safeStepIndex + 1] || null;
   const currentSlide = currentStep ? slides[currentStep.slideIndex] : null;
+  const contentAudienceSlides = useMemo(() => slides.flatMap((slide) => slide.kind === "content" ? [slide.audienceSlide] : []), [slides]);
+  const audiencePlayback = live.snapshot?.session?.playback || null;
+  const announcementNowMs = useProjectionClock(audiencePlayback?.kind === "announcement" && audiencePlayback.status === "playing");
+  const rotatedAnnouncementSlideId = resolvePresentationAnnouncementSlideId(
+    contentAudienceSlides,
+    audiencePlayback,
+    live.snapshot?.serverNow || new Date().toISOString(),
+    live.snapshot?.receivedAtMs || Date.now(),
+    announcementNowMs,
+    currentSlide?.itemId,
+  );
+  const stageCurrentSlide = currentSlide?.kind === "content" && currentSlide.audienceSlide.kind === "announcement" && rotatedAnnouncementSlideId
+    ? slides.find((slide) => slide.kind === "content" && slide.id === rotatedAnnouncementSlideId) || currentSlide
+    : currentSlide;
   const currentWorkspaceItem = currentStep ? getWorkspaceItem(workspace, currentStep.itemId) : null;
-  const viewerRoles = useMemo(() => workspace?.viewer.roles || [], [workspace?.viewer.roles]);
+  const viewerRoles = useMemo(
+    () => authoritativePrivateViewer?.roles || workspace?.viewer.roles || [],
+    [authoritativePrivateViewer?.roles, workspace?.viewer.roles],
+  );
+  const viewerCanEdit = authoritativePrivateViewer?.canEdit ?? workspace?.viewer.canEdit ?? false;
+  const stageRole = presentationStageRoleForViewer(viewerRoles, viewerCanEdit);
+  const scopedViewerLayout = live.snapshot?.viewerLayout?.targetRole === stageRole ? live.snapshot.viewerLayout : null;
+  const stageLayout = outputConfig?.resolvedRoleLayouts[stageRole] || scopedViewerLayout || DEFAULT_PRESENTATION_STAGE_LAYOUTS[stageRole];
+  const effectiveShowChords = stageLayout.show.chords && showChords;
+  const audiencePreviewSlide = useMemo(() => buildAudiencePreviewSlide(stageCurrentSlide), [stageCurrentSlide]);
+  const stageCountdownDuration = stageCurrentSlide?.kind === "content" && stageCurrentSlide.audienceSlide.kind === "countdown"
+    ? stageCurrentSlide.audienceSlide.durationSeconds
+    : 0;
+  const localContentClock = useMemo(() => {
+    const receivedAtMs = Date.now();
+    return {
+      slideId: stageCurrentSlide?.id || "",
+      receivedAtMs,
+      serverNow: new Date(receivedAtMs).toISOString(),
+      targetAt: stageCountdownDuration ? new Date(receivedAtMs + stageCountdownDuration * 1_000).toISOString() : "",
+    };
+  }, [stageCountdownDuration, stageCurrentSlide?.id]);
+  const stageCountdown = useMemo(() => {
+    if (!stageCountdownDuration) return null;
+    if (live.snapshot?.session) {
+      const authoritativeCountdown = live.timing?.countdown || live.snapshot.session.timing.countdown;
+      return authoritativeCountdown ? {
+        durationSeconds: authoritativeCountdown.durationSeconds,
+        targetAt: authoritativeCountdown.targetAt,
+      } : null;
+    }
+    return {
+      durationSeconds: stageCountdownDuration,
+      targetAt: localContentClock.targetAt,
+    };
+  }, [live.snapshot?.session, live.timing?.countdown, localContentClock.targetAt, stageCountdownDuration]);
   const stageAnnotations = useMemo(() => {
     if (!currentWorkspaceItem) return [];
     return currentWorkspaceItem.annotations.filter((annotation) =>
       !currentWorkspaceItem.reconciliation.unresolvedAnnotationIds.includes(annotation.id) &&
       (annotation.sectionAnchorId === null || annotation.sectionAnchorId === currentStep?.sectionAnchorId) &&
-      isPresentationAnnotationVisible(annotation, "stage", viewerRoles, workspace?.viewer.canEdit)
+      isPresentationAnnotationVisible(annotation, "stage", viewerRoles, viewerCanEdit)
     );
-  }, [currentStep?.sectionAnchorId, currentWorkspaceItem, viewerRoles, workspace?.viewer.canEdit]);
+  }, [currentStep?.sectionAnchorId, currentWorkspaceItem, viewerCanEdit, viewerRoles]);
   const operatorAnnotations = useMemo(() => {
     if (!currentWorkspaceItem) return [];
     return currentWorkspaceItem.annotations.filter((annotation) =>
       !currentWorkspaceItem.reconciliation.unresolvedAnnotationIds.includes(annotation.id) &&
       (annotation.sectionAnchorId === null || annotation.sectionAnchorId === currentStep?.sectionAnchorId) &&
-      isPresentationAnnotationVisible(annotation, "operator", viewerRoles, workspace?.viewer.canEdit)
+      isPresentationAnnotationVisible(annotation, "operator", viewerRoles, viewerCanEdit)
     );
-  }, [currentStep?.sectionAnchorId, currentWorkspaceItem, viewerRoles, workspace?.viewer.canEdit]);
+  }, [currentStep?.sectionAnchorId, currentWorkspaceItem, viewerCanEdit, viewerRoles]);
   const currentLegacyNotes = useMemo(
     () => [...new Set([...(workspace?.legacyNotes || []), ...(currentWorkspaceItem?.legacyNotes || [])])],
     [currentWorkspaceItem?.legacyNotes, workspace?.legacyNotes],
   );
-  const effectiveSurface = surface === "remote" ? "remote" : isTabletPresentation ? surface : "stage";
+  const effectiveSurface = surface === "remote" ? "remote" : isTabletPresentation ? (stageLayout.mode === "production" ? "operator" : surface) : "stage";
   const liveControllerOwned = Boolean(live.snapshot?.session?.controller?.ownedByViewer && live.controllerLeaseActive);
   const liveCanMutate = liveControllerOwned && !live.commandPending && live.networkState !== "diverged";
 
@@ -1037,13 +1195,29 @@ export default function ServicePresentation() {
       onPointerUp={isTabletPresentation ? handleTabletPointerUp : undefined}
       onPointerCancel={isTabletPresentation ? suppressNextTabletClick : undefined}
     >
-      <PresentationStageMessages messages={live.messages} canDismiss={liveCanMutate} onCommand={live.sendCommand} />
+      {stageLayout.show.messages ? <PresentationStageMessages messages={live.messages} canDismiss={liveCanMutate} onCommand={live.sendCommand} /> : null}
       {runSteps.length === 0 ? (
         <div className="flex h-full items-center justify-center px-6 text-center"><div><Music className="mx-auto mb-4 h-12 w-12 text-violet-200" /><h1 className="text-3xl font-black">Este servicio todavía no tiene elementos.</h1><p className="mt-2 text-slate-300">Agrega canciones o cues antes de abrirlo en modo presentación.</p></div></div>
-      ) : currentSlide?.kind === "song" ? (
-        <SongSlide slide={currentSlide} showChords={showChords} layout={presentationLayout} songMode={songMode} zoomScale={songZoomScale} activeSequenceId={currentStep?.sectionSequenceId} />
-      ) : currentSlide ? (
-        <CueSlide slide={currentSlide} />
+      ) : !stageLayout.show.current ? (
+        <div className="flex h-full items-center justify-center px-6 text-center"><div><EyeOff className="mx-auto mb-4 h-10 w-10 text-slate-600" /><p className="text-sm font-black uppercase tracking-[0.2em] text-slate-500">Contenido actual oculto en esta vista</p></div></div>
+      ) : stageCurrentSlide?.kind === "song" ? (
+        <SongSlide slide={stageCurrentSlide} showChords={effectiveShowChords} layout={presentationLayout} songMode={songMode} zoomScale={songZoomScale * stageLayout.fontScale} activeSequenceId={currentStep?.sectionSequenceId} stageMode={stageLayout.mode} />
+      ) : stageCurrentSlide?.kind === "content" ? (
+        <PresentationAudienceOutput
+          slide={stageCurrentSlide.audienceSlide}
+          theme={outputConfig?.resolvedTheme}
+          blackout={false}
+          playback={live.snapshot?.session?.playback || null}
+          countdown={stageCurrentSlide.audienceSlide.kind === "countdown" ? stageCountdown : null}
+          serverNow={live.snapshot?.serverNow || localContentClock.serverNow}
+          receivedAtMs={live.snapshot?.receivedAtMs || localContentClock.receivedAtMs}
+          authoritativePlayback={Boolean(live.snapshot?.session)}
+          showPlaybackRecovery
+          embedded
+          fontScale={stageLayout.fontScale}
+        />
+      ) : stageCurrentSlide?.kind === "cue" ? (
+        <CueSlide slide={stageCurrentSlide} fontScale={stageLayout.fontScale} mode={stageLayout.mode} showNotes={stageLayout.show.notes} />
       ) : null}
       {blackout && (
         <div className="absolute inset-0 z-30 flex items-center justify-center bg-black" onClick={stopStageEvent}>
@@ -1061,6 +1235,7 @@ export default function ServicePresentation() {
         <Button variant="ghost" className="h-11 shrink-0 rounded-xl border border-white/10 bg-white/[0.08] px-3 font-bold text-white hover:bg-white/[0.15] hover:text-white" onClick={exitToService}><ArrowLeft className="h-4 w-4" /><span className="hidden sm:inline">Salir</span></Button>
         <div className="hidden min-w-0 flex-1 sm:block"><p className="truncate text-sm font-black">{service.title}</p><p className="truncate text-[10px] text-slate-400">{formatServiceDate(service.date)}</p></div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          {workspace?.viewer.canEdit && <Button variant="ghost" aria-label="Configurar salida congregacional" className="h-11 rounded-xl border border-amber-300/20 bg-amber-300/10 px-3 text-amber-100 hover:bg-amber-300/15 hover:text-amber-50" onClick={() => setShowOutputManager(true)}><MonitorPlay className="h-4 w-4" /><span className="hidden lg:inline">Salida</span></Button>}
           {workspace?.viewer.canEdit && <Button variant="ghost" aria-label="Preparar presentación" className="hidden h-11 rounded-xl border border-white/10 bg-white/[0.08] px-3 text-white hover:bg-white/[0.15] hover:text-white md:flex" onClick={() => setShowEditor(true)}><Settings2 className="h-4 w-4" /><span className="hidden lg:inline">Preparar</span></Button>}
           <Button
             variant="ghost"
@@ -1071,7 +1246,7 @@ export default function ServicePresentation() {
             onClick={toggleBlackout}
           >{blackout ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}<span>{blackout ? "Restaurar" : "Salida en negro"}</span></Button>
           <Button variant="ghost" className="hidden h-11 rounded-xl border border-white/10 bg-white/[0.08] px-3 text-white hover:bg-white/[0.15] hover:text-white sm:flex" disabled={live.snapshot?.session ? !liveCanMutate || safeStepIndex === 0 : !historyCount} onClick={undoNavigation}><Undo2 className="h-4 w-4" /><span className="hidden xl:inline">Atrás</span></Button>
-          {currentSlide?.kind === "song" && <Button
+          {currentSlide?.kind === "song" && stageLayout.show.chords && <Button
             variant="ghost"
             aria-label={showChords ? "Ocultar acordes" : "Mostrar acordes"}
             aria-pressed={showChords}
@@ -1079,7 +1254,7 @@ export default function ServicePresentation() {
             disabled={Boolean(live.snapshot?.session) && !liveCanMutate}
             onClick={toggleChords}
           >{showChords ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}<span>Acordes</span><span className="text-[9px] opacity-70">{showChords ? "sí" : "no"}</span></Button>}
-          <div className="flex h-11 min-w-14 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.08] px-2 text-xs font-black tabular-nums sm:px-3"><Clock3 className="hidden h-4 w-4 text-violet-200 sm:block" /><span><span className="block leading-none">{clock}</span><span className="mt-1 block text-center text-[8px] leading-none text-slate-400 sm:hidden">{runSteps.length ? safeStepIndex + 1 : 0}/{runSteps.length}</span></span></div>
+          {stageLayout.show.clock ? <div className="flex h-11 min-w-14 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.08] px-2 text-xs font-black tabular-nums sm:px-3"><Clock3 className="hidden h-4 w-4 text-violet-200 sm:block" /><span><span className="block leading-none">{clock}</span><span className="mt-1 block text-center text-[8px] leading-none text-slate-400 sm:hidden">{runSteps.length ? safeStepIndex + 1 : 0}/{runSteps.length}</span></span></div> : null}
           <div className="hidden h-11 items-center rounded-xl border border-white/10 bg-white/[0.08] px-3 text-xs font-black tabular-nums sm:flex">{runSteps.length ? safeStepIndex + 1 : 0}/{runSteps.length}</div>
         </div>
       </header>
@@ -1124,11 +1299,11 @@ export default function ServicePresentation() {
         </div>
       )}
 
-      {effectiveSurface === "stage" && live.timing && (
-        <div className="relative z-30 grid shrink-0 grid-cols-3 border-b border-white/[0.06] bg-black/25" role="timer" aria-label="Tiempos del servicio">
-          <div className="px-3 py-2 text-center"><span className="block text-[9px] font-black uppercase tracking-[0.14em] text-slate-500">Servicio</span><span className={`mt-0.5 block text-sm font-black tabular-nums ${live.timing.service.overrunSeconds ? "text-red-300" : "text-white"}`}>{live.timing.service.overrunSeconds ? `+${formatLiveDuration(live.timing.service.overrunSeconds)}` : formatLiveDuration(live.timing.service.elapsedSeconds)}</span></div>
-          <div className="border-x border-white/[0.06] px-3 py-2 text-center"><span className="block text-[9px] font-black uppercase tracking-[0.14em] text-slate-500">Elemento</span><span className={`mt-0.5 block text-sm font-black tabular-nums ${live.timing.item.overrunSeconds ? "text-red-300" : "text-white"}`}>{live.timing.item.overrunSeconds ? `+${formatLiveDuration(live.timing.item.overrunSeconds)}` : formatLiveDuration(live.timing.item.elapsedSeconds)}</span></div>
-          <div className="px-3 py-2 text-center"><span className="block text-[9px] font-black uppercase tracking-[0.14em] text-slate-500">Cuenta</span><span className={`mt-0.5 block text-sm font-black tabular-nums ${live.timing.countdown && live.timing.countdown.remainingSeconds <= 10 ? "text-amber-200" : "text-white"}`}>{live.timing.countdown ? formatLiveDuration(live.timing.countdown.remainingSeconds) : "—"}</span></div>
+      {effectiveSurface === "stage" && live.timing && (stageLayout.show.serviceTimer || stageLayout.show.itemTimer) && (
+        <div className="relative z-30 grid shrink-0 border-b border-white/[0.06] bg-black/25" style={{ gridTemplateColumns: `repeat(${Number(stageLayout.show.serviceTimer) + (stageLayout.show.itemTimer ? 2 : 0)}, minmax(0, 1fr))` }} role="timer" aria-label="Tiempos del servicio">
+          {stageLayout.show.serviceTimer ? <div className="px-3 py-2 text-center"><span className="block text-[9px] font-black uppercase tracking-[0.14em] text-slate-500">Servicio</span><span className={`mt-0.5 block text-sm font-black tabular-nums ${live.timing.service.overrunSeconds ? "text-red-300" : "text-white"}`}>{live.timing.service.overrunSeconds ? `+${formatLiveDuration(live.timing.service.overrunSeconds)}` : formatLiveDuration(live.timing.service.elapsedSeconds)}</span></div> : null}
+          {stageLayout.show.itemTimer ? <div className="border-x border-white/[0.06] px-3 py-2 text-center"><span className="block text-[9px] font-black uppercase tracking-[0.14em] text-slate-500">Elemento</span><span className={`mt-0.5 block text-sm font-black tabular-nums ${live.timing.item.overrunSeconds ? "text-red-300" : "text-white"}`}>{live.timing.item.overrunSeconds ? `+${formatLiveDuration(live.timing.item.overrunSeconds)}` : formatLiveDuration(live.timing.item.elapsedSeconds)}</span></div> : null}
+          {stageLayout.show.itemTimer ? <div className="px-3 py-2 text-center"><span className="block text-[9px] font-black uppercase tracking-[0.14em] text-slate-500">Cuenta</span><span className={`mt-0.5 block text-sm font-black tabular-nums ${live.timing.countdown && live.timing.countdown.remainingSeconds <= 10 ? "text-amber-200" : "text-white"}`}>{live.timing.countdown ? formatLiveDuration(live.timing.countdown.remainingSeconds) : "—"}</span></div> : null}
         </div>
       )}
 
@@ -1155,12 +1330,27 @@ export default function ServicePresentation() {
           </aside>
           <section className="min-h-0 overflow-hidden border-r border-white/10 bg-black/15">{stageOutput}</section>
           <aside className="min-h-0 overflow-y-auto bg-black/20 p-4" onClick={stopStageEvent}>
-            <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-violet-200">Ahora</p><h2 className="mt-1 truncate text-lg font-black">{currentStep?.sectionLabel || currentStep?.title || "Sin contenido"}</h2><p className="truncate text-xs text-slate-400">{currentStep?.title}</p></div><span className="text-lg font-black tabular-nums text-white">{clock}</span></div>
+            <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-violet-200">Ahora</p><h2 className="mt-1 truncate text-lg font-black">{currentStep?.sectionLabel || currentStep?.title || "Sin contenido"}</h2><p className="truncate text-xs text-slate-400">{currentStep?.title}</p></div>{stageLayout.show.clock ? <span className="text-lg font-black tabular-nums text-white">{clock}</span> : null}</div>
             <div className="mt-3"><PresentationOwnershipControls snapshot={live.snapshot} controllerLeaseActive={live.controllerLeaseActive} pending={live.commandPending} onCommand={live.sendCommand} /></div>
-            <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.05] p-3"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Siguiente</p><p className="mt-1 truncate text-sm font-black">{nextStep?.sectionLabel || nextStep?.title || "Fin del servicio"}</p><p className="truncate text-xs text-slate-400">{nextStep?.title}</p></div>
-            <div className="mt-4"><PresentationTimingPanel timing={live.timing} canControl={liveCanMutate} pending={live.commandPending} onCommand={live.sendCommand} compact /></div>
-            <div className="mt-4"><p className="mb-2 text-[10px] font-black uppercase tracking-[0.18em] text-violet-200">Notas del equipo</p><AnnotationList annotations={operatorAnnotations} emptyLabel="Sin indicaciones en este momento." /></div>
-            {currentLegacyNotes.length ? <div className="mt-4 space-y-2"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Notas anteriores</p>{currentLegacyNotes.map((note, index) => <p key={`${note}-${index}`} className="rounded-xl bg-white/[0.05] p-3 text-xs leading-5 text-slate-300">{note}</p>)}</div> : null}
+            {currentSlide?.kind === "content" && (currentSlide.audienceSlide.kind === "video" || currentSlide.audienceSlide.kind === "audio" || currentSlide.audienceSlide.kind === "announcement") ? (
+              <PresentationMediaControls
+                slide={currentSlide}
+                playback={live.snapshot?.session?.playback || null}
+                serverNow={live.snapshot?.serverNow || new Date().toISOString()}
+                receivedAtMs={live.snapshot?.receivedAtMs || Date.now()}
+                pending={live.commandPending}
+                canControl={liveCanMutate && live.networkState === "online"}
+                onPlay={(positionMs) => { const media = currentSlide.audienceSlide; if (media.kind === "video" || media.kind === "audio" || media.kind === "announcement") void live.sendCommand("media_play", { itemId: currentSlide.itemId, slideId: media.id, kind: media.kind, positionMs: Math.round(positionMs), loop: media.loop }).catch(() => undefined); }}
+                onPause={() => { void live.sendCommand("media_pause", {}).catch(() => undefined); }}
+                onSeek={(positionMs) => { void live.sendCommand("media_seek", { positionMs: Math.round(positionMs) }).catch(() => undefined); }}
+                onRestart={() => { void live.sendCommand("media_restart", {}).catch(() => undefined); }}
+                onStop={() => { void live.sendCommand("media_stop", {}).catch(() => undefined); }}
+              />
+            ) : null}
+            {stageLayout.show.next ? <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.05] p-3"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Siguiente</p><p className="mt-1 truncate text-sm font-black">{nextStep?.sectionLabel || nextStep?.title || "Fin del servicio"}</p><p className="truncate text-xs text-slate-400">{nextStep?.title}</p></div> : null}
+            {(stageLayout.show.serviceTimer || stageLayout.show.itemTimer) ? <div className="mt-4"><PresentationTimingPanel timing={live.timing} canControl={liveCanMutate} pending={live.commandPending} onCommand={live.sendCommand} compact /></div> : null}
+            {stageLayout.show.notes ? <div className="mt-4"><p className="mb-2 text-[10px] font-black uppercase tracking-[0.18em] text-violet-200">Notas del equipo</p><AnnotationList annotations={operatorAnnotations} emptyLabel="Sin indicaciones en este momento." /></div> : null}
+            {stageLayout.show.notes && currentLegacyNotes.length ? <div className="mt-4 space-y-2"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Notas anteriores</p>{currentLegacyNotes.map((note, index) => <p key={`${note}-${index}`} className="rounded-xl bg-white/[0.05] p-3 text-xs leading-5 text-slate-300">{note}</p>)}</div> : null}
             <div className="sticky bottom-0 mt-5 grid grid-cols-[3rem_minmax(0,1fr)_3rem] gap-2 bg-[#08070d]/95 py-3">
               <Button variant="ghost" className="h-12 rounded-xl bg-white/10 text-white hover:bg-white/15 hover:text-white" disabled={safeStepIndex === 0 || Boolean(live.snapshot?.session) && !liveCanMutate} onClick={goPrevious}><ChevronLeft className="h-5 w-5" /></Button>
               <Button className="h-12 rounded-xl bg-violet-500 font-black hover:bg-violet-400" disabled={safeStepIndex >= runSteps.length - 1 || Boolean(live.snapshot?.session) && !liveCanMutate} onClick={goNext}>Siguiente</Button>
@@ -1173,10 +1363,10 @@ export default function ServicePresentation() {
           <section className="min-h-0 overflow-hidden">{stageOutput}</section>
           {isTabletPresentation && (
             <aside className="min-h-0 overflow-y-auto border-l border-white/10 bg-black/25 p-4" onClick={stopStageEvent}>
-              <div className="flex items-center justify-between gap-3"><div><p className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-200">Ahora</p><h2 className="mt-1 text-xl font-black">{currentStep?.sectionLabel || currentStep?.title}</h2></div><span className="text-lg font-black tabular-nums">{clock}</span></div>
-              <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.05] p-3"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Siguiente</p><p className="mt-1 text-sm font-black">{nextStep?.sectionLabel || nextStep?.title || "Fin del servicio"}</p></div>
-              <div className="mt-4"><p className="mb-2 text-[10px] font-black uppercase tracking-[0.18em] text-violet-200">Para ti</p><AnnotationList annotations={stageAnnotations} emptyLabel="Sin notas en esta sección." /></div>
-              {currentLegacyNotes.length ? <div className="mt-4 space-y-2"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Notas anteriores</p>{currentLegacyNotes.map((note, index) => <p key={`${note}-${index}`} className="rounded-xl bg-white/[0.05] p-3 text-xs leading-5 text-slate-300">{note}</p>)}</div> : null}
+              <div className="flex items-center justify-between gap-3"><div><p className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-200">Ahora</p><h2 className="mt-1 text-xl font-black">{currentStep?.sectionLabel || currentStep?.title}</h2></div>{stageLayout.show.clock ? <span className="text-lg font-black tabular-nums">{clock}</span> : null}</div>
+              {stageLayout.show.next ? <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.05] p-3"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Siguiente</p><p className="mt-1 text-sm font-black">{nextStep?.sectionLabel || nextStep?.title || "Fin del servicio"}</p></div> : null}
+              {stageLayout.show.notes ? <div className="mt-4"><p className="mb-2 text-[10px] font-black uppercase tracking-[0.18em] text-violet-200">Para ti</p><AnnotationList annotations={stageAnnotations} emptyLabel="Sin notas en esta sección." /></div> : null}
+              {stageLayout.show.notes && currentLegacyNotes.length ? <div className="mt-4 space-y-2"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Notas anteriores</p>{currentLegacyNotes.map((note, index) => <p key={`${note}-${index}`} className="rounded-xl bg-white/[0.05] p-3 text-xs leading-5 text-slate-300">{note}</p>)}</div> : null}
               <Button variant="outline" className="mt-4 h-11 w-full rounded-xl border-white/10 bg-white/[0.06] text-white hover:bg-white/10 hover:text-white" onClick={() => setShowRundown(true)}><ListMusic className="h-4 w-4" /> Salto rápido</Button>
             </aside>
           )}
@@ -1186,7 +1376,11 @@ export default function ServicePresentation() {
       {effectiveSurface === "stage" && (
         <footer className="relative z-30 flex shrink-0 items-center gap-2 border-t border-white/[0.07] px-3 py-2 sm:px-5" onClick={stopStageEvent}>
           <Button variant="ghost" className="h-12 w-12 shrink-0 rounded-xl bg-white/10 text-white hover:bg-white/15 hover:text-white" disabled={safeStepIndex === 0 || Boolean(live.snapshot?.session) && !liveCanMutate} onClick={goPrevious}><ChevronLeft className="h-5 w-5" /></Button>
-          <button type="button" className="min-h-12 min-w-0 flex-1 rounded-xl border border-white/10 bg-white/[0.06] px-3 py-2 text-center" onClick={() => setShowRundown(true)}><span className="block truncate text-[9px] font-black uppercase tracking-[0.18em] text-slate-500">Siguiente</span><span className="block truncate text-sm font-black text-white">{nextStep?.sectionLabel || nextStep?.title || "Fin del servicio"}</span>{!isTabletPresentation && (stageAnnotations[0]?.body || currentLegacyNotes[0]) ? <span className="mt-0.5 block truncate text-[10px] font-semibold text-amber-200">{stageAnnotations[0]?.body || currentLegacyNotes[0]}</span> : null}</button>
+          <button type="button" aria-label="Abrir salto rápido" className="min-h-12 min-w-0 flex-1 rounded-xl border border-white/10 bg-white/[0.06] px-3 py-2 text-center" onClick={() => setShowRundown(true)}>
+            {stageLayout.show.next ? <><span className="block truncate text-[9px] font-black uppercase tracking-[0.18em] text-slate-500">Siguiente</span><span className="block truncate text-sm font-black text-white">{nextStep?.sectionLabel || nextStep?.title || "Fin del servicio"}</span></> : null}
+            {!isTabletPresentation && stageLayout.show.notes && (stageAnnotations[0]?.body || currentLegacyNotes[0]) ? <span className="mt-0.5 block truncate text-[10px] font-semibold text-amber-200">{stageAnnotations[0]?.body || currentLegacyNotes[0]}</span> : null}
+            {!stageLayout.show.next && (!stageLayout.show.notes || !(stageAnnotations[0]?.body || currentLegacyNotes[0])) ? <ListMusic aria-hidden="true" className="mx-auto h-4 w-4 text-slate-500" /> : null}
+          </button>
           <Button variant="ghost" className="h-12 w-12 shrink-0 rounded-xl bg-white/10 text-white hover:bg-white/15 hover:text-white" disabled={safeStepIndex >= runSteps.length - 1 || Boolean(live.snapshot?.session) && !liveCanMutate} onClick={goNext}><ChevronRight className="h-5 w-5" /></Button>
         </footer>
       )}
@@ -1203,6 +1397,17 @@ export default function ServicePresentation() {
       {workspace && (
         <PresentationWorkspaceEditor open={showEditor} onOpenChange={setShowEditor} service={service} workspace={workspace} saving={savingWorkspace} onSave={saveWorkspaceItem} />
       )}
+      {workspace?.viewer.canEdit ? (
+        <PresentationOutputManager
+          open={showOutputManager}
+          onOpenChange={setShowOutputManager}
+          serviceId={service.id}
+          serviceTitle={service.title}
+          previewSlide={audiencePreviewSlide}
+          blackout={blackout}
+          onConfigChange={setOutputConfig}
+        />
+      ) : null}
     </div>
   );
 }

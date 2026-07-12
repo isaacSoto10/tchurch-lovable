@@ -62,6 +62,64 @@ function estimateRenderedRows(slide: ReturnType<typeof buildServicePresentationS
 }
 
 describe("buildServicePresentationSlides", () => {
+  it("paginates long resolved Scripture with stable public IDs and cursor parts", () => {
+    const service = buildService("");
+    service.items = [{
+      id: "scripture-item",
+      title: "Salmo 119",
+      type: "scripture",
+      position: 0,
+      duration: 3,
+      song: null,
+      details: { presentation: {
+        kind: "scripture",
+        reference: "Salmo 119:1-8",
+        resolvedPassage: {
+          source: "youversion",
+          reference: "Salmo 119:1-8",
+          passageUsfm: "PSA.119.1-PSA.119.8",
+          version: { id: "149", name: "Reina-Valera 1960", abbreviation: "RVR1960", language: "es" },
+          verses: Array.from({ length: 8 }, (_value, index) => ({ number: String(index + 1), text: `Versículo ${index + 1} ${"palabra ".repeat(18)}` })),
+          copyright: "Texto bíblico",
+          promotionalContent: null,
+        },
+      } },
+    }];
+
+    const slides = buildServicePresentationSlides(service).filter((slide) => slide.kind === "content");
+    const steps = buildPresentationRunSteps(slides, "paged");
+    expect(slides.length).toBeGreaterThan(1);
+    expect(slides.map((slide) => slide.id)).toEqual(slides.map((_slide, index) => `scripture-item:scripture:${index}`));
+    expect(slides.map((slide) => slide.part)).toEqual(slides.map((_slide, index) => index + 1));
+    expect(slides.every((slide) => slide.totalParts === slides.length)).toBe(true);
+    expect(steps.map((step) => step.page)).toEqual(slides.map((_slide, index) => index + 1));
+  });
+
+  it("paginates a long unpunctuated sermon instead of overflowing one slide", () => {
+    const service = buildService("");
+    service.items = [{
+      id: "sermon-item",
+      title: "La gracia",
+      type: "other",
+      position: 0,
+      duration: 30,
+      song: null,
+      details: { presentation: {
+        kind: "sermon",
+        subtitle: "Mensaje",
+        speaker: "Pastor",
+        body: Array.from({ length: 8 }, () => "gracia verdad esperanza ".repeat(18)),
+        mediaSrc: null,
+        mediaMimeType: null,
+      } },
+    }];
+
+    const slides = buildServicePresentationSlides(service).filter((slide) => slide.kind === "content");
+    expect(slides.length).toBeGreaterThan(1);
+    expect(slides.map((slide) => slide.id)).toEqual(slides.map((_slide, index) => `sermon-item:sermon:part:${index}`));
+    expect(slides.every((slide) => slide.audienceSlide.kind === "sermon" && slide.audienceSlide.body.length <= 7)).toBe(true);
+  });
+
   it("wraps long mobile chord lines without exceeding the presentation column budget", () => {
     const lines = getSongLines(
       "[Bm]Originalmente comienza un [A]solo de batería y luego [G]entran los demás [F#]instrumentos.\n" +

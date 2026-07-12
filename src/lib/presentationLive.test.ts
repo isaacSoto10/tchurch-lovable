@@ -64,6 +64,18 @@ function snapshotRaw(view: "operator" | "stage" | "remote" | "audience" = "stage
       canControl: true,
       canForceTakeover: view === "operator",
     },
+    viewerLayout: {
+      schemaVersion: 3,
+      id: view === "stage" ? "layout-worship" : "layout-production",
+      name: view === "stage" ? "Worship leader" : "Production",
+      targetRole: view === "stage" ? "worship_leader" : "production",
+      mode: view === "stage" ? "confidence" : "production",
+      fontScale: view === "stage" ? 1.08 : 0.92,
+      show: { current: true, next: true, notes: true, chords: view === "stage", clock: true, serviceTimer: true, itemTimer: true, messages: true },
+      version: 2,
+      churchId: "must-not-survive",
+      createdAt: serverNow,
+    },
     session: {
       id: "session-1",
       status: "live",
@@ -251,6 +263,35 @@ describe("Tchurch Live Stage 2 contract", () => {
     expect(normalized.session?.controller).toBeNull();
     expect(normalized.session?.messages).toEqual([]);
     expect(normalized.session).not.toHaveProperty("presence");
+    expect(normalized.viewerLayout).toBeNull();
+  });
+
+  it("keeps only the scoped viewer layout and rejects a layout for another role", () => {
+    const normalized = normalizePresentationLiveSnapshot(snapshotRaw("stage"), "stage", "client-1");
+    expect(normalized.viewerLayout).toEqual({
+      schemaVersion: 3,
+      id: "layout-worship",
+      name: "Worship leader",
+      targetRole: "worship_leader",
+      mode: "confidence",
+      fontScale: 1.08,
+      show: { current: true, next: true, notes: true, chords: true, clock: true, serviceTimer: true, itemTimer: true, messages: true },
+      version: 2,
+    });
+    expect(normalized.viewerLayout).not.toHaveProperty("churchId");
+    const wrong = snapshotRaw("stage");
+    wrong.viewerLayout.targetRole = "production";
+    expect(normalizePresentationLiveSnapshot(wrong, "stage", "client-1").viewerLayout).toBeNull();
+  });
+
+  it("normalizes authoritative media playback and keeps media commands online-only", () => {
+    const raw = snapshotRaw("operator");
+    raw.session.playback = { itemId: "video-item", slideId: "video-item:video:0", kind: "video", status: "playing", positionMs: 2_000, startedAt: "2026-07-11T18:29:58.000Z", rate: 1, loop: false };
+    const normalized = normalizePresentationLiveSnapshot(raw, "operator", "client-1");
+    expect(normalized.session?.playback).toMatchObject({ kind: "video", status: "playing", positionMs: 2_000, rate: 1 });
+    expect(buildPresentationCommand("client", "iPad", "media_seek", { positionMs: 4_000 }, 15)).toMatchObject({ type: "media_seek", payload: { positionMs: 4_000 }, expectedRevision: 15 });
+    const state = createPresentationOfflineState(cachedPackage(), liveSnapshot());
+    expect(() => queueOfflinePresentationCommand(state, { commandId: "media", type: "media_seek" as never, payload: { positionMs: 4_000 } as never }, offlineContext)).toThrow();
   });
 
   it("never infers controller ownership from a matching installation client ID", () => {

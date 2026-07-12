@@ -87,6 +87,9 @@ export function routeFromAppUrl(value: unknown): string | null {
     }
 
     if (url.protocol === "https:" && TRUSTED_LINK_HOSTS.includes(url.hostname)) {
+      // `/present#token` is intentionally web-only and excluded from AASA. Never
+      // normalize its secret-bearing fragment into an authenticated app route.
+      if (url.pathname === "/present") return null;
       return normalizeAppRoute(`${url.pathname}${url.search}`);
     }
 

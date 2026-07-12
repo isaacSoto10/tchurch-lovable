@@ -8,6 +8,13 @@ import {
 } from "./songDisplay";
 import { normalizeKey, transposeChordPro } from "./musicUtils";
 import {
+  normalizePresentationItemContent,
+  paginateResolvedScripture,
+  splitPresentationTextPages,
+  type PresentationAudienceSlide,
+  type PresentationItemContent,
+} from "./presentationOutput";
+import {
   derivePresentationSections,
   getWorkspaceItem,
   type PresentationWorkspace,
@@ -78,6 +85,20 @@ export type PresentationSlide =
       type: string;
       duration: number | null;
       notes: string[];
+      nextTitle?: string;
+    }
+  | {
+      id: string;
+      kind: "content";
+      itemId: string;
+      itemIndex: number;
+      title: string;
+      subtitle: string;
+      type: string;
+      duration: number | null;
+      part: number;
+      totalParts: number;
+      audienceSlide: PresentationAudienceSlide;
       nextTitle?: string;
     };
 
@@ -454,6 +475,116 @@ function buildCueSlide(item: PresentationServiceItem, itemIndex: number): Presen
   };
 }
 
+function buildAudienceContentSlides(
+  item: PresentationServiceItem,
+  itemIndex: number,
+  content: PresentationItemContent,
+): Extract<PresentationSlide, { kind: "content" }>[] {
+  const title = item.title || "Contenido";
+  const base = {
+    itemId: item.id,
+    itemIndex,
+    title,
+    durationSeconds: item.duration ? Math.max(1, Math.round(item.duration * 60)) : null,
+  };
+  let audienceSlides: PresentationAudienceSlide[];
+  if (content.kind === "scripture") {
+    if (!content.resolvedPassage) return [];
+    const pages = paginateResolvedScripture(content.resolvedPassage);
+    audienceSlides = pages.map((verses, index) => ({
+      ...base,
+      id: `${item.id}:scripture:${index}`,
+      kind: "scripture",
+      passage: { ...content.resolvedPassage!, verses },
+      part: index + 1,
+      totalParts: pages.length,
+    }));
+  } else if (content.kind === "image") {
+    audienceSlides = [{ ...base, id: `${item.id}:image:0`, kind: "image", src: content.src, alt: content.alt, fit: content.fit }];
+  } else if (content.kind === "video") {
+    audienceSlides = [{ ...base, id: `${item.id}:video:0`, kind: "video", src: content.src, posterSrc: content.posterSrc, muted: content.muted, autoplay: content.autoplay, loop: content.loop, durationMs: content.durationMs }];
+  } else if (content.kind === "audio") {
+    audienceSlides = [{ ...base, id: `${item.id}:audio:0`, kind: "audio", src: content.src, artist: content.artist, autoplay: content.autoplay, loop: content.loop, durationMs: content.durationMs }];
+  } else if (content.kind === "countdown") {
+    audienceSlides = [{ ...base, id: `${item.id}:countdown:0`, kind: "countdown", label: content.label, durationSeconds: content.durationSeconds }];
+  } else if (content.kind === "sermon") {
+    audienceSlides = splitPresentationTextPages(content.body.join("\n"), 360, 7).map((body, index) => ({ ...base, id: `${item.id}:sermon:part:${index}`, kind: "sermon", subtitle: content.subtitle, speaker: content.speaker, body, mediaSrc: content.mediaSrc, mediaType: content.mediaSrc ? "image" : null }));
+  } else if (content.kind === "announcement") {
+    audienceSlides = splitPresentationTextPages(content.body.join("\n"), 300, 6).map((body, index) => ({ ...base, id: `${item.id}:announcement:part:${index}`, kind: "announcement", body, mediaSrc: content.mediaSrc, mediaType: content.mediaSrc ? "image" : null, durationSeconds: content.durationSeconds, loop: content.loop }));
+  } else {
+    audienceSlides = [{ ...base, id: `${item.id}:blank:0`, kind: "blank", tone: content.tone }];
+  }
+
+  const type = ITEM_TYPE_LABELS[item.type?.toLowerCase()] || content.kind || "Contenido";
+  return audienceSlides.map((audienceSlide, index) => ({
+    id: audienceSlide.id,
+    kind: "content",
+    itemId: item.id,
+    itemIndex,
+    title,
+    subtitle: type,
+    type,
+    duration: item.duration,
+    part: index + 1,
+    totalParts: audienceSlides.length,
+    audienceSlide,
+  }));
+}
+
+function buildNonSongSlides(item: PresentationServiceItem, itemIndex: number): PresentationSlide[] {
+  const details = getPlanningDetails(item);
+  const content = normalizePresentationItemContent(details.presentation);
+  if (content) {
+    const contentSlides = buildAudienceContentSlides(item, itemIndex, content);
+    if (contentSlides.length) return contentSlides;
+    if (content.kind === "scripture") {
+      const cue = buildCueSlide(item, itemIndex);
+      return [cue.kind === "cue"
+        ? { ...cue, notes: ["El texto bíblico debe resolverse en el servidor antes de proyectarlo."] }
+        : cue];
+    }
+  }
+  return [buildCueSlide(item, itemIndex)];
+}
+
+export function buildAudiencePreviewSlide(slide: PresentationSlide | null | undefined): PresentationAudienceSlide | null {
+  if (!slide) return null;
+  if (slide.kind === "content") return slide.audienceSlide;
+  if (slide.kind === "cue") {
+    return {
+      id: `${slide.id}-preview`,
+      itemId: slide.itemId,
+      itemIndex: slide.itemIndex,
+      kind: "sermon",
+      title: slide.title,
+      durationSeconds: slide.duration ? Math.round(slide.duration * 60) : null,
+      subtitle: slide.subtitle,
+      speaker: null,
+      body: [],
+      mediaSrc: null,
+      mediaType: null,
+    };
+  }
+  const lines = slide.lines
+    .filter((line): line is Extract<PresentationDisplayLine, { kind: "line" }> => line.kind === "line")
+    .map((line) => line.lyrics.trim())
+    .filter(Boolean)
+    .slice(0, 7);
+  return {
+    id: `${slide.id}-preview`,
+    itemId: slide.itemId,
+    itemIndex: slide.itemIndex,
+    kind: "lyrics",
+    title: slide.title,
+    durationSeconds: null,
+    sectionLabel: slide.sectionLabels[0] || null,
+    lines: lines.length ? lines : [slide.title],
+    part: slide.part,
+    totalParts: slide.totalParts,
+    copyright: null,
+  };
+}
+
 export function buildServicePresentationSlides(
   service: PresentationService,
   options: BuildServicePresentationSlidesOptions = {}
@@ -465,7 +596,7 @@ export function buildServicePresentationSlides(
     if (isSongItemType(item.type) && item.song) {
       return buildSongSlides(item, index + 1, layout, songMode, getWorkspaceItem(options.workspace, item.id));
     }
-    return [buildCueSlide(item, index + 1)];
+    return buildNonSongSlides(item, index + 1);
   });
 
   return slides.map((slide, index) => ({
@@ -480,7 +611,7 @@ export function buildPresentationRunSteps(
 ): PresentationRunStep[] {
   const steps: PresentationRunStep[] = [];
   slides.forEach((slide, slideIndex) => {
-    if (slide.kind === "cue") {
+    if (slide.kind !== "song") {
       steps.push({
         id: slide.id,
         kind: "cue",
@@ -490,8 +621,8 @@ export function buildPresentationRunSteps(
         sectionAnchorId: null,
         sectionSequenceId: null,
         sectionLabel: null,
-        page: 1,
-        totalPages: 1,
+        page: slide.kind === "content" ? slide.part : 1,
+        totalPages: slide.kind === "content" ? slide.totalParts : 1,
       });
       return;
     }

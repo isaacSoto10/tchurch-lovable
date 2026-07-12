@@ -34,6 +34,12 @@ describe("mobile app navigation helpers", () => {
     expect(routeFromAppUrl("https://www.tchurchapp.com?code=ABC12345")).toBe("/join-church?code=ABC12345");
   });
 
+  it("keeps one-time audience /present links outside native routing", () => {
+    const token = "A".repeat(48);
+    expect(routeFromAppUrl(`https://tchurchapp.com/present#${token}`)).toBeNull();
+    expect(routeFromAppUrl(`https://www.tchurchapp.com/present#${token}`)).toBeNull();
+  });
+
   it("builds event routes from push notification payloads", () => {
     expect(routeFromNotificationData({ eventId: "event-1" })).toBe("/app/events/event-1");
     expect(routeFromNotificationData({ event_id: "event-1", action: "scanner" })).toBe("/app/events/event-1/scanner");

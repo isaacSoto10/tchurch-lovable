@@ -5,6 +5,7 @@ import {
   type PresentationTargetRole,
   type PresentationWorkspace,
 } from "@/lib/presentationWorkspace";
+import { presentationStageRoleForViewer, type PresentationMediaPlayback, type PresentationStageMode, type PresentationStageRole } from "@/lib/presentationOutput";
 
 export const PRESENTATION_LIVE_SCHEMA_VERSION = 2 as const;
 export const PRESENTATION_CONTROLLER_LEASE_MS = 30_000;
@@ -125,6 +126,7 @@ export type PresentationSession = {
   presence?: PresentationPresence[];
   cursor: PresentationCursor;
   display: PresentationDisplay;
+  playback: PresentationMediaPlayback | null;
   timing: PresentationTiming;
   messages: PresentationStageMessage[];
   lastCommand: {
@@ -142,9 +144,30 @@ export type PresentationLiveSnapshot = {
   viewerVersion: string;
   serverNow: string;
   viewer: PresentationLiveViewer;
+  viewerLayout: PresentationViewerLayout | null;
   session: PresentationSession | null;
   /** Local receipt time used only to project server clocks between revisions. */
   receivedAtMs: number;
+};
+
+export type PresentationViewerLayout = {
+  schemaVersion: 3;
+  id: string;
+  name: string;
+  targetRole: PresentationStageRole;
+  mode: PresentationStageMode;
+  fontScale: number;
+  show: {
+    current: boolean;
+    next: boolean;
+    notes: boolean;
+    chords: boolean;
+    clock: boolean;
+    serviceTimer: boolean;
+    itemTimer: boolean;
+    messages: boolean;
+  };
+  version: number;
 };
 
 export type PresentationPlannedTiming = {
@@ -195,6 +218,11 @@ export type PresentationCommandType =
   | "timer_reset"
   | "countdown_set"
   | "countdown_clear"
+  | "media_play"
+  | "media_pause"
+  | "media_seek"
+  | "media_restart"
+  | "media_stop"
   | "stage_message_send"
   | "stage_message_dismiss"
   | "offline_reconcile";
@@ -229,6 +257,11 @@ export type PresentationCommandPayloads = {
   timer_reset: { scope: "service" | "item" };
   countdown_set: { durationSeconds: number };
   countdown_clear: Record<string, never>;
+  media_play: { itemId: string; slideId: string; kind: "video" | "audio" | "announcement"; positionMs?: number; loop?: boolean };
+  media_pause: Record<string, never>;
+  media_seek: { positionMs: number };
+  media_restart: Record<string, never>;
+  media_stop: Record<string, never>;
   stage_message_send: {
     body: string;
     tone: "info" | "urgent";
@@ -337,6 +370,11 @@ const COMMAND_TYPES = new Set<PresentationCommandType>([
   "timer_reset",
   "countdown_set",
   "countdown_clear",
+  "media_play",
+  "media_pause",
+  "media_seek",
+  "media_restart",
+  "media_stop",
   "stage_message_send",
   "stage_message_dismiss",
   "offline_reconcile",
@@ -416,6 +454,60 @@ function normalizeDisplay(value: unknown): PresentationDisplay {
   return {
     blackout: raw?.blackout === true,
     chordsVisible: raw?.chordsVisible !== false,
+  };
+}
+
+function normalizeMediaPlayback(value: unknown): PresentationMediaPlayback | null {
+  const raw = recordValue(value);
+  const itemId = nullableString(raw?.itemId);
+  const slideId = nullableString(raw?.slideId);
+  const kind = raw?.kind;
+  const status = raw?.status;
+  if (!raw || !itemId || !slideId || (kind !== "video" && kind !== "audio" && kind !== "announcement") || (status !== "idle" && status !== "playing" && status !== "paused" && status !== "ended")) return null;
+  return {
+    itemId,
+    slideId,
+    kind,
+    status,
+    positionMs: integer(raw.positionMs),
+    startedAt: isoValue(raw.startedAt),
+    rate: 1,
+    loop: raw.loop === true,
+  };
+}
+
+function normalizeViewerLayout(value: unknown, viewer: PresentationLiveViewer): PresentationViewerLayout | null {
+  if (viewer.view === "audience") return null;
+  const raw = recordValue(value);
+  const show = recordValue(raw?.show);
+  const id = nullableString(raw?.id);
+  const name = nullableString(raw?.name);
+  const targetRole = raw?.targetRole;
+  const mode = raw?.mode;
+  const expectedRole = presentationStageRoleForViewer(viewer.roles, viewer.canEdit);
+  if (
+    !raw || raw.schemaVersion !== 3 || !show || !id || !name || targetRole !== expectedRole ||
+    (mode !== "confidence" && mode !== "lyrics" && mode !== "speaker" && mode !== "production") ||
+    typeof raw.fontScale !== "number" || !Number.isFinite(raw.fontScale) || raw.fontScale < 0.7 || raw.fontScale > 1.5
+  ) return null;
+  return {
+    schemaVersion: 3,
+    id,
+    name,
+    targetRole,
+    mode,
+    fontScale: raw.fontScale,
+    show: {
+      current: show.current === true,
+      next: show.next === true,
+      notes: show.notes === true,
+      chords: show.chords === true,
+      clock: show.clock === true,
+      serviceTimer: show.serviceTimer === true,
+      itemTimer: show.itemTimer === true,
+      messages: show.messages === true,
+    },
+    version: integer(raw.version),
   };
 }
 
@@ -559,6 +651,7 @@ export function normalizePresentationLiveSnapshot(
       ...(view === "operator" || view === "remote" ? { presence: normalizePresence(sessionRaw.presence) } : {}),
       cursor: normalizeCursor(sessionRaw.cursor),
       display: normalizeDisplay(sessionRaw.display),
+      playback: normalizeMediaPlayback(sessionRaw.playback),
       timing,
       messages: normalizeMessages(sessionRaw.messages, viewer, serverNow),
       lastCommand: lastCommandRaw && lastCommandType ? {
@@ -582,6 +675,7 @@ export function normalizePresentationLiveSnapshot(
     viewerVersion: stringValue(raw.viewerVersion),
     serverNow,
     viewer,
+    viewerLayout: normalizeViewerLayout(raw.viewerLayout, viewer),
     session,
     receivedAtMs,
   };
@@ -1080,6 +1174,9 @@ export function queueOfflinePresentationCommand<T extends PresentationOfflineCom
   context: PresentationOfflineContext,
   nowMs = Date.now(),
 ): PresentationOfflineState {
+  if (!isOfflinePresentationCommand(command.type as PresentationCommandType)) {
+    throw new Error("Este control requiere conexión con la sesión oficial.");
+  }
   if (!state.localSnapshot.session?.controller?.ownedByViewer) {
     throw new Error("Este dispositivo no tenía el control cuando se perdió la conexión.");
   }

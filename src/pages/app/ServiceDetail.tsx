@@ -20,6 +20,7 @@ import { useChurch } from "@/providers/ChurchProvider";
 import { useToast } from "@/components/ui/use-toast";
 import { ChordProPreview } from "@/components/ChordProPreview";
 import { ServiceSongPicker } from "@/components/ServiceSongPicker";
+import { PresentationContentEditor } from "@/components/presentation/PresentationContentEditor";
 import {
   filterExistingSongRecommendations,
   getExistingServiceSongIds,
@@ -36,6 +37,7 @@ import {
 } from "@/lib/songDisplay";
 import { normalizeKey, transposeChordPro } from "@/lib/musicUtils";
 import { canUseServicePresentation } from "@/lib/servicePresentation";
+import { normalizePresentationItemContent } from "@/lib/presentationOutput";
 import { formatServiceDate } from "@/lib/serviceDates";
 import { hasLocalServiceBlockoutConflict, type ServiceBlockoutLike } from "@/lib/serviceBlockouts";
 import { sortSongsByLastUsedDesc } from "@/lib/songUsage";
@@ -279,6 +281,7 @@ export default function ServiceDetail() {
     [liveDestinations],
   );
   const [savingDetails, setSavingDetails] = useState(false);
+  const [detailPresentation, setDetailPresentation] = useState<Record<string, unknown> | null>(null);
   const [draggingItemId, setDraggingItemId] = useState<string | null>(null);
   const [dragOverItemId, setDragOverItemId] = useState<string | null>(null);
   const suppressNextCardClickRef = useRef(false);
@@ -1023,6 +1026,7 @@ export default function ServiceDetail() {
       audioVisual: notes.audioVisual || "",
       person: notes.person || "",
     });
+    setDetailPresentation(details.presentation && typeof details.presentation === "object" && !Array.isArray(details.presentation) ? details.presentation as Record<string, unknown> : null);
     setDetailMedia({
       mediaProvider: typeof details.mediaProvider === "string" ? details.mediaProvider : typeof details.provider === "string" ? details.provider : "auto",
       destinationId: typeof details.destinationId === "string" ? details.destinationId : typeof details.liveDestinationId === "string" ? details.liveDestinationId : "",
@@ -1039,6 +1043,15 @@ export default function ServiceDetail() {
 
   async function saveItemDetails(item: ServiceItem) {
     const duration = detailDuration ? Number(detailDuration) : null;
+    const normalizedPresentation = detailPresentation ? normalizePresentationItemContent(detailPresentation) : null;
+    if (detailPresentation && !normalizedPresentation) {
+      toast({ title: "Revisa el contenido de presentación", description: "Usa URLs HTTPS y completa los campos requeridos.", variant: "destructive" });
+      return;
+    }
+    if (normalizedPresentation?.kind === "scripture" && !normalizedPresentation.resolvedPassage) {
+      toast({ title: "Resuelve primero el texto bíblico", description: "La audiencia solo recibe pasajes resueltos por el servidor.", variant: "destructive" });
+      return;
+    }
     const nextDetails: PlanningDetails = {
       ...(item.details || {}),
       timing: detailTiming,
@@ -1059,6 +1072,7 @@ export default function ServiceDetail() {
       scripture: detailMedia.scripture.trim() || undefined,
       series: detailMedia.series.trim() || undefined,
       description: detailMedia.description.trim() || undefined,
+      presentation: normalizedPresentation,
     };
 
     setSavingDetails(true);
@@ -1518,6 +1532,8 @@ export default function ServiceDetail() {
                               </div>
                             ))}
                           </div>
+
+                          <PresentationContentEditor key={item.id} initialValue={(item.details || {}).presentation} onChange={setDetailPresentation} />
 
                           <div className="grid gap-3 rounded-2xl border border-zinc-100 bg-zinc-50 p-3">
                             <div>
