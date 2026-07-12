@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   mergePresentationChatMessages,
-  normalizePlanningCenterConnect,
-  parsePlanningCenterMobileRelay,
-  planningCenterRelayErrorNotice,
-  normalizePlanningCenterCatalog,
-  normalizePlanningCenterImport,
   normalizePresentationAutomationAcknowledgement,
   normalizePresentationAutomationDispatch,
   normalizePresentationAutomationEnvelope,
@@ -101,77 +96,13 @@ describe("presentation production v4 contracts", () => {
     const summary = normalizePresentationIntegrationSummary({
       schemaVersion: 4,
       integrations: [
-        { provider: "planning_center", status: "connected", externalOrganization: { id: "org-00000001", name: "Tchurch" }, scopes: ["services"], connectedAt: now, lastSyncAt: null },
         { provider: "propresenter", status: "local_only", capabilities: ["text_export", "local_api"] },
         { provider: "obs", status: "local_only", capabilities: ["browser_source", "obs_websocket_5"] },
         { provider: "ndi_bridge", status: "requires_tchurch_studio", capabilities: ["frame_feed"] },
       ],
     });
-    expect(summary.integrations).toHaveLength(4);
+    expect(summary.integrations).toHaveLength(3);
     expect(() => normalizePresentationIntegrationSummary({ schemaVersion: 4, integrations: [{ provider: "ndi_bridge", status: "native", capabilities: ["ndi_sdk"] }] })).toThrow();
-  });
-
-  it("parses Planning Center preview/import without accepting hidden credentials", () => {
-    const authorize = new URL("https://api.planningcenteronline.com/oauth/authorize");
-    authorize.searchParams.set("client_id", "client_00000001");
-    authorize.searchParams.set("redirect_uri", "https://www.tchurchapp.com/api/presentation-integrations/planning-center/callback");
-    authorize.searchParams.set("response_type", "code");
-    authorize.searchParams.set("scope", "services");
-    authorize.searchParams.set("state", "s".repeat(43));
-    authorize.searchParams.set("code_challenge", "c".repeat(43));
-    authorize.searchParams.set("code_challenge_method", "S256");
-    expect(normalizePlanningCenterConnect({ schemaVersion: 4, provider: "planning_center", authorizeUrl: authorize.toString(), expiresAt: now }).provider).toBe("planning_center");
-    const duplicate = new URL(authorize);
-    duplicate.searchParams.append("state", "x".repeat(43));
-    expect(() => normalizePlanningCenterConnect({ schemaVersion: 4, provider: "planning_center", authorizeUrl: duplicate.toString(), expiresAt: now })).toThrow(/OAuth inválida/i);
-    const wrongRedirect = new URL(authorize);
-    wrongRedirect.searchParams.set("redirect_uri", "https://evil.example/callback");
-    expect(() => normalizePlanningCenterConnect({ schemaVersion: 4, provider: "planning_center", authorizeUrl: wrongRedirect.toString(), expiresAt: now })).toThrow(/OAuth inválida/i);
-    expect(normalizePlanningCenterCatalog({ schemaVersion: 4, provider: "planning_center", resource: "service_types", items: [{ id: "type-00000001", name: "Domingo" }], nextOffset: null }).resource).toBe("service_types");
-    const preview = { schemaVersion: 4, provider: "planning_center", operation: "preview", source: { serviceTypeId: "type-00000001", planId: "plan-00000001", title: "Domingo", dates: "12 jul" }, changes: { create: 3, update: 1, unchanged: 4, reorderedLocal: 2 }, applied: false, syncedAt: null } as const;
-    expect(normalizePlanningCenterImport(preview).applied).toBe(false);
-    expect(normalizePlanningCenterImport(preview).changes.reorderedLocal).toBe(2);
-    expect(() => normalizePlanningCenterImport({ ...preview, accessToken: "secret" })).toThrow(/no está permitido/i);
-    expect(() => normalizePlanningCenterImport({ ...preview, applied: true })).toThrow(/vista previa/i);
-  });
-
-  it("accepts the bounded catalog values emitted by the canonical Planning Center server contract", () => {
-    const longText = "x".repeat(500);
-    const plans = normalizePlanningCenterCatalog({
-      schemaVersion: 4,
-      provider: "planning_center",
-      resource: "plans",
-      serviceTypeId: "type-00000001",
-      items: [{ id: "plan-00000001", title: longText, dates: "", sortDate: "2026-07-12" }],
-      nextOffset: 25,
-    });
-    expect(plans).toMatchObject({ resource: "plans", nextOffset: 25, items: [{ sortDate: "2026-07-12", title: longText }] });
-
-    const plan = normalizePlanningCenterCatalog({
-      schemaVersion: 4,
-      provider: "planning_center",
-      resource: "plan",
-      serviceTypeId: "type-00000001",
-      plan: { id: "plan-00000001", title: "Domingo", dates: "12 jul", sortDate: "2026-07-12" },
-      items: [{ id: "item-00000001", title: longText, itemType: longText, lengthSeconds: 172_800, sequence: -1, keyName: longText }],
-    });
-    expect(plan).toMatchObject({ resource: "plan", plan: { sortDate: "2026-07-12" }, items: [{ lengthSeconds: 172_800, sequence: -1, keyName: longText }] });
-    expect(() => normalizePlanningCenterCatalog({ schemaVersion: 4, provider: "planning_center", resource: "plans", serviceTypeId: "type-00000001", items: [{ id: "plan-1", title: "Domingo", dates: "", sortDate: "bad\u0000date" }], nextOffset: null })).toThrow(/sortDate es inválido/i);
-    expect(() => normalizePlanningCenterCatalog({ schemaVersion: 4, provider: "planning_center", resource: "service_types", items: Array.from({ length: 101 }, (_, index) => ({ id: `type-${index}`, name: "Domingo" })), nextOffset: null })).toThrow(/demasiados elementos/i);
-  });
-
-  it("parses the one-use mobile Planning Center relay without carrying it into the clean route", () => {
-    const handoff = "h".repeat(43);
-    const complete = parsePlanningCenterMobileRelay(`tchurchapp://tchurchapp.com/#/app/services/service-0001/presentation?planningCenter=complete&handoff=${handoff}`);
-    expect(complete).toMatchObject({ serviceId: "service-0001", route: "/app/services/service-0001/presentation", outcome: "complete", handoff });
-    expect(complete?.route).not.toContain(handoff);
-    expect(parsePlanningCenterMobileRelay(`tchurchapp://tchurchapp.com/#/app/services/service-0001/presentation?planningCenter=complete&handoff=${handoff}&code=leak`)).toBeNull();
-    expect(parsePlanningCenterMobileRelay("tchurchapp://tchurchapp.com/#/app/services/service-0001/presentation?planningCenter=error&code=OAUTH_DECLINED")).toMatchObject({ outcome: "error", code: "OAUTH_DECLINED" });
-    expect(parsePlanningCenterMobileRelay("tchurchapp://tchurchapp.com/#/app/services/service-0001/presentation?planningCenter=error&code=OAUTH_STATE_INVALID")).toMatchObject({ outcome: "error", code: "OAUTH_CALLBACK_ERROR" });
-    expect(parsePlanningCenterMobileRelay("tchurchapp://tchurchapp.com/#/app/services/service-0001/presentation?planningCenter=error&code=%3Cimg%20src%3Dx%3E")).toBeNull();
-    expect(planningCenterRelayErrorNotice("<img src=x>")).toBe("No se pudo completar la conexión con Planning Center. Intenta conectar otra vez.");
-    expect(planningCenterRelayErrorNotice("<img src=x>")).not.toContain("<img");
-    expect(parsePlanningCenterMobileRelay("https://evil.example/#/app/services/service-0001/presentation?planningCenter=complete&handoff=" + handoff)).toBeNull();
   });
 
   it("requires a separate one-time browser-source fragment token", () => {

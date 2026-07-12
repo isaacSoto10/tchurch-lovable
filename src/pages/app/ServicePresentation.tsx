@@ -1611,12 +1611,10 @@ export default function ServicePresentation() {
         controllerOwned={liveControllerOwned}
         viewerRoles={viewerRoles}
         privacyScope={activeAutomationPrivacyScope}
-        accountId={authenticatedUserId || ""}
         churchId={selectedChurch?.id}
         networkState={runtimeNetworkState}
         snapshot={runtimeSnapshot}
         clientId={runtime.clientId}
-        hasActivePresentationSession={Boolean(live.snapshot?.session?.status === "live" || rehearsal.snapshot?.session?.status === "live")}
         automationState={runMode === "rehearsal" ? rehearsalAutomations.state : liveAutomations.state}
         pedalMapping={pedalMapping}
         onPedalMappingChange={changePedalMapping}

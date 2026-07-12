@@ -111,23 +111,6 @@ export type PresentationAutomationAcknowledgement = {
   idempotent: boolean;
 };
 
-export type PlanningCenterConnectResponse = {
-  schemaVersion: 4;
-  provider: "planning_center";
-  authorizeUrl: string;
-  expiresAt: string;
-};
-
-export const PRESENTATION_PLANNING_CENTER_RELAY_EVENT = "tchurch:planning-center-relay";
-
-export type PlanningCenterMobileRelay =
-  | { serviceId: string; route: string; outcome: "complete"; handoff: string }
-  | { serviceId: string; route: string; outcome: "error"; code: "OAUTH_DECLINED" | "OAUTH_CALLBACK_ERROR" };
-
-export type PlanningCenterRelayEventDetail =
-  | { serviceId: string; outcome: "complete"; summary: PresentationIntegrationSummary }
-  | { serviceId: string; outcome: "error"; code: "OAUTH_DECLINED" | "OAUTH_CALLBACK_ERROR" | "HANDOFF_FAILED" };
-
 export type PresentationServiceReport = {
   schemaVersion: 4;
   generatedAt: string;
@@ -153,26 +136,10 @@ export type PresentationServiceReport = {
 export type PresentationIntegrationSummary = {
   schemaVersion: 4;
   integrations: Array<
-    | { provider: "planning_center"; status: "connected" | "not_connected" | "reauthorization_required" | "unavailable"; externalOrganization: { id: string; name: string } | null; scopes: ["services"]; connectedAt: string | null; lastSyncAt: string | null }
     | { provider: "propresenter"; status: "local_only"; capabilities: ["text_export", "local_api"] }
     | { provider: "obs"; status: "local_only"; capabilities: ["browser_source", "obs_websocket_5"] }
     | { provider: "ndi_bridge"; status: "requires_tchurch_studio"; capabilities: ["frame_feed"] }
   >;
-};
-
-export type PlanningCenterCatalogResponse =
-  | { schemaVersion: 4; provider: "planning_center"; resource: "service_types"; items: Array<{ id: string; name: string }>; nextOffset: number | null }
-  | { schemaVersion: 4; provider: "planning_center"; resource: "plans"; serviceTypeId: string; items: Array<{ id: string; title: string; dates: string; sortDate: string | null }>; nextOffset: number | null }
-  | { schemaVersion: 4; provider: "planning_center"; resource: "plan"; serviceTypeId: string; plan: { id: string; title: string; dates: string; sortDate: string | null }; items: Array<{ id: string; title: string; itemType: string; lengthSeconds: number | null; sequence: number; keyName: string | null }> };
-
-export type PlanningCenterImportResponse = {
-  schemaVersion: 4;
-  provider: "planning_center";
-  operation: "preview" | "import";
-  source: { serviceTypeId: string; planId: string; title: string; dates: string };
-  changes: { create: number; update: number; unchanged: number; reorderedLocal: number };
-  applied: boolean;
-  syncedAt: string | null;
 };
 
 export type PresentationBroadcastLink = {
@@ -501,14 +468,6 @@ export function normalizePresentationIntegrationSummary(value: unknown): Present
   const integrations = source.integrations.map((entry) => {
     const item = record(entry);
     if (!item) throw new Error("La integración es inválida.");
-    if (item.provider === "planning_center") {
-      exact(item, ["provider", "status", "externalOrganization", "scopes", "connectedAt", "lastSyncAt"]);
-      if (!["connected", "not_connected", "reauthorization_required", "unavailable"].includes(String(item.status)) || !Array.isArray(item.scopes) || item.scopes.length !== 1 || item.scopes[0] !== "services") throw new Error("Planning Center devolvió un estado inválido.");
-      const organization = item.externalOrganization === null ? null : record(item.externalOrganization);
-      if (item.externalOrganization !== null && !organization) throw new Error("La organización de Planning Center es inválida.");
-      if (organization) exact(organization, ["id", "name"]);
-      return { provider: "planning_center" as const, status: item.status as "connected" | "not_connected" | "reauthorization_required" | "unavailable", externalOrganization: organization ? { id: text(organization.id, "organization.id", 120), name: text(organization.name, "organization.name", 200) } : null, scopes: ["services"] as ["services"], connectedAt: nullableIso(item.connectedAt, "integration.connectedAt"), lastSyncAt: nullableIso(item.lastSyncAt, "integration.lastSyncAt") };
-    }
     if (item.provider === "propresenter") {
       exact(item, ["provider", "status", "capabilities"]);
       if (item.status !== "local_only" || JSON.stringify(item.capabilities) !== JSON.stringify(["text_export", "local_api"])) throw new Error("ProPresenter devolvió capacidades inválidas.");
@@ -527,164 +486,6 @@ export function normalizePresentationIntegrationSummary(value: unknown): Present
     throw new Error("Tchurch recibió un proveedor desconocido.");
   });
   return { schemaVersion: 4, integrations };
-}
-
-export function normalizePlanningCenterConnect(value: unknown): PlanningCenterConnectResponse {
-  const source = record(value);
-  if (!source || source.schemaVersion !== 4 || source.provider !== "planning_center") throw new Error("Planning Center devolvió una autorización incompatible.");
-  exact(source, ["schemaVersion", "provider", "authorizeUrl", "expiresAt"]);
-  const rawUrl = text(source.authorizeUrl, "planningCenter.authorizeUrl", 2_048);
-  const url = new URL(rawUrl);
-  const expectedKeys = ["client_id", "redirect_uri", "response_type", "scope", "state", "code_challenge", "code_challenge_method"];
-  const keys = [...url.searchParams.keys()];
-  const exactQuery = keys.length === expectedKeys.length
-    && expectedKeys.every((key) => url.searchParams.getAll(key).length === 1)
-    && keys.every((key) => expectedKeys.includes(key));
-  if (url.origin !== "https://api.planningcenteronline.com"
-    || url.pathname !== "/oauth/authorize"
-    || url.username || url.password || url.hash
-    || !exactQuery
-    || url.searchParams.get("response_type") !== "code"
-    || url.searchParams.get("scope") !== "services"
-    || url.searchParams.get("code_challenge_method") !== "S256"
-    || url.searchParams.get("redirect_uri") !== "https://www.tchurchapp.com/api/presentation-integrations/planning-center/callback"
-    || !/^[A-Za-z0-9_-]{8,200}$/.test(url.searchParams.get("client_id") || "")
-    || !/^[A-Za-z0-9_-]{43}$/.test(url.searchParams.get("state") || "")
-    || !/^[A-Za-z0-9_-]{43}$/.test(url.searchParams.get("code_challenge") || "")) throw new Error("Planning Center devolvió una dirección OAuth inválida.");
-  return { schemaVersion: 4, provider: "planning_center", authorizeUrl: url.toString(), expiresAt: iso(source.expiresAt, "planningCenter.expiresAt") };
-}
-
-export function parsePlanningCenterMobileRelay(value: unknown): PlanningCenterMobileRelay | null {
-  if (typeof value !== "string" || !value.trim()) return null;
-  let url: URL;
-  try { url = new URL(value.trim()); } catch { return null; }
-  if (url.protocol !== "tchurchapp:" || url.hostname !== "tchurchapp.com" || url.pathname !== "/" || url.search || url.username || url.password || !url.hash.startsWith("#/")) return null;
-  let route: URL;
-  try { route = new URL(url.hash.slice(1), "https://www.tchurchapp.com"); } catch { return null; }
-  const match = route.pathname.match(/^\/app\/services\/([^/]+)\/presentation$/);
-  if (!match?.[1]) return null;
-  let serviceId: string;
-  try { serviceId = decodeURIComponent(match[1]).trim(); } catch { return null; }
-  const unsafeServiceId = [...serviceId].some((character) => {
-    const code = character.charCodeAt(0);
-    return character === "/" || character === "?" || character === "#" || code <= 31 || code === 127;
-  });
-  if (!serviceId || serviceId.length > 120 || unsafeServiceId) return null;
-  const cleanRoute = `/app/services/${encodeURIComponent(serviceId)}/presentation`;
-  const keys = [...route.searchParams.keys()];
-  const planningCenter = route.searchParams.get("planningCenter");
-  if (planningCenter === "complete") {
-    if (keys.length !== 2 || route.searchParams.getAll("planningCenter").length !== 1 || route.searchParams.getAll("handoff").length !== 1 || keys.some((key) => key !== "planningCenter" && key !== "handoff")) return null;
-    const handoff = route.searchParams.get("handoff") || "";
-    if (!/^[A-Za-z0-9_-]{43}$/.test(handoff)) return null;
-    return { serviceId, route: cleanRoute, outcome: "complete", handoff };
-  }
-  if (planningCenter === "error") {
-    if (keys.length !== 2 || route.searchParams.getAll("planningCenter").length !== 1 || route.searchParams.getAll("code").length !== 1 || keys.some((key) => key !== "planningCenter" && key !== "code")) return null;
-    const callbackCode = route.searchParams.get("code") || "";
-    if (!/^[A-Z][A-Z0-9_]{1,79}$/.test(callbackCode)) return null;
-    return {
-      serviceId,
-      route: cleanRoute,
-      outcome: "error",
-      code: callbackCode === "OAUTH_DECLINED" ? "OAUTH_DECLINED" : "OAUTH_CALLBACK_ERROR",
-    };
-  }
-  return null;
-}
-
-/** Returns fixed UI copy only; callback values are never reflected into the interface. */
-export function planningCenterRelayErrorNotice(code: unknown) {
-  if (code === "OAUTH_DECLINED") return "Cancelaste la autorización de Planning Center.";
-  if (code === "HANDOFF_FAILED") return "El relevo móvil expiró o ya fue usado. Intenta conectar otra vez.";
-  return "No se pudo completar la conexión con Planning Center. Intenta conectar otra vez.";
-}
-
-function nullableText(value: unknown, label: string, max: number) {
-  return value === null ? null : text(value, label, max);
-}
-
-function boundedCatalogItems(value: unknown[], maximum: number, label: string) {
-  if (value.length > maximum) throw new Error(`${label} contiene demasiados elementos.`);
-  return value;
-}
-
-function planningCenterPlanSummary(value: unknown) {
-  const source = record(value);
-  if (!source) throw new Error("El plan es inválido.");
-  exact(source, ["id", "title", "dates", "sortDate"]);
-  return {
-    id: text(source.id, "plan.id", 500),
-    title: text(source.title, "plan.title", 500),
-    dates: text(source.dates, "plan.dates", 500, true),
-    // Planning Center currently returns either a date or a timestamp here. The
-    // canonical server contract intentionally exposes it as bounded text.
-    sortDate: nullableText(source.sortDate, "plan.sortDate", 500),
-  };
-}
-
-export function normalizePlanningCenterCatalog(value: unknown): PlanningCenterCatalogResponse {
-  const source = record(value);
-  if (!source || source.schemaVersion !== 4 || source.provider !== "planning_center" || !Array.isArray(source.items)) throw new Error("Planning Center devolvió un catálogo incompatible.");
-  if (source.resource === "service_types") {
-    exact(source, ["schemaVersion", "provider", "resource", "items", "nextOffset"]);
-    const items = boundedCatalogItems(source.items, 100, "El catálogo de tipos de servicio").map((entry) => {
-      const item = record(entry);
-      if (!item) throw new Error("El tipo de servicio es inválido.");
-      exact(item, ["id", "name"]);
-      return { id: text(item.id, "serviceType.id", 500), name: text(item.name, "serviceType.name", 500) };
-    });
-    return { schemaVersion: 4, provider: "planning_center", resource: "service_types", items, nextOffset: source.nextOffset === null ? null : integer(source.nextOffset, "nextOffset", 0, 100_000) };
-  }
-  if (source.resource === "plans") {
-    exact(source, ["schemaVersion", "provider", "resource", "serviceTypeId", "items", "nextOffset"]);
-    return {
-      schemaVersion: 4,
-      provider: "planning_center",
-      resource: "plans",
-      serviceTypeId: text(source.serviceTypeId, "serviceTypeId", 120),
-      items: boundedCatalogItems(source.items, 100, "El catálogo de planes").map(planningCenterPlanSummary),
-      nextOffset: source.nextOffset === null ? null : integer(source.nextOffset, "nextOffset", 0, 100_000),
-    };
-  }
-  if (source.resource === "plan") {
-    exact(source, ["schemaVersion", "provider", "resource", "serviceTypeId", "plan", "items"]);
-    const items = boundedCatalogItems(source.items, 500, "El plan").map((entry) => {
-      const item = record(entry);
-      if (!item) throw new Error("El elemento del plan es inválido.");
-      exact(item, ["id", "title", "itemType", "lengthSeconds", "sequence", "keyName"]);
-      return {
-        id: text(item.id, "item.id", 500),
-        title: text(item.title, "item.title", 500),
-        itemType: text(item.itemType, "item.itemType", 500),
-        lengthSeconds: item.lengthSeconds === null ? null : integer(item.lengthSeconds, "item.lengthSeconds"),
-        sequence: integer(item.sequence, "item.sequence", -Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER),
-        keyName: nullableText(item.keyName, "item.keyName", 500),
-      };
-    });
-    return {
-      schemaVersion: 4,
-      provider: "planning_center",
-      resource: "plan",
-      serviceTypeId: text(source.serviceTypeId, "serviceTypeId", 120),
-      plan: planningCenterPlanSummary(source.plan),
-      items,
-    };
-  }
-  throw new Error("Planning Center devolvió un recurso desconocido.");
-}
-
-export function normalizePlanningCenterImport(value: unknown): PlanningCenterImportResponse {
-  const source = record(value);
-  const input = record(source?.source);
-  const changes = record(source?.changes);
-  if (!source || !input || !changes || source.schemaVersion !== 4 || source.provider !== "planning_center" || (source.operation !== "preview" && source.operation !== "import")) throw new Error("Planning Center devolvió una importación incompatible.");
-  exact(source, ["schemaVersion", "provider", "operation", "source", "changes", "applied", "syncedAt"]);
-  exact(input, ["serviceTypeId", "planId", "title", "dates"]);
-  exact(changes, ["create", "update", "unchanged", "reorderedLocal"]);
-  const applied = boolean(source.applied, "import.applied");
-  if (source.operation === "preview" && applied) throw new Error("Una vista previa no puede marcarse como aplicada.");
-  return { schemaVersion: 4, provider: "planning_center", operation: source.operation, source: { serviceTypeId: text(input.serviceTypeId, "source.serviceTypeId", 120), planId: text(input.planId, "source.planId", 120), title: text(input.title, "source.title", 300), dates: text(input.dates, "source.dates", 200, true) }, changes: { create: integer(changes.create, "changes.create"), update: integer(changes.update, "changes.update"), unchanged: integer(changes.unchanged, "changes.unchanged"), reorderedLocal: integer(changes.reorderedLocal, "changes.reorderedLocal") }, applied, syncedAt: nullableIso(source.syncedAt, "import.syncedAt") };
 }
 
 function normalizeBroadcastLink(value: unknown): PresentationBroadcastLink {
@@ -819,39 +620,6 @@ export async function fetchPresentationReport(serviceId: string) {
 
 export async function fetchPresentationIntegrations() {
   return normalizePresentationIntegrationSummary(await apiFetch<unknown>("/presentation-integrations", { cache: "no-store" }));
-}
-
-export async function connectPlanningCenter(serviceId: string) {
-  return normalizePlanningCenterConnect(await apiFetch<unknown>("/presentation-integrations/planning-center/connect", {
-    method: "POST",
-    body: JSON.stringify({ schemaVersion: 4, returnPath: `/services/${encodeURIComponent(serviceId)}/presentation` }),
-  }));
-}
-
-export async function completePlanningCenterHandoff(handoff: string) {
-  if (!/^[A-Za-z0-9_-]{43}$/.test(handoff)) throw new Error("El relevo móvil de Planning Center es inválido.");
-  return normalizePresentationIntegrationSummary(await apiFetch<unknown>("/presentation-integrations/planning-center/complete", {
-    method: "POST",
-    body: JSON.stringify({ schemaVersion: 4, handoff }),
-  }));
-}
-
-export async function disconnectPlanningCenter() {
-  return normalizePresentationIntegrationSummary(await apiFetch<unknown>("/presentation-integrations?provider=planning_center", { method: "DELETE" }));
-}
-
-export async function fetchPlanningCenterCatalog(query: { serviceTypeId?: string; planId?: string; offset?: number }) {
-  if (query.planId && !query.serviceTypeId) throw new Error("El tipo de servicio es obligatorio para cargar un plan.");
-  const resource = query.planId ? "plan" : query.serviceTypeId ? "plans" : "service_types";
-  const params = new URLSearchParams({ resource });
-  if (query.serviceTypeId) params.set("serviceTypeId", query.serviceTypeId);
-  if (query.planId) params.set("planId", query.planId);
-  if (typeof query.offset === "number") params.set("offset", String(Math.max(0, Math.min(100_000, Math.floor(query.offset)))));
-  return normalizePlanningCenterCatalog(await apiFetch<unknown>(`/presentation-integrations/planning-center/catalog?${params}`, { cache: "no-store" }));
-}
-
-export async function importPlanningCenterPlan(serviceId: string, input: { serviceTypeId: string; planId: string; operation: "preview" | "import" }) {
-  return normalizePlanningCenterImport(await apiFetch<unknown>(servicePath(serviceId, "presentation-integrations/planning-center"), { method: "POST", body: JSON.stringify({ schemaVersion: 4, mode: "live", ...input }) }));
 }
 
 export async function fetchProPresenterExport(serviceId: string) {
