@@ -383,7 +383,11 @@ export function PresentationOutputManager({
       setLinks((current) => [created.link, ...current.filter((link) => link.id !== created.link.id)]);
       setNotice("Enlace creado. Se mostrará solo durante esta sesión.");
     } catch (error) {
-      setNotice(errorMessage(error));
+      const refreshed = await fetchPresentationOutputLinks(serviceId).catch(() => null);
+      if (refreshed) setLinks(refreshed.links);
+      setNotice(refreshed
+        ? `${errorMessage(error)} El enlace pudo haberse creado; recargamos la lista para que puedas revocarlo sin exponer su token.`
+        : errorMessage(error));
     } finally {
       setBusy(null);
     }

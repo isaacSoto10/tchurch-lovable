@@ -44,11 +44,13 @@
 	<true/>
 	<key>NSAppTransportSecurity</key>
 	<dict>
-		<key>NSAllowsArbitraryLoads</key>
+		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>Tchurch usa la cámara para escanear códigos QR de check-in en eventos.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Tchurch usa tu red local únicamente cuando conectas ProPresenter, OBS o Tchurch Studio para una presentación.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

@@ -292,8 +292,10 @@ describe("presentation output v3 contract", () => {
     const link = { id: "link-1", serviceId: "service-1", label: "Santuario", createdAt: timestamp, expiresAt: "2026-07-13T12:00:00.000Z", revokedAt: null, lastUsedAt: null };
     const token = "aB_9-".repeat(9);
     expect(normalizePresentationOutputLinkCreated({ schemaVersion: 3, link, shareUrl: `https://tchurchapp.com/present#${token}` }).shareUrl).toContain(token);
+    expect(normalizePresentationOutputLinkCreated({ schemaVersion: 3, link, shareUrl: `https://tchurch.vercel.app/present#${token}` }).shareUrl).toContain(token);
     for (const shareUrl of [
       `https://evil.example/present#${token}`,
+      `https://tchurch-preview-123.vercel.app/present#${token}`,
       `https://tchurchapp.com/present?leak=1#${token}`,
       `https://user:pass@tchurchapp.com/present#${token}`,
       "https://tchurchapp.com/present#short",

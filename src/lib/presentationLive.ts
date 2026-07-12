@@ -74,6 +74,7 @@ export type PresentationCursor = {
 export type PresentationDisplay = {
   blackout: boolean;
   chordsVisible: boolean;
+  broadcastVisible: boolean;
 };
 
 export type PresentationTimer = {
@@ -118,6 +119,7 @@ export type PresentationStageMessage = {
 
 export type PresentationSession = {
   id: string;
+  mode: "live" | "rehearsal";
   status: PresentationSessionStatus;
   revision: number;
   startedAt: string;
@@ -213,6 +215,7 @@ export type PresentationCommandType =
   | "jump"
   | "set_blackout"
   | "set_chords"
+  | "set_broadcast_visibility"
   | "timer_start"
   | "timer_pause"
   | "timer_reset"
@@ -252,6 +255,7 @@ export type PresentationCommandPayloads = {
   jump: { itemId: string; stepId?: string | null; partIndex?: number };
   set_blackout: { blackout: boolean };
   set_chords: { chordsVisible: boolean };
+  set_broadcast_visibility: { visible: boolean };
   timer_start: { scope: "service" | "item" };
   timer_pause: { scope: "service" | "item" };
   timer_reset: { scope: "service" | "item" };
@@ -365,6 +369,7 @@ const COMMAND_TYPES = new Set<PresentationCommandType>([
   "jump",
   "set_blackout",
   "set_chords",
+  "set_broadcast_visibility",
   "timer_start",
   "timer_pause",
   "timer_reset",
@@ -454,6 +459,7 @@ function normalizeDisplay(value: unknown): PresentationDisplay {
   return {
     blackout: raw?.blackout === true,
     chordsVisible: raw?.chordsVisible !== false,
+    broadcastVisible: raw?.broadcastVisible !== false,
   };
 }
 
@@ -494,7 +500,7 @@ function normalizeViewerLayout(value: unknown, viewer: PresentationLiveViewer): 
     schemaVersion: 3,
     id,
     name,
-    targetRole,
+    targetRole: expectedRole,
     mode,
     fontScale: raw.fontScale,
     show: {
@@ -612,6 +618,7 @@ export function normalizePresentationLiveSnapshot(
   requestedView: PresentationLiveView,
   clientId?: string,
   receivedAtMs = Date.now(),
+  expectedMode?: "live" | "rehearsal",
 ): PresentationLiveSnapshot {
   const raw = recordValue(value);
   if (!raw) throw new Error("La sesión en vivo devolvió una respuesta inválida.");
@@ -636,6 +643,10 @@ export function normalizePresentationLiveSnapshot(
   let session: PresentationSession | null = null;
 
   if (sessionRaw) {
+    const sessionMode = sessionRaw.mode === "live" || sessionRaw.mode === "rehearsal" ? sessionRaw.mode : null;
+    if (expectedMode && sessionMode !== expectedMode) {
+      throw new Error(`SESSION_MODE_MISMATCH: se esperaba ${expectedMode} y la sesión devolvió ${sessionMode || "sin modo"}.`);
+    }
     const timing = normalizeTiming(sessionRaw.timing);
     const lastCommandRaw = recordValue(sessionRaw.lastCommand);
     const lastCommandType = lastCommandRaw && COMMAND_TYPES.has(lastCommandRaw.type as PresentationCommandType)
@@ -643,6 +654,7 @@ export function normalizePresentationLiveSnapshot(
       : null;
     session = {
       id: stringValue(sessionRaw.id),
+      mode: sessionMode || "live",
       status: sessionRaw.status === "ended" ? "ended" : "live",
       revision: integer(sessionRaw.revision),
       startedAt: isoValue(sessionRaw.startedAt, serverNow)!,
@@ -791,6 +803,19 @@ export function presentationSessionPath(
   return `/services/${encodeURIComponent(serviceId)}/presentation-session?${query.toString()}`;
 }
 
+export function presentationRehearsalSessionPath(
+  serviceId: string,
+  view: PresentationLiveView,
+  clientId: string,
+  sinceRevision?: number,
+  viewerVersion?: string,
+) {
+  const query = new URLSearchParams({ view, clientId });
+  if (typeof sinceRevision === "number") query.set("sinceRevision", String(Math.max(0, Math.floor(sinceRevision))));
+  if (viewerVersion?.trim()) query.set("viewerVersion", viewerVersion.trim());
+  return `/services/${encodeURIComponent(serviceId)}/presentation-rehearsal-session?${query.toString()}`;
+}
+
 export async function fetchPresentationLiveSnapshot(
   serviceId: string,
   view: PresentationLiveView,
@@ -799,7 +824,18 @@ export async function fetchPresentationLiveSnapshot(
   viewerVersion?: string,
 ) {
   const raw = await apiFetch<unknown>(presentationSessionPath(serviceId, view, clientId, sinceRevision, viewerVersion), { cache: "no-store" });
-  return raw === undefined ? null : normalizePresentationLiveSnapshot(raw, view, clientId);
+  return raw === undefined ? null : normalizePresentationLiveSnapshot(raw, view, clientId, Date.now(), "live");
+}
+
+export async function fetchPresentationRehearsalSnapshot(
+  serviceId: string,
+  view: PresentationLiveView,
+  clientId: string,
+  sinceRevision?: number,
+  viewerVersion?: string,
+) {
+  const raw = await apiFetch<unknown>(presentationRehearsalSessionPath(serviceId, view, clientId, sinceRevision, viewerVersion), { cache: "no-store" });
+  return raw === undefined ? null : normalizePresentationLiveSnapshot(raw, view, clientId, Date.now(), "rehearsal");
 }
 
 export async function sendPresentationCommand<T extends PresentationCommandType>(
@@ -813,7 +849,21 @@ export async function sendPresentationCommand<T extends PresentationCommandType>
   });
   const responseRaw = recordValue(raw);
   const snapshotRaw = responseRaw?.snapshot || responseRaw?.current || raw;
-  return normalizePresentationLiveSnapshot(snapshotRaw, view, request.clientId);
+  return normalizePresentationLiveSnapshot(snapshotRaw, view, request.clientId, Date.now(), "live");
+}
+
+export async function sendPresentationRehearsalCommand<T extends PresentationCommandType>(
+  serviceId: string,
+  request: PresentationCommandRequest<T>,
+  view: PresentationLiveView,
+) {
+  const raw = await apiFetch<unknown>(`/services/${encodeURIComponent(serviceId)}/presentation-rehearsal-session?view=${view}`, {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
+  const responseRaw = recordValue(raw);
+  const snapshotRaw = responseRaw?.snapshot || responseRaw?.current || raw;
+  return normalizePresentationLiveSnapshot(snapshotRaw, view, request.clientId, Date.now(), "rehearsal");
 }
 
 function normalizePresentationService(value: unknown): PresentationService {
@@ -1592,13 +1642,14 @@ export function getPresentationConflictSnapshot(
   error: unknown,
   view: PresentationLiveView,
   clientId: string,
+  expectedMode?: "live" | "rehearsal",
 ) {
   if (!(error instanceof ApiError)) return null;
   const body = recordValue(error.body);
   const raw = body?.current || body?.snapshot;
   if (!raw) return null;
   try {
-    return normalizePresentationLiveSnapshot(raw, view, clientId);
+    return normalizePresentationLiveSnapshot(raw, view, clientId, Date.now(), expectedMode);
   } catch {
     return null;
   }

@@ -1254,7 +1254,14 @@ export function normalizePresentationOutputLinkCreated(value: unknown): Presenta
   }
   try {
     const url = new URL(shareUrl);
-    const trustedOrigins = new Set(["https://tchurchapp.com", "https://www.tchurchapp.com"]);
+    const trustedOrigins = new Set([
+      "https://tchurchapp.com",
+      "https://www.tchurchapp.com",
+      // Exact first-party Vercel production origin retained for links created
+      // before the canonical-domain environment hotfix. Never allow arbitrary
+      // *.vercel.app hosts.
+      "https://tchurch.vercel.app",
+    ]);
     const token = url.hash.slice(1);
     if (!trustedOrigins.has(url.origin) || url.username || url.password || url.pathname !== "/present" || url.search || !/^[A-Za-z0-9_-]{40,200}$/.test(token)) throw new Error("invalid");
   } catch {

@@ -41,8 +41,10 @@ function snapshot(serviceId: string, viewerVersion: string, revision = 1): Prese
       canControl: true,
       canForceTakeover: true,
     },
+    viewerLayout: null,
     session: {
       id: `${serviceId}-session`,
+      mode: "live",
       status: "live",
       revision,
       startedAt: "2026-07-11T18:30:00.000Z",
@@ -50,7 +52,8 @@ function snapshot(serviceId: string, viewerVersion: string, revision = 1): Prese
       controller: null,
       presence: [],
       cursor: { itemId: null, itemIndex: 0, stepId: null, stepIndex: 0, partIndex: 0, sectionAnchorId: null },
-      display: { blackout: false, chordsVisible: true },
+      display: { blackout: false, chordsVisible: true, broadcastVisible: true },
+      playback: null,
       timing: {
         service: { status: "paused", plannedSeconds: 0, elapsedSeconds: 0, remainingSeconds: 0, overrunSeconds: 0, projectedEndAt: null, startedAt: null, pausedAt: null, accumulatedPausedMs: 0 },
         item: { itemId: null, status: "paused", plannedSeconds: 0, elapsedSeconds: 0, overrunSeconds: 0, startedAt: null, pausedAt: null, accumulatedPausedMs: 0 },
@@ -83,7 +86,7 @@ function presentationPackage(serviceId: string, accountId: string, churchId: str
     plannedTiming: { serviceSeconds: 0, itemSecondsById: {} },
     liveSeed: {
       cursor: { itemId: null, itemIndex: 0, stepId: null, stepIndex: 0, partIndex: 0, sectionAnchorId: null },
-      display: { blackout: false, chordsVisible: true },
+      display: { blackout: false, chordsVisible: true, broadcastVisible: true },
       timing: snapshot(serviceId, "seed").session!.timing,
       countdown: null,
     },

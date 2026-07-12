@@ -58,8 +58,10 @@ function snapshot(owned = true): PresentationLiveSnapshot {
     serverNow: "2026-07-11T19:00:00.000Z",
     receivedAtMs: Date.parse("2026-07-11T19:00:00.000Z"),
     viewer: { view: "operator", roles: ["operator"], canEdit: true, canStart: true, canControl: true, canForceTakeover: true },
+    viewerLayout: null,
     session: {
       id: "session-1",
+      mode: "live",
       status: "live",
       revision: 14,
       startedAt: "2026-07-11T18:00:00.000Z",
@@ -67,7 +69,8 @@ function snapshot(owned = true): PresentationLiveSnapshot {
       controller: { clientId: owned ? "this-client" : "other-client", displayName: owned ? "Booth iPad" : "Sanctuary Mac", leaseExpiresAt: "2026-07-11T19:01:00.000Z", ownedByViewer: owned },
       presence: owned ? [{ clientId: "pastor-phone", displayName: "Pastor iPhone", view: "remote", lastSeenAt: "2026-07-11T18:59:59.000Z", controlRequestedAt: "2026-07-11T18:59:58.000Z" }] : [],
       cursor: { itemId: "item-1", itemIndex: 0, stepId: "step-a", stepIndex: 0, partIndex: 0, sectionAnchorId: "verse" },
-      display: { blackout: false, chordsVisible: true },
+      display: { blackout: false, chordsVisible: true, broadcastVisible: true },
+      playback: null,
       timing,
       messages: [],
       lastCommand: null,
@@ -180,6 +183,6 @@ describe("Tchurch Live controls", () => {
 
     const source = readFileSync(`${process.cwd()}/src/pages/app/ServicePresentation.tsx`, "utf8");
     expect(source).toContain('className="min-h-11 shrink-0 rounded-xl px-3 font-black"');
-    expect(source.indexOf("if (live.error || loadError)")).toBeLessThan(source.indexOf("if (loading || live.loading || workspaceScopeMismatch)"));
+    expect(source.indexOf("if (runtime.error || loadError)")).toBeLessThan(source.indexOf("if (loading || runtime.loading || workspaceScopeMismatch)"));
   });
 });

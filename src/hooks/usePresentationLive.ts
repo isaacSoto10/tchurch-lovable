@@ -50,6 +50,7 @@ type UsePresentationLiveOptions = {
   accountId: string | null | undefined;
   offlineContext: PresentationOfflineContext;
   enabled?: boolean;
+  maintainController?: boolean;
 };
 
 type CommandResult = {
@@ -93,6 +94,7 @@ export function usePresentationLive({
   accountId,
   offlineContext,
   enabled = true,
+  maintainController = true,
 }: UsePresentationLiveOptions) {
   const [snapshot, setSnapshotState] = useState<PresentationLiveSnapshot | null>(null);
   const [presentationPackage, setPresentationPackageState] = useState<PresentationPackage | null>(null);
@@ -337,7 +339,7 @@ export function usePresentationLive({
         return null;
       }
       const code = getPresentationApiErrorCode(reconcileError);
-      const current = getPresentationConflictSnapshot(reconcileError, activeViewRef.current, clientId);
+      const current = getPresentationConflictSnapshot(reconcileError, activeViewRef.current, clientId, "live");
       if (code === "OFFLINE_DIVERGED" || code === "REVISION_CONFLICT") {
         if (current) setSnapshot(current);
         setNetworkState("diverged");
@@ -566,6 +568,7 @@ export function usePresentationLive({
   const sendCommand = useCallback(async <T extends PresentationCommandType>(
     type: T,
     payload: PresentationCommandPayloads[T],
+    options?: { commandId?: string; expectedRevision?: number; allowOffline?: boolean },
   ): Promise<CommandResult> => {
     const generation = authorityGenerationRef.current;
     if (!serviceId || commandPendingRef.current) throw new Error("Espera a que termine la acción anterior.");
@@ -573,9 +576,9 @@ export function usePresentationLive({
       throw new Error("Resuelve primero el conflicto entre la copia local y la sesión oficial.");
     }
     const current = snapshotRef.current;
-    const expectedRevision = NO_EXPECTED_REVISION.has(type) ? undefined : current?.session?.revision;
+    const expectedRevision = NO_EXPECTED_REVISION.has(type) ? undefined : options?.expectedRevision ?? current?.session?.revision;
     if (type !== "start_session" && !current?.session) throw new Error("Inicia la sesión antes de usar este control.");
-    const request = buildPresentationCommand(clientId, clientName, type, payload, expectedRevision);
+    const request = buildPresentationCommand(clientId, clientName, type, payload, expectedRevision, options?.commandId);
     commandPendingRef.current = true;
     mutationEpochRef.current += 1;
     setCommandPending(true);
@@ -596,7 +599,7 @@ export function usePresentationLive({
         await revokePrivateAuthority(commandError, generation);
         throw commandError;
       }
-      if (isConnectivityError(commandError) && isOfflinePresentationCommand(type)) {
+      if (isConnectivityError(commandError) && isOfflinePresentationCommand(type) && options?.allowOffline !== false) {
         const cached = cachedPackageRef.current;
         const base = offlineStateRef.current || (cached && current?.session ? createPresentationOfflineState(cached, current) : null);
         if (!base) throw new Error("No hay un paquete seguro para continuar offline.");
@@ -619,7 +622,7 @@ export function usePresentationLive({
       }
 
       const code = getPresentationApiErrorCode(commandError);
-      const conflict = getPresentationConflictSnapshot(commandError, activeViewRef.current, clientId);
+      const conflict = getPresentationConflictSnapshot(commandError, activeViewRef.current, clientId, "live");
       if (conflict) {
         setSnapshot(conflict);
         await cacheAuthoritativeSnapshot(conflict, undefined, generation);
@@ -637,13 +640,13 @@ export function usePresentationLive({
   }, [cacheAuthoritativeSnapshot, clientId, clientName, revokePrivateAuthority, serviceId, setNetworkState, setOfflineState, setSnapshot]);
 
   useEffect(() => {
-    if (!snapshot?.session?.controller?.ownedByViewer || networkState !== "online") return undefined;
+    if (!maintainController || !snapshot?.session?.controller?.ownedByViewer || networkState !== "online") return undefined;
     const timer = window.setInterval(() => {
       if (commandPendingRef.current) return;
       void sendCommand("heartbeat", {}).catch(() => undefined);
     }, PRESENTATION_HEARTBEAT_MS);
     return () => window.clearInterval(timer);
-  }, [networkState, sendCommand, snapshot?.session?.controller?.ownedByViewer]);
+  }, [maintainController, networkState, sendCommand, snapshot?.session?.controller?.ownedByViewer]);
 
   const discardOfflineChanges = useCallback(async () => {
     const generation = authorityGenerationRef.current;

@@ -69,7 +69,7 @@ export function PresentationContentEditor({ initialValue, onChange }: Presentati
   function setField(field: string, value: unknown, invalidateScripture = false) {
     setDraft((current) => {
       if (!current) return current;
-      const next = { ...current, [field]: value, ...(invalidateScripture ? { resolvedPassage: null } : {}) };
+      const next: Record<string, unknown> = { ...current, [field]: value, ...(invalidateScripture ? { resolvedPassage: null } : {}) };
       if (field === "src" && !next.mimeType && (next.kind === "video" || next.kind === "audio")) {
         next.mimeType = inferAssetMime(textValue(value), next.kind);
       }

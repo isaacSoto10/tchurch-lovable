@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PresentationLiveSnapshot, PresentationTiming } from "@/lib/presentationLive";
 import type { PresentationService } from "@/lib/servicePresentation";
@@ -10,6 +10,17 @@ const mocks = vi.hoisted(() => ({
   livePackage: null as unknown,
   liveSnapshot: null as PresentationLiveSnapshot | null,
   liveTiming: null as PresentationTiming | null,
+  rehearsalSnapshot: null as PresentationLiveSnapshot | null,
+  rehearsalTiming: null as PresentationTiming | null,
+  liveControllerLeaseActive: false,
+  rehearsalControllerLeaseActive: false,
+  rehearsalError: null as string | null,
+  liveSend: vi.fn(),
+  rehearsalSend: vi.fn(),
+  livePrepareRelease: vi.fn(),
+  rehearsalPrepareRelease: vi.fn(),
+  liveResume: vi.fn(),
+  rehearsalResume: vi.fn(),
   audienceOutputProps: [] as Array<Record<string, unknown>>,
   apiFetch: vi.fn(),
   fetchWorkspace: vi.fn(),
@@ -49,17 +60,49 @@ vi.mock("@/hooks/usePresentationLive", () => ({
     networkState: "online",
     offlineQueueCount: 0,
     isLocalState: false,
-    controllerLeaseActive: false,
+    controllerLeaseActive: mocks.liveControllerLeaseActive,
     timing: mocks.liveTiming,
     messages: [],
     loading: false,
     error: null,
     notice: null,
     commandPending: false,
-    sendCommand: vi.fn(async () => undefined),
+    clientId: "11111111-1111-4111-8111-111111111111",
+    sendCommand: mocks.liveSend,
     refresh: vi.fn(async () => undefined),
     reconcileOffline: vi.fn(async () => undefined),
     discardOfflineChanges: vi.fn(async () => undefined),
+    clearNotice: vi.fn(),
+  }),
+}));
+
+vi.mock("@/hooks/usePresentationRehearsal", () => ({
+  usePresentationRehearsal: () => ({
+    snapshot: mocks.rehearsalSnapshot,
+    activeView: "operator",
+    networkState: "online",
+    controllerLeaseActive: mocks.rehearsalControllerLeaseActive,
+    timing: mocks.rehearsalTiming,
+    messages: [],
+    loading: false,
+    error: mocks.rehearsalError,
+    notice: null,
+    commandPending: false,
+    clientId: "22222222-2222-4222-8222-222222222222",
+    clientName: "Test rehearsal",
+    sendCommand: mocks.rehearsalSend,
+    refresh: vi.fn(async () => mocks.rehearsalSnapshot),
+    clearNotice: vi.fn(),
+  }),
+}));
+
+vi.mock("@/hooks/usePresentationAutomations", () => ({
+  usePresentationAutomationRuleThresholds: () => ({ thresholds: { live: [], rehearsal: [] }, error: null }),
+  usePresentationAutomations: ({ mode }: { mode: "live" | "rehearsal" }) => ({
+    state: { phase: "idle", notice: null, queuedEvents: 0, lastAppliedAt: null },
+    prepareSessionEnd: vi.fn(async () => 4),
+    prepareControlRelease: mode === "live" ? mocks.livePrepareRelease : mocks.rehearsalPrepareRelease,
+    resumeAfterControlRelease: mode === "live" ? mocks.liveResume : mocks.rehearsalResume,
     clearNotice: vi.fn(),
   }),
 }));
@@ -169,6 +212,7 @@ function liveSnapshot(show: { next: boolean; notes: boolean }, targetAt = "2026-
     },
     session: {
       id: "session-1",
+      mode: "live",
       status: "live",
       revision: 4,
       startedAt: "2026-07-11T18:59:00.000Z",
@@ -176,13 +220,28 @@ function liveSnapshot(show: { next: boolean; notes: boolean }, targetAt = "2026-
       controller: null,
       presence: [],
       cursor: { itemId: "countdown-item", itemIndex: 0, stepId: null, stepIndex: 0, partIndex: 0, sectionAnchorId: null },
-      display: { blackout: false, chordsVisible: true },
+      display: { blackout: false, chordsVisible: true, broadcastVisible: true },
       playback: null,
       timing: liveTiming,
       messages: [],
       lastCommand: null,
     },
   };
+}
+
+function ownedSnapshot(mode: "live" | "rehearsal") {
+  const value = liveSnapshot({ next: true, notes: true });
+  value.session = value.session ? {
+    ...value.session,
+    id: `${mode}-session-1`,
+    mode,
+    controller: { clientId: mode === "live" ? "11111111-1111-4111-8111-111111111111" : "22222222-2222-4222-8222-222222222222", displayName: "Test controller", leaseExpiresAt: "2099-07-11T19:01:00.000Z", ownedByViewer: true },
+  } : null;
+  return value;
+}
+
+function releasedSnapshot(value: PresentationLiveSnapshot) {
+  return { ...value, session: value.session ? { ...value.session, revision: value.session.revision + 1, controller: null } : null };
 }
 
 describe("ServicePresentation load authority", () => {
@@ -192,6 +251,21 @@ describe("ServicePresentation load authority", () => {
     mocks.livePackage = null;
     mocks.liveSnapshot = null;
     mocks.liveTiming = null;
+    mocks.rehearsalSnapshot = null;
+    mocks.rehearsalTiming = null;
+    mocks.liveControllerLeaseActive = false;
+    mocks.rehearsalControllerLeaseActive = false;
+    mocks.rehearsalError = null;
+    mocks.liveSend.mockReset();
+    mocks.rehearsalSend.mockReset();
+    mocks.livePrepareRelease.mockReset();
+    mocks.rehearsalPrepareRelease.mockReset();
+    mocks.liveResume.mockReset();
+    mocks.rehearsalResume.mockReset();
+    mocks.liveSend.mockResolvedValue(undefined);
+    mocks.rehearsalSend.mockResolvedValue(undefined);
+    mocks.livePrepareRelease.mockResolvedValue(4);
+    mocks.rehearsalPrepareRelease.mockResolvedValue(4);
     mocks.audienceOutputProps = [];
     mocks.apiFetch.mockReset();
     mocks.fetchWorkspace.mockReset();
@@ -302,5 +376,82 @@ describe("ServicePresentation load authority", () => {
     expect(screen.getByText("Siguiente")).toBeInTheDocument();
     expect(screen.getByText("Segundo elemento privado")).toBeInTheDocument();
     expect(screen.queryByText("Entrada después del contador")).not.toBeInTheDocument();
+  });
+
+  it("switches directly when this device does not own the current controller", async () => {
+    mocks.liveSnapshot = liveSnapshot({ next: true, notes: true });
+    mocks.liveTiming = timing();
+    mocks.apiFetch.mockImplementation((path: string) => path === "/users/me" ? Promise.resolve({ id: mocks.accountId }) : Promise.resolve(stageService()));
+    render(<ServicePresentation />);
+    await screen.findByText("Stage fixture");
+    fireEvent.click(screen.getByRole("button", { name: "Usar ensayo aislado" }));
+    expect(screen.queryByRole("dialog", { name: "Confirmar cambio de modo" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Usar ensayo aislado" })).toHaveAttribute("aria-pressed", "true");
+    expect(mocks.liveSend).not.toHaveBeenCalledWith("release_control", expect.anything(), expect.anything());
+  });
+
+  it("drains and releases owned control before switching in both directions", async () => {
+    mocks.liveSnapshot = ownedSnapshot("live");
+    mocks.rehearsalSnapshot = ownedSnapshot("rehearsal");
+    mocks.liveTiming = mocks.liveSnapshot.session!.timing;
+    mocks.rehearsalTiming = mocks.rehearsalSnapshot.session!.timing;
+    mocks.liveControllerLeaseActive = true;
+    mocks.rehearsalControllerLeaseActive = true;
+    mocks.livePrepareRelease.mockResolvedValue(9);
+    mocks.rehearsalPrepareRelease.mockResolvedValue(12);
+    mocks.liveSend.mockResolvedValue({ snapshot: releasedSnapshot(mocks.liveSnapshot), local: false });
+    mocks.rehearsalSend.mockResolvedValue({ snapshot: releasedSnapshot(mocks.rehearsalSnapshot), local: false });
+    mocks.apiFetch.mockImplementation((path: string) => path === "/users/me" ? Promise.resolve({ id: mocks.accountId }) : Promise.resolve(stageService()));
+    render(<ServicePresentation />);
+    await screen.findByText("Stage fixture");
+
+    fireEvent.click(screen.getByRole("button", { name: "Usar ensayo aislado" }));
+    expect(screen.getByRole("dialog", { name: "Confirmar cambio de modo" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Drenar y cambiar" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Usar ensayo aislado" })).toHaveAttribute("aria-pressed", "true"));
+    expect(mocks.livePrepareRelease).toHaveBeenCalledOnce();
+    expect(mocks.liveSend).toHaveBeenCalledWith("release_control", {}, { expectedRevision: 9, allowOffline: false });
+
+    fireEvent.click(screen.getByRole("button", { name: "Usar sesión en vivo" }));
+    expect(screen.getByRole("dialog", { name: "Confirmar cambio de modo" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Drenar y cambiar" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Usar sesión en vivo" })).toHaveAttribute("aria-pressed", "true"));
+    expect(mocks.rehearsalPrepareRelease).toHaveBeenCalledOnce();
+    expect(mocks.rehearsalSend).toHaveBeenCalledWith("release_control", {}, { expectedRevision: 12, allowOffline: false });
+  });
+
+  it("keeps the current mode when releasing owned control fails", async () => {
+    mocks.liveSnapshot = ownedSnapshot("live");
+    mocks.liveTiming = mocks.liveSnapshot.session!.timing;
+    mocks.liveControllerLeaseActive = true;
+    mocks.livePrepareRelease.mockResolvedValue(9);
+    mocks.liveSend.mockRejectedValue(new Error("No se confirmó release"));
+    mocks.apiFetch.mockImplementation((path: string) => path === "/users/me" ? Promise.resolve({ id: mocks.accountId }) : Promise.resolve(stageService()));
+    render(<ServicePresentation />);
+    await screen.findByText("Stage fixture");
+    fireEvent.click(screen.getByRole("button", { name: "Usar ensayo aislado" }));
+    fireEvent.click(screen.getByRole("button", { name: "Drenar y cambiar" }));
+    expect(await screen.findByText(/No cambiamos de modo: No se confirmó release/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Usar sesión en vivo" })).toHaveAttribute("aria-pressed", "true");
+    expect(mocks.liveResume).toHaveBeenCalled();
+  });
+
+  it("does not bypass drain/release when returning from the rehearsal error screen", async () => {
+    mocks.liveSnapshot = liveSnapshot({ next: true, notes: true });
+    mocks.liveTiming = timing();
+    mocks.rehearsalSnapshot = ownedSnapshot("rehearsal");
+    mocks.rehearsalTiming = mocks.rehearsalSnapshot.session!.timing;
+    mocks.rehearsalControllerLeaseActive = true;
+    mocks.rehearsalError = "Ensayo temporalmente no disponible";
+    mocks.rehearsalPrepareRelease.mockResolvedValue(12);
+    mocks.rehearsalSend.mockResolvedValue({ snapshot: releasedSnapshot(mocks.rehearsalSnapshot), local: false });
+    mocks.apiFetch.mockImplementation((path: string) => path === "/users/me" ? Promise.resolve({ id: mocks.accountId }) : Promise.resolve(stageService()));
+    render(<ServicePresentation />);
+    await screen.findByText("Stage fixture");
+    fireEvent.click(screen.getByRole("button", { name: "Usar ensayo aislado" }));
+    expect(await screen.findByText("Ensayo temporalmente no disponible")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Soltar control y volver a en vivo" }));
+    await waitFor(() => expect(mocks.rehearsalSend).toHaveBeenCalledWith("release_control", {}, { expectedRevision: 12, allowOffline: false }));
+    expect(mocks.rehearsalPrepareRelease).toHaveBeenCalledOnce();
   });
 });

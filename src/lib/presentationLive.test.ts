@@ -78,6 +78,7 @@ function snapshotRaw(view: "operator" | "stage" | "remote" | "audience" = "stage
     },
     session: {
       id: "session-1",
+      mode: "live",
       status: "live",
       revision: 14,
       startedAt: "2026-07-11T18:00:00.000Z",
@@ -103,7 +104,8 @@ function snapshotRaw(view: "operator" | "stage" | "remote" | "audience" = "stage
         partIndex: 0,
         sectionAnchorId: "section-1",
       },
-      display: { blackout: false, chordsVisible: true },
+      display: { blackout: false, chordsVisible: true, broadcastVisible: true },
+      playback: null,
       timing: {
         service: {
           status: "running",
@@ -247,6 +249,16 @@ describe("Tchurch Live Stage 2 contract", () => {
     const legacy = snapshotRaw("stage");
     delete (legacy as { viewerVersion?: string }).viewerVersion;
     expect(normalizePresentationLiveSnapshot(legacy, "stage", "client-1").viewerVersion).toBe("");
+  });
+
+  it("fails closed when a live or rehearsal route returns the other session mode", () => {
+    const rehearsal = snapshotRaw("operator");
+    rehearsal.session.mode = "rehearsal";
+    expect(normalizePresentationLiveSnapshot(rehearsal, "operator", "client-1", Date.now(), "rehearsal").session?.mode).toBe("rehearsal");
+    expect(() => normalizePresentationLiveSnapshot(rehearsal, "operator", "client-1", Date.now(), "live")).toThrow(/SESSION_MODE_MISMATCH/);
+    const missing = snapshotRaw("operator");
+    delete (missing.session as { mode?: string }).mode;
+    expect(() => normalizePresentationLiveSnapshot(missing, "operator", "client-1", Date.now(), "rehearsal")).toThrow(/SESSION_MODE_MISMATCH/);
   });
 
   it("treats the server viewer as authoritative and removes audience-only secrets", () => {

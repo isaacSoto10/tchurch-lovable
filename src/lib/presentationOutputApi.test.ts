@@ -63,6 +63,14 @@ describe("presentation output authenticated API", () => {
     expect(apiFetch.mock.calls[0][1].body).not.toContain(token);
   });
 
+  it("accepts the exact first-party Vercel origin without trusting preview deployments", async () => {
+    const token = "B".repeat(48);
+    apiFetch.mockResolvedValueOnce({ schemaVersion: 3, link: link(), shareUrl: `https://tchurch.vercel.app/present#${token}` });
+    await expect(createPresentationOutputLink("service-1", { label: "Santuario", ttlHours: 24 })).resolves.toMatchObject({ shareUrl: `https://tchurch.vercel.app/present#${token}` });
+    apiFetch.mockResolvedValueOnce({ schemaVersion: 3, link: link(), shareUrl: `https://tchurch-preview.vercel.app/present#${token}` });
+    await expect(createPresentationOutputLink("service-1", { label: "Santuario", ttlHours: 24 })).rejects.toThrow(/inválido/i);
+  });
+
   it("revokes by idempotent DELETE without sending a share token", async () => {
     apiFetch.mockResolvedValue({ schemaVersion: 3, link: link("2026-07-12T13:00:00.000Z") });
     const revoked = await revokePresentationOutputLink("service-1", "link-1");
