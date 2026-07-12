@@ -22,6 +22,7 @@ import {
   fetchPresentationIntegrations,
   fetchProPresenterExport,
   importPlanningCenterPlan,
+  planningCenterRelayErrorNotice,
   PRESENTATION_PLANNING_CENTER_RELAY_EVENT,
   type PlanningCenterRelayEventDetail,
   type PlanningCenterCatalogResponse,
@@ -94,7 +95,7 @@ export function PresentationIntegrationsPanel({ serviceId, serviceTitle, mode, c
         setSummary(detail.summary);
         setNotice("Planning Center quedó conectado.");
       } else {
-        setNotice(detail.code === "OAUTH_DECLINED" ? "Cancelaste la autorización de Planning Center." : "El relevo móvil expiró o ya fue usado. Intenta conectar otra vez.");
+        setNotice(planningCenterRelayErrorNotice(detail.code));
       }
     };
     window.addEventListener(PRESENTATION_PLANNING_CENTER_RELAY_EVENT, handleRelay);

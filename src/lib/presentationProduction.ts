@@ -14,6 +14,8 @@ export const PRESENTATION_AUTOMATION_ACTION_TYPES = ["stage_message", "set_black
 export const PRESENTATION_SLIDE_KINDS: PresentationOutputSlideKind[] = ["lyrics", "scripture", "image", "video", "audio", "countdown", "sermon", "announcement", "blank"];
 export const PRESENTATION_PRODUCTION_MAX_RULES = 20;
 export const PRESENTATION_PRODUCTION_MAX_ACTIONS = 4;
+export const PRESENTATION_STAGE_MESSAGE_MIN_LIFETIME_SECONDS = 5;
+export const PRESENTATION_STAGE_MESSAGE_MAX_LIFETIME_SECONDS = 120;
 
 export type PresentationRunMode = "live" | "rehearsal";
 export type PresentationChatChannel = (typeof PRESENTATION_CHAT_CHANNELS)[number];
@@ -120,11 +122,11 @@ export const PRESENTATION_PLANNING_CENTER_RELAY_EVENT = "tchurch:planning-center
 
 export type PlanningCenterMobileRelay =
   | { serviceId: string; route: string; outcome: "complete"; handoff: string }
-  | { serviceId: string; route: string; outcome: "error"; code: "OAUTH_DECLINED" };
+  | { serviceId: string; route: string; outcome: "error"; code: "OAUTH_DECLINED" | "OAUTH_CALLBACK_ERROR" };
 
 export type PlanningCenterRelayEventDetail =
   | { serviceId: string; outcome: "complete"; summary: PresentationIntegrationSummary }
-  | { serviceId: string; outcome: "error"; code: "OAUTH_DECLINED" | "HANDOFF_FAILED" };
+  | { serviceId: string; outcome: "error"; code: "OAUTH_DECLINED" | "OAUTH_CALLBACK_ERROR" | "HANDOFF_FAILED" };
 
 export type PresentationServiceReport = {
   schemaVersion: 4;
@@ -346,7 +348,18 @@ function normalizeAction(value: unknown): PresentationAutomationAction {
     exact(source, ["type", "body", "tone", "roles", "lifetimeSeconds"]);
     if (source.tone !== "info" && source.tone !== "urgent") throw new Error("El tono automático es inválido.");
     if (!Array.isArray(source.roles) || !source.roles.length || source.roles.length > 8) throw new Error("Las funciones automáticas son inválidas.");
-    return { type: "stage_message", body: text(source.body, "action.body", 160), tone: source.tone, roles: [...new Set(source.roles.map(stageRole))], lifetimeSeconds: integer(source.lifetimeSeconds, "action.lifetimeSeconds", 5, 600) };
+    return {
+      type: "stage_message",
+      body: text(source.body, "action.body", 160),
+      tone: source.tone,
+      roles: [...new Set(source.roles.map(stageRole))],
+      lifetimeSeconds: integer(
+        source.lifetimeSeconds,
+        "action.lifetimeSeconds",
+        PRESENTATION_STAGE_MESSAGE_MIN_LIFETIME_SECONDS,
+        PRESENTATION_STAGE_MESSAGE_MAX_LIFETIME_SECONDS,
+      ),
+    };
   }
   if (source.type === "set_blackout") {
     exact(source, ["type", "enabled"]);
@@ -567,14 +580,47 @@ export function parsePlanningCenterMobileRelay(value: unknown): PlanningCenterMo
     return { serviceId, route: cleanRoute, outcome: "complete", handoff };
   }
   if (planningCenter === "error") {
-    if (keys.length !== 2 || route.searchParams.getAll("planningCenter").length !== 1 || route.searchParams.getAll("code").length !== 1 || keys.some((key) => key !== "planningCenter" && key !== "code") || route.searchParams.get("code") !== "OAUTH_DECLINED") return null;
-    return { serviceId, route: cleanRoute, outcome: "error", code: "OAUTH_DECLINED" };
+    if (keys.length !== 2 || route.searchParams.getAll("planningCenter").length !== 1 || route.searchParams.getAll("code").length !== 1 || keys.some((key) => key !== "planningCenter" && key !== "code")) return null;
+    const callbackCode = route.searchParams.get("code") || "";
+    if (!/^[A-Z][A-Z0-9_]{1,79}$/.test(callbackCode)) return null;
+    return {
+      serviceId,
+      route: cleanRoute,
+      outcome: "error",
+      code: callbackCode === "OAUTH_DECLINED" ? "OAUTH_DECLINED" : "OAUTH_CALLBACK_ERROR",
+    };
   }
   return null;
 }
 
+/** Returns fixed UI copy only; callback values are never reflected into the interface. */
+export function planningCenterRelayErrorNotice(code: unknown) {
+  if (code === "OAUTH_DECLINED") return "Cancelaste la autorización de Planning Center.";
+  if (code === "HANDOFF_FAILED") return "El relevo móvil expiró o ya fue usado. Intenta conectar otra vez.";
+  return "No se pudo completar la conexión con Planning Center. Intenta conectar otra vez.";
+}
+
 function nullableText(value: unknown, label: string, max: number) {
   return value === null ? null : text(value, label, max);
+}
+
+function boundedCatalogItems(value: unknown[], maximum: number, label: string) {
+  if (value.length > maximum) throw new Error(`${label} contiene demasiados elementos.`);
+  return value;
+}
+
+function planningCenterPlanSummary(value: unknown) {
+  const source = record(value);
+  if (!source) throw new Error("El plan es inválido.");
+  exact(source, ["id", "title", "dates", "sortDate"]);
+  return {
+    id: text(source.id, "plan.id", 500),
+    title: text(source.title, "plan.title", 500),
+    dates: text(source.dates, "plan.dates", 500, true),
+    // Planning Center currently returns either a date or a timestamp here. The
+    // canonical server contract intentionally exposes it as bounded text.
+    sortDate: nullableText(source.sortDate, "plan.sortDate", 500),
+  };
 }
 
 export function normalizePlanningCenterCatalog(value: unknown): PlanningCenterCatalogResponse {
@@ -582,18 +628,48 @@ export function normalizePlanningCenterCatalog(value: unknown): PlanningCenterCa
   if (!source || source.schemaVersion !== 4 || source.provider !== "planning_center" || !Array.isArray(source.items)) throw new Error("Planning Center devolvió un catálogo incompatible.");
   if (source.resource === "service_types") {
     exact(source, ["schemaVersion", "provider", "resource", "items", "nextOffset"]);
-    return { schemaVersion: 4, provider: "planning_center", resource: "service_types", items: source.items.map((entry) => { const item = record(entry); if (!item) throw new Error("El tipo de servicio es inválido."); exact(item, ["id", "name"]); return { id: text(item.id, "serviceType.id", 120), name: text(item.name, "serviceType.name", 200) }; }), nextOffset: source.nextOffset === null ? null : integer(source.nextOffset, "nextOffset") };
+    const items = boundedCatalogItems(source.items, 100, "El catálogo de tipos de servicio").map((entry) => {
+      const item = record(entry);
+      if (!item) throw new Error("El tipo de servicio es inválido.");
+      exact(item, ["id", "name"]);
+      return { id: text(item.id, "serviceType.id", 500), name: text(item.name, "serviceType.name", 500) };
+    });
+    return { schemaVersion: 4, provider: "planning_center", resource: "service_types", items, nextOffset: source.nextOffset === null ? null : integer(source.nextOffset, "nextOffset", 0, 100_000) };
   }
   if (source.resource === "plans") {
     exact(source, ["schemaVersion", "provider", "resource", "serviceTypeId", "items", "nextOffset"]);
-    return { schemaVersion: 4, provider: "planning_center", resource: "plans", serviceTypeId: text(source.serviceTypeId, "serviceTypeId", 120), items: source.items.map((entry) => { const item = record(entry); if (!item) throw new Error("El plan es inválido."); exact(item, ["id", "title", "dates", "sortDate"]); return { id: text(item.id, "plan.id", 120), title: text(item.title, "plan.title", 200), dates: text(item.dates, "plan.dates", 200, true), sortDate: item.sortDate === null ? null : iso(item.sortDate, "plan.sortDate") }; }), nextOffset: source.nextOffset === null ? null : integer(source.nextOffset, "nextOffset") };
+    return {
+      schemaVersion: 4,
+      provider: "planning_center",
+      resource: "plans",
+      serviceTypeId: text(source.serviceTypeId, "serviceTypeId", 120),
+      items: boundedCatalogItems(source.items, 100, "El catálogo de planes").map(planningCenterPlanSummary),
+      nextOffset: source.nextOffset === null ? null : integer(source.nextOffset, "nextOffset", 0, 100_000),
+    };
   }
   if (source.resource === "plan") {
-    const rawPlan = record(source.plan);
-    if (!rawPlan) throw new Error("El plan es inválido.");
     exact(source, ["schemaVersion", "provider", "resource", "serviceTypeId", "plan", "items"]);
-    exact(rawPlan, ["id", "title", "dates", "sortDate"]);
-    return { schemaVersion: 4, provider: "planning_center", resource: "plan", serviceTypeId: text(source.serviceTypeId, "serviceTypeId", 120), plan: { id: text(rawPlan.id, "plan.id", 120), title: text(rawPlan.title, "plan.title", 200), dates: text(rawPlan.dates, "plan.dates", 200, true), sortDate: rawPlan.sortDate === null ? null : iso(rawPlan.sortDate, "plan.sortDate") }, items: source.items.map((entry) => { const item = record(entry); if (!item) throw new Error("El elemento del plan es inválido."); exact(item, ["id", "title", "itemType", "lengthSeconds", "sequence", "keyName"]); return { id: text(item.id, "item.id", 120), title: text(item.title, "item.title", 300), itemType: text(item.itemType, "item.itemType", 120), lengthSeconds: item.lengthSeconds === null ? null : integer(item.lengthSeconds, "item.lengthSeconds", 0, 86_400), sequence: integer(item.sequence, "item.sequence", 0), keyName: nullableText(item.keyName, "item.keyName", 80) }; }) };
+    const items = boundedCatalogItems(source.items, 500, "El plan").map((entry) => {
+      const item = record(entry);
+      if (!item) throw new Error("El elemento del plan es inválido.");
+      exact(item, ["id", "title", "itemType", "lengthSeconds", "sequence", "keyName"]);
+      return {
+        id: text(item.id, "item.id", 500),
+        title: text(item.title, "item.title", 500),
+        itemType: text(item.itemType, "item.itemType", 500),
+        lengthSeconds: item.lengthSeconds === null ? null : integer(item.lengthSeconds, "item.lengthSeconds"),
+        sequence: integer(item.sequence, "item.sequence", -Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER),
+        keyName: nullableText(item.keyName, "item.keyName", 500),
+      };
+    });
+    return {
+      schemaVersion: 4,
+      provider: "planning_center",
+      resource: "plan",
+      serviceTypeId: text(source.serviceTypeId, "serviceTypeId", 120),
+      plan: planningCenterPlanSummary(source.plan),
+      items,
+    };
   }
   throw new Error("Planning Center devolvió un recurso desconocido.");
 }
@@ -765,10 +841,12 @@ export async function disconnectPlanningCenter() {
 }
 
 export async function fetchPlanningCenterCatalog(query: { serviceTypeId?: string; planId?: string; offset?: number }) {
-  const params = new URLSearchParams();
+  if (query.planId && !query.serviceTypeId) throw new Error("El tipo de servicio es obligatorio para cargar un plan.");
+  const resource = query.planId ? "plan" : query.serviceTypeId ? "plans" : "service_types";
+  const params = new URLSearchParams({ resource });
   if (query.serviceTypeId) params.set("serviceTypeId", query.serviceTypeId);
   if (query.planId) params.set("planId", query.planId);
-  if (typeof query.offset === "number") params.set("offset", String(Math.max(0, Math.floor(query.offset))));
+  if (typeof query.offset === "number") params.set("offset", String(Math.max(0, Math.min(100_000, Math.floor(query.offset)))));
   return normalizePlanningCenterCatalog(await apiFetch<unknown>(`/presentation-integrations/planning-center/catalog?${params}`, { cache: "no-store" }));
 }
 

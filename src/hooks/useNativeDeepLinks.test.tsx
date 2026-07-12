@@ -185,4 +185,33 @@ describe("useNativeDeepLinks", () => {
     view.unmount();
     window.removeEventListener(PRESENTATION_PLANNING_CENTER_RELAY_EVENT, capture);
   });
+
+  it("accepts controlled callback failures without reflecting the server code", async () => {
+    let appUrlOpenListener: AppUrlOpenListener | null = null;
+    const runtime = {
+      isNativePlatform: vi.fn(() => true),
+      getLaunchUrl: vi.fn(async () => undefined),
+      addListener: vi.fn(async (_eventName: "appUrlOpen", listener: AppUrlOpenListener) => {
+        appUrlOpenListener = listener;
+        return { remove: vi.fn() };
+      }),
+      warn: vi.fn(),
+      completePlanningCenterHandoff: vi.fn(),
+    };
+    const navigate = vi.fn();
+    const relayEvents: PlanningCenterRelayEventDetail[] = [];
+    const capture = (event: Event) => relayEvents.push((event as CustomEvent<PlanningCenterRelayEventDetail>).detail);
+    window.addEventListener(PRESENTATION_PLANNING_CENTER_RELAY_EVENT, capture);
+    const view = render(<MemoryRouter initialEntries={["/app"]}><Harness navigate={navigate} runtime={runtime} /></MemoryRouter>);
+    await flushPromises();
+
+    act(() => appUrlOpenListener?.({ url: "tchurchapp://tchurchapp.com/#/app/services/service-1/presentation?planningCenter=error&code=OAUTH_STATE_INVALID" }));
+
+    expect(navigate).toHaveBeenCalledWith("/app/services/service-1/presentation", { replace: true });
+    expect(relayEvents).toEqual([{ serviceId: "service-1", outcome: "error", code: "OAUTH_CALLBACK_ERROR" }]);
+    expect(JSON.stringify(relayEvents)).not.toContain("OAUTH_STATE_INVALID");
+    expect(runtime.completePlanningCenterHandoff).not.toHaveBeenCalled();
+    view.unmount();
+    window.removeEventListener(PRESENTATION_PLANNING_CENTER_RELAY_EVENT, capture);
+  });
 });

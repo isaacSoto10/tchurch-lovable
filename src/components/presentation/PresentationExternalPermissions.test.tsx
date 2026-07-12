@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -43,6 +43,7 @@ vi.mock("@/lib/presentationProduction", async (importOriginal) => {
 
 import { PresentationBroadcastPanel } from "./PresentationBroadcastPanel";
 import { PresentationIntegrationsPanel } from "./PresentationIntegrationsPanel";
+import { PRESENTATION_PLANNING_CENTER_RELAY_EVENT } from "@/lib/presentationProduction";
 
 const integrationSummary = {
   schemaVersion: 4 as const,
@@ -95,5 +96,20 @@ describe("presentation external-system permissions", () => {
     render(<PresentationIntegrationsPanel serviceId="service-1" serviceTitle="Domingo" mode="live" churchId="church-1" canEdit={false} canOperateExternal={false} canExportPublic hasActivePresentationSession={false} />);
     await waitFor(() => expect(mocks.fetchIntegrations).toHaveBeenCalledOnce());
     expect(screen.getByRole("button", { name: /Exportar texto/i })).toBeEnabled();
+  });
+
+  it("shows fixed safe copy for a generic Planning Center callback failure", async () => {
+    const view = render(<PresentationIntegrationsPanel serviceId="service-1" serviceTitle="Domingo" mode="live" churchId="church-1" canEdit canOperateExternal canExportPublic hasActivePresentationSession={false} />);
+    await waitFor(() => expect(mocks.fetchIntegrations).toHaveBeenCalledOnce());
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(PRESENTATION_PLANNING_CENTER_RELAY_EVENT, {
+        detail: { serviceId: "service-1", outcome: "error", code: "OAUTH_CALLBACK_ERROR" },
+      }));
+    });
+
+    expect(await screen.findByText("No se pudo completar la conexión con Planning Center. Intenta conectar otra vez.")).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("OAUTH_CALLBACK_ERROR");
+    view.unmount();
   });
 });
