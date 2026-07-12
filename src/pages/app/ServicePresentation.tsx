@@ -979,9 +979,9 @@ export default function ServicePresentation() {
   const liveAutomationPrivacyScope = [authenticatedUserId || "signed-out", selectedChurch?.id || "no-church", selectedChurch?.role || "no-role", id || "no-service", "live", live.snapshot?.session?.id || "no-session", live.clientId].join("::");
   const rehearsalAutomationPrivacyScope = [authenticatedUserId || "signed-out", selectedChurch?.id || "no-church", selectedChurch?.role || "no-role", id || "no-service", "rehearsal", rehearsal.snapshot?.session?.id || "no-session", rehearsal.clientId].join("::");
   const activeAutomationPrivacyScope = runMode === "rehearsal" ? rehearsalAutomationPrivacyScope : liveAutomationPrivacyScope;
-  const activeExternalAuthorized = canOperatePresentationExternalSystems({ mode: runMode, controllerOwned: liveControllerOwned, canEdit: viewerCanEdit, roles: viewerRoles });
-  const liveExternalConnectorScope = `${presentationExternalAuthorityScope({ baseScope: liveAutomationPrivacyScope, mode: "live", controllerOwned: liveAutomationControllerOwned, canEdit: viewerCanEdit, roles: viewerRoles })}::${selectedChurch?.id || "no-church"}::${id || "no-service"}`;
-  const rehearsalExternalConnectorScope = `${presentationExternalAuthorityScope({ baseScope: rehearsalAutomationPrivacyScope, mode: "rehearsal", controllerOwned: rehearsalAutomationControllerOwned, canEdit: viewerCanEdit, roles: viewerRoles })}::${selectedChurch?.id || "no-church"}::${id || "no-service"}`;
+  const activeExternalAuthorized = runtimeNetworkState === "online" && canOperatePresentationExternalSystems({ mode: runMode, controllerOwned: liveControllerOwned, canEdit: viewerCanEdit, roles: viewerRoles });
+  const liveExternalConnectorScope = `${presentationExternalAuthorityScope({ baseScope: liveAutomationPrivacyScope, mode: "live", controllerOwned: liveAutomationControllerOwned, canEdit: viewerCanEdit, roles: viewerRoles })}::${live.networkState}::${selectedChurch?.id || "no-church"}::${id || "no-service"}`;
+  const rehearsalExternalConnectorScope = `${presentationExternalAuthorityScope({ baseScope: rehearsalAutomationPrivacyScope, mode: "rehearsal", controllerOwned: rehearsalAutomationControllerOwned, canEdit: viewerCanEdit, roles: viewerRoles })}::${rehearsal.networkState}::${selectedChurch?.id || "no-church"}::${id || "no-service"}`;
   const activeExternalConnectorScope = runMode === "rehearsal" ? rehearsalExternalConnectorScope : liveExternalConnectorScope;
   const automationRules = usePresentationAutomationRuleThresholds(id, Boolean(id && selectedChurch?.id && authenticatedUserId));
   const liveAutomations = usePresentationAutomations({
@@ -1017,7 +1017,7 @@ export default function ServicePresentation() {
   const activeAutomations = runMode === "rehearsal" ? rehearsalAutomations : liveAutomations;
   prepareSessionEndRef.current = runMode === "rehearsal" ? rehearsalAutomations.prepareSessionEnd : liveAutomations.prepareSessionEnd;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     reconcileActivePresentationObsAuthority(activeExternalConnectorScope, activeExternalAuthorized);
   }, [activeExternalAuthorized, activeExternalConnectorScope]);
 
@@ -1611,7 +1611,9 @@ export default function ServicePresentation() {
         controllerOwned={liveControllerOwned}
         viewerRoles={viewerRoles}
         privacyScope={activeAutomationPrivacyScope}
+        accountId={authenticatedUserId || ""}
         churchId={selectedChurch?.id}
+        networkState={runtimeNetworkState}
         snapshot={runtimeSnapshot}
         clientId={runtime.clientId}
         hasActivePresentationSession={Boolean(live.snapshot?.session?.status === "live" || rehearsal.snapshot?.session?.status === "live")}

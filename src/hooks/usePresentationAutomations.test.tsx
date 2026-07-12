@@ -259,4 +259,32 @@ describe("usePresentationAutomations delivery discipline", () => {
     expect(mocks.ack).not.toHaveBeenCalled();
     expect(mocks.dispatch).not.toHaveBeenCalled();
   });
+
+  it("does not acknowledge an OBS action when only the external connector authority changes in flight", async () => {
+    let resolveObsRequest!: (value: Record<string, unknown>) => void;
+    const obsRequest = vi.fn(() => new Promise<Record<string, unknown>>((resolve) => { resolveObsRequest = resolve; }));
+    mocks.activeObs.mockReturnValue({ client: { request: obsRequest } });
+    mocks.pending.mockResolvedValue(pending([{
+      deliveryId: "delivery-obs",
+      ruleId: "rule-obs",
+      type: "obs_scene",
+      payload: { sceneName: "Wide" },
+    }]));
+    const sendCommand = vi.fn() as unknown as PresentationAutomationCommandSender;
+    const initial = options("live", sendCommand, { externalConnectorScope: "external-scope-a" });
+    const { result, rerender } = renderHook((props) => usePresentationAutomations(props), { initialProps: initial });
+
+    const closing = result.current.prepareSessionEnd();
+    const handledClosing = closing.then(() => null, (error: unknown) => error);
+    await waitFor(() => expect(obsRequest).toHaveBeenCalledOnce());
+    rerender({ ...initial, externalConnectorScope: "external-scope-b" });
+    await act(async () => resolveObsRequest({}));
+
+    const closingError = await handledClosing;
+    expect(closingError).toBeInstanceOf(Error);
+    expect((closingError as Error).message).toMatch(/control|identidad/i);
+    expect(mocks.activeObs).toHaveBeenCalledWith("external-scope-a");
+    expect(sendCommand).not.toHaveBeenCalled();
+    expect(mocks.ack).not.toHaveBeenCalled();
+  });
 });

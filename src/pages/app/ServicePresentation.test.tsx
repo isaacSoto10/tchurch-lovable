@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { PresentationLiveSnapshot, PresentationTiming } from "@/lib/presentationLive";
+import type { PresentationLiveSnapshot, PresentationNetworkState, PresentationTiming } from "@/lib/presentationLive";
 import type { PresentationService } from "@/lib/servicePresentation";
 import type { PresentationWorkspace } from "@/lib/presentationWorkspace";
 
@@ -15,6 +15,9 @@ const mocks = vi.hoisted(() => ({
   liveControllerLeaseActive: false,
   rehearsalControllerLeaseActive: false,
   rehearsalError: null as string | null,
+  liveNetworkState: "online" as PresentationNetworkState,
+  rehearsalNetworkState: "online" as PresentationNetworkState,
+  reconcileObsAuthority: vi.fn(),
   liveSend: vi.fn(),
   rehearsalSend: vi.fn(),
   livePrepareRelease: vi.fn(),
@@ -44,6 +47,11 @@ vi.mock("@/lib/api", async () => {
   return { ...actual, apiFetch: mocks.apiFetch };
 });
 
+vi.mock("@/lib/presentationLocalConnectors", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/presentationLocalConnectors")>("@/lib/presentationLocalConnectors");
+  return { ...actual, reconcileActivePresentationObsAuthority: mocks.reconcileObsAuthority };
+});
+
 vi.mock("@/lib/presentationWorkspace", async () => {
   const actual = await vi.importActual<typeof import("@/lib/presentationWorkspace")>("@/lib/presentationWorkspace");
   return {
@@ -57,7 +65,7 @@ vi.mock("@/hooks/usePresentationLive", () => ({
     snapshot: mocks.liveSnapshot,
     presentationPackage: mocks.livePackage,
     activeView: "operator",
-    networkState: "online",
+    networkState: mocks.liveNetworkState,
     offlineQueueCount: 0,
     isLocalState: false,
     controllerLeaseActive: mocks.liveControllerLeaseActive,
@@ -80,7 +88,7 @@ vi.mock("@/hooks/usePresentationRehearsal", () => ({
   usePresentationRehearsal: () => ({
     snapshot: mocks.rehearsalSnapshot,
     activeView: "operator",
-    networkState: "online",
+    networkState: mocks.rehearsalNetworkState,
     controllerLeaseActive: mocks.rehearsalControllerLeaseActive,
     timing: mocks.rehearsalTiming,
     messages: [],
@@ -256,6 +264,9 @@ describe("ServicePresentation load authority", () => {
     mocks.liveControllerLeaseActive = false;
     mocks.rehearsalControllerLeaseActive = false;
     mocks.rehearsalError = null;
+    mocks.liveNetworkState = "online";
+    mocks.rehearsalNetworkState = "online";
+    mocks.reconcileObsAuthority.mockReset();
     mocks.liveSend.mockReset();
     mocks.rehearsalSend.mockReset();
     mocks.livePrepareRelease.mockReset();
@@ -453,5 +464,20 @@ describe("ServicePresentation load authority", () => {
     fireEvent.click(screen.getByRole("button", { name: "Soltar control y volver a en vivo" }));
     await waitFor(() => expect(mocks.rehearsalSend).toHaveBeenCalledWith("release_control", {}, { expectedRevision: 12, allowOffline: false }));
     expect(mocks.rehearsalPrepareRelease).toHaveBeenCalledOnce();
+  });
+
+  it("revokes external-system authority when the owned live session goes offline", async () => {
+    mocks.liveSnapshot = ownedSnapshot("live");
+    mocks.liveTiming = mocks.liveSnapshot.session!.timing;
+    mocks.liveControllerLeaseActive = true;
+    mocks.apiFetch.mockImplementation((path: string) => path === "/users/me" ? Promise.resolve({ id: mocks.accountId }) : Promise.resolve(stageService()));
+    const view = render(<ServicePresentation />);
+    await screen.findByText("Stage fixture");
+    await waitFor(() => expect(mocks.reconcileObsAuthority).toHaveBeenLastCalledWith(expect.stringContaining("online"), true));
+
+    mocks.liveNetworkState = "offline";
+    view.rerender(<ServicePresentation />);
+
+    await waitFor(() => expect(mocks.reconcileObsAuthority).toHaveBeenLastCalledWith(expect.stringContaining("offline"), false));
   });
 });

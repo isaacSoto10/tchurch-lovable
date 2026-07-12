@@ -155,6 +155,7 @@ async function executeDelivery(
       assertAuthorized();
       return expectedRevision;
     } catch {
+      assertAuthorized();
       throw new PermanentAutomationDeliveryError("OBS_REQUEST_FAILED", "OBS no confirmó la escena automática.");
     }
   }
@@ -249,11 +250,13 @@ export function usePresentationAutomations({
   const networkStateRef = useRef(networkState);
   const commandPendingRef = useRef(commandPending);
   const scopeRef = useRef("");
+  const externalConnectorScopeRef = useRef(externalConnectorScope);
   snapshotRef.current = snapshot;
   sendCommandRef.current = sendCommand;
   controllerOwnedRef.current = controllerOwned;
   networkStateRef.current = networkState;
   commandPendingRef.current = commandPending;
+  externalConnectorScopeRef.current = externalConnectorScope;
 
   const session = snapshot?.session?.mode === mode ? snapshot.session : null;
   const activeSessionId = session?.id || null;
@@ -398,10 +401,12 @@ export function usePresentationAutomations({
   const applyPendingUntilEmpty = useCallback(async (drainCompletely: boolean, initialRevision = 0) => {
     if (!serviceId || mode !== "live") return snapshotRef.current?.session?.revision || 0;
     const authorizedScope = scopeRef.current;
+    const authorizedConnectorScope = externalConnectorScopeRef.current;
     const authorizedSessionId = snapshotRef.current?.session?.id || null;
     const assertAuthorized = () => {
       const current = snapshotRef.current?.session;
       if (scopeRef.current !== authorizedScope
+        || externalConnectorScopeRef.current !== authorizedConnectorScope
         || !controllerOwnedRef.current
         || networkStateRef.current !== "online"
         || commandPendingRef.current
@@ -422,7 +427,7 @@ export function usePresentationAutomations({
       for (const action of pending.actions) {
         try {
           assertAuthorized();
-          revision = await executeDelivery(action, sendCommandRef.current, revision, externalConnectorScope, assertAuthorized);
+          revision = await executeDelivery(action, sendCommandRef.current, revision, authorizedConnectorScope, assertAuthorized);
           assertAuthorized();
           await acknowledgePresentationAutomation(serviceId, { deliveryId: action.deliveryId, clientId, status: "applied" });
           assertAuthorized();
@@ -449,7 +454,7 @@ export function usePresentationAutomations({
       if (!drainCompletely) return revision;
     } while (batchCount < MAX_DRAIN_BATCHES);
     throw new Error("Quedan demasiadas automatizaciones pendientes para terminar la sesión con seguridad.");
-  }, [clientId, externalConnectorScope, mode, serviceId]);
+  }, [clientId, mode, serviceId]);
 
   const runApplyExclusive = useCallback(async (drainCompletely: boolean, initialRevision = 0) => {
     while (dispatchingRef.current) await dispatchingRef.current;

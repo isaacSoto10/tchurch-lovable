@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Share } from "@capacitor/share";
 import { Cast, CheckCircle2, Copy, Loader2, MonitorPlay, Radio, RefreshCw, ShieldAlert, Square, Trash2, Unplug, Wifi } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -69,11 +69,12 @@ export function PresentationBroadcastPanel({ serviceId, mode, churchId, privacyS
   const connectorScopeRef = useRef(connectorScope);
   const canOperateExternalRef = useRef(canOperateExternal);
   const modeRef = useRef(mode);
+  const obsRequestGenerationRef = useRef(0);
   connectorScopeRef.current = connectorScope;
   canOperateExternalRef.current = canOperateExternal;
   modeRef.current = mode;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     setSettings(readPresentationLocalConnectorSettings(churchId));
     const active = getActivePresentationObsConnection();
     if (mode === "live" && canOperateExternal && active?.scope === connectorScope) {
@@ -128,7 +129,8 @@ export function PresentationBroadcastPanel({ serviceId, mode, churchId, privacyS
     return () => { active = false; };
   }, [canEdit, mode, serviceId]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    obsRequestGenerationRef.current += 1;
     if (mode === "live" && canOperateExternal) return;
     disconnectActivePresentationObsConnection(connectorScope);
     obsRef.current = null;
@@ -138,6 +140,7 @@ export function PresentationBroadcastPanel({ serviceId, mode, churchId, privacyS
     setScenes([]);
     setSelectedScene("");
     setConfirmStream(null);
+    setBusy((current) => current === "scene" || current?.startsWith("stream:") ? null : current);
   }, [canOperateExternal, connectorScope, mode]);
 
   useEffect(() => {
@@ -224,27 +227,29 @@ export function PresentationBroadcastPanel({ serviceId, mode, churchId, privacyS
   }
 
   async function connectObs() {
-    if (mode !== "live" || !canOperateExternal) {
+    if (modeRef.current !== "live" || !canOperateExternalRef.current) {
       setNotice("Necesitas el control de producción activo para conectar OBS.");
       return;
     }
     const requestedScope = connectorScope;
+    const generation = ++obsRequestGenerationRef.current;
+    let client: ObsWebSocketClient | null = null;
     setObsState("connecting");
     setNotice(null);
     setScenes([]);
     try {
       const endpoint = normalizePresentationConnectorEndpoint(settings.obsEndpoint, "obs");
-      const client = new ObsWebSocketClient();
+      client = new ObsWebSocketClient();
       disconnectActivePresentationObsConnection();
       obsRef.current = client;
       const connected = await client.connect(endpoint, obsPassword);
       setObsPassword("");
-      if (connectorScopeRef.current !== requestedScope || !canOperateExternalRef.current || modeRef.current !== "live") {
+      if (generation !== obsRequestGenerationRef.current || connectorScopeRef.current !== requestedScope || !canOperateExternalRef.current || modeRef.current !== "live" || obsRef.current !== client) {
         client.disconnect();
         throw new Error("El control o la identidad cambió antes de terminar la conexión con OBS.");
       }
       const response = await client.request("GetSceneList", {}, { mode });
-      if (connectorScopeRef.current !== requestedScope || !canOperateExternalRef.current || modeRef.current !== "live") {
+      if (generation !== obsRequestGenerationRef.current || connectorScopeRef.current !== requestedScope || !canOperateExternalRef.current || modeRef.current !== "live" || obsRef.current !== client) {
         client.disconnect();
         throw new Error("El control o la identidad cambió mientras OBS respondía.");
       }
@@ -257,15 +262,21 @@ export function PresentationBroadcastPanel({ serviceId, mode, churchId, privacyS
       setNotice(`OBS ${connected.version} conectado. La contraseña se eliminó de memoria.`);
     } catch (error) {
       setObsPassword("");
-      disconnectActivePresentationObsConnection(requestedScope);
-      obsRef.current?.disconnect();
-      obsRef.current = null;
-      setObsState("disconnected");
-      setNotice(error instanceof Error ? error.message : "No se pudo conectar con OBS.");
+      client?.disconnect();
+      if (client && getActivePresentationObsConnection(requestedScope)?.client === client) disconnectActivePresentationObsConnection(requestedScope);
+      if (obsRef.current === client) obsRef.current = null;
+      if (generation === obsRequestGenerationRef.current && connectorScopeRef.current === requestedScope) {
+        setObsState("disconnected");
+        setObsVersion(null);
+        setScenes([]);
+        setSelectedScene("");
+        setNotice(error instanceof Error ? error.message : "No se pudo conectar con OBS.");
+      }
     }
   }
 
   function disconnectObs() {
+    obsRequestGenerationRef.current += 1;
     disconnectActivePresentationObsConnection(connectorScope);
     obsRef.current?.disconnect();
     obsRef.current = null;
@@ -281,37 +292,51 @@ export function PresentationBroadcastPanel({ serviceId, mode, churchId, privacyS
 
   async function selectObsScene(sceneName: string) {
     setSelectedScene(sceneName);
-    if (!obsRef.current || mode !== "live" || !canOperateExternal) {
+    const client = obsRef.current;
+    const requestedScope = connectorScopeRef.current;
+    if (!client || modeRef.current !== "live" || !canOperateExternalRef.current || getActivePresentationObsConnection(requestedScope)?.client !== client) {
       setNotice("Necesitas el control de producción activo para cambiar escenas en OBS.");
       return;
     }
+    const generation = ++obsRequestGenerationRef.current;
     setBusy("scene");
     setNotice(null);
     try {
-      await obsRef.current.request("SetCurrentProgramScene", { sceneName }, { mode });
+      await client.request("SetCurrentProgramScene", { sceneName }, { mode: "live" });
+      if (generation !== obsRequestGenerationRef.current || connectorScopeRef.current !== requestedScope || !canOperateExternalRef.current || modeRef.current !== "live" || obsRef.current !== client || getActivePresentationObsConnection(requestedScope)?.client !== client) return;
       setNotice(`Escena “${sceneName}” enviada a OBS.`);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "No se pudo cambiar la escena.");
+      if (generation === obsRequestGenerationRef.current && connectorScopeRef.current === requestedScope && canOperateExternalRef.current && obsRef.current === client) {
+        setNotice(error instanceof Error ? error.message : "No se pudo cambiar la escena.");
+      }
     } finally {
-      setBusy(null);
+      if (generation === obsRequestGenerationRef.current && connectorScopeRef.current === requestedScope) setBusy(null);
     }
   }
 
   async function changeStream(operation: "start" | "stop") {
-    if (!obsRef.current || mode !== "live" || !canOperateExternal || !canEdit || confirmStream !== operation) {
+    const client = obsRef.current;
+    const requestedScope = connectorScopeRef.current;
+    if (!client || modeRef.current !== "live" || !canOperateExternalRef.current || !canEdit || confirmStream !== operation || getActivePresentationObsConnection(requestedScope)?.client !== client) {
       setNotice("Iniciar o detener el stream requiere control activo, permiso de edición y confirmación explícita.");
       return;
     }
+    const generation = ++obsRequestGenerationRef.current;
     setBusy(`stream:${operation}`);
     setNotice(null);
     try {
-      await obsRef.current.request(operation === "start" ? "StartStream" : "StopStream", {}, { mode });
+      await client.request(operation === "start" ? "StartStream" : "StopStream", {}, { mode: "live" });
+      if (generation !== obsRequestGenerationRef.current || connectorScopeRef.current !== requestedScope || !canOperateExternalRef.current || modeRef.current !== "live" || obsRef.current !== client || getActivePresentationObsConnection(requestedScope)?.client !== client) return;
       setNotice(operation === "start" ? "OBS confirmó el inicio del stream." : "OBS confirmó que el stream se detuvo.");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "OBS no confirmó la acción.");
+      if (generation === obsRequestGenerationRef.current && connectorScopeRef.current === requestedScope && canOperateExternalRef.current && obsRef.current === client) {
+        setNotice(error instanceof Error ? error.message : "OBS no confirmó la acción.");
+      }
     } finally {
-      setBusy(null);
-      setConfirmStream(null);
+      if (generation === obsRequestGenerationRef.current && connectorScopeRef.current === requestedScope) {
+        setBusy(null);
+        setConfirmStream(null);
+      }
     }
   }
 

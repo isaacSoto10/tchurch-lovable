@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   obsClientDisconnect: vi.fn(),
   disconnectObs: vi.fn(),
   fetchCatalog: vi.fn(),
+  connectPlanningCenter: vi.fn(),
 }));
 
 vi.mock("@capacitor/app", () => ({ App: { addListener: vi.fn(async () => ({ remove: vi.fn() })) } }));
@@ -34,7 +35,7 @@ vi.mock("@/lib/presentationProduction", async (importOriginal) => {
     ...actual,
     fetchPresentationIntegrations: mocks.fetchIntegrations,
     fetchPresentationBroadcastLinks: mocks.fetchBroadcastLinks,
-    connectPlanningCenter: vi.fn(),
+    connectPlanningCenter: mocks.connectPlanningCenter,
     disconnectPlanningCenter: vi.fn(),
     fetchPlanningCenterCatalog: mocks.fetchCatalog,
     fetchProPresenterExport: vi.fn(),
@@ -68,11 +69,13 @@ describe("presentation external-system permissions", () => {
     mocks.obsClientDisconnect.mockReset();
     mocks.disconnectObs.mockReset();
     mocks.fetchCatalog.mockReset();
+    mocks.connectPlanningCenter.mockReset();
     mocks.fetchIntegrations.mockResolvedValue(integrationSummary);
     mocks.fetchBroadcastLinks.mockResolvedValue({ schemaVersion: 4, links: [] });
     mocks.requestProPresenter.mockResolvedValue({ connected: true, host: "localhost:50001", version: "20.1", platform: "macOS", name: "ProPresenter" });
     mocks.obsConnect.mockResolvedValue({ version: "5.5.0", rpcVersion: 1 });
     mocks.obsRequest.mockResolvedValue({ scenes: [{ sceneName: "Wide" }, { sceneName: "Cámara" }], currentProgramSceneName: "Wide" });
+    mocks.connectPlanningCenter.mockResolvedValue({ authorizeUrl: "https://api.planningcenteronline.com/oauth/authorize" });
   });
 
   it("does not let a band/member without controller authority mutate OBS or manage browser links", async () => {
@@ -88,7 +91,7 @@ describe("presentation external-system permissions", () => {
   });
 
   it("allows a local ProPresenter status check but blocks movement/export for a band member without production permission", async () => {
-    const view = render(<PresentationIntegrationsPanel serviceId="service-1" serviceTitle="Domingo" mode="live" churchId="church-1" canEdit={false} canOperateExternal={false} canExportPublic={false} hasActivePresentationSession={false} />);
+    const view = render(<PresentationIntegrationsPanel serviceId="service-1" serviceTitle="Domingo" mode="live" accountId="account-1" churchId="church-1" externalAuthorityScope="account-1::church-1::service-1::online::observer" canEdit={false} canOperateExternal={false} canExportPublic={false} hasActivePresentationSession={false} />);
     await waitFor(() => expect(mocks.fetchIntegrations).toHaveBeenCalledOnce());
     fireEvent.click(screen.getByRole("button", { name: /Probar conexión/i }));
     await screen.findByText(/ProPresenter 20.1 conectado/i);
@@ -102,14 +105,17 @@ describe("presentation external-system permissions", () => {
   });
 
   it("permits an operator to export public ProPresenter text without requiring the controller lease", async () => {
-    render(<PresentationIntegrationsPanel serviceId="service-1" serviceTitle="Domingo" mode="live" churchId="church-1" canEdit={false} canOperateExternal={false} canExportPublic hasActivePresentationSession={false} />);
+    render(<PresentationIntegrationsPanel serviceId="service-1" serviceTitle="Domingo" mode="live" accountId="account-1" churchId="church-1" externalAuthorityScope="account-1::church-1::service-1::online::observer" canEdit={false} canOperateExternal={false} canExportPublic hasActivePresentationSession={false} />);
     await waitFor(() => expect(mocks.fetchIntegrations).toHaveBeenCalledOnce());
     expect(screen.getByRole("button", { name: /Exportar texto/i })).toBeEnabled();
   });
 
   it("shows fixed safe copy for a generic Planning Center callback failure", async () => {
-    const view = render(<PresentationIntegrationsPanel serviceId="service-1" serviceTitle="Domingo" mode="live" churchId="church-1" canEdit canOperateExternal canExportPublic hasActivePresentationSession={false} />);
+    const view = render(<PresentationIntegrationsPanel serviceId="service-1" serviceTitle="Domingo" mode="live" accountId="account-1" churchId="church-1" externalAuthorityScope="account-1::church-1::service-1::online::controller" canEdit canOperateExternal canExportPublic hasActivePresentationSession={false} />);
     await waitFor(() => expect(mocks.fetchIntegrations).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole("button", { name: /Conectar con OAuth/i }));
+    await waitFor(() => expect(mocks.connectPlanningCenter).toHaveBeenCalledOnce());
+    await screen.findByText(/Completa el acceso en Planning Center/i);
 
     act(() => {
       window.dispatchEvent(new CustomEvent(PRESENTATION_PLANNING_CENTER_RELAY_EVENT, {
@@ -143,6 +149,22 @@ describe("presentation external-system permissions", () => {
     expect(await screen.findByText("OBS fue desconectado de este dispositivo.")).toBeInTheDocument();
   });
 
+  it("drops an in-flight OBS connection and blocks manual controls when the live runtime goes offline", async () => {
+    let resolveConnect!: (value: { version: string; rpcVersion: number }) => void;
+    mocks.obsConnect.mockReturnValue(new Promise((resolve) => { resolveConnect = resolve; }));
+    const view = render(<PresentationBroadcastPanel serviceId="service-1" mode="live" churchId="church-1" privacyScope="operator::online" canEdit canOperateExternal />);
+    fireEvent.click(await screen.findByRole("button", { name: "Conectar" }));
+    await waitFor(() => expect(mocks.obsConnect).toHaveBeenCalledOnce());
+
+    view.rerender(<PresentationBroadcastPanel serviceId="service-1" mode="live" churchId="church-1" privacyScope="operator::offline" canEdit canOperateExternal={false} />);
+    await act(async () => resolveConnect({ version: "5.5.0", rpcVersion: 1 }));
+
+    await waitFor(() => expect(mocks.obsClientDisconnect).toHaveBeenCalled());
+    expect(screen.queryByText("Conectado · 5.5.0")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Conectar" })).toBeDisabled();
+    expect(document.querySelector('input[type="password"]')).toBeDisabled();
+  });
+
   it("loads Planning Center catalog pages one at a time and stops a stalled offset", async () => {
     mocks.fetchIntegrations.mockResolvedValue({
       ...integrationSummary,
@@ -159,7 +181,7 @@ describe("presentation external-system permissions", () => {
       .mockResolvedValueOnce({ schemaVersion: 4, provider: "planning_center", resource: "service_types", items: [{ id: "type-1", name: "Domingo" }], nextOffset: 25 })
       .mockResolvedValueOnce({ schemaVersion: 4, provider: "planning_center", resource: "service_types", items: [{ id: "type-1", name: "Domingo" }, { id: "type-2", name: "Miércoles" }], nextOffset: 25 });
 
-    render(<PresentationIntegrationsPanel serviceId="service-1" serviceTitle="Domingo" mode="live" churchId="church-1" canEdit canOperateExternal canExportPublic hasActivePresentationSession={false} />);
+    render(<PresentationIntegrationsPanel serviceId="service-1" serviceTitle="Domingo" mode="live" accountId="account-1" churchId="church-1" externalAuthorityScope="account-1::church-1::service-1::online::controller" canEdit canOperateExternal canExportPublic hasActivePresentationSession={false} />);
     const loadMore = await screen.findByRole("button", { name: /Cargar más tipos/i });
     fireEvent.click(loadMore);
     await waitFor(() => expect(mocks.fetchCatalog).toHaveBeenLastCalledWith({ offset: 25 }));

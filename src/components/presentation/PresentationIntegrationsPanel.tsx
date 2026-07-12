@@ -40,7 +40,9 @@ type PresentationIntegrationsPanelProps = {
   serviceId: string;
   serviceTitle: string;
   mode: PresentationRunMode;
+  accountId: string;
   churchId?: string | null;
+  externalAuthorityScope: string;
   canEdit: boolean;
   canOperateExternal: boolean;
   canExportPublic: boolean;
@@ -51,8 +53,27 @@ function fileName(value: string) {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "servicio";
 }
 
-export function PresentationIntegrationsPanel({ serviceId, serviceTitle, mode, churchId, canEdit, canOperateExternal, canExportPublic, hasActivePresentationSession }: PresentationIntegrationsPanelProps) {
+function planningCenterIdentityScope(input: {
+  accountId: string;
+  churchId?: string | null;
+  serviceId: string;
+  mode: PresentationRunMode;
+  canEdit: boolean;
+  hasActivePresentationSession: boolean;
+}) {
+  return [
+    input.accountId || "signed-out",
+    input.churchId || "no-church",
+    input.serviceId || "no-service",
+    input.mode,
+    input.canEdit ? "editor" : "viewer",
+    input.hasActivePresentationSession ? "session-active" : "session-idle",
+  ].map(encodeURIComponent).join("::");
+}
+
+export function PresentationIntegrationsPanel({ serviceId, serviceTitle, mode, accountId, churchId, externalAuthorityScope, canEdit, canOperateExternal, canExportPublic, hasActivePresentationSession }: PresentationIntegrationsPanelProps) {
   const [summary, setSummary] = useState<PresentationIntegrationSummary | null>(null);
+  const [summaryIdentity, setSummaryIdentity] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -70,42 +91,146 @@ export function PresentationIntegrationsPanel({ serviceId, serviceTitle, mode, c
   const [settings, setSettings] = useState(() => readPresentationLocalConnectorSettings(churchId));
   const [proStatus, setProStatus] = useState<ProPresenterStatus | null>(null);
   const [catalogRefresh, setCatalogRefresh] = useState(0);
-  const pendingPlanningCenterReturnRef = useRef(false);
+  const pendingPlanningCenterReturnRef = useRef<{ identity: string; generation: number } | null>(null);
+  const summaryRequestGenerationRef = useRef(0);
+  const planningConnectionGenerationRef = useRef(0);
   const serviceTypeCatalogGenerationRef = useRef(0);
+  const serviceTypeRequestSequenceRef = useRef(0);
   const planCatalogGenerationRef = useRef(0);
+  const planRequestSequenceRef = useRef(0);
+  const selectionGenerationRef = useRef(0);
+  const importGenerationRef = useRef(0);
   const selectedServiceTypeRef = useRef("");
+  const selectedPlanRef = useRef("");
+  const previewSelectionRef = useRef<string | null>(null);
+  const planningIdentityRef = useRef("");
+  const planningAuthorityRef = useRef("");
+  const externalAuthorityScopeRef = useRef(externalAuthorityScope);
+  const canOperateExternalRef = useRef(canOperateExternal);
+  const externalRequestGenerationRef = useRef(0);
+  const exportAuthorityRef = useRef("");
+  const exportRequestGenerationRef = useRef(0);
+
+  const planningIdentity = planningCenterIdentityScope({ accountId, churchId, serviceId, mode, canEdit, hasActivePresentationSession });
+  const currentSummary = summaryIdentity === planningIdentity ? summary : null;
+  const planningCenter = currentSummary?.integrations.find((integration) => integration.provider === "planning_center");
+  const planningCenterConnected = planningCenter?.provider === "planning_center" && planningCenter.status === "connected";
+  const planningAuthority = `${planningIdentity}::${planningCenterConnected ? "connected" : "not-connected"}`;
+  const exportAuthority = `${planningIdentity}::${externalAuthorityScope}::${canExportPublic ? "exporter" : "no-export"}::${encodeURIComponent(serviceTitle)}`;
+  const hasCompletePlanningIdentity = Boolean(accountId && churchId && serviceId);
+  planningIdentityRef.current = planningIdentity;
+  planningAuthorityRef.current = planningAuthority;
+  externalAuthorityScopeRef.current = externalAuthorityScope;
+  canOperateExternalRef.current = canOperateExternal;
+  exportAuthorityRef.current = exportAuthority;
   selectedServiceTypeRef.current = serviceTypeId;
+  selectedPlanRef.current = planId;
 
   const reload = useCallback(async () => {
+    const requestedIdentity = planningCenterIdentityScope({ accountId, churchId, serviceId, mode, canEdit, hasActivePresentationSession });
+    const requestedAuthority = planningAuthorityRef.current;
+    const generation = ++summaryRequestGenerationRef.current;
+    if (!accountId || !churchId || !serviceId) {
+      setSummary(null);
+      setSummaryIdentity(null);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setNotice(null);
     try {
-      setSummary(await fetchPresentationIntegrations());
+      const next = await fetchPresentationIntegrations();
+      if (generation !== summaryRequestGenerationRef.current || planningIdentityRef.current !== requestedIdentity || planningAuthorityRef.current !== requestedAuthority) return;
+      setSummary(next);
+      setSummaryIdentity(requestedIdentity);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "No se pudieron cargar las integraciones.");
+      if (generation === summaryRequestGenerationRef.current && planningIdentityRef.current === requestedIdentity && planningAuthorityRef.current === requestedAuthority) {
+        setNotice(error instanceof Error ? error.message : "No se pudieron cargar las integraciones.");
+      }
     } finally {
-      setLoading(false);
+      if (generation === summaryRequestGenerationRef.current && planningIdentityRef.current === requestedIdentity && planningAuthorityRef.current === requestedAuthority) setLoading(false);
     }
-  }, []);
+  }, [accountId, canEdit, churchId, hasActivePresentationSession, mode, serviceId]);
 
   useEffect(() => {
     setSettings(readPresentationLocalConnectorSettings(churchId));
   }, [churchId]);
 
   useEffect(() => {
+    summaryRequestGenerationRef.current += 1;
+    planningConnectionGenerationRef.current += 1;
+    serviceTypeCatalogGenerationRef.current += 1;
+    serviceTypeRequestSequenceRef.current += 1;
+    planCatalogGenerationRef.current += 1;
+    planRequestSequenceRef.current += 1;
+    selectionGenerationRef.current += 1;
+    importGenerationRef.current += 1;
+    pendingPlanningCenterReturnRef.current = null;
+    previewSelectionRef.current = null;
+    selectedServiceTypeRef.current = "";
+    selectedPlanRef.current = "";
+    setServiceTypes([]);
+    setPlans([]);
+    setServiceTypesNextOffset(null);
+    setPlansNextOffset(null);
+    setServiceTypePagesLoaded(0);
+    setPlanPagesLoaded(0);
+    setServiceTypeId("");
+    setPlanId("");
+    setPreview(null);
+    setImportConfirm(false);
+    setDisconnectConfirm(false);
+    setBusy(null);
+    setNotice(null);
     void reload();
-  }, [reload, serviceId]);
+    return () => {
+      summaryRequestGenerationRef.current += 1;
+      planningConnectionGenerationRef.current += 1;
+      serviceTypeCatalogGenerationRef.current += 1;
+      serviceTypeRequestSequenceRef.current += 1;
+      planCatalogGenerationRef.current += 1;
+      planRequestSequenceRef.current += 1;
+      selectionGenerationRef.current += 1;
+      importGenerationRef.current += 1;
+    };
+  }, [planningIdentity, reload]);
+
+  useEffect(() => {
+    externalRequestGenerationRef.current += 1;
+    setProStatus(null);
+    setBusy((current) => current === "pro-status" || current === "pro-next" || current === "pro-previous" ? null : current);
+  }, [canOperateExternal, externalAuthorityScope]);
+
+  useEffect(() => {
+    exportRequestGenerationRef.current += 1;
+    setBusy((current) => current === "pro-export" ? null : current);
+  }, [exportAuthority]);
 
   useEffect(() => {
     const handleRelay = (event: Event) => {
       const detail = (event as CustomEvent<PlanningCenterRelayEventDetail>).detail;
-      if (!detail || detail.serviceId !== serviceId) return;
-      pendingPlanningCenterReturnRef.current = false;
+      const pending = pendingPlanningCenterReturnRef.current;
+      if (!detail
+        || detail.serviceId !== serviceId
+        || !pending
+        || pending.identity !== planningIdentityRef.current
+        || pending.generation !== planningConnectionGenerationRef.current) return;
+      pendingPlanningCenterReturnRef.current = null;
+      planningConnectionGenerationRef.current += 1;
+      serviceTypeCatalogGenerationRef.current += 1;
+      serviceTypeRequestSequenceRef.current += 1;
+      planCatalogGenerationRef.current += 1;
+      planRequestSequenceRef.current += 1;
+      selectionGenerationRef.current += 1;
+      importGenerationRef.current += 1;
+      previewSelectionRef.current = null;
       setPreview(null);
       setImportConfirm(false);
+      setBusy((current) => current === "pco-connect" ? null : current);
       setCatalogRefresh((value) => value + 1);
       if (detail.outcome === "complete") {
         setSummary(detail.summary);
+        setSummaryIdentity(planningIdentityRef.current);
         setNotice("Planning Center quedó conectado.");
       } else {
         setNotice(planningCenterRelayErrorNotice(detail.code));
@@ -115,12 +240,16 @@ export function PresentationIntegrationsPanel({ serviceId, serviceTitle, mode, c
     return () => window.removeEventListener(PRESENTATION_PLANNING_CENTER_RELAY_EVENT, handleRelay);
   }, [serviceId]);
 
-  const planningCenter = summary?.integrations.find((integration) => integration.provider === "planning_center");
-
   useEffect(() => {
     const generation = ++serviceTypeCatalogGenerationRef.current;
+    const requestSequence = ++serviceTypeRequestSequenceRef.current;
     planCatalogGenerationRef.current += 1;
-    if (mode !== "live" || planningCenter?.provider !== "planning_center" || planningCenter.status !== "connected") {
+    planRequestSequenceRef.current += 1;
+    selectionGenerationRef.current += 1;
+    importGenerationRef.current += 1;
+    previewSelectionRef.current = null;
+    if (mode !== "live" || !canEdit || !planningCenterConnected || !hasCompletePlanningIdentity) {
+      setBusy((current) => current === "plans" || current === "plans-more" || current === "service-types-more" || current === "pco-preview" || current === "pco-import" ? null : current);
       setServiceTypes([]);
       setPlans([]);
       setServiceTypesNextOffset(null);
@@ -128,39 +257,59 @@ export function PresentationIntegrationsPanel({ serviceId, serviceTitle, mode, c
       setServiceTypePagesLoaded(0);
       setPlanPagesLoaded(0);
       selectedServiceTypeRef.current = "";
+      selectedPlanRef.current = "";
       setServiceTypeId("");
       setPlanId("");
       setPreview(null);
       setImportConfirm(false);
       return;
     }
+    const requestedAuthority = planningAuthority;
     let active = true;
     void fetchPlanningCenterCatalog({}).then((catalog) => {
-      if (active && generation === serviceTypeCatalogGenerationRef.current && catalog.resource === "service_types") {
+      if (active
+        && generation === serviceTypeCatalogGenerationRef.current
+        && requestSequence === serviceTypeRequestSequenceRef.current
+        && planningAuthorityRef.current === requestedAuthority
+        && catalog.resource === "service_types") {
         const page = mergePlanningCenterCatalogPage({ current: [], incoming: catalog.items, requestedOffset: 0, nextOffset: catalog.nextOffset, pagesLoaded: 0 });
         setServiceTypes(page.items);
         setServiceTypesNextOffset(page.nextOffset);
         setServiceTypePagesLoaded(page.pagesLoaded);
       }
-    }).catch((error) => { if (active && generation === serviceTypeCatalogGenerationRef.current) setNotice(error instanceof Error ? error.message : "No se pudo cargar Planning Center."); });
+    }).catch((error) => {
+      if (active
+        && generation === serviceTypeCatalogGenerationRef.current
+        && requestSequence === serviceTypeRequestSequenceRef.current
+        && planningAuthorityRef.current === requestedAuthority) {
+        setNotice(error instanceof Error ? error.message : "No se pudo cargar Planning Center.");
+      }
+    });
     return () => { active = false; };
-  }, [catalogRefresh, mode, planningCenter?.provider, planningCenter?.status]);
+  }, [canEdit, catalogRefresh, hasCompletePlanningIdentity, mode, planningAuthority, planningCenterConnected]);
 
   useEffect(() => {
     let disposed = false;
     let appListener: { remove: () => Promise<void> } | null = null;
     let browserListener: { remove: () => Promise<void> } | null = null;
     const refreshAfterOAuth = () => {
-      if (!pendingPlanningCenterReturnRef.current) return;
-      pendingPlanningCenterReturnRef.current = false;
+      const pending = pendingPlanningCenterReturnRef.current;
+      if (!pending) return;
+      if (pending.identity !== planningIdentityRef.current || pending.generation !== planningConnectionGenerationRef.current) return;
       setPreview(null);
       setImportConfirm(false);
       setPlans([]);
       setPlansNextOffset(null);
       setPlanPagesLoaded(0);
       serviceTypeCatalogGenerationRef.current += 1;
+      serviceTypeRequestSequenceRef.current += 1;
       planCatalogGenerationRef.current += 1;
+      planRequestSequenceRef.current += 1;
+      selectionGenerationRef.current += 1;
+      importGenerationRef.current += 1;
+      previewSelectionRef.current = null;
       selectedServiceTypeRef.current = "";
+      selectedPlanRef.current = "";
       setServiceTypeId("");
       setPlanId("");
       setCatalogRefresh((value) => value + 1);
@@ -182,28 +331,47 @@ export function PresentationIntegrationsPanel({ serviceId, serviceTitle, mode, c
   }, [reload, serviceId]);
 
   async function beginPlanningCenter() {
-    if (!canEdit || mode !== "live") return;
+    if (!canEdit || mode !== "live" || !hasCompletePlanningIdentity) return;
+    const requestedAuthority = planningAuthorityRef.current;
+    const requestedIdentity = planningIdentityRef.current;
+    const generation = ++planningConnectionGenerationRef.current;
     setBusy("pco-connect");
     setNotice(null);
     try {
       const response = await connectPlanningCenter(serviceId);
-      pendingPlanningCenterReturnRef.current = true;
+      if (generation !== planningConnectionGenerationRef.current || planningAuthorityRef.current !== requestedAuthority) return;
+      pendingPlanningCenterReturnRef.current = { identity: requestedIdentity, generation };
       await Browser.open({ url: response.authorizeUrl, presentationStyle: "popover" });
+      if (generation !== planningConnectionGenerationRef.current || planningAuthorityRef.current !== requestedAuthority) return;
       setNotice("Completa el acceso en Planning Center. Tchurch actualizará la conexión al volver.");
     } catch (error) {
-      pendingPlanningCenterReturnRef.current = false;
-      setNotice(error instanceof Error ? error.message : "No se pudo abrir Planning Center.");
+      if (generation === planningConnectionGenerationRef.current && planningAuthorityRef.current === requestedAuthority) {
+        pendingPlanningCenterReturnRef.current = null;
+        setNotice(error instanceof Error ? error.message : "No se pudo abrir Planning Center.");
+      }
     } finally {
-      setBusy(null);
+      if (generation === planningConnectionGenerationRef.current && planningAuthorityRef.current === requestedAuthority) setBusy(null);
     }
   }
 
   async function disconnect() {
-    if (!disconnectConfirm || !canEdit || mode !== "live") return;
+    if (!disconnectConfirm || !canEdit || mode !== "live" || !planningCenterConnected) return;
+    const requestedAuthority = planningAuthorityRef.current;
+    const generation = ++planningConnectionGenerationRef.current;
+    serviceTypeCatalogGenerationRef.current += 1;
+    serviceTypeRequestSequenceRef.current += 1;
+    planCatalogGenerationRef.current += 1;
+    planRequestSequenceRef.current += 1;
+    selectionGenerationRef.current += 1;
+    importGenerationRef.current += 1;
+    previewSelectionRef.current = null;
     setBusy("pco-disconnect");
     setNotice(null);
     try {
-      setSummary(await disconnectPlanningCenter());
+      const next = await disconnectPlanningCenter();
+      if (generation !== planningConnectionGenerationRef.current || planningAuthorityRef.current !== requestedAuthority) return;
+      setSummary(next);
+      setSummaryIdentity(planningIdentityRef.current);
       setDisconnectConfirm(false);
       setServiceTypes([]);
       setPlans([]);
@@ -211,23 +379,32 @@ export function PresentationIntegrationsPanel({ serviceId, serviceTitle, mode, c
       setPlansNextOffset(null);
       setServiceTypePagesLoaded(0);
       setPlanPagesLoaded(0);
-      serviceTypeCatalogGenerationRef.current += 1;
-      planCatalogGenerationRef.current += 1;
       selectedServiceTypeRef.current = "";
+      selectedPlanRef.current = "";
       setServiceTypeId("");
       setPlanId("");
+      setPreview(null);
+      setImportConfirm(false);
       setNotice("Planning Center fue desconectado.");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "No se pudo desconectar Planning Center.");
+      if (generation === planningConnectionGenerationRef.current && planningAuthorityRef.current === requestedAuthority) {
+        setNotice(error instanceof Error ? error.message : "No se pudo desconectar Planning Center.");
+      }
     } finally {
-      setBusy(null);
+      if (generation === planningConnectionGenerationRef.current && planningAuthorityRef.current === requestedAuthority) setBusy(null);
     }
   }
 
   async function chooseServiceType(value: string) {
-    if (!canEdit || mode !== "live" || hasActivePresentationSession) return;
+    if (!canEdit || mode !== "live" || hasActivePresentationSession || !planningCenterConnected || !hasCompletePlanningIdentity) return;
+    const requestedAuthority = planningAuthorityRef.current;
     const generation = ++planCatalogGenerationRef.current;
+    const requestSequence = ++planRequestSequenceRef.current;
+    const selectionGeneration = ++selectionGenerationRef.current;
+    importGenerationRef.current += 1;
+    previewSelectionRef.current = null;
     selectedServiceTypeRef.current = value;
+    selectedPlanRef.current = "";
     setServiceTypeId(value);
     setPlanId("");
     setPlans([]);
@@ -238,83 +415,149 @@ export function PresentationIntegrationsPanel({ serviceId, serviceTitle, mode, c
     setBusy("plans");
     try {
       const catalog = await fetchPlanningCenterCatalog({ serviceTypeId: value });
+      if (generation !== planCatalogGenerationRef.current
+        || requestSequence !== planRequestSequenceRef.current
+        || selectionGeneration !== selectionGenerationRef.current
+        || planningAuthorityRef.current !== requestedAuthority
+        || selectedServiceTypeRef.current !== value) return;
       if (catalog.resource !== "plans" || catalog.serviceTypeId !== value) throw new Error("Planning Center respondió con otro tipo de servicio.");
-      if (generation !== planCatalogGenerationRef.current || selectedServiceTypeRef.current !== value) return;
       const page = mergePlanningCenterCatalogPage({ current: [], incoming: catalog.items, requestedOffset: 0, nextOffset: catalog.nextOffset, pagesLoaded: 0 });
       setPlans(page.items);
       setPlansNextOffset(page.nextOffset);
       setPlanPagesLoaded(page.pagesLoaded);
     } catch (error) {
-      if (generation === planCatalogGenerationRef.current) setNotice(error instanceof Error ? error.message : "No se pudieron cargar los planes.");
+      if (generation === planCatalogGenerationRef.current
+        && requestSequence === planRequestSequenceRef.current
+        && selectionGeneration === selectionGenerationRef.current
+        && planningAuthorityRef.current === requestedAuthority
+        && selectedServiceTypeRef.current === value) {
+        setNotice(error instanceof Error ? error.message : "No se pudieron cargar los planes.");
+      }
     } finally {
-      if (generation === planCatalogGenerationRef.current) setBusy(null);
+      if (generation === planCatalogGenerationRef.current
+        && requestSequence === planRequestSequenceRef.current
+        && selectionGeneration === selectionGenerationRef.current
+        && planningAuthorityRef.current === requestedAuthority
+        && selectedServiceTypeRef.current === value) setBusy(null);
     }
   }
 
   async function loadMoreServiceTypes() {
-    if (serviceTypesNextOffset === null || busy || serviceTypePagesLoaded >= PRESENTATION_PLANNING_CENTER_MAX_CATALOG_PAGES || serviceTypes.length >= PRESENTATION_PLANNING_CENTER_MAX_CATALOG_ITEMS) return;
+    if (!planningCenterConnected || !hasCompletePlanningIdentity || serviceTypesNextOffset === null || busy || serviceTypePagesLoaded >= PRESENTATION_PLANNING_CENTER_MAX_CATALOG_PAGES || serviceTypes.length >= PRESENTATION_PLANNING_CENTER_MAX_CATALOG_ITEMS) return;
+    const requestedAuthority = planningAuthorityRef.current;
     const generation = serviceTypeCatalogGenerationRef.current;
+    const requestSequence = ++serviceTypeRequestSequenceRef.current;
     const requestedOffset = serviceTypesNextOffset;
     setBusy("service-types-more");
     setNotice(null);
     try {
       const catalog = await fetchPlanningCenterCatalog({ offset: requestedOffset });
+      if (generation !== serviceTypeCatalogGenerationRef.current || requestSequence !== serviceTypeRequestSequenceRef.current || planningAuthorityRef.current !== requestedAuthority) return;
       if (catalog.resource !== "service_types") throw new Error("Planning Center respondió con otro catálogo.");
-      if (generation !== serviceTypeCatalogGenerationRef.current) return;
       const page = mergePlanningCenterCatalogPage({ current: serviceTypes, incoming: catalog.items, requestedOffset, nextOffset: catalog.nextOffset, pagesLoaded: serviceTypePagesLoaded });
       setServiceTypes(page.items);
       setServiceTypesNextOffset(page.nextOffset);
       setServiceTypePagesLoaded(page.pagesLoaded);
       if (page.nextOffset === null && catalog.nextOffset !== null && catalog.nextOffset > requestedOffset) setNotice(`Se alcanzó el límite seguro de ${PRESENTATION_PLANNING_CENTER_MAX_CATALOG_ITEMS} tipos o ${PRESENTATION_PLANNING_CENTER_MAX_CATALOG_PAGES} páginas.`);
     } catch (error) {
-      if (generation === serviceTypeCatalogGenerationRef.current) setNotice(error instanceof Error ? error.message : "No se pudieron cargar más tipos de servicio.");
+      if (generation === serviceTypeCatalogGenerationRef.current && requestSequence === serviceTypeRequestSequenceRef.current && planningAuthorityRef.current === requestedAuthority) {
+        setNotice(error instanceof Error ? error.message : "No se pudieron cargar más tipos de servicio.");
+      }
     } finally {
-      if (generation === serviceTypeCatalogGenerationRef.current) setBusy(null);
+      if (generation === serviceTypeCatalogGenerationRef.current && requestSequence === serviceTypeRequestSequenceRef.current && planningAuthorityRef.current === requestedAuthority) setBusy(null);
     }
   }
 
   async function loadMorePlans() {
-    if (!serviceTypeId || plansNextOffset === null || busy || planPagesLoaded >= PRESENTATION_PLANNING_CENTER_MAX_CATALOG_PAGES || plans.length >= PRESENTATION_PLANNING_CENTER_MAX_CATALOG_ITEMS) return;
+    if (!planningCenterConnected || !hasCompletePlanningIdentity || !serviceTypeId || plansNextOffset === null || busy || planPagesLoaded >= PRESENTATION_PLANNING_CENTER_MAX_CATALOG_PAGES || plans.length >= PRESENTATION_PLANNING_CENTER_MAX_CATALOG_ITEMS) return;
+    const requestedAuthority = planningAuthorityRef.current;
     const generation = planCatalogGenerationRef.current;
+    const requestSequence = ++planRequestSequenceRef.current;
     const requestedServiceTypeId = serviceTypeId;
     const requestedOffset = plansNextOffset;
     setBusy("plans-more");
     setNotice(null);
     try {
       const catalog = await fetchPlanningCenterCatalog({ serviceTypeId: requestedServiceTypeId, offset: requestedOffset });
+      if (generation !== planCatalogGenerationRef.current
+        || requestSequence !== planRequestSequenceRef.current
+        || planningAuthorityRef.current !== requestedAuthority
+        || selectedServiceTypeRef.current !== requestedServiceTypeId) return;
       if (catalog.resource !== "plans" || catalog.serviceTypeId !== requestedServiceTypeId) {
         throw new Error("Planning Center respondió con otro tipo de servicio.");
       }
-      if (generation !== planCatalogGenerationRef.current || selectedServiceTypeRef.current !== requestedServiceTypeId) return;
       const page = mergePlanningCenterCatalogPage({ current: plans, incoming: catalog.items, requestedOffset, nextOffset: catalog.nextOffset, pagesLoaded: planPagesLoaded });
       setPlans(page.items);
       setPlansNextOffset(page.nextOffset);
       setPlanPagesLoaded(page.pagesLoaded);
       if (page.nextOffset === null && catalog.nextOffset !== null && catalog.nextOffset > requestedOffset) setNotice(`Se alcanzó el límite seguro de ${PRESENTATION_PLANNING_CENTER_MAX_CATALOG_ITEMS} planes o ${PRESENTATION_PLANNING_CENTER_MAX_CATALOG_PAGES} páginas.`);
     } catch (error) {
-      if (generation === planCatalogGenerationRef.current) setNotice(error instanceof Error ? error.message : "No se pudieron cargar más planes.");
+      if (generation === planCatalogGenerationRef.current
+        && requestSequence === planRequestSequenceRef.current
+        && planningAuthorityRef.current === requestedAuthority
+        && selectedServiceTypeRef.current === requestedServiceTypeId) {
+        setNotice(error instanceof Error ? error.message : "No se pudieron cargar más planes.");
+      }
     } finally {
-      if (generation === planCatalogGenerationRef.current) setBusy(null);
+      if (generation === planCatalogGenerationRef.current
+        && requestSequence === planRequestSequenceRef.current
+        && planningAuthorityRef.current === requestedAuthority
+        && selectedServiceTypeRef.current === requestedServiceTypeId) setBusy(null);
     }
   }
 
+  function choosePlan(value: string) {
+    selectionGenerationRef.current += 1;
+    importGenerationRef.current += 1;
+    previewSelectionRef.current = null;
+    selectedPlanRef.current = value;
+    setPlanId(value);
+    setPreview(null);
+    setImportConfirm(false);
+  }
+
   async function runImport(operation: "preview" | "import") {
-    if (!serviceTypeId || !planId || mode !== "live" || !canEdit || hasActivePresentationSession) {
+    if (!serviceTypeId || !planId || mode !== "live" || !canEdit || hasActivePresentationSession || !planningCenterConnected || !hasCompletePlanningIdentity) {
       if (hasActivePresentationSession) setNotice("Termina la sesión en vivo o de ensayo antes de previsualizar o importar un plan.");
       return;
     }
-    if (operation === "import" && (!preview || !importConfirm)) return;
+    const selectionKey = `${serviceTypeId}::${planId}`;
+    if (operation === "import" && (!preview || !importConfirm || previewSelectionRef.current !== selectionKey)) return;
+    const requestedAuthority = planningAuthorityRef.current;
+    const selectionGeneration = selectionGenerationRef.current;
+    const generation = ++importGenerationRef.current;
+    const requestedServiceTypeId = serviceTypeId;
+    const requestedPlanId = planId;
     setBusy(`pco-${operation}`);
     setNotice(null);
     try {
-      const result = await importPlanningCenterPlan(serviceId, { serviceTypeId, planId, operation });
+      const result = await importPlanningCenterPlan(serviceId, { serviceTypeId: requestedServiceTypeId, planId: requestedPlanId, operation });
+      if (generation !== importGenerationRef.current
+        || selectionGeneration !== selectionGenerationRef.current
+        || planningAuthorityRef.current !== requestedAuthority
+        || selectedServiceTypeRef.current !== requestedServiceTypeId
+        || selectedPlanRef.current !== requestedPlanId) return;
+      if (result.operation !== operation || result.source.serviceTypeId !== requestedServiceTypeId || result.source.planId !== requestedPlanId) {
+        throw new Error("Planning Center respondió con otro plan.");
+      }
+      previewSelectionRef.current = selectionKey;
       setPreview(result);
       setImportConfirm(false);
       setNotice(operation === "preview" ? "Vista previa lista; todavía no se cambió el servicio." : "Plan importado. Reabre la presentación para cargar el nuevo orden.");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "No se pudo importar el plan.");
+      if (generation === importGenerationRef.current
+        && selectionGeneration === selectionGenerationRef.current
+        && planningAuthorityRef.current === requestedAuthority
+        && selectedServiceTypeRef.current === requestedServiceTypeId
+        && selectedPlanRef.current === requestedPlanId) {
+        setNotice(error instanceof Error ? error.message : "No se pudo importar el plan.");
+      }
     } finally {
-      setBusy(null);
+      if (generation === importGenerationRef.current
+        && selectionGeneration === selectionGenerationRef.current
+        && planningAuthorityRef.current === requestedAuthority
+        && selectedServiceTypeRef.current === requestedServiceTypeId
+        && selectedPlanRef.current === requestedPlanId) setBusy(null);
     }
   }
 
@@ -329,59 +572,76 @@ export function PresentationIntegrationsPanel({ serviceId, serviceTitle, mode, c
   }
 
   async function testProPresenter() {
+    const requestedAuthority = externalAuthorityScopeRef.current;
+    const generation = ++externalRequestGenerationRef.current;
     setBusy("pro-status");
     setNotice(null);
     try {
       const response = await requestProPresenter(settings.propresenterEndpoint, "status", { mode });
+      if (generation !== externalRequestGenerationRef.current || externalAuthorityScopeRef.current !== requestedAuthority) return;
       if (!("connected" in response)) throw new Error("ProPresenter no devolvió estado.");
       setProStatus(response);
       setNotice(`ProPresenter ${response.version || ""} conectado en ${response.host}.`);
     } catch (error) {
-      setProStatus(null);
-      setNotice(`${error instanceof Error ? error.message : "No se pudo conectar."} Si ProPresenter bloquea CORS en iOS, usa el futuro conector local de Tchurch Studio; Tchurch no envía esta solicitud por un proxy.`);
+      if (generation === externalRequestGenerationRef.current && externalAuthorityScopeRef.current === requestedAuthority) {
+        setProStatus(null);
+        setNotice(`${error instanceof Error ? error.message : "No se pudo conectar."} Si ProPresenter bloquea CORS en iOS, usa el futuro conector local de Tchurch Studio; Tchurch no envía esta solicitud por un proxy.`);
+      }
     } finally {
-      setBusy(null);
+      if (generation === externalRequestGenerationRef.current && externalAuthorityScopeRef.current === requestedAuthority) setBusy(null);
     }
   }
 
   async function triggerProPresenter(action: "next" | "previous") {
-    if (mode !== "live" || !canOperateExternal) {
+    if (mode !== "live" || !canOperateExternalRef.current) {
       setNotice("Necesitas el control de producción activo para mover ProPresenter.");
       return;
     }
+    const requestedAuthority = externalAuthorityScopeRef.current;
+    const generation = ++externalRequestGenerationRef.current;
     setBusy(`pro-${action}`);
     setNotice(null);
     try {
       await requestProPresenter(settings.propresenterEndpoint, action, { mode });
+      if (generation !== externalRequestGenerationRef.current || externalAuthorityScopeRef.current !== requestedAuthority || !canOperateExternalRef.current) return;
       setNotice(action === "next" ? "ProPresenter avanzó al siguiente cue." : "ProPresenter regresó al cue anterior.");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "ProPresenter no confirmó la acción.");
+      if (generation === externalRequestGenerationRef.current && externalAuthorityScopeRef.current === requestedAuthority && canOperateExternalRef.current) {
+        setNotice(error instanceof Error ? error.message : "ProPresenter no confirmó la acción.");
+      }
     } finally {
-      setBusy(null);
+      if (generation === externalRequestGenerationRef.current && externalAuthorityScopeRef.current === requestedAuthority) setBusy(null);
     }
   }
 
   async function exportForProPresenter() {
     if (mode !== "live" || !canExportPublic) return;
+    const requestedAuthority = exportAuthorityRef.current;
+    const generation = ++exportRequestGenerationRef.current;
     setBusy("pro-export");
     setNotice(null);
     const path = `Tchurch-${fileName(serviceTitle)}-ProPresenter.txt`;
     let wroteFile = false;
     try {
       const content = await fetchProPresenterExport(serviceId);
+      if (generation !== exportRequestGenerationRef.current || exportAuthorityRef.current !== requestedAuthority) return;
       const saved = await Filesystem.writeFile({ path, data: content, directory: Directory.Cache, encoding: Encoding.UTF8, recursive: true });
       wroteFile = true;
+      if (generation !== exportRequestGenerationRef.current || exportAuthorityRef.current !== requestedAuthority) return;
       await Share.share({ title: `${serviceTitle} · ProPresenter`, text: "Exportación de Tchurch con slides separados por //", files: [saved.uri], dialogTitle: "Exportar a ProPresenter" });
+      if (generation !== exportRequestGenerationRef.current || exportAuthorityRef.current !== requestedAuthority) return;
       setNotice("Exportación preparada. El archivo no contiene tokens ni credenciales locales.");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "No se pudo preparar la exportación.");
+      if (generation === exportRequestGenerationRef.current && exportAuthorityRef.current === requestedAuthority) {
+        setNotice(error instanceof Error ? error.message : "No se pudo preparar la exportación.");
+      }
     } finally {
       if (wroteFile) await Filesystem.deleteFile({ path, directory: Directory.Cache }).catch(() => undefined);
-      setBusy(null);
+      if (generation === exportRequestGenerationRef.current && exportAuthorityRef.current === requestedAuthority) setBusy(null);
     }
   }
 
-  if (loading && !summary) return <div className="flex min-h-80 items-center justify-center"><Loader2 className="h-7 w-7 animate-spin text-slate-500" /></div>;
+  if (loading && !currentSummary) return <div className="flex min-h-80 items-center justify-center"><Loader2 className="h-7 w-7 animate-spin text-slate-500" /></div>;
 
   return (
     <section className="space-y-5">
@@ -406,7 +666,7 @@ export function PresentationIntegrationsPanel({ serviceId, serviceTitle, mode, c
               </div>
               <div>
                 <Label className="text-xs font-bold text-slate-300">Plan</Label>
-                <Select value={planId || undefined} disabled={!serviceTypeId || Boolean(busy) || mode !== "live" || !canEdit || hasActivePresentationSession} onValueChange={(value) => { setPlanId(value); setPreview(null); setImportConfirm(false); }}>
+                <Select value={planId || undefined} disabled={!serviceTypeId || Boolean(busy) || mode !== "live" || !canEdit || hasActivePresentationSession} onValueChange={choosePlan}>
                   <SelectTrigger aria-label="Plan" className="mt-2 h-11 rounded-xl border-white/10 bg-black/20 text-white"><SelectValue placeholder={busy === "plans" ? "Cargando…" : "Selecciona…"} /></SelectTrigger>
                   <SelectContent>{plans.map((plan) => <SelectItem key={plan.id} value={plan.id}>{plan.title} · {plan.dates}</SelectItem>)}</SelectContent>
                 </Select>
