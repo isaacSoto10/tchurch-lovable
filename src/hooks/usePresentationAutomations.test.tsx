@@ -206,6 +206,41 @@ describe("usePresentationAutomations delivery discipline", () => {
     expect(mocks.activeObs).not.toHaveBeenCalled();
   });
 
+  it("drains 80 one-action leases before session end without skipping apply or ack", async () => {
+    const empty = pending();
+    let leased = 0;
+    mocks.pending.mockImplementation(async () => {
+      if (leased >= 80) return empty;
+      const index = leased;
+      leased += 1;
+      return pending([{
+        deliveryId: `delivery-${String(index).padStart(3, "0")}`,
+        ruleId: "rule-single-page",
+        type: "set_blackout",
+        payload: { enabled: index % 2 === 0 },
+      }]);
+    });
+    mocks.dispatch.mockResolvedValue(dispatch("live"));
+    const sendCommandMock = vi.fn(async (_type: string, _payload: unknown, commandOptions?: { expectedRevision?: number }) => ({
+      snapshot: snapshot("live", (commandOptions?.expectedRevision ?? 5) + 1),
+      local: false,
+    }));
+    const sendCommand = sendCommandMock as unknown as PresentationAutomationCommandSender;
+    const { result } = renderHook(() => usePresentationAutomations(options("live", sendCommand)));
+
+    let finalRevision = 0;
+    await act(async () => { finalRevision = await result.current.prepareSessionEnd(); });
+
+    expect(finalRevision).toBe(85);
+    expect(sendCommand).toHaveBeenCalledTimes(80);
+    expect(mocks.ack).toHaveBeenCalledTimes(80);
+    expect(mocks.ack.mock.calls.every((call) => call[1].status === "applied")).toBe(true);
+    expect(sendCommandMock.mock.calls[0][2]).toEqual({ commandId: "delivery-000", expectedRevision: 5, allowOffline: false });
+    expect(sendCommandMock.mock.calls[79][2]).toEqual({ commandId: "delivery-079", expectedRevision: 84, allowOffline: false });
+    expect(mocks.dispatch).toHaveBeenCalledWith("service-1", expect.objectContaining({ event: expect.objectContaining({ type: "session_ended", revision: 85 }) }));
+    expect(mocks.pending).toHaveBeenCalledTimes(82);
+  });
+
   it("aborts before applying or acknowledging when identity/control changes during pending fetch", async () => {
     let resolvePending!: (value: PresentationAutomationPending) => void;
     mocks.pending.mockReturnValue(new Promise((resolve) => { resolvePending = resolve; }));

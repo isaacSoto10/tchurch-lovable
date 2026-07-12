@@ -24,7 +24,7 @@ import {
 const EVENT_RETRY_MS = 3_000;
 const EMPTY_DELIVERY_POLL_MS = 4_000;
 const RULE_REFRESH_MS = 30_000;
-const MAX_DRAIN_BATCHES = 12;
+const MAX_DRAIN_BATCHES = 100;
 const MAX_AUTOMATION_CLOCK_PROJECTION_MS = 8_000;
 
 type AutomationAction = PresentationAutomationPending["actions"][number];
