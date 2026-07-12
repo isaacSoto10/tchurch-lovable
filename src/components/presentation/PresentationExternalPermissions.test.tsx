@@ -6,7 +6,10 @@ const mocks = vi.hoisted(() => ({
   fetchBroadcastLinks: vi.fn(),
   requestProPresenter: vi.fn(),
   obsConnect: vi.fn(),
+  obsRequest: vi.fn(),
+  obsClientDisconnect: vi.fn(),
   disconnectObs: vi.fn(),
+  fetchCatalog: vi.fn(),
 }));
 
 vi.mock("@capacitor/app", () => ({ App: { addListener: vi.fn(async () => ({ remove: vi.fn() })) } }));
@@ -15,7 +18,7 @@ vi.mock("@capacitor/filesystem", () => ({ Directory: { Cache: "CACHE" }, Encodin
 vi.mock("@capacitor/share", () => ({ Share: { share: vi.fn() } }));
 
 vi.mock("@/lib/presentationLocalConnectors", () => ({
-  ObsWebSocketClient: class { connect = mocks.obsConnect; disconnect = vi.fn(); request = vi.fn(); },
+  ObsWebSocketClient: class { connect = mocks.obsConnect; disconnect = mocks.obsClientDisconnect; request = mocks.obsRequest; },
   disconnectActivePresentationObsConnection: mocks.disconnectObs,
   getActivePresentationObsConnection: vi.fn(() => null),
   normalizePresentationConnectorEndpoint: (value: string) => value,
@@ -33,7 +36,7 @@ vi.mock("@/lib/presentationProduction", async (importOriginal) => {
     fetchPresentationBroadcastLinks: mocks.fetchBroadcastLinks,
     connectPlanningCenter: vi.fn(),
     disconnectPlanningCenter: vi.fn(),
-    fetchPlanningCenterCatalog: vi.fn(),
+    fetchPlanningCenterCatalog: mocks.fetchCatalog,
     fetchProPresenterExport: vi.fn(),
     importPlanningCenterPlan: vi.fn(),
     createPresentationBroadcastLink: vi.fn(),
@@ -61,9 +64,15 @@ describe("presentation external-system permissions", () => {
     mocks.fetchBroadcastLinks.mockReset();
     mocks.requestProPresenter.mockReset();
     mocks.obsConnect.mockReset();
+    mocks.obsRequest.mockReset();
+    mocks.obsClientDisconnect.mockReset();
     mocks.disconnectObs.mockReset();
+    mocks.fetchCatalog.mockReset();
     mocks.fetchIntegrations.mockResolvedValue(integrationSummary);
+    mocks.fetchBroadcastLinks.mockResolvedValue({ schemaVersion: 4, links: [] });
     mocks.requestProPresenter.mockResolvedValue({ connected: true, host: "localhost:50001", version: "20.1", platform: "macOS", name: "ProPresenter" });
+    mocks.obsConnect.mockResolvedValue({ version: "5.5.0", rpcVersion: 1 });
+    mocks.obsRequest.mockResolvedValue({ scenes: [{ sceneName: "Wide" }, { sceneName: "Cámara" }], currentProgramSceneName: "Wide" });
   });
 
   it("does not let a band/member without controller authority mutate OBS or manage browser links", async () => {
@@ -111,5 +120,49 @@ describe("presentation external-system permissions", () => {
     expect(await screen.findByText("No se pudo completar la conexión con Planning Center. Intenta conectar otra vez.")).toBeInTheDocument();
     expect(document.body.textContent).not.toContain("OAUTH_CALLBACK_ERROR");
     view.unmount();
+  });
+
+  it("disconnects OBS immediately when dynamic production authority is lost and also offers manual disconnect", async () => {
+    const view = render(<PresentationBroadcastPanel serviceId="service-1" mode="live" churchId="church-1" privacyScope="operator-authority" canEdit canOperateExternal />);
+    fireEvent.click(await screen.findByRole("button", { name: "Conectar" }));
+    expect(await screen.findByText("Conectado · 5.5.0")).toBeInTheDocument();
+    expect(mocks.obsRequest).toHaveBeenCalledWith("GetSceneList", {}, { mode: "live" });
+
+    mocks.disconnectObs.mockClear();
+    view.rerender(<PresentationBroadcastPanel serviceId="service-1" mode="live" churchId="church-1" privacyScope="band-authority" canEdit={false} canOperateExternal={false} />);
+    await waitFor(() => expect(mocks.disconnectObs).toHaveBeenCalled());
+    expect(screen.queryByText("Conectado · 5.5.0")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Conectar" })).toBeDisabled();
+
+    view.rerender(<PresentationBroadcastPanel serviceId="service-1" mode="live" churchId="church-1" privacyScope="operator-authority-2" canEdit canOperateExternal />);
+    fireEvent.click(await screen.findByRole("button", { name: "Conectar" }));
+    await screen.findByText("Conectado · 5.5.0");
+    mocks.disconnectObs.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Desconectar" }));
+    expect(mocks.disconnectObs).toHaveBeenCalled();
+    expect(await screen.findByText("OBS fue desconectado de este dispositivo.")).toBeInTheDocument();
+  });
+
+  it("loads Planning Center catalog pages one at a time and stops a stalled offset", async () => {
+    mocks.fetchIntegrations.mockResolvedValue({
+      ...integrationSummary,
+      integrations: integrationSummary.integrations.map((item) => item.provider === "planning_center" ? {
+        provider: "planning_center" as const,
+        status: "connected" as const,
+        externalOrganization: { id: "org-1", name: "Tchurch" },
+        scopes: ["services" as const],
+        connectedAt: "2026-07-12T13:00:00.000Z",
+        lastSyncAt: null,
+      } : item),
+    });
+    mocks.fetchCatalog
+      .mockResolvedValueOnce({ schemaVersion: 4, provider: "planning_center", resource: "service_types", items: [{ id: "type-1", name: "Domingo" }], nextOffset: 25 })
+      .mockResolvedValueOnce({ schemaVersion: 4, provider: "planning_center", resource: "service_types", items: [{ id: "type-1", name: "Domingo" }, { id: "type-2", name: "Miércoles" }], nextOffset: 25 });
+
+    render(<PresentationIntegrationsPanel serviceId="service-1" serviceTitle="Domingo" mode="live" churchId="church-1" canEdit canOperateExternal canExportPublic hasActivePresentationSession={false} />);
+    const loadMore = await screen.findByRole("button", { name: /Cargar más tipos/i });
+    fireEvent.click(loadMore);
+    await waitFor(() => expect(mocks.fetchCatalog).toHaveBeenLastCalledWith({ offset: 25 }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Cargar más tipos/i })).not.toBeInTheDocument());
   });
 });

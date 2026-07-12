@@ -8,6 +8,7 @@ import { Switch } from "@/components/ui/switch";
 import {
   PRESENTATION_PRODUCTION_MAX_ACTIONS,
   PRESENTATION_PRODUCTION_MAX_RULES,
+  PRESENTATION_SLIDE_KINDS,
   PRESENTATION_STAGE_MESSAGE_MAX_LIFETIME_SECONDS,
   PRESENTATION_STAGE_MESSAGE_MIN_LIFETIME_SECONDS,
   dispatchPresentationAutomation,
@@ -19,7 +20,9 @@ import {
   type PresentationAutomationRule,
   type PresentationAutomationTrigger,
   type PresentationAutomationTriggerType,
+  type PresentationOutputSlideKind,
   type PresentationRunMode,
+  type PresentationStageMessageRole,
 } from "@/lib/presentationProduction";
 import {
   projectPresentationAutomationOccurredAt,
@@ -54,6 +57,29 @@ const ACTION_LABELS: Record<PresentationAutomationAction["type"], string> = {
   broadcast_visibility: "Cambiar visibilidad broadcast",
 };
 
+const SLIDE_KIND_LABELS: Record<PresentationOutputSlideKind, string> = {
+  lyrics: "Letra",
+  scripture: "Biblia",
+  image: "Imagen",
+  video: "Video",
+  audio: "Audio",
+  countdown: "Conteo",
+  sermon: "Sermón",
+  announcement: "Anuncio",
+  blank: "En blanco",
+};
+
+const STAGE_ROLE_OPTIONS: Array<{ value: PresentationStageMessageRole; label: string }> = [
+  { value: "worship_leader", label: "Líder" },
+  { value: "band", label: "Banda" },
+  { value: "vocals", label: "Voces" },
+  { value: "av", label: "A/V" },
+  { value: "speaker", label: "Orador" },
+  { value: "operator", label: "Operador" },
+  { value: "stage", label: "Escenario" },
+  { value: "all", label: "Todos" },
+];
+
 function uuid() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
   if (globalThis.crypto?.getRandomValues) {
@@ -80,7 +106,7 @@ function defaultAction(type: PresentationAutomationAction["type"]): Presentation
 }
 
 function defaultTrigger(type: PresentationAutomationTriggerType): PresentationAutomationTrigger {
-  if (type === "slide_entered") return { type, slideKinds: ["lyrics"] };
+  if (type === "slide_entered") return { type, slideKinds: [] };
   if (type === "item_elapsed") return { type, afterSeconds: 300 };
   return { type };
 }
@@ -101,6 +127,17 @@ function newRule(priority: number): PresentationAutomationRule {
 
 function actionType(action: PresentationAutomationAction, type: PresentationAutomationAction["type"]) {
   return action.type === type ? action : defaultAction(type);
+}
+
+function toggleSlideKind(current: PresentationOutputSlideKind[], value: PresentationOutputSlideKind, checked: boolean): PresentationOutputSlideKind[] {
+  return checked ? [...new Set([...current, value])] : current.filter((kind) => kind !== value);
+}
+
+function toggleStageRole(current: PresentationStageMessageRole[], value: PresentationStageMessageRole, checked: boolean): PresentationStageMessageRole[] {
+  if (checked && value === "all") return ["all"];
+  if (checked) return [...new Set([...current.filter((role) => role !== "all"), value])];
+  const remaining = current.filter((role) => role !== value);
+  return remaining.length ? remaining : current;
 }
 
 function buildSimulationEvent(rule: PresentationAutomationRule, snapshot: PresentationLiveSnapshot): PresentationAutomationEventInput {
@@ -226,12 +263,12 @@ export function PresentationAutomationPanel({ serviceId, mode, canEdit, controll
               <div className="flex min-h-14 items-center gap-3 px-3 py-2 sm:px-4"><Switch checked={rule.enabled} disabled={!canEdit} onCheckedChange={(enabled) => mutateRule(rule.id, (current) => ({ ...current, enabled }))} aria-label={`Activar ${rule.name}`} /><button type="button" className="min-h-11 min-w-0 flex-1 text-left" onClick={() => setExpandedId(expanded ? null : rule.id)}><span className="block truncate text-sm font-black text-white">{rule.name}</span><span className="block truncate text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">{TRIGGER_LABELS[rule.trigger.type]} · {rule.actions.length} acción(es)</span></button><button type="button" className="flex h-11 w-11 items-center justify-center rounded-xl text-slate-400 hover:bg-white/5 hover:text-white" aria-label={expanded ? "Cerrar regla" : "Editar regla"} onClick={() => setExpandedId(expanded ? null : rule.id)}>{expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</button></div>
               {expanded ? (
                 <div className="border-t border-white/10 p-4">
-                  <div className="grid gap-4 md:grid-cols-2"><div><Label className="text-xs font-bold text-slate-300">Nombre</Label><Input value={rule.name} maxLength={100} disabled={!canEdit} onChange={(event) => mutateRule(rule.id, (current) => ({ ...current, name: event.target.value }))} className="mt-2 h-11 rounded-xl border-white/10 bg-black/20 text-white" /></div><div><Label className="text-xs font-bold text-slate-300">Disparador</Label><Select value={rule.trigger.type} disabled={!canEdit} onValueChange={(value) => mutateRule(rule.id, (current) => ({ ...current, trigger: defaultTrigger(value as PresentationAutomationTriggerType) }))}><SelectTrigger className="mt-2 h-11 rounded-xl border-white/10 bg-black/20 text-white"><SelectValue /></SelectTrigger><SelectContent>{Object.entries(TRIGGER_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div></div>
-                  {rule.trigger.type === "slide_entered" ? <div className="mt-4"><Label className="text-xs font-bold text-slate-300">Tipo de slide</Label><Select value={rule.trigger.slideKinds[0] || "lyrics"} disabled={!canEdit} onValueChange={(value) => mutateRule(rule.id, (current) => ({ ...current, trigger: { type: "slide_entered", slideKinds: [value as "lyrics"] } }))}><SelectTrigger className="mt-2 h-11 rounded-xl border-white/10 bg-black/20 text-white"><SelectValue /></SelectTrigger><SelectContent>{["lyrics", "scripture", "image", "video", "audio", "countdown", "sermon", "announcement", "blank"].map((kind) => <SelectItem key={kind} value={kind}>{kind}</SelectItem>)}</SelectContent></Select></div> : null}
+                  <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_10rem]"><div><Label className="text-xs font-bold text-slate-300">Nombre</Label><Input value={rule.name} maxLength={100} disabled={!canEdit} onChange={(event) => mutateRule(rule.id, (current) => ({ ...current, name: event.target.value }))} className="mt-2 h-11 rounded-xl border-white/10 bg-black/20 text-white" /></div><div><Label className="text-xs font-bold text-slate-300">Disparador</Label><Select value={rule.trigger.type} disabled={!canEdit} onValueChange={(value) => mutateRule(rule.id, (current) => ({ ...current, trigger: defaultTrigger(value as PresentationAutomationTriggerType) }))}><SelectTrigger className="mt-2 h-11 rounded-xl border-white/10 bg-black/20 text-white"><SelectValue /></SelectTrigger><SelectContent>{Object.entries(TRIGGER_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div><div><Label className="text-xs font-bold text-slate-300">Prioridad · 0 primero</Label><Input aria-label="Prioridad de automatización" type="number" min={0} max={1000} step={1} value={rule.priority} disabled={!canEdit} onChange={(event) => mutateRule(rule.id, (current) => ({ ...current, priority: Math.max(0, Math.min(1_000, Math.floor(Number(event.target.value) || 0))) }))} className="mt-2 h-11 rounded-xl border-white/10 bg-black/20 text-white" /></div></div>
+                  {rule.trigger.type === "slide_entered" ? <fieldset className="mt-4 rounded-xl border border-white/10 bg-black/20 p-3"><legend className="px-1 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">Tipos de slide · vacío = cualquiera</legend><div className="grid grid-cols-2 gap-2 sm:grid-cols-3">{PRESENTATION_SLIDE_KINDS.map((kind) => <label key={kind} className="flex min-h-11 items-center gap-2 rounded-lg border border-white/[0.07] bg-white/[0.03] px-3 text-xs font-bold text-slate-300"><input type="checkbox" checked={rule.trigger.type === "slide_entered" && rule.trigger.slideKinds.includes(kind)} disabled={!canEdit} onChange={(event) => mutateRule(rule.id, (current) => current.trigger.type === "slide_entered" ? { ...current, trigger: { ...current.trigger, slideKinds: toggleSlideKind(current.trigger.slideKinds, kind, event.target.checked) } } : current)} />{SLIDE_KIND_LABELS[kind]}</label>)}</div></fieldset> : null}
                   {rule.trigger.type === "item_elapsed" ? <div className="mt-4 max-w-xs"><Label className="text-xs font-bold text-slate-300">Después de segundos</Label><Input type="number" min={1} max={21600} value={rule.trigger.afterSeconds} disabled={!canEdit} onChange={(event) => mutateRule(rule.id, (current) => ({ ...current, trigger: { type: "item_elapsed", afterSeconds: Math.max(1, Math.min(21600, Number(event.target.value) || 1)) } }))} className="mt-2 h-11 rounded-xl border-white/10 bg-black/20 text-white" /></div> : null}
                   <div className="mt-4 grid gap-2 sm:grid-cols-2"><label className="flex min-h-11 items-center justify-between rounded-xl border border-white/10 bg-black/20 px-3 text-xs font-bold text-slate-300">En vivo<Switch checked={rule.modes.live} disabled={!canEdit} onCheckedChange={(live) => mutateRule(rule.id, (current) => ({ ...current, modes: { ...current.modes, live } }))} /></label><label className="flex min-h-11 items-center justify-between rounded-xl border border-white/10 bg-black/20 px-3 text-xs font-bold text-slate-300">Ensayo simulado<Switch checked={rule.modes.rehearsal} disabled={!canEdit} onCheckedChange={(rehearsal) => mutateRule(rule.id, (current) => ({ ...current, modes: { ...current.modes, rehearsal } }))} /></label></div>
                   <div className="mt-5 flex items-center justify-between"><div><p className="text-xs font-black text-slate-200">Acciones</p><p className="text-[10px] text-slate-500">Se ejecutan en este orden.</p></div><Button variant="ghost" className="h-11 rounded-xl text-xs text-cyan-200 hover:bg-cyan-300/10 hover:text-cyan-100" disabled={!canEdit || rule.actions.length >= PRESENTATION_PRODUCTION_MAX_ACTIONS} onClick={() => mutateRule(rule.id, (current) => ({ ...current, actions: [...current.actions, defaultAction("stage_message")] }))}><Plus className="h-4 w-4" />Acción</Button></div>
-                  <div className="mt-2 space-y-3">{rule.actions.map((action, actionIndex) => <AutomationActionEditor key={`${rule.id}-${actionIndex}`} action={action} disabled={!canEdit} onChange={(next) => mutateRule(rule.id, (current) => ({ ...current, actions: current.actions.map((candidate, index) => index === actionIndex ? next : candidate) }))} onRemove={() => mutateRule(rule.id, (current) => ({ ...current, actions: current.actions.filter((_, index) => index !== actionIndex) }))} />)}</div>
+                  <div className="mt-2 space-y-3">{rule.actions.map((action, actionIndex) => <AutomationActionEditor key={`${rule.id}-${actionIndex}`} action={action} disabled={!canEdit} canRemove={rule.actions.length > 1} onChange={(next) => mutateRule(rule.id, (current) => ({ ...current, actions: current.actions.map((candidate, index) => index === actionIndex ? next : candidate) }))} onRemove={() => mutateRule(rule.id, (current) => ({ ...current, actions: current.actions.filter((_, index) => index !== actionIndex) }))} />)}</div>
                   <div className="mt-5 flex justify-end"><Button variant="ghost" className="h-11 rounded-xl text-red-300 hover:bg-red-400/10 hover:text-red-200" disabled={!canEdit} onClick={() => { setEnvelope((current) => current ? { ...current, rules: current.rules.filter((candidate) => candidate.id !== rule.id) } : current); setExpandedId(null); }}><Trash2 className="h-4 w-4" />Eliminar regla</Button></div>
                 </div>
               ) : null}
@@ -245,11 +282,11 @@ export function PresentationAutomationPanel({ serviceId, mode, canEdit, controll
   );
 }
 
-function AutomationActionEditor({ action, disabled, onChange, onRemove }: { action: PresentationAutomationAction; disabled: boolean; onChange: (action: PresentationAutomationAction) => void; onRemove: () => void }) {
+function AutomationActionEditor({ action, disabled, canRemove, onChange, onRemove }: { action: PresentationAutomationAction; disabled: boolean; canRemove: boolean; onChange: (action: PresentationAutomationAction) => void; onRemove: () => void }) {
   return (
     <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_3rem]"><Select value={action.type} disabled={disabled} onValueChange={(value) => onChange(actionType(action, value as PresentationAutomationAction["type"]))}><SelectTrigger className="h-11 rounded-xl border-white/10 bg-white/[0.04] text-white"><SelectValue /></SelectTrigger><SelectContent>{Object.entries(ACTION_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select><Button variant="ghost" aria-label="Eliminar acción" className="h-11 w-11 rounded-xl text-red-300 hover:bg-red-400/10 hover:text-red-200" disabled={disabled} onClick={onRemove}><Trash2 className="h-4 w-4" /></Button></div>
-      {action.type === "stage_message" ? <div className="mt-3 grid gap-3 sm:grid-cols-[minmax(0,1fr)_8rem_7rem]"><Input value={action.body} maxLength={160} disabled={disabled} onChange={(event) => onChange({ ...action, body: event.target.value })} className="h-11 rounded-xl border-white/10 bg-white/[0.04] text-white" aria-label="Mensaje automático" /><Select value={action.tone} disabled={disabled} onValueChange={(tone) => onChange({ ...action, tone: tone as "info" | "urgent" })}><SelectTrigger className="h-11 rounded-xl border-white/10 bg-white/[0.04] text-white"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="info">Info</SelectItem><SelectItem value="urgent">Urgente</SelectItem></SelectContent></Select><Input type="number" min={PRESENTATION_STAGE_MESSAGE_MIN_LIFETIME_SECONDS} max={PRESENTATION_STAGE_MESSAGE_MAX_LIFETIME_SECONDS} value={action.lifetimeSeconds} disabled={disabled} onChange={(event) => onChange({ ...action, lifetimeSeconds: Math.max(PRESENTATION_STAGE_MESSAGE_MIN_LIFETIME_SECONDS, Math.min(PRESENTATION_STAGE_MESSAGE_MAX_LIFETIME_SECONDS, Number(event.target.value) || PRESENTATION_STAGE_MESSAGE_MIN_LIFETIME_SECONDS)) })} className="h-11 rounded-xl border-white/10 bg-white/[0.04] text-white" aria-label="Duración del mensaje" /></div> : null}
+      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_3rem]"><Select value={action.type} disabled={disabled} onValueChange={(value) => onChange(actionType(action, value as PresentationAutomationAction["type"]))}><SelectTrigger className="h-11 rounded-xl border-white/10 bg-white/[0.04] text-white"><SelectValue /></SelectTrigger><SelectContent>{Object.entries(ACTION_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select><Button variant="ghost" aria-label="Eliminar acción" className="h-11 w-11 rounded-xl text-red-300 hover:bg-red-400/10 hover:text-red-200" disabled={disabled || !canRemove} onClick={onRemove}><Trash2 className="h-4 w-4" /></Button></div>
+      {action.type === "stage_message" ? <div className="mt-3 space-y-3"><div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_8rem_7rem]"><Input value={action.body} maxLength={160} disabled={disabled} onChange={(event) => onChange({ ...action, body: event.target.value })} className="h-11 rounded-xl border-white/10 bg-white/[0.04] text-white" aria-label="Mensaje automático" /><Select value={action.tone} disabled={disabled} onValueChange={(tone) => onChange({ ...action, tone: tone as "info" | "urgent" })}><SelectTrigger className="h-11 rounded-xl border-white/10 bg-white/[0.04] text-white"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="info">Info</SelectItem><SelectItem value="urgent">Urgente</SelectItem></SelectContent></Select><Input type="number" min={PRESENTATION_STAGE_MESSAGE_MIN_LIFETIME_SECONDS} max={PRESENTATION_STAGE_MESSAGE_MAX_LIFETIME_SECONDS} value={action.lifetimeSeconds} disabled={disabled} onChange={(event) => onChange({ ...action, lifetimeSeconds: Math.max(PRESENTATION_STAGE_MESSAGE_MIN_LIFETIME_SECONDS, Math.min(PRESENTATION_STAGE_MESSAGE_MAX_LIFETIME_SECONDS, Number(event.target.value) || PRESENTATION_STAGE_MESSAGE_MIN_LIFETIME_SECONDS)) })} className="h-11 rounded-xl border-white/10 bg-white/[0.04] text-white" aria-label="Duración del mensaje" /></div><fieldset className="rounded-xl border border-white/[0.08] bg-white/[0.025] p-3"><legend className="px-1 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">Roles del escenario</legend><div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{STAGE_ROLE_OPTIONS.map(({ value, label }) => { const checked = action.roles.includes(value); return <label key={value} className="flex min-h-11 items-center gap-2 rounded-lg border border-white/[0.07] bg-black/20 px-3 text-xs font-bold text-slate-300"><input type="checkbox" checked={checked} disabled={disabled || (checked && action.roles.length === 1)} onChange={(event) => onChange({ ...action, roles: toggleStageRole(action.roles, value, event.target.checked) })} />{label}</label>; })}</div></fieldset></div> : null}
       {action.type === "obs_scene" ? <div className="mt-3"><Input value={action.sceneName} maxLength={120} disabled={disabled} onChange={(event) => onChange({ ...action, sceneName: event.target.value })} className="h-11 rounded-xl border-white/10 bg-white/[0.04] text-white" placeholder="Nombre exacto de escena OBS" /></div> : null}
       {action.type === "set_blackout" ? <label className="mt-3 flex min-h-11 items-center justify-between rounded-xl bg-white/[0.04] px-3 text-xs font-bold text-slate-300">Salida en negro<Switch checked={action.enabled} disabled={disabled} onCheckedChange={(enabled) => onChange({ ...action, enabled })} /></label> : null}
       {action.type === "set_chords" || action.type === "broadcast_visibility" ? <label className="mt-3 flex min-h-11 items-center justify-between rounded-xl bg-white/[0.04] px-3 text-xs font-bold text-slate-300">Visible<Switch checked={action.visible} disabled={disabled} onCheckedChange={(visible) => onChange({ ...action, visible })} /></label> : null}

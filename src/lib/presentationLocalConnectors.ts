@@ -5,6 +5,7 @@ export const DEFAULT_OBS_WEBSOCKET_ENDPOINT = "ws://localhost:4455";
 export const PRESENTATION_CONNECTOR_STORAGE_PREFIX = "tchurch_live_connectors_v1";
 
 export type PresentationLocalConnectorKind = "propresenter" | "obs" | "studio_bridge";
+export type PresentationExternalRole = "worship_leader" | "band" | "vocals" | "av" | "speaker" | "operator" | "stage" | "all";
 export type ProPresenterAction = "status" | "next" | "previous" | "clear_slide";
 export type ObsRequestType =
   | "GetVersion"
@@ -41,6 +42,38 @@ const presentationLocalHttpRuntime: PresentationLocalHttpRuntime = {
   nativeGet: (options) => CapacitorHttp.get(options),
   browserFetch: (input, init) => fetch(input, init),
 };
+
+const PRESENTATION_EXTERNAL_ROLES = new Set<PresentationExternalRole>(["av", "operator", "all"]);
+
+export function canOperatePresentationExternalSystems(input: {
+  mode: "live" | "rehearsal";
+  controllerOwned: boolean;
+  canEdit: boolean;
+  roles: readonly string[];
+}) {
+  if (input.mode !== "live" || !input.controllerOwned) return false;
+  if (input.canEdit) return true;
+  return input.roles.some((role) => PRESENTATION_EXTERNAL_ROLES.has(role as PresentationExternalRole));
+}
+
+export function presentationExternalAuthorityScope(input: {
+  baseScope: string;
+  mode: "live" | "rehearsal";
+  controllerOwned: boolean;
+  canEdit: boolean;
+  roles: readonly string[];
+}) {
+  const roles = [...new Set(input.roles.filter((role): role is PresentationExternalRole => [
+    "worship_leader", "band", "vocals", "av", "speaker", "operator", "stage", "all",
+  ].includes(role)))].sort();
+  return [
+    input.baseScope,
+    input.mode,
+    input.controllerOwned ? "controller" : "observer",
+    input.canEdit ? "editor" : "viewer",
+    roles.join(",") || "no-role",
+  ].map(encodeURIComponent).join("::");
+}
 
 type ObsHello = {
   op: 0;
@@ -470,6 +503,16 @@ export function disconnectActivePresentationObsConnection(expectedScope?: string
   if (expectedScope !== undefined && activeObsConnection?.scope !== expectedScope) return;
   activeObsConnection?.client.disconnect();
   activeObsConnection = null;
+}
+
+/** Disconnects an OBS socket whenever its dynamic account/church/service/role
+ * authority no longer matches. This guard lives above the panel so it also
+ * runs while the Broadcast tab is closed. */
+export function reconcileActivePresentationObsAuthority(expectedScope: string, authorized: boolean) {
+  const active = getActivePresentationObsConnection();
+  if (!active || (authorized && active.scope === expectedScope)) return false;
+  disconnectActivePresentationObsConnection();
+  return true;
 }
 
 export type PresentationObsLifecycleRuntime = {

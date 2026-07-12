@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import {
   DEFAULT_OBS_WEBSOCKET_ENDPOINT,
   DEFAULT_PROPRESENTER_ENDPOINT,
+  canOperatePresentationExternalSystems,
   disconnectActivePresentationObsConnection,
   getActivePresentationObsConnection,
   installPresentationObsBackgroundLifecycle,
@@ -11,7 +12,9 @@ import {
   normalizePresentationConnectorEndpoint,
   normalizePresentationLocalConnectorSettings,
   presentationConnectorStorageKey,
+  presentationExternalAuthorityScope,
   readPresentationLocalConnectorSettings,
+  reconcileActivePresentationObsAuthority,
   requestProPresenter,
   setActivePresentationObsConnection,
   validatePresentationConnectorResponseUrl,
@@ -87,6 +90,27 @@ describe("local presentation connectors", () => {
   it("does not expose an OBS password as durable client state", () => {
     const client = new ObsWebSocketClient();
     expect(JSON.stringify(client)).not.toMatch(/password|secret/i);
+  });
+
+  it("fails external control closed when live ownership or a production role changes", () => {
+    const operator = { mode: "live" as const, controllerOwned: true, canEdit: false, roles: ["operator"] };
+    expect(canOperatePresentationExternalSystems(operator)).toBe(true);
+    expect(canOperatePresentationExternalSystems({ ...operator, roles: ["band"] })).toBe(false);
+    expect(canOperatePresentationExternalSystems({ ...operator, controllerOwned: false })).toBe(false);
+    expect(canOperatePresentationExternalSystems({ ...operator, mode: "rehearsal" })).toBe(false);
+    expect(canOperatePresentationExternalSystems({ ...operator, roles: ["unexpected-role"] })).toBe(false);
+
+    const operatorScope = presentationExternalAuthorityScope({ baseScope: "account::church::service", ...operator });
+    const bandScope = presentationExternalAuthorityScope({ baseScope: "account::church::service", ...operator, roles: ["band"] });
+    expect(operatorScope).not.toBe(bandScope);
+
+    const client = { isConnected: true, disconnect: vi.fn() } as unknown as ObsWebSocketClient;
+    setActivePresentationObsConnection({ client, endpoint: "ws://localhost:4455", version: "5.5.0", scope: operatorScope });
+    expect(reconcileActivePresentationObsAuthority(operatorScope, true)).toBe(false);
+    expect(client.disconnect).not.toHaveBeenCalled();
+    expect(reconcileActivePresentationObsAuthority(bandScope, false)).toBe(true);
+    expect(client.disconnect).toHaveBeenCalledOnce();
+    expect(getActivePresentationObsConnection()).toBeNull();
   });
 
   it("disconnects a global OBS socket on background even after its panel is unmounted", async () => {

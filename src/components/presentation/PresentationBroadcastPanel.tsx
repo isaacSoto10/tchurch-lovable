@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Share } from "@capacitor/share";
-import { Cast, CheckCircle2, Copy, Loader2, MonitorPlay, Radio, RefreshCw, ShieldAlert, Square, Trash2, Wifi } from "lucide-react";
+import { Cast, CheckCircle2, Copy, Loader2, MonitorPlay, Radio, RefreshCw, ShieldAlert, Square, Trash2, Unplug, Wifi } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -36,6 +36,19 @@ function date(value: string) {
   return new Intl.DateTimeFormat("es", { dateStyle: "short", timeStyle: "short" }).format(new Date(value));
 }
 
+function obsSceneSelection(response: Record<string, unknown>) {
+  const rawScenes = Array.isArray(response.scenes) ? response.scenes : [];
+  const scenes = [...new Set(rawScenes.flatMap((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+    const name = (entry as { sceneName?: unknown }).sceneName;
+    return typeof name === "string" && name.trim() && name.length <= 120 ? [name.trim()] : [];
+  }))].slice(0, 100);
+  const current = typeof response.currentProgramSceneName === "string" && scenes.includes(response.currentProgramSceneName)
+    ? response.currentProgramSceneName
+    : scenes[0] || "";
+  return { scenes, current };
+}
+
 export function PresentationBroadcastPanel({ serviceId, mode, churchId, privacyScope, canEdit, canOperateExternal }: PresentationBroadcastPanelProps) {
   const connectorScope = `${privacyScope}::${churchId || "no-church"}::${serviceId}`;
   const [links, setLinks] = useState<PresentationBroadcastLink[]>([]);
@@ -63,20 +76,37 @@ export function PresentationBroadcastPanel({ serviceId, mode, churchId, privacyS
   useEffect(() => {
     setSettings(readPresentationLocalConnectorSettings(churchId));
     const active = getActivePresentationObsConnection();
-    if (active?.scope === connectorScope) {
+    if (mode === "live" && canOperateExternal && active?.scope === connectorScope) {
       obsRef.current = active.client;
       setObsState("connected");
       setObsVersion(active.version);
+      void active.client.request("GetSceneList", {}, { mode: "live" }).then((response) => {
+        if (connectorScopeRef.current !== connectorScope || !canOperateExternalRef.current || modeRef.current !== "live" || getActivePresentationObsConnection(connectorScope)?.client !== active.client) return;
+        const selection = obsSceneSelection(response);
+        setScenes(selection.scenes);
+        setSelectedScene(selection.current);
+      }).catch(() => {
+        if (getActivePresentationObsConnection(connectorScope)?.client !== active.client) return;
+        disconnectActivePresentationObsConnection(connectorScope);
+        obsRef.current = null;
+        setObsState("disconnected");
+        setObsVersion(null);
+        setScenes([]);
+        setSelectedScene("");
+        setNotice("OBS dejó de responder y fue desconectado.");
+      });
     } else {
       disconnectActivePresentationObsConnection();
       obsRef.current = null;
       setObsState("disconnected");
       setObsVersion(null);
+      setScenes([]);
+      setSelectedScene("");
     }
     setCreated(null);
     setObsPassword("");
     setConfirmStream(null);
-  }, [churchId, connectorScope, privacyScope, serviceId]);
+  }, [canOperateExternal, churchId, connectorScope, mode, privacyScope, serviceId]);
 
   useEffect(() => {
     let active = true;
@@ -105,6 +135,8 @@ export function PresentationBroadcastPanel({ serviceId, mode, churchId, privacyS
     setObsPassword("");
     setObsState("disconnected");
     setObsVersion(null);
+    setScenes([]);
+    setSelectedScene("");
     setConfirmStream(null);
   }, [canOperateExternal, connectorScope, mode]);
 
@@ -117,6 +149,9 @@ export function PresentationBroadcastPanel({ serviceId, mode, churchId, privacyS
       disconnectActivePresentationObsConnection();
       obsRef.current = null;
       setObsState("disconnected");
+      setObsVersion(null);
+      setScenes([]);
+      setSelectedScene("");
     }
     document.addEventListener("visibilitychange", clearSensitiveState);
     return () => {
@@ -216,15 +251,9 @@ export function PresentationBroadcastPanel({ serviceId, mode, churchId, privacyS
       setActivePresentationObsConnection({ client, endpoint, version: connected.version, scope: requestedScope });
       setObsVersion(connected.version);
       setObsState("connected");
-      const rawScenes = Array.isArray(response.scenes) ? response.scenes : [];
-      const names = rawScenes.flatMap((entry) => {
-        if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
-        const name = (entry as { sceneName?: unknown }).sceneName;
-        return typeof name === "string" && name.trim() && name.length <= 120 ? [name.trim()] : [];
-      }).slice(0, 100);
-      setScenes(names);
-      const current = typeof response.currentProgramSceneName === "string" ? response.currentProgramSceneName : names[0] || "";
-      setSelectedScene(current);
+      const selection = obsSceneSelection(response);
+      setScenes(selection.scenes);
+      setSelectedScene(selection.current);
       setNotice(`OBS ${connected.version} conectado. La contraseña se eliminó de memoria.`);
     } catch (error) {
       setObsPassword("");
@@ -234,6 +263,20 @@ export function PresentationBroadcastPanel({ serviceId, mode, churchId, privacyS
       setObsState("disconnected");
       setNotice(error instanceof Error ? error.message : "No se pudo conectar con OBS.");
     }
+  }
+
+  function disconnectObs() {
+    disconnectActivePresentationObsConnection(connectorScope);
+    obsRef.current?.disconnect();
+    obsRef.current = null;
+    setObsPassword("");
+    setObsState("disconnected");
+    setObsVersion(null);
+    setScenes([]);
+    setSelectedScene("");
+    setConfirmStream(null);
+    setBusy(null);
+    setNotice("OBS fue desconectado de este dispositivo.");
   }
 
   async function selectObsScene(sceneName: string) {
@@ -291,7 +334,7 @@ export function PresentationBroadcastPanel({ serviceId, mode, churchId, privacyS
         <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4 sm:p-5">
           <div className="flex items-start gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-300/10 text-blue-200"><Wifi className="h-5 w-5" /></div><div><h4 className="font-black text-white">OBS WebSocket 5</h4><p className="mt-1 text-xs leading-5 text-slate-500">Puerto predeterminado 4455. Usa una contraseña en OBS.</p></div></div>
           <div className="mt-4 space-y-3"><div><Label className="text-xs font-bold text-slate-300">Dirección local</Label><Input value={settings.obsEndpoint} onChange={(event) => setSettings((current) => ({ ...current, obsEndpoint: event.target.value }))} onBlur={() => saveSettings()} disabled={mode !== "live" || !canOperateExternal} className="mt-2 h-11 rounded-xl border-white/10 bg-black/20 font-mono text-xs text-white" /></div><div><Label className="text-xs font-bold text-slate-300">Contraseña · solo memoria</Label><div className="mt-2 grid grid-cols-[minmax(0,1fr)_auto] gap-2"><Input type="password" autoComplete="off" value={obsPassword} onChange={(event) => setObsPassword(event.target.value)} disabled={mode !== "live" || !canOperateExternal} className="h-11 rounded-xl border-white/10 bg-black/20 text-white" /><Button variant="outline" className="h-11 rounded-xl border-white/10 bg-white/[0.05] text-white hover:bg-white/10 hover:text-white" disabled={mode !== "live" || !canOperateExternal || obsState === "connecting"} onClick={() => void connectObs()}>{obsState === "connecting" ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}{obsState === "connected" ? "Reconectar" : "Conectar"}</Button></div></div></div>
-          {obsState === "connected" ? <div className="mt-4 rounded-xl border border-blue-300/15 bg-blue-300/[0.06] p-3"><p className="text-xs font-black text-blue-100">Conectado · {obsVersion}</p><div className="mt-3"><Label className="text-xs font-bold text-slate-300">Escena de programa</Label><Select value={selectedScene || undefined} disabled={mode !== "live" || !canOperateExternal || busy === "scene"} onValueChange={(value) => void selectObsScene(value)}><SelectTrigger className="mt-2 h-11 rounded-xl border-white/10 bg-black/20 text-white"><SelectValue placeholder="Sin escenas" /></SelectTrigger><SelectContent>{scenes.map((scene) => <SelectItem key={scene} value={scene}>{scene}</SelectItem>)}</SelectContent></Select></div><div className="mt-3 grid grid-cols-2 gap-2"><Button variant="outline" className="h-11 rounded-xl border-emerald-300/20 bg-emerald-300/10 text-emerald-100 hover:bg-emerald-300/15 hover:text-emerald-50" disabled={mode !== "live" || !canOperateExternal || !canEdit} onClick={() => setConfirmStream("start")}><Radio className="h-4 w-4" />Iniciar stream</Button><Button variant="outline" className="h-11 rounded-xl border-red-300/20 bg-red-300/10 text-red-100 hover:bg-red-300/15 hover:text-red-50" disabled={mode !== "live" || !canOperateExternal || !canEdit} onClick={() => setConfirmStream("stop")}><Square className="h-4 w-4" />Detener stream</Button></div></div> : null}
+          {obsState === "connected" ? <div className="mt-4 rounded-xl border border-blue-300/15 bg-blue-300/[0.06] p-3"><div className="flex min-h-11 items-center justify-between gap-3"><p className="text-xs font-black text-blue-100">Conectado · {obsVersion}</p><Button variant="ghost" className="h-11 rounded-xl text-slate-300 hover:bg-white/5 hover:text-white" onClick={disconnectObs}><Unplug className="h-4 w-4" />Desconectar</Button></div><div className="mt-3"><Label className="text-xs font-bold text-slate-300">Escena de programa</Label><Select value={selectedScene || undefined} disabled={mode !== "live" || !canOperateExternal || busy === "scene"} onValueChange={(value) => void selectObsScene(value)}><SelectTrigger className="mt-2 h-11 rounded-xl border-white/10 bg-black/20 text-white"><SelectValue placeholder="Sin escenas" /></SelectTrigger><SelectContent>{scenes.map((scene) => <SelectItem key={scene} value={scene}>{scene}</SelectItem>)}</SelectContent></Select></div><div className="mt-3 grid grid-cols-2 gap-2"><Button variant="outline" className="h-11 rounded-xl border-emerald-300/20 bg-emerald-300/10 text-emerald-100 hover:bg-emerald-300/15 hover:text-emerald-50" disabled={mode !== "live" || !canOperateExternal || !canEdit} onClick={() => setConfirmStream("start")}><Radio className="h-4 w-4" />Iniciar stream</Button><Button variant="outline" className="h-11 rounded-xl border-red-300/20 bg-red-300/10 text-red-100 hover:bg-red-300/15 hover:text-red-50" disabled={mode !== "live" || !canOperateExternal || !canEdit} onClick={() => setConfirmStream("stop")}><Square className="h-4 w-4" />Detener stream</Button></div></div> : null}
           {confirmStream ? <div className="mt-3 rounded-xl border border-amber-300/20 bg-amber-300/10 p-3"><div className="flex gap-2"><ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-200" /><p className="text-xs leading-5 text-amber-100">Confirma manualmente: {confirmStream === "start" ? "OBS comenzará a transmitir" : "OBS detendrá la transmisión"}. Ninguna automatización puede hacer esto.</p></div><div className="mt-3 flex justify-end gap-2"><Button variant="ghost" className="h-11 rounded-xl text-slate-300 hover:bg-white/5 hover:text-white" onClick={() => setConfirmStream(null)}>Cancelar</Button><Button className={`h-11 rounded-xl font-black ${confirmStream === "start" ? "bg-emerald-400 text-slate-950 hover:bg-emerald-300" : "bg-red-400 text-white hover:bg-red-300"}`} disabled={busy === `stream:${confirmStream}`} onClick={() => void changeStream(confirmStream)}>{busy === `stream:${confirmStream}` ? <Loader2 className="h-4 w-4 animate-spin" /> : null}Confirmar</Button></div></div> : null}
         </div>
       </div>

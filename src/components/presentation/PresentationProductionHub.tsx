@@ -19,6 +19,10 @@ import type { PresentationChatChannel, PresentationRunMode } from "@/lib/present
 import type { PresentationTargetRole } from "@/lib/presentationWorkspace";
 import type { PresentationAutomationRuntimeState } from "@/hooks/usePresentationAutomations";
 import type { PresentationLiveSnapshot } from "@/lib/presentationLive";
+import {
+  canOperatePresentationExternalSystems,
+  presentationExternalAuthorityScope,
+} from "@/lib/presentationLocalConnectors";
 
 type ProductionTab = "chat" | "automation" | "report" | "integrations" | "broadcast" | "pedal";
 
@@ -81,7 +85,8 @@ export function PresentationProductionHub({
   const [tab, setTab] = useState<ProductionTab>(initialTab);
   const channels = useMemo(() => allowedChatChannels(viewerRoles, canEdit), [canEdit, viewerRoles]);
   const canUseProductionTools = canEdit || viewerRoles.includes("operator") || viewerRoles.includes("av") || viewerRoles.includes("all");
-  const canOperateExternal = controllerOwned && canUseProductionTools;
+  const canOperateExternal = canOperatePresentationExternalSystems({ mode, controllerOwned, canEdit, roles: viewerRoles });
+  const externalAuthorityScope = presentationExternalAuthorityScope({ baseScope: privacyScope, mode, controllerOwned, canEdit, roles: viewerRoles });
 
   useEffect(() => {
     if (open) setTab(initialTab);
@@ -115,7 +120,7 @@ export function PresentationProductionHub({
         {tab === "automation" ? <PresentationAutomationPanel serviceId={serviceId} mode={mode} canEdit={canEdit} controllerOwned={controllerOwned} snapshot={snapshot} clientId={clientId} runtimeState={automationState} /> : null}
         {tab === "report" ? <PresentationReportPanel serviceId={serviceId} mode={mode} /> : null}
         {tab === "integrations" ? <PresentationIntegrationsPanel serviceId={serviceId} serviceTitle={serviceTitle} mode={mode} churchId={churchId} canEdit={canEdit} canOperateExternal={canOperateExternal} canExportPublic={canUseProductionTools} hasActivePresentationSession={hasActivePresentationSession} /> : null}
-        {tab === "broadcast" ? <PresentationBroadcastPanel serviceId={serviceId} mode={mode} churchId={churchId} privacyScope={privacyScope} canEdit={canEdit} canOperateExternal={canOperateExternal} /> : null}
+        {tab === "broadcast" ? <PresentationBroadcastPanel serviceId={serviceId} mode={mode} churchId={churchId} privacyScope={externalAuthorityScope} canEdit={canEdit} canOperateExternal={canOperateExternal} /> : null}
         {tab === "pedal" ? <PresentationPedalPanel mapping={pedalMapping} controllerOwned={controllerOwned} mode={mode} onChange={onPedalMappingChange} /> : null}
       </div></main>
     </div>

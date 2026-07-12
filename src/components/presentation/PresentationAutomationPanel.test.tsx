@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -29,7 +29,7 @@ const envelope = {
     enabled: true,
     modes: { live: true, rehearsal: true },
     priority: 10,
-    trigger: { type: "session_started" as const },
+    trigger: { type: "slide_entered" as const, slideKinds: ["lyrics" as const] },
     actions: [{ type: "stage_message" as const, body: "Listos", tone: "info" as const, roles: ["all" as const], lifetimeSeconds: 20 }],
     version: 1,
     updatedAt: "2026-07-12T13:00:00.000Z",
@@ -42,6 +42,7 @@ describe("PresentationAutomationPanel", () => {
     mocks.updateAutomations.mockReset();
     mocks.dispatchAutomation.mockReset();
     mocks.fetchAutomations.mockResolvedValue(envelope);
+    mocks.updateAutomations.mockResolvedValue(envelope);
   });
 
   it("caps the stage-message editor at the canonical 120 seconds", async () => {
@@ -63,5 +64,41 @@ describe("PresentationAutomationPanel", () => {
 
     fireEvent.change(lifetime, { target: { value: "600" } });
     expect(lifetime).toHaveValue(120);
+  });
+
+  it("edits priority, all nine slide kinds, and all eight stage roles without collapsing selections", async () => {
+    render(<PresentationAutomationPanel
+      serviceId="service-1"
+      mode="live"
+      canEdit
+      controllerOwned
+      snapshot={null}
+      clientId="11111111-1111-4111-8111-111111111111"
+      runtimeState={{ phase: "idle", notice: null, queuedEvents: 0, lastAppliedAt: null }}
+    />);
+
+    await screen.findByText("Aviso al coro");
+    fireEvent.click(screen.getByRole("button", { name: "Editar regla" }));
+
+    const slideKinds = screen.getByRole("group", { name: /Tipos de slide/i });
+    const stageRoles = screen.getByRole("group", { name: /Roles del escenario/i });
+    expect(within(slideKinds).getAllByRole("checkbox")).toHaveLength(9);
+    expect(within(stageRoles).getAllByRole("checkbox")).toHaveLength(8);
+
+    fireEvent.click(within(slideKinds).getByRole("checkbox", { name: "Biblia" }));
+    fireEvent.click(within(stageRoles).getByRole("checkbox", { name: "A/V" }));
+    fireEvent.click(within(stageRoles).getByRole("checkbox", { name: "Banda" }));
+    fireEvent.change(screen.getByLabelText("Prioridad de automatización"), { target: { value: "5000" } });
+    expect(screen.getByLabelText("Prioridad de automatización")).toHaveValue(1000);
+    expect(screen.getByRole("button", { name: "Eliminar acción" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: /Guardar/i }));
+    await waitFor(() => expect(mocks.updateAutomations).toHaveBeenCalledOnce());
+    const saved = mocks.updateAutomations.mock.calls[0][1];
+    expect(saved.rules[0]).toMatchObject({
+      priority: 1000,
+      trigger: { type: "slide_entered", slideKinds: ["lyrics", "scripture"] },
+      actions: [{ type: "stage_message", roles: ["av", "band"] }],
+    });
   });
 });

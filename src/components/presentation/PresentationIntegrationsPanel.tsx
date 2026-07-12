@@ -3,7 +3,7 @@ import { App } from "@capacitor/app";
 import { Browser } from "@capacitor/browser";
 import { Directory, Encoding, Filesystem } from "@capacitor/filesystem";
 import { Share } from "@capacitor/share";
-import { Cable, CheckCircle2, Download, ExternalLink, Loader2, RefreshCw, ShieldAlert, Unplug } from "lucide-react";
+import { Cable, CheckCircle2, Download, ExternalLink, Loader2, Plus, RefreshCw, ShieldAlert, Unplug } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -30,6 +30,11 @@ import {
   type PresentationIntegrationSummary,
   type PresentationRunMode,
 } from "@/lib/presentationProduction";
+import {
+  PRESENTATION_PLANNING_CENTER_MAX_CATALOG_ITEMS,
+  PRESENTATION_PLANNING_CENTER_MAX_CATALOG_PAGES,
+  mergePlanningCenterCatalogPage,
+} from "@/lib/presentationPlanningCenterCatalog";
 
 type PresentationIntegrationsPanelProps = {
   serviceId: string;
@@ -54,6 +59,10 @@ export function PresentationIntegrationsPanel({ serviceId, serviceTitle, mode, c
   const [disconnectConfirm, setDisconnectConfirm] = useState(false);
   const [serviceTypes, setServiceTypes] = useState<Extract<PlanningCenterCatalogResponse, { resource: "service_types" }>["items"]>([]);
   const [plans, setPlans] = useState<Extract<PlanningCenterCatalogResponse, { resource: "plans" }>["items"]>([]);
+  const [serviceTypesNextOffset, setServiceTypesNextOffset] = useState<number | null>(null);
+  const [plansNextOffset, setPlansNextOffset] = useState<number | null>(null);
+  const [serviceTypePagesLoaded, setServiceTypePagesLoaded] = useState(0);
+  const [planPagesLoaded, setPlanPagesLoaded] = useState(0);
   const [serviceTypeId, setServiceTypeId] = useState("");
   const [planId, setPlanId] = useState("");
   const [preview, setPreview] = useState<PlanningCenterImportResponse | null>(null);
@@ -62,6 +71,10 @@ export function PresentationIntegrationsPanel({ serviceId, serviceTitle, mode, c
   const [proStatus, setProStatus] = useState<ProPresenterStatus | null>(null);
   const [catalogRefresh, setCatalogRefresh] = useState(0);
   const pendingPlanningCenterReturnRef = useRef(false);
+  const serviceTypeCatalogGenerationRef = useRef(0);
+  const planCatalogGenerationRef = useRef(0);
+  const selectedServiceTypeRef = useRef("");
+  selectedServiceTypeRef.current = serviceTypeId;
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -105,9 +118,16 @@ export function PresentationIntegrationsPanel({ serviceId, serviceTitle, mode, c
   const planningCenter = summary?.integrations.find((integration) => integration.provider === "planning_center");
 
   useEffect(() => {
+    const generation = ++serviceTypeCatalogGenerationRef.current;
+    planCatalogGenerationRef.current += 1;
     if (mode !== "live" || planningCenter?.provider !== "planning_center" || planningCenter.status !== "connected") {
       setServiceTypes([]);
       setPlans([]);
+      setServiceTypesNextOffset(null);
+      setPlansNextOffset(null);
+      setServiceTypePagesLoaded(0);
+      setPlanPagesLoaded(0);
+      selectedServiceTypeRef.current = "";
       setServiceTypeId("");
       setPlanId("");
       setPreview(null);
@@ -116,8 +136,13 @@ export function PresentationIntegrationsPanel({ serviceId, serviceTitle, mode, c
     }
     let active = true;
     void fetchPlanningCenterCatalog({}).then((catalog) => {
-      if (active && catalog.resource === "service_types") setServiceTypes(catalog.items);
-    }).catch((error) => { if (active) setNotice(error instanceof Error ? error.message : "No se pudo cargar Planning Center."); });
+      if (active && generation === serviceTypeCatalogGenerationRef.current && catalog.resource === "service_types") {
+        const page = mergePlanningCenterCatalogPage({ current: [], incoming: catalog.items, requestedOffset: 0, nextOffset: catalog.nextOffset, pagesLoaded: 0 });
+        setServiceTypes(page.items);
+        setServiceTypesNextOffset(page.nextOffset);
+        setServiceTypePagesLoaded(page.pagesLoaded);
+      }
+    }).catch((error) => { if (active && generation === serviceTypeCatalogGenerationRef.current) setNotice(error instanceof Error ? error.message : "No se pudo cargar Planning Center."); });
     return () => { active = false; };
   }, [catalogRefresh, mode, planningCenter?.provider, planningCenter?.status]);
 
@@ -131,6 +156,12 @@ export function PresentationIntegrationsPanel({ serviceId, serviceTitle, mode, c
       setPreview(null);
       setImportConfirm(false);
       setPlans([]);
+      setPlansNextOffset(null);
+      setPlanPagesLoaded(0);
+      serviceTypeCatalogGenerationRef.current += 1;
+      planCatalogGenerationRef.current += 1;
+      selectedServiceTypeRef.current = "";
+      setServiceTypeId("");
       setPlanId("");
       setCatalogRefresh((value) => value + 1);
       void reload();
@@ -174,6 +205,17 @@ export function PresentationIntegrationsPanel({ serviceId, serviceTitle, mode, c
     try {
       setSummary(await disconnectPlanningCenter());
       setDisconnectConfirm(false);
+      setServiceTypes([]);
+      setPlans([]);
+      setServiceTypesNextOffset(null);
+      setPlansNextOffset(null);
+      setServiceTypePagesLoaded(0);
+      setPlanPagesLoaded(0);
+      serviceTypeCatalogGenerationRef.current += 1;
+      planCatalogGenerationRef.current += 1;
+      selectedServiceTypeRef.current = "";
+      setServiceTypeId("");
+      setPlanId("");
       setNotice("Planning Center fue desconectado.");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "No se pudo desconectar Planning Center.");
@@ -184,19 +226,75 @@ export function PresentationIntegrationsPanel({ serviceId, serviceTitle, mode, c
 
   async function chooseServiceType(value: string) {
     if (!canEdit || mode !== "live" || hasActivePresentationSession) return;
+    const generation = ++planCatalogGenerationRef.current;
+    selectedServiceTypeRef.current = value;
     setServiceTypeId(value);
     setPlanId("");
+    setPlans([]);
+    setPlansNextOffset(null);
+    setPlanPagesLoaded(0);
     setPreview(null);
     setImportConfirm(false);
     setBusy("plans");
     try {
       const catalog = await fetchPlanningCenterCatalog({ serviceTypeId: value });
       if (catalog.resource !== "plans" || catalog.serviceTypeId !== value) throw new Error("Planning Center respondió con otro tipo de servicio.");
-      setPlans(catalog.items);
+      if (generation !== planCatalogGenerationRef.current || selectedServiceTypeRef.current !== value) return;
+      const page = mergePlanningCenterCatalogPage({ current: [], incoming: catalog.items, requestedOffset: 0, nextOffset: catalog.nextOffset, pagesLoaded: 0 });
+      setPlans(page.items);
+      setPlansNextOffset(page.nextOffset);
+      setPlanPagesLoaded(page.pagesLoaded);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "No se pudieron cargar los planes.");
+      if (generation === planCatalogGenerationRef.current) setNotice(error instanceof Error ? error.message : "No se pudieron cargar los planes.");
     } finally {
-      setBusy(null);
+      if (generation === planCatalogGenerationRef.current) setBusy(null);
+    }
+  }
+
+  async function loadMoreServiceTypes() {
+    if (serviceTypesNextOffset === null || busy || serviceTypePagesLoaded >= PRESENTATION_PLANNING_CENTER_MAX_CATALOG_PAGES || serviceTypes.length >= PRESENTATION_PLANNING_CENTER_MAX_CATALOG_ITEMS) return;
+    const generation = serviceTypeCatalogGenerationRef.current;
+    const requestedOffset = serviceTypesNextOffset;
+    setBusy("service-types-more");
+    setNotice(null);
+    try {
+      const catalog = await fetchPlanningCenterCatalog({ offset: requestedOffset });
+      if (catalog.resource !== "service_types") throw new Error("Planning Center respondió con otro catálogo.");
+      if (generation !== serviceTypeCatalogGenerationRef.current) return;
+      const page = mergePlanningCenterCatalogPage({ current: serviceTypes, incoming: catalog.items, requestedOffset, nextOffset: catalog.nextOffset, pagesLoaded: serviceTypePagesLoaded });
+      setServiceTypes(page.items);
+      setServiceTypesNextOffset(page.nextOffset);
+      setServiceTypePagesLoaded(page.pagesLoaded);
+      if (page.nextOffset === null && catalog.nextOffset !== null && catalog.nextOffset > requestedOffset) setNotice(`Se alcanzó el límite seguro de ${PRESENTATION_PLANNING_CENTER_MAX_CATALOG_ITEMS} tipos o ${PRESENTATION_PLANNING_CENTER_MAX_CATALOG_PAGES} páginas.`);
+    } catch (error) {
+      if (generation === serviceTypeCatalogGenerationRef.current) setNotice(error instanceof Error ? error.message : "No se pudieron cargar más tipos de servicio.");
+    } finally {
+      if (generation === serviceTypeCatalogGenerationRef.current) setBusy(null);
+    }
+  }
+
+  async function loadMorePlans() {
+    if (!serviceTypeId || plansNextOffset === null || busy || planPagesLoaded >= PRESENTATION_PLANNING_CENTER_MAX_CATALOG_PAGES || plans.length >= PRESENTATION_PLANNING_CENTER_MAX_CATALOG_ITEMS) return;
+    const generation = planCatalogGenerationRef.current;
+    const requestedServiceTypeId = serviceTypeId;
+    const requestedOffset = plansNextOffset;
+    setBusy("plans-more");
+    setNotice(null);
+    try {
+      const catalog = await fetchPlanningCenterCatalog({ serviceTypeId: requestedServiceTypeId, offset: requestedOffset });
+      if (catalog.resource !== "plans" || catalog.serviceTypeId !== requestedServiceTypeId) {
+        throw new Error("Planning Center respondió con otro tipo de servicio.");
+      }
+      if (generation !== planCatalogGenerationRef.current || selectedServiceTypeRef.current !== requestedServiceTypeId) return;
+      const page = mergePlanningCenterCatalogPage({ current: plans, incoming: catalog.items, requestedOffset, nextOffset: catalog.nextOffset, pagesLoaded: planPagesLoaded });
+      setPlans(page.items);
+      setPlansNextOffset(page.nextOffset);
+      setPlanPagesLoaded(page.pagesLoaded);
+      if (page.nextOffset === null && catalog.nextOffset !== null && catalog.nextOffset > requestedOffset) setNotice(`Se alcanzó el límite seguro de ${PRESENTATION_PLANNING_CENTER_MAX_CATALOG_ITEMS} planes o ${PRESENTATION_PLANNING_CENTER_MAX_CATALOG_PAGES} páginas.`);
+    } catch (error) {
+      if (generation === planCatalogGenerationRef.current) setNotice(error instanceof Error ? error.message : "No se pudieron cargar más planes.");
+    } finally {
+      if (generation === planCatalogGenerationRef.current) setBusy(null);
     }
   }
 
@@ -296,7 +394,33 @@ export function PresentationIntegrationsPanel({ serviceId, serviceTitle, mode, c
         <article className="rounded-2xl border border-white/10 bg-white/[0.035] p-4 sm:p-5">
           <div className="flex items-start gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-300/10 text-sky-200"><ExternalLink className="h-5 w-5" /></div><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><h4 className="font-black text-white">Planning Center</h4>{planningCenter?.provider === "planning_center" && planningCenter.status === "connected" ? <span className="rounded-md bg-emerald-300/10 px-2 py-1 text-[9px] font-black uppercase tracking-[0.12em] text-emerald-200">Conectado</span> : null}</div><p className="mt-1 text-xs leading-5 text-slate-500">Importa el orden y tiempos de un plan de Services.</p></div></div>
           {planningCenter?.provider === "planning_center" && planningCenter.status === "connected" ? <div className="mt-4 rounded-xl bg-black/20 p-3"><p className="text-xs font-black text-slate-200">{planningCenter.externalOrganization?.name || "Organización conectada"}</p><p className="mt-1 text-[10px] text-slate-600">Última sincronización {planningCenter.lastSyncAt ? new Date(planningCenter.lastSyncAt).toLocaleString("es") : "—"}</p></div> : <Button className="mt-4 h-11 rounded-xl bg-sky-400 font-black text-slate-950 hover:bg-sky-300" disabled={!canEdit || mode !== "live" || busy === "pco-connect"} onClick={() => void beginPlanningCenter()}>{busy === "pco-connect" ? <Loader2 className="h-4 w-4 animate-spin" /> : <ExternalLink className="h-4 w-4" />}Conectar con OAuth</Button>}
-          {planningCenter?.provider === "planning_center" && planningCenter.status === "connected" ? <div className="mt-4 space-y-3"><div><Label className="text-xs font-bold text-slate-300">Tipo de servicio</Label><Select value={serviceTypeId || undefined} disabled={mode !== "live" || !canEdit || hasActivePresentationSession} onValueChange={(value) => void chooseServiceType(value)}><SelectTrigger className="mt-2 h-11 rounded-xl border-white/10 bg-black/20 text-white"><SelectValue placeholder="Selecciona…" /></SelectTrigger><SelectContent>{serviceTypes.map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></Select></div><div><Label className="text-xs font-bold text-slate-300">Plan</Label><Select value={planId || undefined} disabled={!serviceTypeId || busy === "plans" || mode !== "live" || !canEdit || hasActivePresentationSession} onValueChange={(value) => { setPlanId(value); setPreview(null); setImportConfirm(false); }}><SelectTrigger className="mt-2 h-11 rounded-xl border-white/10 bg-black/20 text-white"><SelectValue placeholder={busy === "plans" ? "Cargando…" : "Selecciona…"} /></SelectTrigger><SelectContent>{plans.map((plan) => <SelectItem key={plan.id} value={plan.id}>{plan.title} · {plan.dates}</SelectItem>)}</SelectContent></Select></div><div className="flex flex-wrap gap-2"><Button variant="outline" className="h-11 rounded-xl border-white/10 bg-white/[0.04] text-white hover:bg-white/10 hover:text-white" disabled={!canEdit || hasActivePresentationSession || !planId || busy === "pco-preview" || mode !== "live"} onClick={() => void runImport("preview")}>{busy === "pco-preview" ? <Loader2 className="h-4 w-4 animate-spin" /> : null}Vista previa</Button><Button className="h-11 rounded-xl bg-sky-400 font-black text-slate-950 hover:bg-sky-300" disabled={!canEdit || hasActivePresentationSession || !preview || busy === "pco-import" || mode !== "live"} onClick={() => setImportConfirm(true)}>{busy === "pco-import" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}Importar</Button><Button variant="ghost" className="ml-auto h-11 rounded-xl text-red-300 hover:bg-red-400/10 hover:text-red-200" disabled={!canEdit || mode !== "live"} onClick={() => setDisconnectConfirm(true)}><Unplug className="h-4 w-4" />Desconectar</Button></div>{preview ? <div className="rounded-xl border border-sky-300/15 bg-sky-300/[0.06] p-3 text-xs text-sky-100"><p className="font-black">{preview.source.title}</p><p className="mt-1">{preview.changes.create} nuevos · {preview.changes.update} actualizados · {preview.changes.unchanged} sin cambio{preview.changes.reorderedLocal ? ` · ${preview.changes.reorderedLocal} locales reordenados` : ""}</p></div> : null}{importConfirm && preview ? <div className="rounded-xl border border-amber-300/20 bg-amber-300/10 p-3"><div className="flex gap-2"><ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-200" /><p className="text-xs leading-5 text-amber-100">Confirma la importación de “{preview.source.title}”. Se aplicarán {preview.changes.create} elementos nuevos y {preview.changes.update} actualizaciones.</p></div><div className="mt-3 flex justify-end gap-2"><Button variant="ghost" className="h-11 rounded-xl text-slate-300 hover:bg-white/5 hover:text-white" onClick={() => setImportConfirm(false)}>Cancelar</Button><Button className="h-11 rounded-xl bg-amber-300 font-black text-slate-950 hover:bg-amber-200" disabled={busy === "pco-import"} onClick={() => void runImport("import")}>{busy === "pco-import" ? <Loader2 className="h-4 w-4 animate-spin" /> : null}Confirmar importación</Button></div></div> : null}</div> : null}
+          {planningCenter?.provider === "planning_center" && planningCenter.status === "connected" ? (
+            <div className="mt-4 space-y-3">
+              <div>
+                <Label className="text-xs font-bold text-slate-300">Tipo de servicio</Label>
+                <Select value={serviceTypeId || undefined} disabled={mode !== "live" || !canEdit || hasActivePresentationSession} onValueChange={(value) => void chooseServiceType(value)}>
+                  <SelectTrigger aria-label="Tipo de servicio" className="mt-2 h-11 rounded-xl border-white/10 bg-black/20 text-white"><SelectValue placeholder="Selecciona…" /></SelectTrigger>
+                  <SelectContent>{serviceTypes.map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent>
+                </Select>
+                {serviceTypesNextOffset !== null ? <Button variant="ghost" className="mt-2 h-11 w-full rounded-xl text-xs font-black text-sky-200 hover:bg-sky-300/10 hover:text-sky-100" disabled={Boolean(busy) || !canEdit || hasActivePresentationSession} onClick={() => void loadMoreServiceTypes()}>{busy === "service-types-more" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}Cargar más tipos</Button> : null}
+              </div>
+              <div>
+                <Label className="text-xs font-bold text-slate-300">Plan</Label>
+                <Select value={planId || undefined} disabled={!serviceTypeId || Boolean(busy) || mode !== "live" || !canEdit || hasActivePresentationSession} onValueChange={(value) => { setPlanId(value); setPreview(null); setImportConfirm(false); }}>
+                  <SelectTrigger aria-label="Plan" className="mt-2 h-11 rounded-xl border-white/10 bg-black/20 text-white"><SelectValue placeholder={busy === "plans" ? "Cargando…" : "Selecciona…"} /></SelectTrigger>
+                  <SelectContent>{plans.map((plan) => <SelectItem key={plan.id} value={plan.id}>{plan.title} · {plan.dates}</SelectItem>)}</SelectContent>
+                </Select>
+                {plansNextOffset !== null ? <Button variant="ghost" className="mt-2 h-11 w-full rounded-xl text-xs font-black text-sky-200 hover:bg-sky-300/10 hover:text-sky-100" disabled={Boolean(busy) || !canEdit || hasActivePresentationSession} onClick={() => void loadMorePlans()}>{busy === "plans-more" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}Cargar más planes</Button> : null}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" className="h-11 rounded-xl border-white/10 bg-white/[0.04] text-white hover:bg-white/10 hover:text-white" disabled={!canEdit || hasActivePresentationSession || !planId || Boolean(busy) || mode !== "live"} onClick={() => void runImport("preview")}>{busy === "pco-preview" ? <Loader2 className="h-4 w-4 animate-spin" /> : null}Vista previa</Button>
+                <Button className="h-11 rounded-xl bg-sky-400 font-black text-slate-950 hover:bg-sky-300" disabled={!canEdit || hasActivePresentationSession || !preview || Boolean(busy) || mode !== "live"} onClick={() => setImportConfirm(true)}>{busy === "pco-import" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}Importar</Button>
+                <Button variant="ghost" className="ml-auto h-11 rounded-xl text-red-300 hover:bg-red-400/10 hover:text-red-200" disabled={!canEdit || mode !== "live" || Boolean(busy)} onClick={() => setDisconnectConfirm(true)}><Unplug className="h-4 w-4" />Desconectar</Button>
+              </div>
+              {preview ? <div className="rounded-xl border border-sky-300/15 bg-sky-300/[0.06] p-3 text-xs text-sky-100"><p className="font-black">{preview.source.title}</p><p className="mt-1">{preview.changes.create} nuevos · {preview.changes.update} actualizados · {preview.changes.unchanged} sin cambio{preview.changes.reorderedLocal ? ` · ${preview.changes.reorderedLocal} locales reordenados` : ""}</p></div> : null}
+              {importConfirm && preview ? <div className="rounded-xl border border-amber-300/20 bg-amber-300/10 p-3"><div className="flex gap-2"><ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-200" /><p className="text-xs leading-5 text-amber-100">Confirma la importación de “{preview.source.title}”. Se aplicarán {preview.changes.create} elementos nuevos y {preview.changes.update} actualizaciones.</p></div><div className="mt-3 flex justify-end gap-2"><Button variant="ghost" className="h-11 rounded-xl text-slate-300 hover:bg-white/5 hover:text-white" onClick={() => setImportConfirm(false)}>Cancelar</Button><Button className="h-11 rounded-xl bg-amber-300 font-black text-slate-950 hover:bg-amber-200" disabled={busy === "pco-import"} onClick={() => void runImport("import")}>{busy === "pco-import" ? <Loader2 className="h-4 w-4 animate-spin" /> : null}Confirmar importación</Button></div></div> : null}
+            </div>
+          ) : null}
           {disconnectConfirm ? <div className="mt-3 rounded-xl border border-red-300/20 bg-red-300/10 p-3"><div className="flex gap-2"><ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-red-200" /><p className="text-xs leading-5 text-red-100">Se revocará la conexión guardada para esta iglesia. No elimina datos ya importados.</p></div><div className="mt-3 flex justify-end gap-2"><Button variant="ghost" className="h-11 rounded-xl text-slate-300 hover:bg-white/5 hover:text-white" onClick={() => setDisconnectConfirm(false)}>Cancelar</Button><Button className="h-11 rounded-xl bg-red-400 font-black text-white hover:bg-red-300" disabled={busy === "pco-disconnect"} onClick={() => void disconnect()}>{busy === "pco-disconnect" ? <Loader2 className="h-4 w-4 animate-spin" /> : null}Desconectar</Button></div></div> : null}
         </article>
 
