@@ -107,12 +107,11 @@ vi.mock("@/hooks/usePresentationRehearsal", () => ({
 }));
 
 vi.mock("@/hooks/usePresentationRemoteIntents", () => ({
-  usePresentationRemoteIntents: () => {
+  usePresentationRemoteIntents: (options: { controllerOwned: boolean }) => {
     const controller = mocks.liveSnapshot?.session?.controller;
-    const owned = Boolean(controller?.ownedByViewer && mocks.liveControllerLeaseActive);
     const available = Boolean(
       controller
-      && !owned
+      && !options.controllerOwned
       && mocks.liveSnapshot?.viewer.canControl
       && mocks.liveNetworkState === "online",
     );
@@ -760,6 +759,26 @@ describe("ServicePresentation load authority", () => {
 
     await waitFor(() => expect(mocks.remoteSend).toHaveBeenCalledWith("program_next", {}));
     expect(mocks.liveSend).not.toHaveBeenCalledWith("claim_control", expect.anything(), expect.anything());
+    expect(mocks.liveSend).not.toHaveBeenCalledWith("jump", expect.anything(), expect.anything());
+  });
+
+  it("does not trust account-level ownedByViewer when the controller belongs to another client", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 1366 });
+    mocks.liveSnapshot = observedLiveSnapshot();
+    mocks.liveSnapshot.session!.controller!.ownedByViewer = true;
+    mocks.liveTiming = mocks.liveSnapshot.session!.timing;
+    mocks.liveControllerLeaseActive = true;
+    mocks.apiFetch.mockImplementation((path: string) => path === "/users/me"
+      ? Promise.resolve({ id: mocks.accountId })
+      : Promise.resolve(stageService()));
+
+    render(<ServicePresentation />);
+    await screen.findByText("Stage fixture");
+    fireEvent.click(screen.getByRole("button", { name: "Escenario" }));
+    fireEvent.click(screen.getByRole("button", { name: "Enviar siguiente al Programa" }));
+
+    await waitFor(() => expect(mocks.remoteSend).toHaveBeenCalledWith("program_next", {}));
     expect(mocks.liveSend).not.toHaveBeenCalledWith("jump", expect.anything(), expect.anything());
   });
 

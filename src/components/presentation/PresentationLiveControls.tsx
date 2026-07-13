@@ -316,6 +316,7 @@ export function PresentationStageMessages({
 
 export function PresentationRemoteSurface({
   snapshot,
+  localClientId,
   activeView,
   controllerLeaseActive,
   timing,
@@ -333,6 +334,7 @@ export function PresentationRemoteSurface({
   onRemoteIntent,
 }: {
   snapshot: PresentationLiveSnapshot | null;
+  localClientId: string | null;
   activeView: PresentationPrivateLiveView;
   controllerLeaseActive: boolean;
   timing: PresentationTiming | null;
@@ -351,7 +353,12 @@ export function PresentationRemoteSurface({
 }) {
   const [showOrder, setShowOrder] = useState(false);
   const session = snapshot?.session;
-  const owned = Boolean(session?.controller?.ownedByViewer && controllerLeaseActive);
+  const owned = Boolean(
+    localClientId
+    && session?.controller?.ownedByViewer
+    && session.controller.clientId === localClientId
+    && controllerLeaseActive,
+  );
   const active = steps[activeIndex];
   const previousLiveStep = liveSteps[activeIndex - 1];
   const nextLiveStep = liveSteps[activeIndex + 1];

@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
 import {
+  PRESENTATION_REMOTE_INTENT_ATTEMPT_TIMEOUT_MS,
+  PRESENTATION_REMOTE_INTENT_POLL_MS,
+  PRESENTATION_REMOTE_INTENT_TTL_MS,
   PRESENTATION_REMOTE_INTENT_TYPES,
   buildPresentationRemoteIntentRequest,
   canSendPresentationRemoteIntent,
@@ -170,6 +173,78 @@ describe("presentation remote intent idempotency and deadline", () => {
     expect(attemptedAt.length).toBeGreaterThan(1);
     expect(attemptedAt.every((attempt) => attempt < 10_000)).toBe(true);
     expect(clock).toBe(10_000);
+  });
+
+  it("cannot remain blocked beyond the absolute ten-second deadline when request ignores abort", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    try {
+      const signals: AbortSignal[] = [];
+      const request = vi.fn((_path: string, options: { signal: AbortSignal }) => {
+        signals.push(options.signal);
+        return new Promise<unknown>(() => undefined);
+      });
+      let settled = false;
+      const action = dispatchPresentationRemoteIntent({
+        churchId: CHURCH_ID,
+        serviceId: SERVICE_ID,
+        sessionId: SESSION_ID,
+        clientId: CLIENT_ID,
+        intentId: INTENT_ID,
+        type: "take",
+        payload: {},
+        request,
+      }).then((result) => {
+        settled = true;
+        return result;
+      });
+
+      await vi.advanceTimersByTimeAsync(9_999);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+
+      await expect(action).resolves.toMatchObject({ phase: "expired", intentId: INTENT_ID });
+      expect(Date.now()).toBe(PRESENTATION_REMOTE_INTENT_TTL_MS);
+      expect(signals.length).toBeGreaterThan(1);
+      expect(signals.every((signal) => signal.aborted)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retries the same UUID and byte-identical body after an attempt timeout", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    try {
+      const bodies: string[] = [];
+      const signals: AbortSignal[] = [];
+      const request = vi.fn((_path: string, options: { body: string; signal: AbortSignal }) => {
+        bodies.push(options.body);
+        signals.push(options.signal);
+        if (bodies.length === 1) return new Promise<unknown>(() => undefined);
+        return Promise.resolve(submission("applied", true));
+      });
+      const action = dispatchPresentationRemoteIntent({
+        churchId: CHURCH_ID,
+        serviceId: SERVICE_ID,
+        sessionId: SESSION_ID,
+        clientId: CLIENT_ID,
+        intentId: INTENT_ID,
+        type: "take",
+        payload: {},
+        request,
+      });
+
+      await vi.advanceTimersByTimeAsync(PRESENTATION_REMOTE_INTENT_ATTEMPT_TIMEOUT_MS + PRESENTATION_REMOTE_INTENT_POLL_MS);
+      await expect(action).resolves.toMatchObject({ phase: "applied", intentId: INTENT_ID });
+      expect(bodies).toHaveLength(2);
+      expect(new Set(bodies).size).toBe(1);
+      expect(JSON.parse(bodies[0]).intent.id).toBe(INTENT_ID);
+      expect(signals[0].aborted).toBe(true);
+      expect(signals[1].aborted).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it.each([

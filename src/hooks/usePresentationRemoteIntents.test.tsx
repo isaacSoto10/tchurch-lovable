@@ -41,11 +41,13 @@ function applied(intentId: string) {
 }
 
 describe("usePresentationRemoteIntents authority lifecycle", () => {
-  it("drops a late applied response after the controller scope changes", async () => {
+  it("aborts the active request immediately and drops a late response after scope changes", async () => {
     let resolveRequest: (value: unknown) => void = () => undefined;
     let requestBody = "";
-    const request = async (_path: string, requestOptions: { body: string }) => new Promise<unknown>((resolve) => {
+    let requestSignal: AbortSignal | null = null;
+    const request = async (_path: string, requestOptions: { body: string; signal: AbortSignal }) => new Promise<unknown>((resolve) => {
       requestBody = requestOptions.body;
+      requestSignal = requestOptions.signal;
       resolveRequest = resolve;
     });
     const view = renderHook((props) => usePresentationRemoteIntents(props), { initialProps: options({ request }) });
@@ -55,11 +57,32 @@ describe("usePresentationRemoteIntents authority lifecycle", () => {
 
     view.rerender(options({ request, controllerClientId: "66666666-6666-4666-8666-666666666666" }));
     await waitFor(() => expect(view.result.current.status.phase).toBe("idle"));
-    const intentId = JSON.parse(requestBody).intent.id as string;
-    resolveRequest(applied(intentId));
+    expect(requestSignal).not.toBeNull();
+    expect(requestSignal!.aborted).toBe(true);
     await act(async () => { await action; });
 
+    const intentId = JSON.parse(requestBody).intent.id as string;
+    resolveRequest(applied(intentId));
+    await act(async () => { await Promise.resolve(); });
+
     expect(view.result.current.status.phase).toBe("idle");
+  });
+
+  it("aborts the active request on unmount even when transport ignores its signal", async () => {
+    let requestSignal: AbortSignal | null = null;
+    const request = async (_path: string, requestOptions: { signal: AbortSignal }) => new Promise<unknown>(() => {
+      requestSignal = requestOptions.signal;
+    });
+    const view = renderHook(() => usePresentationRemoteIntents(options({ request })));
+    let action: Promise<unknown> = Promise.resolve();
+    act(() => { action = view.result.current.send("take", {}); });
+    await waitFor(() => expect(view.result.current.status.phase).toBe("sending"));
+
+    view.unmount();
+
+    expect(requestSignal).not.toBeNull();
+    expect(requestSignal!.aborted).toBe(true);
+    await action;
   });
 
   it("turns off remote availability immediately for offline, read-only, or owned control", () => {

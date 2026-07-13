@@ -846,6 +846,16 @@ export default function ServicePresentation() {
     enabled: Boolean(id && selectedChurch?.id && authenticatedUserId),
     maintainController: runMode === "rehearsal",
   });
+  const liveControllerOwnedByClient = Boolean(
+    live.snapshot?.session?.controller?.ownedByViewer
+    && live.snapshot.session.controller.clientId === live.clientId
+    && live.controllerLeaseActive,
+  );
+  const rehearsalControllerOwnedByClient = Boolean(
+    rehearsal.snapshot?.session?.controller?.ownedByViewer
+    && rehearsal.snapshot.session.controller.clientId === rehearsal.clientId
+    && rehearsal.controllerLeaseActive,
+  );
   const remoteIntents = usePresentationRemoteIntents({
     accountId: authenticatedUserId,
     churchId: selectedChurch?.id,
@@ -856,7 +866,7 @@ export default function ServicePresentation() {
     enabled: runMode === "live",
     online: live.networkState === "online",
     viewerCanControl: live.snapshot?.viewer.canControl === true,
-    controllerOwned: Boolean(live.snapshot?.session?.controller?.ownedByViewer && live.controllerLeaseActive),
+    controllerOwned: liveControllerOwnedByClient,
   });
   const runtime = runMode === "rehearsal" ? rehearsal : live;
   const runtimeSnapshot = runtime.snapshot;
@@ -1001,11 +1011,11 @@ export default function ServicePresentation() {
     isTablet: isTabletPresentation,
     stageMode: stageLayout.mode,
   });
-  const liveControllerOwned = Boolean(runtimeSession?.controller?.ownedByViewer && runtimeControllerLeaseActive);
+  const liveControllerOwned = runMode === "rehearsal" ? rehearsalControllerOwnedByClient : liveControllerOwnedByClient;
   const liveCanMutate = liveControllerOwned && !runtimeCommandPending && runtimeNetworkState !== "diverged";
   keyboardContextRef.current = { mapping: pedalMapping, mode: runMode, controllerOwned: liveControllerOwned };
-  const liveAutomationControllerOwned = Boolean(live.snapshot?.session?.controller?.ownedByViewer && live.controllerLeaseActive);
-  const rehearsalAutomationControllerOwned = Boolean(rehearsal.snapshot?.session?.controller?.ownedByViewer && rehearsal.controllerLeaseActive);
+  const liveAutomationControllerOwned = liveControllerOwnedByClient;
+  const rehearsalAutomationControllerOwned = rehearsalControllerOwnedByClient;
   const liveAutomationPrivacyScope = [authenticatedUserId || "signed-out", selectedChurch?.id || "no-church", selectedChurch?.role || "no-role", id || "no-service", "live", live.snapshot?.session?.id || "no-session", live.clientId].join("::");
   const rehearsalAutomationPrivacyScope = [authenticatedUserId || "signed-out", selectedChurch?.id || "no-church", selectedChurch?.role || "no-role", id || "no-service", "rehearsal", rehearsal.snapshot?.session?.id || "no-session", rehearsal.clientId].join("::");
   const activeAutomationPrivacyScope = runMode === "rehearsal" ? rehearsalAutomationPrivacyScope : liveAutomationPrivacyScope;
@@ -1381,7 +1391,7 @@ export default function ServicePresentation() {
 
   function requestRunModeChange(nextMode: PresentationRunMode) {
     if (nextMode === runMode || switchingRunMode) return;
-    if (runtimeSession?.controller?.ownedByViewer && runtimeControllerLeaseActive) {
+    if (liveControllerOwned) {
       setPendingRunMode(nextMode);
       return;
     }
@@ -1390,7 +1400,7 @@ export default function ServicePresentation() {
 
   async function confirmRunModeChange(nextMode = pendingRunMode) {
     if (!nextMode || nextMode === runMode || switchingRunMode) return;
-    if (!runtimeSession?.controller?.ownedByViewer || !runtimeControllerLeaseActive) {
+    if (!liveControllerOwned) {
       switchRunModeWithoutOwnedControl(nextMode);
       return;
     }
@@ -1402,7 +1412,9 @@ export default function ServicePresentation() {
       const releaseSnapshot = release && typeof release === "object" && "snapshot" in release
         ? (release as { snapshot?: typeof runtimeSnapshot }).snapshot
         : await runtime.refresh();
-      if (releaseSnapshot?.session?.controller?.ownedByViewer) throw new Error("El servidor todavía muestra este dispositivo como controlador.");
+      if (releaseSnapshot?.session?.controller?.ownedByViewer && releaseSnapshot.session.controller.clientId === runtime.clientId) {
+        throw new Error("El servidor todavía muestra este dispositivo como controlador.");
+      }
       switchRunModeWithoutOwnedControl(nextMode);
     } catch (error) {
       activeAutomations.resumeAfterControlRelease();
@@ -1627,6 +1639,7 @@ export default function ServicePresentation() {
       {effectiveSurface === "remote" ? (
         <PresentationRemoteSurface
           snapshot={runtimeSnapshot}
+          localClientId={runtime.clientId}
           activeView={runtime.activeView}
           controllerLeaseActive={runtimeControllerLeaseActive}
           timing={runtimeTiming}

@@ -28,15 +28,24 @@ export function usePresentationRemoteIntents(options: UsePresentationRemoteInten
   const [status, setStatus] = useState<PresentationRemoteIntentUiState>(IDLE_PRESENTATION_REMOTE_INTENT_STATE);
   const scopeGenerationRef = useRef(0);
   const pendingRef = useRef(false);
+  const inFlightAbortRef = useRef<AbortController | null>(null);
   const scopeKey = presentationRemoteIntentScopeKey(options);
   const scopeKeyRef = useRef(scopeKey);
   const available = canSendPresentationRemoteIntent(options);
 
   useEffect(() => {
+    inFlightAbortRef.current?.abort();
+    inFlightAbortRef.current = null;
+    pendingRef.current = false;
     scopeKeyRef.current = scopeKey;
     scopeGenerationRef.current += 1;
-    pendingRef.current = false;
     setStatus(IDLE_PRESENTATION_REMOTE_INTENT_STATE);
+    return () => {
+      scopeGenerationRef.current += 1;
+      pendingRef.current = false;
+      inFlightAbortRef.current?.abort();
+      inFlightAbortRef.current = null;
+    };
   }, [scopeKey]);
 
   const send = useCallback(async <T extends PresentationRemoteIntentType>(
@@ -69,6 +78,8 @@ export function usePresentationRemoteIntents(options: UsePresentationRemoteInten
     const generation = scopeGenerationRef.current;
     const expectedScopeKey = scopeKeyRef.current;
     const isScopeCurrent = () => generation === scopeGenerationRef.current && expectedScopeKey === scopeKeyRef.current;
+    const abortController = new AbortController();
+    inFlightAbortRef.current = abortController;
     pendingRef.current = true;
     try {
       return await dispatchPresentationRemoteIntent({
@@ -79,12 +90,14 @@ export function usePresentationRemoteIntents(options: UsePresentationRemoteInten
         type,
         payload,
         request: options.request,
+        signal: abortController.signal,
         isScopeCurrent,
         onState: (next) => {
           if (isScopeCurrent()) setStatus(next);
         },
       });
     } finally {
+      if (inFlightAbortRef.current === abortController) inFlightAbortRef.current = null;
       if (isScopeCurrent()) pendingRef.current = false;
     }
   }, [options]);

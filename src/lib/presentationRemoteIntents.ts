@@ -4,6 +4,7 @@ import { createPresentationId } from "@/lib/presentationLive";
 export const PRESENTATION_REMOTE_INTENT_SCHEMA_VERSION = 1 as const;
 export const PRESENTATION_REMOTE_INTENT_TTL_MS = 10_000;
 export const PRESENTATION_REMOTE_INTENT_POLL_MS = 450;
+export const PRESENTATION_REMOTE_INTENT_ATTEMPT_TIMEOUT_MS = 2_500;
 
 export const PRESENTATION_REMOTE_INTENT_TYPES = [
   "preview_previous",
@@ -82,8 +83,14 @@ export type PresentationRemoteIntentRequest = (
     cache: "no-store";
     sensitiveBody: true;
     churchId: string;
+    signal: AbortSignal;
   },
 ) => Promise<unknown>;
+
+export type PresentationRemoteIntentWait = (
+  milliseconds: number,
+  signal: AbortSignal,
+) => Promise<void>;
 
 export type DispatchPresentationRemoteIntentOptions<T extends PresentationRemoteIntentType> = {
   churchId: string;
@@ -95,7 +102,8 @@ export type DispatchPresentationRemoteIntentOptions<T extends PresentationRemote
   intentId?: string;
   request?: PresentationRemoteIntentRequest;
   now?: () => number;
-  wait?: (milliseconds: number) => Promise<void>;
+  wait?: PresentationRemoteIntentWait;
+  signal?: AbortSignal;
   isScopeCurrent?: () => boolean;
   onState?: (state: PresentationRemoteIntentUiState) => void;
 };
@@ -208,8 +216,78 @@ function defaultRequest(path: string, options: Parameters<PresentationRemoteInte
   return apiFetch<unknown>(path, options);
 }
 
-function defaultWait(milliseconds: number) {
-  return new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
+function abortError(message: string) {
+  if (typeof DOMException !== "undefined") return new DOMException(message, "AbortError");
+  const error = new Error(message);
+  error.name = "AbortError";
+  return error;
+}
+
+function signalAbortError(signal: AbortSignal) {
+  return signal.reason instanceof Error ? signal.reason : abortError("La acción remota fue cancelada.");
+}
+
+function defaultWait(milliseconds: number, signal: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signalAbortError(signal));
+      return;
+    }
+    const timeoutId = globalThis.setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, milliseconds);
+    const onAbort = () => {
+      globalThis.clearTimeout(timeoutId);
+      signal.removeEventListener("abort", onAbort);
+      reject(signalAbortError(signal));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function raceWithAbort<T>(promise: Promise<T>, signal: AbortSignal) {
+  if (signal.aborted) return Promise.reject<T>(signalAbortError(signal));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      signal.removeEventListener("abort", onAbort);
+      reject(signalAbortError(signal));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
+function createAttemptAbortScope(parentSignal: AbortSignal, timeoutMs: number) {
+  const controller = new AbortController();
+  let timedOut = false;
+  let cleaned = false;
+  const onParentAbort = () => controller.abort(signalAbortError(parentSignal));
+  if (parentSignal.aborted) onParentAbort();
+  else parentSignal.addEventListener("abort", onParentAbort, { once: true });
+  const timeoutId = globalThis.setTimeout(() => {
+    timedOut = true;
+    controller.abort(abortError("El intento remoto agotó su tiempo."));
+  }, timeoutMs);
+  return {
+    signal: controller.signal,
+    didTimeOut: () => timedOut,
+    cleanup: () => {
+      if (cleaned) return;
+      cleaned = true;
+      globalThis.clearTimeout(timeoutId);
+      parentSignal.removeEventListener("abort", onParentAbort);
+    },
+  };
 }
 
 function errorCode(error: unknown) {
@@ -258,32 +336,59 @@ export async function dispatchPresentationRemoteIntent<T extends PresentationRem
   const now = options.now || Date.now;
   const wait = options.wait || defaultWait;
   const isScopeCurrent = options.isScopeCurrent || (() => true);
+  const operationSignal = options.signal || new AbortController().signal;
   const built = buildPresentationRemoteIntentRequest(options);
   const startedAtMs = now();
   let deadlineAtMs = startedAtMs + PRESENTATION_REMOTE_INTENT_TTL_MS;
   let accepted = false;
   let acceptedDelivery: { deliveryId: string; createdAt: string; expiresAt: string } | null = null;
+  const isOperationCurrent = () => !operationSignal.aborted && isScopeCurrent();
+  const cancelledState = () => state("rejected", built.intentId, options.type, "La sesión o el controlador cambió.");
   const emit = (next: PresentationRemoteIntentUiState) => {
-    if (isScopeCurrent()) options.onState?.(next);
+    if (isOperationCurrent()) options.onState?.(next);
     return next;
   };
-
-  emit(state("sending", built.intentId, options.type, "Enviando al controlador en vivo…"));
-  while (isScopeCurrent() && now() < deadlineAtMs) {
-    let raw: unknown;
+  const waitForPoll = async () => {
+    if (!isOperationCurrent()) return false;
+    const remainingMs = Math.max(0, deadlineAtMs - now());
+    if (!remainingMs) return false;
     try {
-      raw = await request(built.path, {
-        method: "POST",
-        body: built.body,
-        cache: "no-store",
-        sensitiveBody: true,
-        churchId: options.churchId,
-      });
+      await raceWithAbort(
+        Promise.resolve().then(() => wait(Math.min(PRESENTATION_REMOTE_INTENT_POLL_MS, remainingMs), operationSignal)),
+        operationSignal,
+      );
+      return isOperationCurrent();
+    } catch {
+      return false;
+    }
+  };
+
+  if (!isOperationCurrent()) return cancelledState();
+  emit(state("sending", built.intentId, options.type, "Enviando al controlador en vivo…"));
+  while (isOperationCurrent() && now() < deadlineAtMs) {
+    let raw: unknown;
+    const remainingMs = deadlineAtMs - now();
+    const attempt = createAttemptAbortScope(
+      operationSignal,
+      Math.min(PRESENTATION_REMOTE_INTENT_ATTEMPT_TIMEOUT_MS, remainingMs),
+    );
+    try {
+      raw = await raceWithAbort(
+        Promise.resolve().then(() => request(built.path, {
+          method: "POST",
+          body: built.body,
+          cache: "no-store",
+          sensitiveBody: true,
+          churchId: options.churchId,
+          signal: attempt.signal,
+        })),
+        attempt.signal,
+      );
     } catch (error) {
-      if (!isScopeCurrent()) {
-        return state("rejected", built.intentId, options.type, "La sesión o el controlador cambió.");
-      }
-      if (!isAmbiguousTransportError(error)) {
+      const attemptTimedOut = attempt.didTimeOut();
+      attempt.cleanup();
+      if (!isOperationCurrent()) return cancelledState();
+      if (!attemptTimedOut && !isAmbiguousTransportError(error)) {
         const phase = error instanceof ApiError && [401, 403, 404, 409].includes(error.status) ? "rejected" : "error";
         return emit(state(phase, built.intentId, options.type, rejectedTransportMessage(error)));
       }
@@ -291,12 +396,14 @@ export async function dispatchPresentationRemoteIntent<T extends PresentationRem
       emit(state(accepted ? "pending" : "sending", built.intentId, options.type, accepted
         ? "Esperando confirmación del controlador…"
         : "Confirmando que el controlador recibió la acción…"));
-      await wait(Math.min(PRESENTATION_REMOTE_INTENT_POLL_MS, Math.max(0, deadlineAtMs - now())));
+      if (!await waitForPoll()) return isOperationCurrent()
+        ? emit(state("expired", built.intentId, options.type, "La acción expiró antes de recibir confirmación."))
+        : cancelledState();
       continue;
+    } finally {
+      attempt.cleanup();
     }
-    if (!isScopeCurrent()) {
-      return state("rejected", built.intentId, options.type, "La sesión o el controlador cambió.");
-    }
+    if (!isOperationCurrent()) return cancelledState();
 
     let submission: PresentationRemoteIntentSubmission;
     try {
@@ -328,12 +435,12 @@ export async function dispatchPresentationRemoteIntent<T extends PresentationRem
     if (terminal) return emit(terminal);
     if (now() >= deadlineAtMs) break;
     emit(state("pending", built.intentId, options.type, "Enviado; esperando confirmación del controlador…"));
-    await wait(Math.min(PRESENTATION_REMOTE_INTENT_POLL_MS, Math.max(0, deadlineAtMs - now())));
+    if (!await waitForPoll()) return isOperationCurrent()
+      ? emit(state("expired", built.intentId, options.type, "La acción expiró antes de recibir confirmación."))
+      : cancelledState();
   }
 
-  if (!isScopeCurrent()) {
-    return state("rejected", built.intentId, options.type, "La sesión o el controlador cambió.");
-  }
+  if (!isOperationCurrent()) return cancelledState();
   return emit(state("expired", built.intentId, options.type, "La acción expiró antes de recibir confirmación."));
 }
 

@@ -86,6 +86,7 @@ function renderRemote(overrides: { owned?: boolean; blackout?: boolean; chordsVi
   render(
     <PresentationRemoteSurface
       snapshot={snapshot(overrides.owned ?? true)}
+      localClientId="this-client"
       activeView="operator"
       controllerLeaseActive
       timing={timing}
@@ -152,6 +153,7 @@ describe("Tchurch Live controls", () => {
     render(
       <PresentationRemoteSurface
         snapshot={snapshot(false)}
+        localClientId="this-client"
         activeView="operator"
         controllerLeaseActive
         timing={timing}
@@ -188,6 +190,42 @@ describe("Tchurch Live controls", () => {
       ["set_chords", { visible: false }],
     ]);
     expect(onCommand).not.toHaveBeenCalled();
+  });
+
+  it("uses remote intents when ownedByViewer belongs to the same user on another exact client", () => {
+    const sameViewerOtherClient = snapshot(true);
+    sameViewerOtherClient.session!.controller = {
+      ...sameViewerOtherClient.session!.controller!,
+      clientId: "other-client",
+      displayName: "Sanctuary Mac",
+      ownedByViewer: true,
+    };
+    const onCommand = vi.fn(async () => undefined) as unknown as PresentationLiveCommandSender;
+    const remoteMock = vi.fn(async () => ({ phase: "applied", intentId: "intent", type: "program_next", message: "Aplicado" }));
+    render(
+      <PresentationRemoteSurface
+        snapshot={sameViewerOtherClient}
+        localClientId="this-client"
+        activeView="operator"
+        controllerLeaseActive
+        timing={timing}
+        steps={steps}
+        liveSteps={liveSteps}
+        activeIndex={0}
+        nextLabel="Verso · página 2"
+        blackout={false}
+        chordsVisible
+        pending={false}
+        remoteAvailable
+        remotePending={false}
+        onCommand={onCommand}
+        onRemoteIntent={remoteMock as unknown as PresentationRemoteIntentSender}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Programa siguiente" }));
+    expect(remoteMock).toHaveBeenCalledWith("program_next", {});
+    expect(onCommand).not.toHaveBeenCalledWith("jump", expect.anything());
   });
 
   it.each([
