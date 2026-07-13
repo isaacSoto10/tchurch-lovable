@@ -41,7 +41,27 @@ export type ApiFetchOptions = RequestInit & {
   sensitiveBody?: boolean;
   /** Pin this request to an already-authorized church scope instead of reading mutable local selection. */
   churchId?: string | null;
+  /** Abort the underlying transport after this budget, in addition to any caller signal. */
+  timeoutMs?: number;
 };
+
+function apiRequestSignal(parentSignal: AbortSignal | null | undefined, timeoutMs: number | undefined) {
+  if (!Number.isFinite(timeoutMs) || Number(timeoutMs) <= 0) {
+    return { signal: parentSignal, cleanup: () => undefined };
+  }
+  const controller = new AbortController();
+  const onParentAbort = () => controller.abort();
+  if (parentSignal?.aborted) controller.abort();
+  else parentSignal?.addEventListener("abort", onParentAbort, { once: true });
+  const timeoutId = globalThis.setTimeout(() => controller.abort(), Math.max(1, Math.floor(Number(timeoutMs))));
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      globalThis.clearTimeout(timeoutId);
+      parentSignal?.removeEventListener("abort", onParentAbort);
+    },
+  };
+}
 
 type ClerkTokenWindow = Window & {
   Clerk?: {
@@ -68,7 +88,7 @@ export async function apiFetch<T = unknown>(
   options: ApiFetchOptions = {},
   token?: string | null
 ): Promise<T> {
-  const { sensitiveBody = false, churchId: churchIdOverride, ...requestOptions } = options;
+  const { sensitiveBody = false, churchId: churchIdOverride, timeoutMs, ...requestOptions } = options;
   const isFormData = typeof FormData !== "undefined" && requestOptions.body instanceof FormData;
   const method = (requestOptions.method || "GET").toUpperCase();
   const shouldNoStore = method === "GET" || method === "POST" || method === "PUT" || method === "PATCH" || method === "DELETE";
@@ -106,12 +126,14 @@ export async function apiFetch<T = unknown>(
 
   const url = `${API_BASE}${path}`;
   const startedAt = actionNow();
+  const transport = apiRequestSignal(requestOptions.signal, timeoutMs);
   let res: Response;
   try {
     res = await fetch(url, {
       ...requestOptions,
       cache: requestOptions.cache ?? (shouldNoStore ? "no-store" : undefined),
       headers,
+      signal: transport.signal,
     });
   } catch (error) {
     logApiRequestSummary({
@@ -133,6 +155,8 @@ export async function apiFetch<T = unknown>(
       0,
       { error: error instanceof Error ? error.message : String(error), path }
     );
+  } finally {
+    transport.cleanup();
   }
 
   logApiRequestSummary({

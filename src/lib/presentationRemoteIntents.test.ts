@@ -390,6 +390,7 @@ describe("presentation remote intent authority scope", () => {
     clientId: CLIENT_ID,
     controllerClientId: CONTROLLER_ID,
     viewerVersion: "viewer-v1",
+    controllerAuthorityVersion: `sha256:${"a".repeat(64)}`,
     controllerVersion: "controller-v1",
     enabled: true,
     online: true,
@@ -407,12 +408,13 @@ describe("presentation remote intent authority scope", () => {
       { clientId: "77777777-7777-4777-8777-777777777777" },
       { controllerClientId: "88888888-8888-4888-8888-888888888888" },
       { viewerVersion: "viewer-v2" },
-      { controllerVersion: "controller-v2" },
+      { controllerAuthorityVersion: `sha256:${"b".repeat(64)}` },
       { enabled: false },
       { online: false },
       { viewerCanControl: false },
       { controllerOwned: true },
     ]) expect(presentationRemoteIntentScopeKey({ ...base, ...changed })).not.toBe(key);
+    expect(presentationRemoteIntentScopeKey({ ...base, controllerVersion: "controller-heartbeat-v2" })).toBe(key);
   });
 
   it("is available only to an online authorized observer with another exact controller", () => {
@@ -421,6 +423,9 @@ describe("presentation remote intent authority scope", () => {
     expect(canSendPresentationRemoteIntent({ ...base, controllerOwned: true })).toBe(false);
     expect(canSendPresentationRemoteIntent({ ...base, controllerClientId: null })).toBe(false);
     expect(canSendPresentationRemoteIntent({ ...base, controllerClientId: CLIENT_ID })).toBe(false);
+    expect(canSendPresentationRemoteIntent({ ...base, controllerAuthorityVersion: null })).toBe(false);
+    expect(canSendPresentationRemoteIntent({ ...base, controllerAuthorityVersion: "sha256:not-a-digest" })).toBe(false);
+    expect(canSendPresentationRemoteIntent({ ...base, controllerAuthorityVersion: `sha256:${"A".repeat(64)}` })).toBe(false);
     expect(canSendPresentationRemoteIntent({ ...base, viewerCanControl: false })).toBe(false);
     expect(canSendPresentationRemoteIntent({ ...base, accountId: null })).toBe(false);
     expect(canSendPresentationRemoteIntent({ ...base, churchId: null })).toBe(false);

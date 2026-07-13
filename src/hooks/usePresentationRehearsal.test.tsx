@@ -26,6 +26,7 @@ function snapshot(viewerVersion: string, controllerVersion: string): Presentatio
     serviceVersion: "service-v1",
     viewerVersion,
     controllerVersion,
+    controllerAuthorityVersion: `sha256:${"a".repeat(64)}`,
     serverNow: "2026-07-13T14:00:00.000Z",
     receivedAtMs: Date.parse("2026-07-13T14:00:00.000Z"),
     viewer: {

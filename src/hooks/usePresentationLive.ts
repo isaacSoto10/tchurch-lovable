@@ -61,6 +61,7 @@ type UsePresentationLiveOptions = {
 type CommandResult = {
   snapshot: PresentationLiveSnapshot;
   local: boolean;
+  idempotent?: true;
 };
 
 const NO_EXPECTED_REVISION = new Set<PresentationCommandType>([
@@ -630,7 +631,14 @@ export function usePresentationLive({
   const sendCommand = useCallback(async <T extends PresentationCommandType>(
     type: T,
     payload: PresentationCommandPayloads[T],
-    options?: { commandId?: string; expectedRevision?: number; allowOffline?: boolean; mediaBinding?: PresentationMediaCommandBinding },
+    options?: {
+      commandId?: string;
+      expectedRevision?: number;
+      allowOffline?: boolean;
+      mediaBinding?: PresentationMediaCommandBinding;
+      signal?: AbortSignal;
+      timeoutMs?: number;
+    },
   ): Promise<CommandResult> => {
     const generation = authorityGenerationRef.current;
     if (!activeRef.current) throw new Error("La sesión en vivo está inactiva mientras usas Ensayo.");
@@ -659,7 +667,12 @@ export function usePresentationLive({
 
     try {
       if (networkStateRef.current === "offline") throw new ApiError("Offline", 0, { error: "OFFLINE" });
-      const next = await sendPresentationCommand(serviceId, request, activeViewRef.current);
+      const next = options?.signal || options?.timeoutMs !== undefined
+        ? await sendPresentationCommand(serviceId, request, activeViewRef.current, {
+          signal: options.signal,
+          timeoutMs: options.timeoutMs,
+        })
+        : await sendPresentationCommand(serviceId, request, activeViewRef.current);
       if (generation !== authorityGenerationRef.current) throw new Error("La cuenta activa cambió antes de completar la acción.");
       if (isPresentationMediaCommandType(type)) {
         assertPresentationMediaCommandAcknowledged({
@@ -673,7 +686,11 @@ export function usePresentationLive({
       setNetworkState("online");
       setNotice(null);
       await cacheAuthoritativeSnapshot(next, undefined, generation);
-      return { snapshot: next, local: false };
+      return {
+        snapshot: next,
+        local: false,
+        ...(next.idempotent === true ? { idempotent: true as const } : {}),
+      };
     } catch (commandError) {
       if (generation !== authorityGenerationRef.current) throw commandError;
       if (isPresentationAuthorizationError(commandError)) {

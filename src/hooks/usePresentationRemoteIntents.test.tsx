@@ -6,6 +6,7 @@ import { usePresentationRemoteIntents } from "./usePresentationRemoteIntents";
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
 const CLIENT_ID = "22222222-2222-4222-8222-222222222222";
 const CONTROLLER_ID = "33333333-3333-4333-8333-333333333333";
+const CONTROLLER_AUTHORITY_VERSION = `sha256:${"a".repeat(64)}`;
 
 function options(overrides: Record<string, unknown> = {}) {
   return {
@@ -16,6 +17,7 @@ function options(overrides: Record<string, unknown> = {}) {
     clientId: CLIENT_ID,
     controllerClientId: CONTROLLER_ID,
     viewerVersion: "viewer-v1",
+    controllerAuthorityVersion: CONTROLLER_AUTHORITY_VERSION,
     controllerVersion: "controller-v1",
     enabled: true,
     online: true,
@@ -72,7 +74,8 @@ describe("usePresentationRemoteIntents authority lifecycle", () => {
 
   it.each([
     ["viewerVersion", "viewer-v2"],
-    ["controllerVersion", "controller-v2"],
+    ["controllerAuthorityVersion", `sha256:${"b".repeat(64)}`],
+    ["controllerAuthorityVersion", null],
   ] as const)("aborts an in-flight remote intent when %s changes under the same controller client", async (field, changedVersion) => {
     let resolveRequest: (value: unknown) => void = () => undefined;
     let requestBody = "";
@@ -97,6 +100,31 @@ describe("usePresentationRemoteIntents authority lifecycle", () => {
     resolveRequest(applied(intentId));
     await act(async () => { await Promise.resolve(); });
     expect(view.result.current.status.phase).toBe("idle");
+  });
+
+  it("does not abort an in-flight remote intent when only heartbeat controllerVersion changes", async () => {
+    let resolveRequest: (value: unknown) => void = () => undefined;
+    let requestBody = "";
+    let requestSignal: AbortSignal | null = null;
+    const request = async (_path: string, requestOptions: { body: string; signal: AbortSignal }) => new Promise<unknown>((resolve) => {
+      requestBody = requestOptions.body;
+      requestSignal = requestOptions.signal;
+      resolveRequest = resolve;
+    });
+    const view = renderHook((props) => usePresentationRemoteIntents(props), { initialProps: options({ request }) });
+    let action: Promise<unknown> = Promise.resolve();
+    act(() => { action = view.result.current.send("take", {}); });
+    await waitFor(() => expect(view.result.current.status.phase).toBe("sending"));
+
+    view.rerender(options({ request, controllerVersion: "controller-heartbeat-v2" }));
+    expect(requestSignal).not.toBeNull();
+    expect(requestSignal!.aborted).toBe(false);
+    const intentId = JSON.parse(requestBody).intent.id as string;
+    await act(async () => {
+      resolveRequest(applied(intentId));
+      await action;
+    });
+    expect(view.result.current.status.phase).toBe("applied");
   });
 
   it("aborts the active request on unmount even when transport ignores its signal", async () => {

@@ -53,6 +53,7 @@ function snapshotRaw(view: "operator" | "stage" | "remote" | "audience" = "stage
     serviceVersion: "svc-v2",
     viewerVersion: "sha256:viewer-operator",
     controllerVersion: "sha256:controller-present",
+    controllerAuthorityVersion: `sha256:${"a".repeat(64)}`,
     serverNow,
     viewer: view === "audience" ? {
       view,
@@ -245,7 +246,9 @@ describe("Tchurch Live Stage 2 contract", () => {
     expect(PRESENTATION_POLL_MS).toBeLessThanOrEqual(1_250);
   });
 
-  it("round-trips independent viewer and controller versions while accepting legacy snapshots", () => {
+  it("round-trips independent viewer, heartbeat controller and stable authority versions while accepting legacy snapshots", () => {
+    expect(normalizePresentationLiveSnapshot(snapshotRaw("stage"), "stage", "client-1").controllerAuthorityVersion)
+      .toBe(`sha256:${"a".repeat(64)}`);
     const versioned = presentationSessionPath(
       "service-1",
       "stage",
@@ -275,9 +278,16 @@ describe("Tchurch Live Stage 2 contract", () => {
     const legacy = snapshotRaw("stage");
     delete (legacy as { viewerVersion?: string }).viewerVersion;
     delete (legacy as { controllerVersion?: string }).controllerVersion;
+    delete (legacy as { controllerAuthorityVersion?: string }).controllerAuthorityVersion;
     const normalized = normalizePresentationLiveSnapshot(legacy, "stage", "client-1");
     expect(normalized.viewerVersion).toBe("");
     expect(normalized.controllerVersion).toBe("");
+    expect(normalized.controllerAuthorityVersion).toBe("");
+    const invalidAuthority = snapshotRaw("stage");
+    invalidAuthority.controllerAuthorityVersion = "sha256:not-a-digest";
+    expect(normalizePresentationLiveSnapshot(invalidAuthority, "stage", "client-1").controllerAuthorityVersion).toBe("");
+    invalidAuthority.controllerAuthorityVersion = `sha256:${"A".repeat(64)}`;
+    expect(normalizePresentationLiveSnapshot(invalidAuthority, "stage", "client-1").controllerAuthorityVersion).toBe("");
   });
 
   it("fails closed when a live or rehearsal route returns the other session mode", () => {

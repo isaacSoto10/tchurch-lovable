@@ -5,6 +5,7 @@ export const PRESENTATION_REMOTE_INTENT_SCHEMA_VERSION = 1 as const;
 export const PRESENTATION_REMOTE_INTENT_TTL_MS = 10_000;
 export const PRESENTATION_REMOTE_INTENT_POLL_MS = 450;
 export const PRESENTATION_REMOTE_INTENT_ATTEMPT_TIMEOUT_MS = 2_500;
+const PRESENTATION_REMOTE_INTENT_AUTHORITY_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
 
 export const PRESENTATION_REMOTE_INTENT_TYPES = [
   "preview_previous",
@@ -457,6 +458,9 @@ export function presentationRemoteIntentScopeKey(input: {
   clientId?: string | null;
   controllerClientId?: string | null;
   viewerVersion?: string | null;
+  /** Stable controller owner/generation fingerprint. */
+  controllerAuthorityVersion?: string | null;
+  /** Informational only: controllerVersion rotates on heartbeat lease renewal. */
   controllerVersion?: string | null;
   enabled: boolean;
   online: boolean;
@@ -471,7 +475,10 @@ export function presentationRemoteIntentScopeKey(input: {
     input.clientId || "no-client",
     input.controllerClientId || "no-controller",
     input.viewerVersion || "no-viewer-version",
-    input.controllerVersion || "no-controller-version",
+    typeof input.controllerAuthorityVersion === "string"
+      && PRESENTATION_REMOTE_INTENT_AUTHORITY_DIGEST_PATTERN.test(input.controllerAuthorityVersion)
+      ? input.controllerAuthorityVersion
+      : "no-controller-authority-version",
     input.enabled ? "enabled" : "disabled",
     input.online ? "online" : "offline",
     input.viewerCanControl ? "allowed" : "read-only",
@@ -486,6 +493,7 @@ export function canSendPresentationRemoteIntent(input: {
   sessionId?: string | null;
   clientId?: string | null;
   controllerClientId?: string | null;
+  controllerAuthorityVersion?: string | null;
   enabled: boolean;
   online: boolean;
   viewerCanControl: boolean;
@@ -502,6 +510,8 @@ export function canSendPresentationRemoteIntent(input: {
     && input.sessionId
     && input.clientId
     && input.controllerClientId
+    && typeof input.controllerAuthorityVersion === "string"
+    && PRESENTATION_REMOTE_INTENT_AUTHORITY_DIGEST_PATTERN.test(input.controllerAuthorityVersion)
     && input.controllerClientId !== input.clientId,
   );
 }

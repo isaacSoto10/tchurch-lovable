@@ -18,6 +18,7 @@ type UsePresentationRemoteIntentsOptions = {
   clientId?: string | null;
   controllerClientId?: string | null;
   viewerVersion?: string | null;
+  controllerAuthorityVersion?: string | null;
   controllerVersion?: string | null;
   enabled: boolean;
   online: boolean;

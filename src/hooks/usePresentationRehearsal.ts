@@ -246,7 +246,13 @@ export function usePresentationRehearsal({
   const sendCommand = useCallback(async <T extends PresentationCommandType>(
     type: T,
     payload: PresentationCommandPayloads[T],
-    options?: { commandId?: string; expectedRevision?: number; mediaBinding?: PresentationMediaCommandBinding },
+    options?: {
+      commandId?: string;
+      expectedRevision?: number;
+      mediaBinding?: PresentationMediaCommandBinding;
+      signal?: AbortSignal;
+      timeoutMs?: number;
+    },
   ) => {
     const generation = generationRef.current;
     if (!activeRef.current) throw new Error("El ensayo está inactivo mientras usas la sesión en vivo.");
@@ -270,7 +276,12 @@ export function usePresentationRehearsal({
     setCommandPending(true);
     setError(null);
     try {
-      const next = await sendPresentationRehearsalCommand(serviceId, request, activeViewRef.current);
+      const next = options?.signal || options?.timeoutMs !== undefined
+        ? await sendPresentationRehearsalCommand(serviceId, request, activeViewRef.current, {
+          signal: options.signal,
+          timeoutMs: options.timeoutMs,
+        })
+        : await sendPresentationRehearsalCommand(serviceId, request, activeViewRef.current);
       if (generation !== generationRef.current) throw new Error("La cuenta activa cambió antes de completar el ensayo.");
       if (isPresentationMediaCommandType(type)) {
         assertPresentationMediaCommandAcknowledged({

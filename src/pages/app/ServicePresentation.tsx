@@ -21,6 +21,7 @@ import {
 import { usePresentationLive } from "@/hooks/usePresentationLive";
 import { usePresentationRehearsal } from "@/hooks/usePresentationRehearsal";
 import { usePresentationRemoteIntents } from "@/hooks/usePresentationRemoteIntents";
+import { usePresentationRemoteIntentReceiver } from "@/hooks/usePresentationRemoteIntentReceiver";
 import { usePresentationAutomations, usePresentationAutomationRuleThresholds } from "@/hooks/usePresentationAutomations";
 import { useAppAuth } from "@/hooks/useAppAuth";
 import { useChurch } from "@/providers/ChurchProvider";
@@ -866,11 +867,33 @@ export default function ServicePresentation() {
     clientId: live.clientId,
     controllerClientId: live.snapshot?.session?.controller?.clientId,
     viewerVersion: live.snapshot?.viewerVersion,
+    controllerAuthorityVersion: live.snapshot?.controllerAuthorityVersion,
     controllerVersion: live.snapshot?.controllerVersion,
     enabled: runMode === "live",
     online: live.networkState === "online",
     viewerCanControl: live.snapshot?.viewer.canControl === true,
     controllerOwned: liveControllerOwnedByClient,
+  });
+  usePresentationRemoteIntentReceiver({
+    accountId: authenticatedUserId,
+    churchId: selectedChurch?.id,
+    serviceId: id,
+    sessionId: live.snapshot?.session?.id,
+    clientId: live.clientId,
+    controllerClientId: live.snapshot?.session?.controller?.clientId,
+    viewerVersion: live.snapshot?.viewerVersion,
+    controllerAuthorityVersion: live.snapshot?.controllerAuthorityVersion,
+    controllerVersion: live.snapshot?.controllerVersion,
+    mode: runMode,
+    enabled: Boolean(id && selectedChurch?.id && authenticatedUserId),
+    active: runMode === "live",
+    online: live.networkState === "online",
+    viewerCanControl: live.snapshot?.viewer.canControl === true,
+    controllerOwned: liveControllerOwnedByClient,
+    controllerLeaseActive: live.controllerLeaseActive,
+    sessionLive: live.snapshot?.session?.mode === "live" && live.snapshot.session.status === "live",
+    currentRevision: live.snapshot?.session?.revision || 0,
+    sendCommand: live.sendCommand,
   });
   const runtime = runMode === "rehearsal" ? rehearsal : live;
   const runtimeSnapshot = runtime.snapshot;
@@ -884,7 +907,14 @@ export default function ServicePresentation() {
   const runtimeSendCommand = async <T extends PresentationCommandType>(
     type: T,
     payload: PresentationCommandPayloads[T],
-    options?: { commandId?: string; expectedRevision?: number; allowOffline?: boolean; mediaBinding?: PresentationMediaCommandBinding },
+    options?: {
+      commandId?: string;
+      expectedRevision?: number;
+      allowOffline?: boolean;
+      mediaBinding?: PresentationMediaCommandBinding;
+      signal?: AbortSignal;
+      timeoutMs?: number;
+    },
   ) => {
     if (type === "end_session") {
       const prepare = prepareSessionEndRef.current;

@@ -295,6 +295,7 @@ function liveSnapshot(show: { next: boolean; notes: boolean }, targetAt = "2026-
     serviceVersion: "service-v1",
     viewerVersion: "viewer-v1",
     controllerVersion: "controller-v1",
+    controllerAuthorityVersion: `sha256:${"a".repeat(64)}`,
     serverNow: "2026-07-11T19:00:00.000Z",
     receivedAtMs: Date.parse("2026-07-11T19:00:00.000Z"),
     viewer: { view: "operator", roles: ["all"], canEdit: true, canStart: true, canControl: false, canForceTakeover: false },

@@ -146,10 +146,14 @@ export type PresentationLiveSnapshot = {
   viewerVersion: string;
   /** Opaque controller/presence fingerprint. Empty only while rolling against a legacy backend. */
   controllerVersion: string;
+  /** Stable controller session/owner/generation fingerprint. Empty values fail closed. */
+  controllerAuthorityVersion: string;
   serverNow: string;
   viewer: PresentationLiveViewer;
   viewerLayout: PresentationViewerLayout | null;
   session: PresentationSession | null;
+  /** Present only on an authoritative idempotent command response. */
+  idempotent?: true;
   /** Local receipt time used only to project server clocks between revisions. */
   receivedAtMs: number;
 };
@@ -317,6 +321,11 @@ export type PresentationCommandRequest<T extends PresentationCommandType = Prese
   expectedRevision?: number;
   type: T;
   payload: PresentationCommandPayloads[T];
+};
+
+export type PresentationCommandTransportOptions = {
+  signal?: AbortSignal;
+  timeoutMs?: number;
 };
 
 const PRESENTATION_MEDIA_COMMAND_TYPES = new Set<PresentationMediaCommandType>([
@@ -564,6 +573,11 @@ function recordValue(value: unknown): Record<string, unknown> | null {
 
 function stringValue(value: unknown, fallback = "") {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function sha256DigestValue(value: unknown) {
+  const digest = stringValue(value);
+  return /^sha256:[0-9a-f]{64}$/.test(digest) ? digest : "";
 }
 
 function nullableString(value: unknown) {
@@ -845,10 +859,12 @@ export function normalizePresentationLiveSnapshot(
     serviceVersion: stringValue(raw.serviceVersion),
     viewerVersion: stringValue(raw.viewerVersion),
     controllerVersion: stringValue(raw.controllerVersion),
+    controllerAuthorityVersion: sha256DigestValue(raw.controllerAuthorityVersion),
     serverNow,
     viewer,
     viewerLayout: normalizeViewerLayout(raw.viewerLayout, viewer),
     session,
+    ...(raw.idempotent === true ? { idempotent: true as const } : {}),
     receivedAtMs,
   };
 }
@@ -1008,28 +1024,40 @@ export async function sendPresentationCommand<T extends PresentationCommandType>
   serviceId: string,
   request: PresentationCommandRequest<T>,
   view: PresentationLiveView,
+  transport?: PresentationCommandTransportOptions,
 ) {
   const raw = await apiFetch<unknown>(`/services/${encodeURIComponent(serviceId)}/presentation-session?view=${view}`, {
     method: "POST",
     body: JSON.stringify(request),
+    signal: transport?.signal,
+    timeoutMs: transport?.timeoutMs,
   });
   const responseRaw = recordValue(raw);
   const snapshotRaw = responseRaw?.snapshot || responseRaw?.current || raw;
-  return normalizePresentationLiveSnapshot(snapshotRaw, view, request.clientId, Date.now(), "live");
+  const snapshot = normalizePresentationLiveSnapshot(snapshotRaw, view, request.clientId, Date.now(), "live");
+  return responseRaw?.idempotent === true && snapshot.idempotent !== true
+    ? { ...snapshot, idempotent: true as const }
+    : snapshot;
 }
 
 export async function sendPresentationRehearsalCommand<T extends PresentationCommandType>(
   serviceId: string,
   request: PresentationCommandRequest<T>,
   view: PresentationLiveView,
+  transport?: PresentationCommandTransportOptions,
 ) {
   const raw = await apiFetch<unknown>(`/services/${encodeURIComponent(serviceId)}/presentation-rehearsal-session?view=${view}`, {
     method: "POST",
     body: JSON.stringify(request),
+    signal: transport?.signal,
+    timeoutMs: transport?.timeoutMs,
   });
   const responseRaw = recordValue(raw);
   const snapshotRaw = responseRaw?.snapshot || responseRaw?.current || raw;
-  return normalizePresentationLiveSnapshot(snapshotRaw, view, request.clientId, Date.now(), "rehearsal");
+  const snapshot = normalizePresentationLiveSnapshot(snapshotRaw, view, request.clientId, Date.now(), "rehearsal");
+  return responseRaw?.idempotent === true && snapshot.idempotent !== true
+    ? { ...snapshot, idempotent: true as const }
+    : snapshot;
 }
 
 function normalizePresentationService(value: unknown): PresentationService {

@@ -41,6 +41,7 @@ function snapshot(
     serviceVersion: `${serviceId}-v1`,
     viewerVersion,
     controllerVersion,
+    controllerAuthorityVersion: `sha256:${"a".repeat(64)}`,
     serverNow: "2026-07-11T19:00:00.000Z",
     receivedAtMs: Date.parse("2026-07-11T19:00:00.000Z"),
     viewer: {
@@ -164,6 +165,48 @@ describe("usePresentationLive authority generation", () => {
     expect(result.current.snapshot?.serviceId).toBe("service-new");
     expect(result.current.snapshot?.viewerVersion).toBe("viewer-new");
     expect(result.current.presentationPackage?.service.id).toBe("service-new");
+  });
+
+  it("passes a remote command signal and timeout to the presentation-session transport", async () => {
+    const initial = snapshot("service-1", "viewer-v1", 1);
+    const applied = snapshot("service-1", "viewer-v2", 2);
+    applied.idempotent = true;
+    liveMocks.fetchSnapshot.mockResolvedValue(initial);
+    liveMocks.fetchPackage.mockResolvedValue(presentationPackage("service-1", "account-1", "church-1"));
+    liveMocks.sendCommand.mockResolvedValue(applied);
+    mockPackageSave();
+    const view = renderHook(() => usePresentationLive({
+      serviceId: "service-1",
+      accountId: "account-1",
+      churchId: "church-1",
+      preferredView: "operator",
+      offlineContext: { steps: [], plannedTiming: { serviceSeconds: 0, itemSecondsById: {} } },
+    }));
+    await waitFor(() => expect(view.result.current.loading).toBe(false));
+    const controller = new AbortController();
+    let commandResult: Awaited<ReturnType<typeof view.result.current.sendCommand>> | null = null;
+
+    await act(async () => {
+      commandResult = await view.result.current.sendCommand("next", {}, {
+        commandId: "55555555-5555-4555-8555-555555555555",
+        expectedRevision: 1,
+        allowOffline: false,
+        signal: controller.signal,
+        timeoutMs: 1_234,
+      });
+    });
+
+    expect(liveMocks.sendCommand).toHaveBeenLastCalledWith(
+      "service-1",
+      expect.objectContaining({
+        commandId: "55555555-5555-4555-8555-555555555555",
+        expectedRevision: 1,
+        type: "next",
+      }),
+      "operator",
+      { signal: controller.signal, timeoutMs: 1_234 },
+    );
+    expect(commandResult).toMatchObject({ local: false, idempotent: true, snapshot: applied });
   });
 
   it("preserves an exact-client live queue while inactive and reconciles it only after Live reactivates", async () => {
