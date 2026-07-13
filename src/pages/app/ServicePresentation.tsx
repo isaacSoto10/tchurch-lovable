@@ -64,6 +64,7 @@ import {
   resolvePresentationCursorIndex,
   type PresentationCommandPayloads,
   type PresentationCommandType,
+  type PresentationLiveSnapshot,
   type PresentationPrivateLiveView,
 } from "@/lib/presentationLive";
 import {
@@ -80,6 +81,7 @@ import {
   type PresentationPedalMapping,
 } from "@/lib/presentationPedal";
 import type { PresentationRunMode } from "@/lib/presentationProduction";
+import { resolvePresentationSongTypography, resolvePresentationSurface, type PresentationSurface } from "@/lib/presentationSurface";
 
 type UserMe = {
   id: string;
@@ -259,10 +261,6 @@ function getSongZoomScale(level: number) {
   return 1 + level * SONG_ZOOM_STEP;
 }
 
-function scaledClamp(minRem: number, preferredVw: number, maxRem: number, scale: number) {
-  return `clamp(${(minRem * scale).toFixed(2)}rem, ${(preferredVw * scale).toFixed(2)}vw, ${(maxRem * scale).toFixed(2)}rem)`;
-}
-
 function SongSlide({
   slide,
   showChords,
@@ -271,6 +269,7 @@ function SongSlide({
   zoomScale,
   activeSequenceId,
   stageMode,
+  expandedStage,
 }: {
   slide: Extract<PresentationSlide, { kind: "song" }>;
   showChords: boolean;
@@ -279,6 +278,7 @@ function SongSlide({
   zoomScale: number;
   activeSequenceId?: string | null;
   stageMode: PresentationStageMode;
+  expandedStage: boolean;
 }) {
   const isTabletLayout = layout === "tablet";
   const allowsVerticalScroll = songMode === "scroll" || zoomScale > 1 || !isTabletLayout;
@@ -321,19 +321,16 @@ function SongSlide({
   const fallbackHeight = typeof window === "undefined" ? 620 : Math.max(window.innerHeight - 118, 420);
   const chartWidth = chartSize.width || fallbackWidth;
   const chartHeight = chartSize.height || fallbackHeight;
-  const isCompactStage = chartWidth < 640;
-  const widthLimitedFont = (chartWidth / Math.max(chartMetrics.maxColumns, 1)) * (isCompactStage ? 2.05 : 1.8);
-  const heightLimitedFont = (chartHeight / Math.max(chartMetrics.rows, 1)) * (isCompactStage ? 0.94 : 0.9);
-  const minLyricFontSize = isCompactStage ? 20 : 24;
-  const maxLyricFontSize = isCompactStage ? 24 : 38;
-  const lyricFontSizePx = Math.round(
-    Math.max(minLyricFontSize, Math.min(widthLimitedFont, heightLimitedFont, maxLyricFontSize))
-  );
-  const chordFontSizePx = Math.round(
-    Math.max(isCompactStage ? 18 : 22, Math.min(lyricFontSizePx - 1, isCompactStage ? 22 : 34))
-  );
-  const lyricFontSize = isTabletLayout ? scaledClamp(1, 2.35, 1.75, zoomScale) : `${Math.round(lyricFontSizePx * zoomScale)}px`;
-  const chordFontSize = isTabletLayout ? scaledClamp(0.86, 1.85, 1.35, zoomScale) : `${Math.round(chordFontSizePx * zoomScale)}px`;
+  const { lyricFontSize, chordFontSize } = resolvePresentationSongTypography({
+    layout,
+    songMode,
+    expandedStage,
+    zoomScale,
+    chartWidth,
+    chartHeight,
+    maxColumns: chartMetrics.maxColumns,
+    rows: chartMetrics.rows,
+  });
 
   return (
     <div className="mx-auto flex h-full w-full max-w-none flex-col px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-0 sm:max-w-6xl sm:px-8 sm:pb-4 sm:pt-1">
@@ -653,7 +650,7 @@ export default function ServicePresentation() {
   const [showChords, setShowChords] = useState(true);
   const [songModeOverride, setSongModeOverride] = useState<PresentationSongMode | null>(null);
   const [songZoomLevel, setSongZoomLevel] = useState(0);
-  const [surface, setSurface] = useState<"operator" | "stage" | "remote">("stage");
+  const [surface, setSurface] = useState<PresentationSurface>("stage");
   const [blackout, setBlackout] = useState(false);
   const [historyCount, setHistoryCount] = useState(0);
   const [showRundown, setShowRundown] = useState(false);
@@ -972,7 +969,11 @@ export default function ServicePresentation() {
     () => [...new Set([...(workspace?.legacyNotes || []), ...(currentWorkspaceItem?.legacyNotes || [])])],
     [currentWorkspaceItem?.legacyNotes, workspace?.legacyNotes],
   );
-  const effectiveSurface = surface === "remote" ? "remote" : isTabletPresentation ? (stageLayout.mode === "production" ? "operator" : surface) : "stage";
+  const effectiveSurface = resolvePresentationSurface({
+    requested: surface,
+    isTablet: isTabletPresentation,
+    stageMode: stageLayout.mode,
+  });
   const liveControllerOwned = Boolean(runtimeSession?.controller?.ownedByViewer && runtimeControllerLeaseActive);
   const liveCanMutate = liveControllerOwned && !runtimeCommandPending && runtimeNetworkState !== "diverged";
   keyboardContextRef.current = { mapping: pedalMapping, mode: runMode, controllerOwned: liveControllerOwned };
@@ -1101,6 +1102,51 @@ export default function ServicePresentation() {
       return;
     }
     goToStep(safeStepIndex + 1);
+  }
+
+  async function navigateFromStage(direction: "previous" | "next") {
+    if (!runtimeSession || liveCanMutate) {
+      if (direction === "next") goNext();
+      else goPrevious();
+      return;
+    }
+    if (!runtimeSnapshot?.viewer.canControl) {
+      setWorkspaceNotice("Esta vista está en modo de seguimiento. Un operador con control debe avanzar la presentación.");
+      return;
+    }
+    if (!runtimeSession.controller || !runtimeControllerLeaseActive) {
+      try {
+        const claimResult = await runtimeSendCommand("claim_control", {}) as {
+          snapshot?: PresentationLiveSnapshot;
+          local?: boolean;
+        };
+        const claimedSession = claimResult.snapshot?.session;
+        const claimedController = claimedSession?.controller;
+        const claimedLeaseActive = Boolean(
+          claimedController?.ownedByViewer
+          && Date.parse(claimedController.leaseExpiresAt) > Date.parse(claimResult.snapshot?.serverNow || "")
+        );
+        if (!claimedSession || claimResult.local || !claimedLeaseActive) {
+          setWorkspaceNotice("Tchurch todavía no confirmó el control. Intenta avanzar nuevamente cuando aparezca como tuyo.");
+          return;
+        }
+        const targetLiveStep = liveRunSteps[safeStepIndex + (direction === "next" ? 1 : -1)];
+        if (targetLiveStep) {
+          await runtimeSendCommand("jump", {
+            itemId: targetLiveStep.itemId,
+            stepId: targetLiveStep.stepId,
+            partIndex: targetLiveStep.partIndex,
+          }, { expectedRevision: claimedSession.revision, allowOffline: false });
+        } else {
+          await runtimeSendCommand(direction, {}, { expectedRevision: claimedSession.revision, allowOffline: false });
+        }
+      } catch (error) {
+        setWorkspaceNotice(error instanceof Error ? error.message : "No se pudo tomar el control de la presentación.");
+      }
+      return;
+    }
+    setWorkspaceNotice("Otro dispositivo controla la presentación. Solicita el control antes de avanzar.");
+    setSurface("remote");
   }
 
   function goPrevious() {
@@ -1384,7 +1430,7 @@ export default function ServicePresentation() {
       ) : !stageLayout.show.current ? (
         <div className="flex h-full items-center justify-center px-6 text-center"><div><EyeOff className="mx-auto mb-4 h-10 w-10 text-slate-600" /><p className="text-sm font-black uppercase tracking-[0.2em] text-slate-500">Contenido actual oculto en esta vista</p></div></div>
       ) : stageCurrentSlide?.kind === "song" ? (
-        <SongSlide slide={stageCurrentSlide} showChords={effectiveShowChords} layout={presentationLayout} songMode={songMode} zoomScale={songZoomScale * stageLayout.fontScale} activeSequenceId={currentStep?.sectionSequenceId} stageMode={stageLayout.mode} />
+        <SongSlide slide={stageCurrentSlide} showChords={effectiveShowChords} layout={presentationLayout} songMode={songMode} zoomScale={songZoomScale * stageLayout.fontScale} activeSequenceId={currentStep?.sectionSequenceId} stageMode={stageLayout.mode} expandedStage={isTabletPresentation && effectiveSurface === "stage"} />
       ) : stageCurrentSlide?.kind === "content" ? (
         <PresentationAudienceOutput
           slide={stageCurrentSlide.audienceSlide}
@@ -1409,6 +1455,34 @@ export default function ServicePresentation() {
       )}
     </div>
   );
+
+  const stageAtEnd = safeStepIndex >= runSteps.length - 1;
+  const stageAtStart = safeStepIndex <= 0;
+  const stageNeedsControl = Boolean(runtimeSession && !liveCanMutate);
+  const stageCanClaimControl = Boolean(
+    stageNeedsControl
+    && runtimeSnapshot?.viewer.canControl
+    && (!runtimeSession?.controller || !runtimeControllerLeaseActive)
+  );
+  const stageAdvanceLabel = !stageNeedsControl
+    ? "Siguiente"
+    : !runtimeSnapshot?.viewer.canControl
+      ? "Solo seguimiento"
+      : stageCanClaimControl
+        ? "Tomar control para avanzar"
+        : "Solicitar control para avanzar";
+  const stagePreviousLabel = !stageNeedsControl
+    ? "Anterior"
+    : !runtimeSnapshot?.viewer.canControl
+      ? "Solo seguimiento"
+      : stageCanClaimControl
+        ? "Tomar control para retroceder"
+        : "Solicitar control para retroceder";
+  const stageControlDisabled = runtimeCommandPending
+    || stageCanClaimControl && runtimeNetworkState !== "online"
+    || stageNeedsControl && !runtimeSnapshot?.viewer.canControl;
+  const stageAdvanceDisabled = stageAtEnd || stageControlDisabled;
+  const stagePreviousDisabled = stageAtStart || stageControlDisabled;
 
   return (
     <div className="fixed inset-0 z-50 flex min-h-svh flex-col overflow-hidden bg-[radial-gradient(circle_at_top_left,#2f1e6a_0%,#090912_34%,#020204_100%)] text-white" style={{ paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}>
@@ -1554,29 +1628,20 @@ export default function ServicePresentation() {
           </aside>
         </main>
       ) : (
-        <main className={`relative z-10 grid min-h-0 flex-1 overflow-hidden ${isTabletPresentation ? "grid-cols-[minmax(0,1fr)_15rem] xl:grid-cols-[minmax(0,1fr)_18rem]" : "grid-cols-1"}`}>
+        <main className="relative z-10 grid min-h-0 flex-1 grid-cols-1 overflow-hidden">
           <section className="min-h-0 overflow-hidden">{stageOutput}</section>
-          {isTabletPresentation && (
-            <aside className="min-h-0 overflow-y-auto border-l border-white/10 bg-black/25 p-4" onClick={stopStageEvent}>
-              <div className="flex items-center justify-between gap-3"><div><p className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-200">Ahora</p><h2 className="mt-1 text-xl font-black">{currentStep?.sectionLabel || currentStep?.title}</h2></div>{stageLayout.show.clock ? <span className="text-lg font-black tabular-nums">{clock}</span> : null}</div>
-              {stageLayout.show.next ? <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.05] p-3"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Siguiente</p><p className="mt-1 text-sm font-black">{nextStep?.sectionLabel || nextStep?.title || "Fin del servicio"}</p></div> : null}
-              {stageLayout.show.notes ? <div className="mt-4"><p className="mb-2 text-[10px] font-black uppercase tracking-[0.18em] text-violet-200">Para ti</p><AnnotationList annotations={stageAnnotations} emptyLabel="Sin notas en esta sección." /></div> : null}
-              {stageLayout.show.notes && currentLegacyNotes.length ? <div className="mt-4 space-y-2"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Notas anteriores</p>{currentLegacyNotes.map((note, index) => <p key={`${note}-${index}`} className="rounded-xl bg-white/[0.05] p-3 text-xs leading-5 text-slate-300">{note}</p>)}</div> : null}
-              <Button variant="outline" className="mt-4 h-11 w-full rounded-xl border-white/10 bg-white/[0.06] text-white hover:bg-white/10 hover:text-white" onClick={() => setShowRundown(true)}><ListMusic className="h-4 w-4" /> Salto rápido</Button>
-            </aside>
-          )}
         </main>
       )}
 
       {effectiveSurface === "stage" && (
         <footer className="relative z-30 flex shrink-0 items-center gap-2 border-t border-white/[0.07] px-3 py-2 sm:px-5" onClick={stopStageEvent}>
-          <Button variant="ghost" className="h-12 w-12 shrink-0 rounded-xl bg-white/10 text-white hover:bg-white/15 hover:text-white" disabled={safeStepIndex === 0 || Boolean(runtimeSession) && !liveCanMutate} onClick={goPrevious}><ChevronLeft className="h-5 w-5" /></Button>
+          <Button variant="ghost" aria-label={stagePreviousLabel} className="h-12 w-12 shrink-0 rounded-xl bg-white/10 text-white hover:bg-white/15 hover:text-white" disabled={stagePreviousDisabled} onClick={() => void navigateFromStage("previous")}><ChevronLeft className="h-5 w-5" /></Button>
           <button type="button" aria-label="Abrir salto rápido" className="min-h-12 min-w-0 flex-1 rounded-xl border border-white/10 bg-white/[0.06] px-3 py-2 text-center" onClick={() => setShowRundown(true)}>
-            {stageLayout.show.next ? <><span className="block truncate text-[9px] font-black uppercase tracking-[0.18em] text-slate-500">Siguiente</span><span className="block truncate text-sm font-black text-white">{nextStep?.sectionLabel || nextStep?.title || "Fin del servicio"}</span></> : null}
+            {stageLayout.show.next ? <><span className="block truncate text-[9px] font-black uppercase tracking-[0.18em] text-slate-500">Siguiente</span><span className="block truncate text-sm font-black text-white">{nextStep?.sectionLabel || nextStep?.title || "Fin del servicio"}</span></> : <span className="block truncate text-xs font-black text-white">{stageAdvanceLabel}</span>}
             {!isTabletPresentation && stageLayout.show.notes && (stageAnnotations[0]?.body || currentLegacyNotes[0]) ? <span className="mt-0.5 block truncate text-[10px] font-semibold text-amber-200">{stageAnnotations[0]?.body || currentLegacyNotes[0]}</span> : null}
             {!stageLayout.show.next && (!stageLayout.show.notes || !(stageAnnotations[0]?.body || currentLegacyNotes[0])) ? <ListMusic aria-hidden="true" className="mx-auto h-4 w-4 text-slate-500" /> : null}
           </button>
-          <Button variant="ghost" className="h-12 w-12 shrink-0 rounded-xl bg-white/10 text-white hover:bg-white/15 hover:text-white" disabled={safeStepIndex >= runSteps.length - 1 || Boolean(runtimeSession) && !liveCanMutate} onClick={goNext}><ChevronRight className="h-5 w-5" /></Button>
+          <Button variant="ghost" aria-label={stageAdvanceLabel} className="h-12 w-12 shrink-0 rounded-xl bg-white/10 text-white hover:bg-white/15 hover:text-white" disabled={stageAdvanceDisabled} onClick={() => void navigateFromStage("next")}><ChevronRight className="h-5 w-5" /></Button>
         </footer>
       )}
 

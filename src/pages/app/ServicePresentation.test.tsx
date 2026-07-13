@@ -447,6 +447,146 @@ describe("ServicePresentation load authority", () => {
     expect(screen.getByRole("button", { name: "Ocultar acordes" })).toBeEnabled();
   });
 
+  it("keeps explicit iPad surface selections when the private layout uses production mode", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 1366 });
+    const snapshot = liveSnapshot({ next: true, notes: true });
+    snapshot.viewer = { view: "operator", roles: ["all"], canEdit: true, canStart: true, canControl: true, canForceTakeover: false };
+    mocks.liveSnapshot = snapshot;
+    mocks.liveTiming = timing();
+    mocks.apiFetch.mockImplementation((path: string) => path === "/users/me"
+      ? Promise.resolve({ id: mocks.accountId, email: "operator@example.com" })
+      : Promise.resolve(stageService()));
+
+    render(<ServicePresentation />);
+    await screen.findByText("Stage fixture");
+
+    const operator = screen.getByRole("button", { name: "Operador" });
+    const stage = screen.getByRole("button", { name: "Escenario" });
+    const remote = screen.getByRole("button", { name: "Control" });
+
+    await waitFor(() => expect(operator).toHaveAttribute("aria-pressed", "true"));
+    expect(screen.getByText("Notas del equipo")).toBeInTheDocument();
+
+    fireEvent.click(stage);
+    expect(stage).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByText("Notas del equipo")).not.toBeInTheDocument();
+    expect(screen.queryByText("Para ti")).not.toBeInTheDocument();
+    expect(screen.queryByText("Salto rápido")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Abrir salto rápido" })).toBeEnabled();
+
+    fireEvent.click(remote);
+    expect(remote).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(stage);
+    expect(stage).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("takes control from the iPad stage before allowing a live advance", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 1366 });
+    const snapshot = liveSnapshot({ next: true, notes: true });
+    snapshot.viewer = { view: "operator", roles: ["all"], canEdit: true, canStart: true, canControl: true, canForceTakeover: false };
+    mocks.liveSnapshot = snapshot;
+    mocks.liveTiming = timing();
+    const claimedSnapshot = {
+      ...snapshot,
+      serverNow: "2026-07-11T19:00:00.000Z",
+      session: snapshot.session ? {
+        ...snapshot.session,
+        revision: 5,
+        controller: {
+          clientId: "11111111-1111-4111-8111-111111111111",
+          displayName: "Este iPad",
+          leaseExpiresAt: "2099-07-11T19:01:00.000Z",
+          ownedByViewer: true,
+        },
+      } : null,
+    };
+    mocks.liveSend.mockResolvedValue({ snapshot: claimedSnapshot, local: false });
+    mocks.apiFetch.mockImplementation((path: string) => path === "/users/me"
+      ? Promise.resolve({ id: mocks.accountId })
+      : Promise.resolve(stageService()));
+
+    render(<ServicePresentation />);
+    await screen.findByText("Stage fixture");
+    fireEvent.click(screen.getByRole("button", { name: "Escenario" }));
+    fireEvent.click(screen.getByRole("button", { name: "Tomar control para avanzar" }));
+
+    await waitFor(() => expect(mocks.liveSend).toHaveBeenNthCalledWith(1, "claim_control", {}, undefined));
+    expect(mocks.liveSend).toHaveBeenNthCalledWith(2, "jump", {
+      itemId: "next-item",
+      stepId: null,
+      partIndex: 0,
+    }, { expectedRevision: 5, allowOffline: false });
+  });
+
+  it("advances the live session from the iPad stage only while this device owns the lease", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 1366 });
+    mocks.liveSnapshot = ownedSnapshot("live");
+    mocks.liveTiming = mocks.liveSnapshot.session!.timing;
+    mocks.liveControllerLeaseActive = true;
+    mocks.apiFetch.mockImplementation((path: string) => path === "/users/me"
+      ? Promise.resolve({ id: mocks.accountId })
+      : Promise.resolve(stageService()));
+
+    render(<ServicePresentation />);
+    await screen.findByText("Stage fixture");
+    fireEvent.click(screen.getByRole("button", { name: "Escenario" }));
+    fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
+
+    await waitFor(() => expect(mocks.liveSend).toHaveBeenCalledWith("jump", {
+      itemId: "next-item",
+      stepId: null,
+      partIndex: 0,
+    }, undefined));
+    expect(mocks.liveSend).not.toHaveBeenCalledWith("claim_control", expect.anything(), expect.anything());
+  });
+
+  it("offers a safe control claim from the iPad previous arrow instead of failing silently", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 1366 });
+    const snapshot = liveSnapshot({ next: true, notes: true });
+    snapshot.viewer = { view: "operator", roles: ["all"], canEdit: true, canStart: true, canControl: true, canForceTakeover: false };
+    snapshot.session = snapshot.session ? {
+      ...snapshot.session,
+      cursor: { itemId: "next-item", itemIndex: 1, stepId: null, stepIndex: 1, partIndex: 0, sectionAnchorId: null },
+    } : null;
+    mocks.liveSnapshot = snapshot;
+    mocks.liveTiming = timing();
+    mocks.apiFetch.mockImplementation((path: string) => path === "/users/me"
+      ? Promise.resolve({ id: mocks.accountId })
+      : Promise.resolve(stageService()));
+
+    render(<ServicePresentation />);
+    await screen.findByText("Stage fixture");
+    fireEvent.click(screen.getByRole("button", { name: "Escenario" }));
+
+    expect(screen.getByRole("button", { name: "Tomar control para retroceder" })).toBeEnabled();
+  });
+
+  it("fits the current Slides page to the expanded iPad stage without changing operator typography", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 1366 });
+    const snapshot = liveSnapshot({ next: true, notes: true });
+    snapshot.session = null;
+    mocks.liveSnapshot = snapshot;
+    mocks.apiFetch.mockImplementation((path: string) => path === "/users/me"
+      ? Promise.resolve({ id: mocks.accountId })
+      : Promise.resolve(chordSheetService()));
+
+    render(<ServicePresentation />);
+    await screen.findByText("Chord sheet fixture");
+    fireEvent.click(screen.getByRole("button", { name: "Slides" }));
+    const operatorLyrics = screen.getByText("Con acordes visibles");
+    expect(operatorLyrics.style.fontSize).not.toBe("46px");
+
+    fireEvent.click(screen.getByRole("button", { name: "Escenario" }));
+    const stageLyrics = screen.getByText("Con acordes visibles");
+    expect(stageLyrics.style.fontSize).toBe("46px");
+  });
+
   it("switches directly when this device does not own the current controller", async () => {
     mocks.liveSnapshot = liveSnapshot({ next: true, notes: true });
     mocks.liveTiming = timing();
