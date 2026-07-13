@@ -667,9 +667,13 @@ export function usePresentationLive({
     () => (snapshot?.session?.messages || []).filter((message) => Date.parse(message.expiresAt) > projectedServerNowMs),
     [projectedServerNowMs, snapshot?.session?.messages],
   );
-  const controllerLeaseActive = Boolean(
-    snapshot?.session?.controller && Date.parse(snapshot.session.controller.leaseExpiresAt) > projectedServerNowMs,
-  );
+  // A 204 poll intentionally carries no renewed lease timestamp. The server
+  // clears an actually expired controller and bumps the session revision, so
+  // the presence of a controller in the latest authoritative snapshot is the
+  // reliable signal for followers. Locally expiring this cached timestamp can
+  // otherwise show a false “Tomar control” action while heartbeats keep the
+  // server lease alive.
+  const controllerLeaseActive = Boolean(snapshot?.session?.controller);
 
   return {
     snapshot,

@@ -263,7 +263,10 @@ export function usePresentationRehearsal({
     () => (snapshot?.session?.messages || []).filter((item) => Date.parse(item.expiresAt) > projectedNow),
     [projectedNow, snapshot?.session?.messages],
   );
-  const controllerLeaseActive = Boolean(snapshot?.session?.controller && Date.parse(snapshot.session.controller.leaseExpiresAt) > projectedNow);
+  // The server renews heartbeats without bumping the session revision, so a
+  // 204 poll does not contain a newer lease timestamp. Actual expiry clears
+  // the controller and increments revision; trust that authoritative shape.
+  const controllerLeaseActive = Boolean(snapshot?.session?.controller);
 
   return {
     snapshot,

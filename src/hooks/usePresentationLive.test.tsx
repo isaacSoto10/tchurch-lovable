@@ -228,4 +228,30 @@ describe("usePresentationLive authority generation", () => {
     expect(result.current.presentationPackage).toBe(verifiedPackage);
     expect(liveMocks.fetchPackage).toHaveBeenCalledTimes(1);
   });
+
+  it("keeps a controller active across a cached 204-style snapshot until the server revises it", async () => {
+    const controlled = snapshot("service-1", "viewer-v1");
+    controlled.receivedAtMs = Date.now() - 31_000;
+    controlled.session!.controller = {
+      clientId: "11111111-1111-4111-8111-111111111111",
+      displayName: "Sanctuary Mac",
+      leaseExpiresAt: new Date(controlled.receivedAtMs + 30_000).toISOString(),
+      ownedByViewer: false,
+    };
+    liveMocks.fetchSnapshot.mockResolvedValue(controlled);
+    liveMocks.fetchPackage.mockResolvedValue(presentationPackage("service-1", "account-1", "church-1"));
+    mockPackageSave();
+    const offlineContext = { steps: [], plannedTiming: { serviceSeconds: 0, itemSecondsById: {} } };
+    const { result } = renderHook(() => usePresentationLive({
+      serviceId: "service-1",
+      accountId: "account-1",
+      churchId: "church-1",
+      preferredView: "operator",
+      offlineContext,
+    }));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(Date.parse(controlled.session!.controller!.leaseExpiresAt)).toBeLessThan(Date.now());
+    expect(result.current.controllerLeaseActive).toBe(true);
+  });
 });
