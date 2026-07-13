@@ -27,6 +27,8 @@ const mocks = vi.hoisted(() => ({
   rehearsalResume: vi.fn(),
   audienceOutputProps: [] as Array<Record<string, unknown>>,
   remoteSurfaceProps: [] as Array<Record<string, unknown>>,
+  liveHookOptions: [] as Array<Record<string, unknown>>,
+  rehearsalHookOptions: [] as Array<Record<string, unknown>>,
   apiFetch: vi.fn(),
   fetchWorkspace: vi.fn(),
 }));
@@ -63,7 +65,9 @@ vi.mock("@/lib/presentationWorkspace", async () => {
 });
 
 vi.mock("@/hooks/usePresentationLive", () => ({
-  usePresentationLive: () => ({
+  usePresentationLive: (options: Record<string, unknown>) => {
+    mocks.liveHookOptions.push(options);
+    return ({
     snapshot: mocks.liveSnapshot,
     presentationPackage: mocks.livePackage,
     activeView: "operator",
@@ -83,11 +87,14 @@ vi.mock("@/hooks/usePresentationLive", () => ({
     reconcileOffline: vi.fn(async () => undefined),
     discardOfflineChanges: vi.fn(async () => undefined),
     clearNotice: vi.fn(),
-  }),
+    });
+  },
 }));
 
 vi.mock("@/hooks/usePresentationRehearsal", () => ({
-  usePresentationRehearsal: () => ({
+  usePresentationRehearsal: (options: Record<string, unknown>) => {
+    mocks.rehearsalHookOptions.push(options);
+    return ({
     snapshot: mocks.rehearsalSnapshot,
     activeView: "operator",
     networkState: mocks.rehearsalNetworkState,
@@ -103,7 +110,8 @@ vi.mock("@/hooks/usePresentationRehearsal", () => ({
     sendCommand: mocks.rehearsalSend,
     refresh: vi.fn(async () => mocks.rehearsalSnapshot),
     clearNotice: vi.fn(),
-  }),
+    });
+  },
 }));
 
 vi.mock("@/hooks/usePresentationRemoteIntents", () => ({
@@ -400,6 +408,8 @@ describe("ServicePresentation load authority", () => {
     mocks.rehearsalPrepareRelease.mockResolvedValue(4);
     mocks.audienceOutputProps = [];
     mocks.remoteSurfaceProps = [];
+    mocks.liveHookOptions = [];
+    mocks.rehearsalHookOptions = [];
     mocks.apiFetch.mockReset();
     mocks.fetchWorkspace.mockReset();
     mocks.fetchWorkspace.mockResolvedValue(workspace());
@@ -541,6 +551,35 @@ describe("ServicePresentation load authority", () => {
     fireEvent.click(screen.getByRole("button", { name: "Usar ensayo aislado" }));
     expect(screen.getByText(/Ensayo aislado · no cambia la sesión en vivo/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Ocultar acordes" })).toBeEnabled();
+  });
+
+  it("activates exactly one session runtime when switching between live and rehearsal", async () => {
+    mocks.liveSnapshot = liveSnapshot({ next: true, notes: true });
+    mocks.liveTiming = timing();
+    mocks.rehearsalSnapshot = ownedSnapshot("rehearsal");
+    mocks.rehearsalTiming = mocks.rehearsalSnapshot.session!.timing;
+    mocks.apiFetch.mockImplementation((path: string) => path === "/users/me"
+      ? Promise.resolve({ id: mocks.accountId })
+      : Promise.resolve(stageService()));
+
+    render(<ServicePresentation />);
+    await screen.findByText("Stage fixture");
+    await waitFor(() => {
+      expect(mocks.liveHookOptions.at(-1)).toMatchObject({ enabled: true, active: true });
+      expect(mocks.rehearsalHookOptions.at(-1)).toMatchObject({ enabled: true, active: false });
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Usar ensayo aislado" }));
+    await waitFor(() => {
+      expect(mocks.liveHookOptions.at(-1)).toMatchObject({ enabled: true, active: false });
+      expect(mocks.rehearsalHookOptions.at(-1)).toMatchObject({ enabled: true, active: true });
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Usar sesión en vivo" }));
+    await waitFor(() => {
+      expect(mocks.liveHookOptions.at(-1)).toMatchObject({ enabled: true, active: true });
+      expect(mocks.rehearsalHookOptions.at(-1)).toMatchObject({ enabled: true, active: false });
+    });
   });
 
   it("keeps explicit iPad surface selections when the private layout uses production mode", async () => {

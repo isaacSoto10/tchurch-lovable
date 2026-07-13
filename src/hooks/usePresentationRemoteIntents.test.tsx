@@ -15,6 +15,8 @@ function options(overrides: Record<string, unknown> = {}) {
     sessionId: SESSION_ID,
     clientId: CLIENT_ID,
     controllerClientId: CONTROLLER_ID,
+    viewerVersion: "viewer-v1",
+    controllerVersion: "controller-v1",
     enabled: true,
     online: true,
     viewerCanControl: true,
@@ -65,6 +67,35 @@ describe("usePresentationRemoteIntents authority lifecycle", () => {
     resolveRequest(applied(intentId));
     await act(async () => { await Promise.resolve(); });
 
+    expect(view.result.current.status.phase).toBe("idle");
+  });
+
+  it.each([
+    ["viewerVersion", "viewer-v2"],
+    ["controllerVersion", "controller-v2"],
+  ] as const)("aborts an in-flight remote intent when %s changes under the same controller client", async (field, changedVersion) => {
+    let resolveRequest: (value: unknown) => void = () => undefined;
+    let requestBody = "";
+    let requestSignal: AbortSignal | null = null;
+    const request = async (_path: string, requestOptions: { body: string; signal: AbortSignal }) => new Promise<unknown>((resolve) => {
+      requestBody = requestOptions.body;
+      requestSignal = requestOptions.signal;
+      resolveRequest = resolve;
+    });
+    const view = renderHook((props) => usePresentationRemoteIntents(props), { initialProps: options({ request }) });
+    let action: Promise<unknown> = Promise.resolve();
+    act(() => { action = view.result.current.send("take", {}); });
+    await waitFor(() => expect(view.result.current.status.phase).toBe("sending"));
+
+    view.rerender(options({ request, [field]: changedVersion }));
+    await waitFor(() => expect(view.result.current.status.phase).toBe("idle"));
+    expect(requestSignal).not.toBeNull();
+    expect(requestSignal!.aborted).toBe(true);
+    await act(async () => { await action; });
+
+    const intentId = JSON.parse(requestBody).intent.id as string;
+    resolveRequest(applied(intentId));
+    await act(async () => { await Promise.resolve(); });
     expect(view.result.current.status.phase).toBe("idle");
   });
 

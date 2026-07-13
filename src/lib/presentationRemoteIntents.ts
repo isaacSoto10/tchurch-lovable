@@ -456,6 +456,8 @@ export function presentationRemoteIntentScopeKey(input: {
   sessionId?: string | null;
   clientId?: string | null;
   controllerClientId?: string | null;
+  viewerVersion?: string | null;
+  controllerVersion?: string | null;
   enabled: boolean;
   online: boolean;
   viewerCanControl: boolean;
@@ -468,6 +470,8 @@ export function presentationRemoteIntentScopeKey(input: {
     input.sessionId || "no-session",
     input.clientId || "no-client",
     input.controllerClientId || "no-controller",
+    input.viewerVersion || "no-viewer-version",
+    input.controllerVersion || "no-controller-version",
     input.enabled ? "enabled" : "disabled",
     input.online ? "online" : "offline",
     input.viewerCanControl ? "allowed" : "read-only",

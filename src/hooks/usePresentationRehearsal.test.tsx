@@ -67,6 +67,71 @@ describe("usePresentationRehearsal conditional polling", () => {
     rehearsalMocks.sendCommand.mockReset();
   });
 
+  it("does not fetch, poll, heartbeat or send while rehearsal mode is inactive", async () => {
+    rehearsalMocks.fetchSnapshot.mockResolvedValue(snapshot("viewer-v1", "controller-v1"));
+    const intervalSpy = vi.spyOn(window, "setInterval");
+    const view = renderHook(() => usePresentationRehearsal({
+      serviceId: "service-1",
+      preferredView: "operator",
+      churchId: "church-1",
+      accountId: "account-1",
+      active: false,
+      maintainController: true,
+    }));
+
+    try {
+      expect(view.result.current.loading).toBe(false);
+      expect(view.result.current.snapshot).toBeNull();
+      expect(rehearsalMocks.fetchSnapshot).not.toHaveBeenCalled();
+      await act(async () => {
+        await expect(view.result.current.sendCommand("start_session", {})).rejects.toThrow(/inactivo/);
+        await view.result.current.refresh();
+      });
+      expect(rehearsalMocks.fetchSnapshot).not.toHaveBeenCalled();
+      expect(rehearsalMocks.sendCommand).not.toHaveBeenCalled();
+      expect(intervalSpy.mock.calls.some(([, milliseconds]) => milliseconds === PRESENTATION_HEARTBEAT_MS)).toBe(false);
+    } finally {
+      view.unmount();
+      intervalSpy.mockRestore();
+    }
+  });
+
+  it("drops a late rehearsal response after switching back to Live", async () => {
+    const initial = snapshot("viewer-v1", "controller-v1");
+    const late = snapshot("viewer-rehearsal-late", "controller-late");
+    let resolvePoll: (value: PresentationLiveSnapshot) => void = () => undefined;
+    const deferredPoll = new Promise<PresentationLiveSnapshot>((resolve) => { resolvePoll = resolve; });
+    rehearsalMocks.fetchSnapshot.mockImplementation((
+      _serviceId: string,
+      _view: PresentationPrivateLiveView,
+      _clientId: string,
+      sinceRevision?: number,
+    ) => sinceRevision === undefined ? Promise.resolve(initial) : deferredPoll);
+    const view = renderHook(
+      (props: { active: boolean }) => usePresentationRehearsal({
+        serviceId: "service-1",
+        preferredView: "operator",
+        churchId: "church-1",
+        accountId: "account-1",
+        active: props.active,
+      }),
+      { initialProps: { active: true } },
+    );
+
+    await waitFor(() => expect(view.result.current.loading).toBe(false));
+    const poll = view.result.current.refresh();
+    await waitFor(() => expect(rehearsalMocks.fetchSnapshot).toHaveBeenCalledTimes(2));
+    await act(async () => { view.rerender({ active: false }); });
+    expect(view.result.current.snapshot).toBeNull();
+
+    await act(async () => {
+      resolvePoll(late);
+      await poll;
+    });
+    expect(view.result.current.snapshot).toBeNull();
+    expect(rehearsalMocks.sendCommand).not.toHaveBeenCalled();
+  });
+
   it("sends both opaque versions on a quiet-revision refresh", async () => {
     const initial = snapshot("viewer-v1", "controller-v1");
     const controllerChanged = snapshot("viewer-v1", "controller-v2");

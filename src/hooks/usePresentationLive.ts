@@ -54,6 +54,7 @@ type UsePresentationLiveOptions = {
   accountId: string | null | undefined;
   offlineContext: PresentationOfflineContext;
   enabled?: boolean;
+  active?: boolean;
   maintainController?: boolean;
 };
 
@@ -98,6 +99,7 @@ export function usePresentationLive({
   accountId,
   offlineContext,
   enabled = true,
+  active = true,
   maintainController = true,
 }: UsePresentationLiveOptions) {
   const [snapshot, setSnapshotState] = useState<PresentationLiveSnapshot | null>(null);
@@ -105,7 +107,7 @@ export function usePresentationLive({
   const [activeView, setActiveViewState] = useState<PresentationPrivateLiveView>(preferredView);
   const [networkState, setNetworkStateState] = useState<PresentationNetworkState>("online");
   const [offlineState, setOfflineStateState] = useState<PresentationOfflineState | null>(null);
-  const [loading, setLoading] = useState(enabled);
+  const [loading, setLoading] = useState(enabled && active);
   const [commandPending, setCommandPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -124,8 +126,13 @@ export function usePresentationLive({
   const clientNameRef = useRef<string | null>(null);
   const authorityGenerationRef = useRef(0);
   const authorityScopeRef = useRef("");
+  const authorityIdentityRef = useRef("");
+  const activeRef = useRef(active);
 
-  const authorityScope = [accountId || "signed-out", churchId || "no-church", serviceId || "no-service", preferredView, enabled ? "enabled" : "disabled"].join("::");
+  const authorityIdentity = [accountId || "signed-out", churchId || "no-church", serviceId || "no-service", preferredView, enabled ? "enabled" : "disabled"].join("::");
+  const authorityScope = [authorityIdentity, active ? "live-active" : "live-inactive"].join("::");
+  activeRef.current = active;
+  authorityIdentityRef.current = authorityIdentity;
   if (authorityScopeRef.current !== authorityScope) {
     authorityScopeRef.current = authorityScope;
     authorityGenerationRef.current += 1;
@@ -200,7 +207,7 @@ export function usePresentationLive({
     cached = cachedPackageRef.current,
     expectedGeneration = authorityGenerationRef.current,
   ) => {
-    if (expectedGeneration !== authorityGenerationRef.current) return;
+    if (!activeRef.current || expectedGeneration !== authorityGenerationRef.current) return;
     if (
       !cached
       || !nextSnapshot.session
@@ -219,11 +226,11 @@ export function usePresentationLive({
     const base = createPresentationOfflineState(cached, nextSnapshot, clientId);
     await savePresentationOfflineState(base, clientId);
     if (expectedGeneration !== authorityGenerationRef.current) {
-      await removePresentationOfflineState(base.key);
+      if (authorityIdentityRef.current !== authorityIdentity) await removePresentationOfflineState(base.key);
       return;
     }
     setOfflineState(base);
-  }, [accountId, churchId, clientId, serviceId, setOfflineState]);
+  }, [accountId, authorityIdentity, churchId, clientId, serviceId, setOfflineState]);
 
   const fetchAllowedSnapshot = useCallback(async (
     sinceRevision?: number,
@@ -231,6 +238,7 @@ export function usePresentationLive({
     controllerVersion?: string,
   ) => {
     const generation = authorityGenerationRef.current;
+    if (!activeRef.current) throw new Error("La sesión en vivo está inactiva mientras usas Ensayo.");
     if (!serviceId) throw new Error("Falta el servicio de Tchurch Live.");
     let lastForbidden: unknown = null;
     const candidates = sinceRevision === undefined ? viewCandidates(preferredView) : [activeViewRef.current];
@@ -244,11 +252,11 @@ export function usePresentationLive({
           viewerVersion,
           controllerVersion,
         );
-        if (generation !== authorityGenerationRef.current) return null;
+        if (!activeRef.current || generation !== authorityGenerationRef.current) return null;
         if (next) setActiveView(next.viewer.view === "audience" ? view : next.viewer.view);
         return next;
       } catch (candidateError) {
-        if (generation !== authorityGenerationRef.current) return null;
+        if (!activeRef.current || generation !== authorityGenerationRef.current) return null;
         if (candidateError instanceof ApiError && candidateError.status === 403 && sinceRevision === undefined) {
           lastForbidden = candidateError;
           continue;
@@ -261,11 +269,11 @@ export function usePresentationLive({
 
   const downloadPackage = useCallback(async (nextSnapshot: PresentationLiveSnapshot) => {
     const generation = authorityGenerationRef.current;
-    if (!serviceId || !churchId || !accountId || nextSnapshot.viewer.view === "audience") return null;
+    if (!activeRef.current || !serviceId || !churchId || !accountId || nextSnapshot.viewer.view === "audience") return null;
     const view = nextSnapshot.viewer.view;
     const roles = getPresentationViewerRoles(nextSnapshot.viewer);
     const nextPackage = await fetchPresentationPackage(serviceId, view);
-    if (generation !== authorityGenerationRef.current) return null;
+    if (!activeRef.current || generation !== authorityGenerationRef.current) return null;
     if (
       nextPackage.scope.accountId !== accountId ||
       nextPackage.scope.churchId !== churchId ||
@@ -284,7 +292,7 @@ export function usePresentationLive({
     try {
       const cached = await savePresentationPackage({ accountId, churchId, serviceId, view, roles }, nextPackage);
       if (generation !== authorityGenerationRef.current) {
-        await removePresentationPackage(cached.key);
+        if (authorityIdentityRef.current !== authorityIdentity) await removePresentationPackage(cached.key);
         return null;
       }
       if (mountedRef.current) setPresentationPackageState(nextPackage);
@@ -299,11 +307,11 @@ export function usePresentationLive({
       }
       throw cacheError;
     }
-  }, [accountId, churchId, serviceId]);
+  }, [accountId, authorityIdentity, churchId, serviceId]);
 
   const restoreOfflinePackage = useCallback(async () => {
     const generation = authorityGenerationRef.current;
-    if (!serviceId || !churchId || !accountId) return false;
+    if (!activeRef.current || !serviceId || !churchId || !accountId) return false;
     const trustedViewer = snapshotRef.current?.viewer;
     const expectedRoleFingerprint = trustedViewer && trustedViewer.view !== "audience"
       ? presentationRoleFingerprint(trustedViewer.roles)
@@ -315,10 +323,10 @@ export function usePresentationLive({
       viewCandidates(preferredView),
       expectedRoleFingerprint,
     );
-    if (generation !== authorityGenerationRef.current) return false;
+    if (!activeRef.current || generation !== authorityGenerationRef.current) return false;
     if (!cached) return false;
     const savedOffline = await loadPresentationOfflineState(cached.key, clientId);
-    if (generation !== authorityGenerationRef.current) return false;
+    if (!activeRef.current || generation !== authorityGenerationRef.current) return false;
     cachedPackageRef.current = cached;
     if (mountedRef.current) setPresentationPackageState(cached.package);
     setActiveView(cached.view);
@@ -336,7 +344,7 @@ export function usePresentationLive({
   const reconcileOffline = useCallback(async () => {
     const generation = authorityGenerationRef.current;
     const pending = offlineStateRef.current;
-    if (!serviceId || !pending?.commands.length || commandPendingRef.current) return null;
+    if (!activeRef.current || !serviceId || !pending?.commands.length || commandPendingRef.current) return null;
     commandPendingRef.current = true;
     mutationEpochRef.current += 1;
     setCommandPending(true);
@@ -384,7 +392,7 @@ export function usePresentationLive({
 
   const refresh = useCallback(async (allowReconcile = true) => {
     const generation = authorityGenerationRef.current;
-    if (!enabled || !serviceId) return null;
+    if (!enabled || !activeRef.current || !serviceId) return null;
     if (commandPendingRef.current) return snapshotRef.current;
     if (networkStateRef.current === "diverged") return snapshotRef.current;
     if (allowReconcile && offlineStateRef.current?.commands.length) return reconcileOffline();
@@ -423,7 +431,7 @@ export function usePresentationLive({
           if (localBase) {
             await savePresentationOfflineState(localBase, clientId);
             if (generation !== authorityGenerationRef.current) {
-              await removePresentationOfflineState(localBase.key);
+              if (authorityIdentityRef.current !== authorityIdentity) await removePresentationOfflineState(localBase.key);
               return snapshotRef.current;
             }
             setOfflineState(localBase);
@@ -435,7 +443,15 @@ export function usePresentationLive({
       }
       throw refreshError;
     }
-  }, [cacheAuthoritativeSnapshot, clientId, enabled, fetchAllowedSnapshot, reconcileOffline, revokePrivateAuthority, serviceId, setNetworkState, setOfflineState, setSnapshot]);
+  }, [authorityIdentity, cacheAuthoritativeSnapshot, clientId, enabled, fetchAllowedSnapshot, reconcileOffline, revokePrivateAuthority, serviceId, setNetworkState, setOfflineState, setSnapshot]);
+
+  useEffect(() => {
+    if (!enabled || !accountId || !churchId) return;
+    // Cache identity is authorization state, not run-mode state. Keeping this
+    // active while Live is paused preserves same-scope drafts, while a real
+    // account/church transition still purges the previous private cache.
+    void activatePresentationCacheIdentity(accountId, churchId);
+  }, [accountId, churchId, enabled]);
 
   useEffect(() => {
     const generation = authorityGenerationRef.current;
@@ -452,7 +468,21 @@ export function usePresentationLive({
       setNetworkState("online");
       setLoading(false);
       void clearPresentationLiveCache();
-      return undefined;
+      return () => { mountedRef.current = false; };
+    }
+    if (!active) {
+      mutationEpochRef.current += 1;
+      cachedPackageRef.current = null;
+      commandPendingRef.current = false;
+      setPresentationPackageState(null);
+      setSnapshot(null);
+      setOfflineState(null);
+      setCommandPending(false);
+      setError(null);
+      setNotice(null);
+      setNetworkState("online");
+      setLoading(false);
+      return () => { mountedRef.current = false; };
     }
     let cancelled = false;
     setLoading(true);
@@ -515,12 +545,13 @@ export function usePresentationLive({
       cancelled = true;
       mountedRef.current = false;
     };
-  }, [accountId, cacheAuthoritativeSnapshot, churchId, clientId, downloadPackage, enabled, fetchAllowedSnapshot, preferredView, reconcileOffline, restoreOfflinePackage, revokePrivateAuthority, serviceId, setActiveView, setNetworkState, setOfflineState, setSnapshot]);
+  }, [accountId, active, cacheAuthoritativeSnapshot, churchId, clientId, downloadPackage, enabled, fetchAllowedSnapshot, preferredView, reconcileOffline, restoreOfflinePackage, revokePrivateAuthority, serviceId, setActiveView, setNetworkState, setOfflineState, setSnapshot]);
 
   useEffect(() => {
     const current = snapshot;
     if (
       !enabled
+      || !active
       || loading
       || networkState !== "online"
       || !serviceId
@@ -548,10 +579,10 @@ export function usePresentationLive({
       if (mountedRef.current) setError("No se pudo actualizar el acceso privado de esta presentación.");
     });
     return () => { cancelled = true; };
-  }, [accountId, churchId, downloadPackage, enabled, loading, networkState, presentationPackage, revokePrivateAuthority, serviceId, snapshot]);
+  }, [accountId, active, churchId, downloadPackage, enabled, loading, networkState, presentationPackage, revokePrivateAuthority, serviceId, snapshot]);
 
   useEffect(() => {
-    if (!enabled || loading || !serviceId) return undefined;
+    if (!enabled || !active || loading || !serviceId) return undefined;
     let cancelled = false;
     let timeout: number | undefined;
     let failureCount = 0;
@@ -571,10 +602,10 @@ export function usePresentationLive({
       cancelled = true;
       if (timeout) window.clearTimeout(timeout);
     };
-  }, [enabled, loading, refresh, serviceId]);
+  }, [active, enabled, loading, refresh, serviceId]);
 
   useEffect(() => {
-    if (!enabled || loading || !serviceId) return undefined;
+    if (!enabled || !active || loading || !serviceId) return undefined;
     async function handleOnline() {
       setNetworkState("reconnecting");
       await refresh(true).catch(() => undefined);
@@ -588,12 +619,13 @@ export function usePresentationLive({
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
     };
-  }, [enabled, loading, refresh, serviceId, setNetworkState]);
+  }, [active, enabled, loading, refresh, serviceId, setNetworkState]);
 
   useEffect(() => {
+    if (!active) return undefined;
     const timer = window.setInterval(() => setNowMs(Date.now()), 500);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [active]);
 
   const sendCommand = useCallback(async <T extends PresentationCommandType>(
     type: T,
@@ -601,6 +633,7 @@ export function usePresentationLive({
     options?: { commandId?: string; expectedRevision?: number; allowOffline?: boolean; mediaBinding?: PresentationMediaCommandBinding },
   ): Promise<CommandResult> => {
     const generation = authorityGenerationRef.current;
+    if (!activeRef.current) throw new Error("La sesión en vivo está inactiva mientras usas Ensayo.");
     if (!serviceId || commandPendingRef.current) throw new Error("Espera a que termine la acción anterior.");
     if (networkStateRef.current === "diverged") {
       throw new Error("Resuelve primero el conflicto entre la copia local y la sesión oficial.");
@@ -659,8 +692,8 @@ export function usePresentationLive({
         const nextOffline = queueOfflinePresentationCommand(base, queued, offlineContextRef.current, clientId);
         await savePresentationOfflineState(nextOffline, clientId);
         if (generation !== authorityGenerationRef.current) {
-          await removePresentationOfflineState(nextOffline.key);
-          throw new Error("La cuenta activa cambió antes de guardar la acción local.");
+          if (authorityIdentityRef.current !== authorityIdentity) await removePresentationOfflineState(nextOffline.key);
+          throw new Error("El modo o la cuenta activa cambió antes de guardar la acción local.");
         }
         setOfflineState(nextOffline);
         setSnapshot(nextOffline.localSnapshot);
@@ -685,13 +718,14 @@ export function usePresentationLive({
         if (mountedRef.current) setCommandPending(false);
       }
     }
-  }, [cacheAuthoritativeSnapshot, clientId, clientName, revokePrivateAuthority, serviceId, setNetworkState, setOfflineState, setSnapshot]);
+  }, [authorityIdentity, cacheAuthoritativeSnapshot, clientId, clientName, revokePrivateAuthority, serviceId, setNetworkState, setOfflineState, setSnapshot]);
 
   const heartbeatControllerClientId = snapshot?.session?.controller?.clientId;
   const heartbeatControllerOwnedByViewer = snapshot?.session?.controller?.ownedByViewer;
   useEffect(() => {
     if (
-      !maintainController
+      !active
+      || !maintainController
       || !heartbeatControllerOwnedByViewer
       || heartbeatControllerClientId !== clientId
       || networkState !== "online"
@@ -701,9 +735,10 @@ export function usePresentationLive({
       void sendCommand("heartbeat", {}).catch(() => undefined);
     }, PRESENTATION_HEARTBEAT_MS);
     return () => window.clearInterval(timer);
-  }, [clientId, heartbeatControllerClientId, heartbeatControllerOwnedByViewer, maintainController, networkState, sendCommand]);
+  }, [active, clientId, heartbeatControllerClientId, heartbeatControllerOwnedByViewer, maintainController, networkState, sendCommand]);
 
   const discardOfflineChanges = useCallback(async () => {
+    if (!activeRef.current) return;
     const generation = authorityGenerationRef.current;
     const pending = offlineStateRef.current;
     if (pending) await removePresentationOfflineState(pending.key);
@@ -731,6 +766,7 @@ export function usePresentationLive({
   const controllerLeaseActive = Boolean(snapshot?.session?.controller);
 
   return {
+    active,
     snapshot,
     presentationPackage,
     activeView,

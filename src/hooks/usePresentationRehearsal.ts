@@ -30,6 +30,7 @@ type UsePresentationRehearsalOptions = {
   churchId: string | null | undefined;
   accountId: string | null | undefined;
   enabled?: boolean;
+  active?: boolean;
   maintainController?: boolean;
 };
 
@@ -61,8 +62,8 @@ function pollDelay(failures: number) {
 
 /**
  * Rehearsal deliberately has no package/offline/report/broadcast pipeline.
- * It keeps polling beside the live hook, but every mutation is sent only to
- * the isolated rehearsal endpoint.
+ * Its runtime is active only while the UI is in rehearsal mode, and every
+ * mutation is sent only to the isolated rehearsal endpoint.
  */
 export function usePresentationRehearsal({
   serviceId,
@@ -70,12 +71,13 @@ export function usePresentationRehearsal({
   churchId,
   accountId,
   enabled = true,
+  active = true,
   maintainController = true,
 }: UsePresentationRehearsalOptions) {
   const [snapshot, setSnapshot] = useState<PresentationLiveSnapshot | null>(null);
   const [activeView, setActiveView] = useState<PresentationPrivateLiveView>(preferredView);
   const [networkState, setNetworkState] = useState<PresentationNetworkState>("online");
-  const [loading, setLoading] = useState(enabled);
+  const [loading, setLoading] = useState(enabled && active);
   const [commandPending, setCommandPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -85,7 +87,9 @@ export function usePresentationRehearsal({
   const pendingRef = useRef(false);
   const mutationEpochRef = useRef(0);
   const generationRef = useRef(0);
-  const scope = [serviceId || "none", churchId || "none", accountId || "none", preferredView, enabled].join("::");
+  const activeRef = useRef(active);
+  const scope = [serviceId || "none", churchId || "none", accountId || "none", preferredView, enabled, active ? "rehearsal-active" : "rehearsal-inactive"].join("::");
+  activeRef.current = active;
   const scopeRef = useRef(scope);
   if (scopeRef.current !== scope) {
     scopeRef.current = scope;
@@ -109,7 +113,8 @@ export function usePresentationRehearsal({
     viewerVersion?: string,
     controllerVersion?: string,
   ) => {
-    if (!serviceId) return null;
+    const generation = generationRef.current;
+    if (!activeRef.current || !serviceId) return null;
     const candidates = sinceRevision === undefined ? viewCandidates(preferredView) : [activeViewRef.current];
     let lastForbidden: unknown = null;
     for (const view of candidates) {
@@ -122,12 +127,14 @@ export function usePresentationRehearsal({
           viewerVersion,
           controllerVersion,
         );
+        if (!activeRef.current || generation !== generationRef.current) return null;
         if (next?.viewer.view !== "audience") {
           activeViewRef.current = next?.viewer.view || view;
           setActiveView(activeViewRef.current);
         }
         return next;
       } catch (candidateError) {
+        if (!activeRef.current || generation !== generationRef.current) return null;
         if (candidateError instanceof ApiError && candidateError.status === 403 && sinceRevision === undefined) {
           lastForbidden = candidateError;
           continue;
@@ -140,7 +147,7 @@ export function usePresentationRehearsal({
 
   const refresh = useCallback(async () => {
     const generation = generationRef.current;
-    if (!enabled || !serviceId || pendingRef.current) return snapshotRef.current;
+    if (!enabled || !activeRef.current || !serviceId || pendingRef.current) return snapshotRef.current;
     const pollEpoch = mutationEpochRef.current;
     try {
       const current = snapshotRef.current;
@@ -149,7 +156,7 @@ export function usePresentationRehearsal({
         current?.viewerVersion,
         current?.controllerVersion,
       );
-      if (generation !== generationRef.current || pollEpoch !== mutationEpochRef.current || pendingRef.current) return snapshotRef.current;
+      if (!activeRef.current || generation !== generationRef.current || pollEpoch !== mutationEpochRef.current || pendingRef.current) return snapshotRef.current;
       if (next) acceptSnapshot(next);
       setNetworkState("online");
       return next || snapshotRef.current;
@@ -182,6 +189,17 @@ export function usePresentationRehearsal({
       setLoading(false);
       return undefined;
     }
+    if (!active) {
+      mutationEpochRef.current += 1;
+      pendingRef.current = false;
+      acceptSnapshot(null);
+      setCommandPending(false);
+      setError(null);
+      setNotice(null);
+      setNetworkState("online");
+      setLoading(false);
+      return undefined;
+    }
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -205,10 +223,10 @@ export function usePresentationRehearsal({
       if (!cancelled && generation === generationRef.current) setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [acceptSnapshot, accountId, churchId, enabled, fetchAllowed, preferredView, serviceId]);
+  }, [acceptSnapshot, accountId, active, churchId, enabled, fetchAllowed, preferredView, serviceId]);
 
   useEffect(() => {
-    if (!enabled || loading || !serviceId) return undefined;
+    if (!enabled || !active || loading || !serviceId) return undefined;
     let cancelled = false;
     let timeout: number | undefined;
     let failures = 0;
@@ -223,7 +241,7 @@ export function usePresentationRehearsal({
       cancelled = true;
       if (timeout) window.clearTimeout(timeout);
     };
-  }, [enabled, loading, networkState, refresh, serviceId]);
+  }, [active, enabled, loading, networkState, refresh, serviceId]);
 
   const sendCommand = useCallback(async <T extends PresentationCommandType>(
     type: T,
@@ -231,6 +249,7 @@ export function usePresentationRehearsal({
     options?: { commandId?: string; expectedRevision?: number; mediaBinding?: PresentationMediaCommandBinding },
   ) => {
     const generation = generationRef.current;
+    if (!activeRef.current) throw new Error("El ensayo está inactivo mientras usas la sesión en vivo.");
     if (!serviceId || pendingRef.current) throw new Error("Espera a que termine la acción anterior.");
     const current = snapshotRef.current;
     if (type !== "start_session" && !current?.session) throw new Error("Inicia el ensayo antes de usar este control.");
@@ -289,7 +308,8 @@ export function usePresentationRehearsal({
   const heartbeatControllerOwnedByViewer = snapshot?.session?.controller?.ownedByViewer;
   useEffect(() => {
     if (
-      !maintainController
+      !active
+      || !maintainController
       || !heartbeatControllerOwnedByViewer
       || heartbeatControllerClientId !== clientId
       || networkState !== "online"
@@ -298,12 +318,13 @@ export function usePresentationRehearsal({
       if (!pendingRef.current) void sendCommand("heartbeat", {}).catch(() => undefined);
     }, PRESENTATION_HEARTBEAT_MS);
     return () => window.clearInterval(timer);
-  }, [clientId, heartbeatControllerClientId, heartbeatControllerOwnedByViewer, maintainController, networkState, sendCommand]);
+  }, [active, clientId, heartbeatControllerClientId, heartbeatControllerOwnedByViewer, maintainController, networkState, sendCommand]);
 
   useEffect(() => {
+    if (!active) return undefined;
     const timer = window.setInterval(() => setNowMs(Date.now()), 500);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [active]);
 
   const timing = useMemo(() => projectPresentationTiming(snapshot, nowMs), [nowMs, snapshot]);
   const projectedNow = snapshot ? Date.parse(snapshot.serverNow) + Math.max(0, nowMs - snapshot.receivedAtMs) : nowMs;
@@ -317,6 +338,7 @@ export function usePresentationRehearsal({
   const controllerLeaseActive = Boolean(snapshot?.session?.controller);
 
   return {
+    active,
     snapshot,
     activeView,
     networkState,

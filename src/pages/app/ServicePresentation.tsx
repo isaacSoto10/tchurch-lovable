@@ -836,6 +836,7 @@ export default function ServicePresentation() {
     accountId: authenticatedUserId,
     offlineContext,
     enabled: Boolean(id && selectedChurch?.id && authenticatedUserId),
+    active: runMode === "live",
     maintainController: runMode === "live",
   });
   const rehearsal = usePresentationRehearsal({
@@ -844,6 +845,7 @@ export default function ServicePresentation() {
     churchId: selectedChurch?.id,
     accountId: authenticatedUserId,
     enabled: Boolean(id && selectedChurch?.id && authenticatedUserId),
+    active: runMode === "rehearsal",
     maintainController: runMode === "rehearsal",
   });
   const liveControllerOwnedByClient = Boolean(
@@ -863,6 +865,8 @@ export default function ServicePresentation() {
     sessionId: live.snapshot?.session?.id,
     clientId: live.clientId,
     controllerClientId: live.snapshot?.session?.controller?.clientId,
+    viewerVersion: live.snapshot?.viewerVersion,
+    controllerVersion: live.snapshot?.controllerVersion,
     enabled: runMode === "live",
     online: live.networkState === "online",
     viewerCanControl: live.snapshot?.viewer.canControl === true,

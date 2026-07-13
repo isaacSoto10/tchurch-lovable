@@ -1,5 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "@/lib/api";
 import type {
   CachedPresentationPackage,
   PresentationLiveSnapshot,
@@ -163,6 +164,143 @@ describe("usePresentationLive authority generation", () => {
     expect(result.current.snapshot?.serviceId).toBe("service-new");
     expect(result.current.snapshot?.viewerVersion).toBe("viewer-new");
     expect(result.current.presentationPackage?.service.id).toBe("service-new");
+  });
+
+  it("preserves an exact-client live queue while inactive and reconciles it only after Live reactivates", async () => {
+    const localClientId = "11111111-1111-4111-8111-111111111111";
+    localStorage.setItem("tchurch_live_installation_client_id", localClientId);
+    const controlled = snapshot("service-1", "viewer-v1", 1);
+    controlled.session!.controller = {
+      clientId: localClientId,
+      displayName: "Este iPad",
+      leaseExpiresAt: "2099-07-11T19:01:00.000Z",
+      ownedByViewer: true,
+    };
+    const reconciled = snapshot("service-1", "viewer-v2", 2);
+    reconciled.session!.controller = { ...controlled.session!.controller! };
+    liveMocks.fetchSnapshot.mockResolvedValue(controlled);
+    liveMocks.fetchPackage.mockResolvedValue(presentationPackage("service-1", "account-1", "church-1"));
+    liveMocks.sendCommand
+      .mockRejectedValueOnce(new ApiError("Offline", 0, { error: "OFFLINE" }))
+      .mockResolvedValueOnce(reconciled);
+    mockPackageSave();
+    const offlineContext = { steps: [], plannedTiming: { serviceSeconds: 0, itemSecondsById: {} } };
+    const view = renderHook(
+      (props: { active: boolean; accountId: string; churchId: string }) => usePresentationLive({
+        serviceId: "service-1",
+        preferredView: "operator",
+        offlineContext,
+        ...props,
+      }),
+      { initialProps: { active: true, accountId: "account-1", churchId: "church-1" } },
+    );
+
+    await waitFor(() => expect(view.result.current.loading).toBe(false));
+    await act(async () => {
+      await view.result.current.sendCommand("next", {});
+    });
+    expect(view.result.current.offlineQueueCount).toBe(1);
+    expect(liveMocks.sendCommand).toHaveBeenCalledOnce();
+    const staleRefresh = view.result.current.refresh;
+
+    await act(async () => {
+      view.rerender({ active: false, accountId: "account-1", churchId: "church-1" });
+    });
+    expect(view.result.current.snapshot).toBeNull();
+    expect(view.result.current.offlineQueueCount).toBe(0);
+    const persistedWhileInactive = JSON.parse(localStorage.getItem("tchurch_live_offline_v1") || "[]");
+    expect(persistedWhileInactive).toHaveLength(1);
+    expect(persistedWhileInactive[0].clientId).toBe(localClientId);
+    expect(persistedWhileInactive[0].commands).toHaveLength(1);
+
+    await act(async () => {
+      window.dispatchEvent(new Event("online"));
+      await staleRefresh(true);
+      await expect(view.result.current.sendCommand("next", {})).rejects.toThrow(/inactiva/);
+    });
+    expect(liveMocks.fetchSnapshot).toHaveBeenCalledTimes(1);
+    expect(liveMocks.sendCommand).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      view.rerender({ active: true, accountId: "account-1", churchId: "church-1" });
+    });
+    await waitFor(() => expect(liveMocks.sendCommand).toHaveBeenCalledTimes(2));
+    expect(liveMocks.sendCommand).toHaveBeenLastCalledWith(
+      "service-1",
+      expect.objectContaining({ clientId: localClientId, type: "offline_reconcile" }),
+      "operator",
+    );
+    await waitFor(() => expect(view.result.current.snapshot?.viewerVersion).toBe("viewer-v2"));
+    expect(view.result.current.offlineQueueCount).toBe(0);
+  });
+
+  it("drops a late live poll after rehearsal deactivates the runtime", async () => {
+    const initial = snapshot("service-1", "viewer-v1");
+    const late = snapshot("service-1", "viewer-live-late", 99);
+    let resolvePoll: (value: PresentationLiveSnapshot) => void = () => undefined;
+    const deferredPoll = new Promise<PresentationLiveSnapshot>((resolve) => { resolvePoll = resolve; });
+    liveMocks.fetchSnapshot.mockImplementation((_serviceId: string, _view: PresentationPrivateLiveView, _clientId: string, sinceRevision?: number) => (
+      sinceRevision === undefined ? Promise.resolve(initial) : deferredPoll
+    ));
+    liveMocks.fetchPackage.mockResolvedValue(presentationPackage("service-1", "account-1", "church-1"));
+    mockPackageSave();
+    const offlineContext = { steps: [], plannedTiming: { serviceSeconds: 0, itemSecondsById: {} } };
+    const view = renderHook(
+      (props: { active: boolean }) => usePresentationLive({
+        serviceId: "service-1",
+        accountId: "account-1",
+        churchId: "church-1",
+        preferredView: "operator",
+        offlineContext,
+        active: props.active,
+      }),
+      { initialProps: { active: true } },
+    );
+
+    await waitFor(() => expect(view.result.current.loading).toBe(false));
+    const poll = view.result.current.refresh(false);
+    await waitFor(() => expect(liveMocks.fetchSnapshot).toHaveBeenCalledTimes(2));
+    await act(async () => { view.rerender({ active: false }); });
+    expect(view.result.current.snapshot).toBeNull();
+
+    await act(async () => {
+      resolvePoll(late);
+      await poll;
+    });
+    expect(view.result.current.snapshot).toBeNull();
+    expect(view.result.current.presentationPackage).toBeNull();
+  });
+
+  it("purges private live storage on an account/church change even while Live is inactive", async () => {
+    localStorage.setItem("tchurch_live_active_cache_identity", "account-1::church-1");
+    localStorage.setItem("tchurch_live_offline_v1", JSON.stringify([{ key: "old-private-state" }]));
+    const offlineContext = { steps: [], plannedTiming: { serviceSeconds: 0, itemSecondsById: {} } };
+    liveMocks.fetchSnapshot.mockResolvedValue(snapshot("service-1", "viewer-account-2"));
+    liveMocks.fetchPackage.mockResolvedValue(presentationPackage("service-1", "account-2", "church-2"));
+    mockPackageSave();
+    const view = renderHook(
+      (props: { accountId: string; churchId: string; active: boolean }) => usePresentationLive({
+        serviceId: "service-1",
+        preferredView: "operator",
+        offlineContext,
+        ...props,
+      }),
+      { initialProps: { accountId: "account-1", churchId: "church-1", active: false } },
+    );
+    expect(JSON.parse(localStorage.getItem("tchurch_live_offline_v1") || "[]")).toHaveLength(1);
+
+    await act(async () => {
+      view.rerender({ accountId: "account-2", churchId: "church-2", active: false });
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(JSON.parse(localStorage.getItem("tchurch_live_offline_v1") || "[]")).toEqual([]));
+
+    await act(async () => {
+      view.rerender({ accountId: "account-2", churchId: "church-2", active: true });
+    });
+    await waitFor(() => expect(view.result.current.loading).toBe(false));
+    expect(view.result.current.snapshot?.viewerVersion).toBe("viewer-account-2");
+    expect(liveMocks.sendCommand).not.toHaveBeenCalled();
   });
 
   it("drops an in-memory editor package before a downgraded replacement finishes", async () => {
