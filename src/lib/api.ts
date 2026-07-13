@@ -36,6 +36,11 @@ export class ApiError extends Error {
   }
 }
 
+export type ApiFetchOptions = RequestInit & {
+  /** Never pass this request body to diagnostics. Used for lyrics, decisions, and other private drafts. */
+  sensitiveBody?: boolean;
+};
+
 type ClerkTokenWindow = Window & {
   Clerk?: {
     session?: {
@@ -58,11 +63,12 @@ export function setChurchId(id: string | null): void {
 
 export async function apiFetch<T = unknown>(
   path: string,
-  options: RequestInit = {},
+  options: ApiFetchOptions = {},
   token?: string | null
 ): Promise<T> {
-  const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
-  const method = (options.method || "GET").toUpperCase();
+  const { sensitiveBody = false, ...requestOptions } = options;
+  const isFormData = typeof FormData !== "undefined" && requestOptions.body instanceof FormData;
+  const method = (requestOptions.method || "GET").toUpperCase();
   const shouldNoStore = method === "GET" || method === "POST" || method === "PUT" || method === "PATCH" || method === "DELETE";
   const resolvedToken =
     token ??
@@ -72,9 +78,9 @@ export async function apiFetch<T = unknown>(
   const shouldUseNativeCache =
     method === "GET" &&
     Boolean(resolvedToken) &&
-    options.cache !== "no-store" &&
-    options.cache !== "reload" &&
-    options.cache !== "no-cache" &&
+    requestOptions.cache !== "no-store" &&
+    requestOptions.cache !== "reload" &&
+    requestOptions.cache !== "no-cache" &&
     isNativeApiCacheableGet(path);
   const nativeCache = shouldUseNativeCache ? readNativeApiCache<T>(path) : null;
 
@@ -84,7 +90,7 @@ export async function apiFetch<T = unknown>(
 
   const headers: Record<string, string> = {
     ...(!isFormData ? { "Content-Type": "application/json" } : {}),
-    ...(options.headers as Record<string, string>),
+    ...(requestOptions.headers as Record<string, string>),
   };
 
   if (resolvedToken) {
@@ -101,8 +107,8 @@ export async function apiFetch<T = unknown>(
   let res: Response;
   try {
     res = await fetch(url, {
-      ...options,
-      cache: options.cache ?? (shouldNoStore ? "no-store" : undefined),
+      ...requestOptions,
+      cache: requestOptions.cache ?? (shouldNoStore ? "no-store" : undefined),
       headers,
     });
   } catch (error) {
@@ -112,7 +118,7 @@ export async function apiFetch<T = unknown>(
       status: 0,
       ok: false,
       durationMs: actionNow() - startedAt,
-      body: options.body,
+      body: sensitiveBody ? undefined : requestOptions.body,
       source: "apiFetch",
     });
     if (nativeCache?.stale) {
@@ -133,7 +139,7 @@ export async function apiFetch<T = unknown>(
     status: res.status,
     ok: res.ok,
     durationMs: actionNow() - startedAt,
-    body: options.body,
+    body: sensitiveBody ? undefined : requestOptions.body,
     source: "apiFetch",
   });
 

@@ -8,12 +8,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Search, Pencil, Trash2, Loader2 } from "lucide-react";
+import { Plus, Search, Pencil, Trash2, Loader2, FileClock } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
-import { useChurch } from "@/providers/ChurchProvider";
 import { getSongDisplayKey, type SongArrangement } from "@/lib/songDisplay";
 import { compareSongsByDateAddedDesc, compareSongsByLastUsedDesc, formatSongLastUsedLabel } from "@/lib/songUsage";
+import { listSongLyricsProposals } from "@/lib/songLyricsProposals";
 
 interface Song {
   id: string;
@@ -37,10 +37,10 @@ const SONG_SEARCH_MIN_LENGTH = 2;
 
 export default function Songs() {
   const navigate = useNavigate();
-  const { selectedChurch } = useChurch();
   const { fetchApi } = useApi();
   const { toast } = useToast();
-  const isAdmin = selectedChurch?.role === "ADMIN";
+  const [canManageLyrics, setCanManageLyrics] = useState<boolean | null>(null);
+  const [hasPendingProposals, setHasPendingProposals] = useState(false);
   const [songs, setSongs] = useState<Song[]>([]);
   const [search, setSearch] = useState("");
   const [appliedSearch, setAppliedSearch] = useState("");
@@ -108,6 +108,20 @@ export default function Songs() {
   useEffect(() => {
     loadSongs(appliedSearch);
   }, [appliedSearch, loadSongs]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void listSongLyricsProposals({ status: "PENDING", limit: 1 })
+      .then((response) => {
+        if (cancelled) return;
+        setCanManageLyrics(response.permissions.canManageLyrics);
+        setHasPendingProposals(response.proposals.length > 0);
+      })
+      .catch(() => {
+        if (!cancelled) setCanManageLyrics(null);
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   const openNewDialog = () => {
     setEditingSong(null);
@@ -227,7 +241,13 @@ export default function Songs() {
             <h1 className="mt-1 text-3xl font-black tracking-tight text-zinc-950">Canciones</h1>
             <p className="mt-1 text-sm text-muted-foreground">Encuentra acordes, letras, tonalidades y videos para el equipo.</p>
           </div>
-          {isAdmin && <Button size="sm" onClick={openNewDialog} className="h-11 shrink-0 rounded-2xl px-4"><Plus className="w-4 h-4 mr-1" /> Nueva</Button>}
+          <div className="flex shrink-0 items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => navigate("/app/songs/proposals")} className="relative h-11 rounded-2xl px-3">
+              <FileClock className="h-4 w-4 sm:mr-2" /><span className="hidden sm:inline">Propuestas</span>
+              {hasPendingProposals && <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-primary ring-2 ring-white" aria-label="Hay propuestas pendientes" />}
+            </Button>
+            {canManageLyrics === true && <Button size="sm" onClick={openNewDialog} className="h-11 rounded-2xl px-4"><Plus className="w-4 h-4 mr-1" /> Nueva</Button>}
+          </div>
         </div>
       </div>
       <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_180px_160px_180px]">
@@ -370,7 +390,7 @@ export default function Songs() {
               </div>
               <div className="flex shrink-0 items-center gap-1" onClick={(e) => e.stopPropagation()}>
                 {s.bpm && <span className="mr-1 rounded-full bg-zinc-100 px-2 py-1 text-xs font-semibold text-muted-foreground">{s.bpm} BPM</span>}
-                {isAdmin && (
+                {canManageLyrics === true && (
                   <>
                     <Button variant="ghost" size="icon" className="h-9 w-9 rounded-xl" onClick={() => openEditDialog(s)}>
                       <Pencil className="w-4 h-4" />

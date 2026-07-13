@@ -8,6 +8,7 @@ import { useChurch } from "@/providers/ChurchProvider";
 import { useIsMobile, useResponsiveLayout } from "@/hooks/use-mobile";
 import { usePushNotifications } from "@/hooks/usePushNotifications";
 import { useEventCheckInQueueSync } from "@/hooks/useEventCheckInQueueSync";
+import { useSongLyricsProposalSync } from "@/hooks/useSongLyricsProposalSync";
 import { NotificationBell } from "@/components/NotificationBell";
 import { NotificationsProvider } from "@/providers/NotificationsProvider";
 import {
@@ -92,6 +93,7 @@ function AppLayoutInner() {
 
   usePushNotifications();
   useEventCheckInQueueSync();
+  useSongLyricsProposalSync();
 
   useEffect(() => {
     const viewport = window.visualViewport;

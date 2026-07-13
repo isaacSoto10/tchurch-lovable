@@ -19,6 +19,7 @@ const Signup = lazy(appRouteLoaders.Signup);
 const AppLayout = lazy(() => appRouteLoaders.AppLayout().then((module) => ({ default: module.AppLayout })));
 const Dashboard = lazy(appRouteLoaders.Dashboard);
 const Songs = lazy(appRouteLoaders.Songs);
+const SongLyricsProposals = lazy(appRouteLoaders.SongLyricsProposals);
 const SongDetail = lazy(appRouteLoaders.SongDetail);
 const Services = lazy(appRouteLoaders.Services);
 const ServiceDetail = lazy(appRouteLoaders.ServiceDetail);
@@ -135,6 +136,7 @@ const App = () => {
                   <Route path="/app" element={<RequireAuth><AppLayout /></RequireAuth>}>
                     <Route index element={<Dashboard />} />
                     <Route path="songs" element={<Songs />} />
+                    <Route path="songs/proposals" element={<SongLyricsProposals />} />
                     <Route path="songs/:id" element={<SongDetail />} />
                     <Route path="services" element={<Services />} />
                     <Route path="services/:id" element={<ServiceDetail />} />

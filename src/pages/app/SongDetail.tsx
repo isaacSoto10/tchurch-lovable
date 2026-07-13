@@ -1,25 +1,24 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Separator } from "@/components/ui/separator";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Loader2, ArrowLeft, Plus, Trash2, Music2, Play, PlayCircle } from "lucide-react";
+import { Loader2, ArrowLeft, Plus, Trash2, Music2, Play, PlayCircle, FileClock } from "lucide-react";
 import { apiFetch } from "@/lib/api";
-import { useChurch } from "@/providers/ChurchProvider";
 import { ChordProPreview } from "@/components/ChordProPreview";
+import { SongLyricsProposalEditor, type SongLyricsEditorTarget } from "@/components/SongLyricsProposalEditor";
 import { buildSongNotes, getSongYoutubeUrl, parseSongNotes } from "@/lib/songDisplay";
 import { inferChordProKey } from "@/lib/musicUtils";
+import { canonicalizeChordPro, listSongLyricsProposals } from "@/lib/songLyricsProposals";
 
 const MUSICAL_KEYS = ["C", "C#/Db", "D", "D#/Eb", "E", "F", "F#/Gb", "G", "G#/Ab", "A", "A#/Bb", "B",
   "Cm", "C#m", "Dm", "D#m", "Em", "Fm", "F#m", "Gm", "G#m", "Am", "A#m", "Bm"];
@@ -51,7 +50,7 @@ type Arrangement = {
   key: string | null;
   bpm: number | null;
   meter: string | null;
-  sequence: any[];
+  sequence: unknown[];
   lyrics: string | null;
   notes: string | null;
   createdAt: string;
@@ -81,7 +80,6 @@ function PresentationSlide({ text }: { text: string }) {
 export default function SongDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { selectedChurch } = useChurch();
 
   const [song, setSong] = useState<Song | null>(null);
   const [arrangements, setArrangements] = useState<Arrangement[]>([]);
@@ -90,6 +88,7 @@ export default function SongDetail() {
   const [activeArrangement, setActiveArrangement] = useState<Arrangement | null>(null);
   const [showAddArrangement, setShowAddArrangement] = useState(false);
   const [showDeleteSong, setShowDeleteSong] = useState(false);
+  const [canManageLyrics, setCanManageLyrics] = useState<boolean | null>(null);
 
   // Info form
   const [infoForm, setInfoForm] = useState({
@@ -129,6 +128,12 @@ export default function SongDetail() {
           notes: songNotes.plainNotes || "",
         });
         setArrangements(arrData || []);
+        try {
+          const proposalAccess = await listSongLyricsProposals({ songId: id, limit: 1 });
+          setCanManageLyrics(proposalAccess.permissions.canManageLyrics);
+        } catch {
+          setCanManageLyrics(null);
+        }
         if (arrData?.length > 0) setActiveArrangement(arrData[0]);
       } catch (e) {
         console.error(e);
@@ -137,11 +142,11 @@ export default function SongDetail() {
       }
     }
     load();
-  }, [id]);
+  }, [id, navigate]);
 
-  async function saveField(field: string, value: string) {
-    if (!id || !song) return;
-    setSong({ ...song, [field]: value });
+  async function saveField(field: string, value: string | number | null) {
+    if (!id || !song || canManageLyrics !== true) return;
+    setSong({ ...song, [field]: value } as Song);
     try {
       await apiFetch(`/songs/${id}`, {
         method: "PUT",
@@ -153,7 +158,7 @@ export default function SongDetail() {
   }
 
   async function handleSaveInfo() {
-    if (!id) return;
+    if (!id || canManageLyrics !== true) return;
     setSaving(true);
     try {
       const updates = {
@@ -182,7 +187,7 @@ export default function SongDetail() {
 
   async function handleAddArrangement(e: React.FormEvent) {
     e.preventDefault();
-    if (!id) return;
+    if (!id || canManageLyrics !== true) return;
     setSaving(true);
     try {
       const data = await apiFetch<Arrangement>(`/arrangements`, {
@@ -196,6 +201,7 @@ export default function SongDetail() {
           lyrics: arrForm.lyrics || null,
           sequence: [],
         }),
+        sensitiveBody: Boolean(arrForm.lyrics),
       });
       setArrangements((prev) => [...prev, data]);
       setActiveArrangement(data);
@@ -209,7 +215,7 @@ export default function SongDetail() {
   }
 
   async function handleDeleteArrangement(arrId: string) {
-    if (!id) return;
+    if (!id || canManageLyrics !== true) return;
     try {
       await apiFetch(`/arrangements/${arrId}`, { method: "DELETE" });
       setArrangements((prev) => prev.filter((a) => a.id !== arrId));
@@ -220,7 +226,7 @@ export default function SongDetail() {
   }
 
   async function handleDeleteSong() {
-    if (!id) return;
+    if (!id || canManageLyrics !== true) return;
     try {
       await apiFetch(`/songs/${id}`, { method: "DELETE" });
       navigate("/app/songs");
@@ -229,19 +235,46 @@ export default function SongDetail() {
     }
   }
 
-  async function handleSaveLyrics() {
-    if (!activeArrangement) return;
-    setSaving(true);
-    try {
-      await apiFetch(`/arrangements/${activeArrangement.id}`, {
+  const lyricsTargets: SongLyricsEditorTarget[] = [
+    { type: "SONG", songId: song?.id || id || "", arrangementId: null, label: "Canción principal", lyrics: song?.lyrics || "" },
+    ...arrangements.map((arrangement) => ({
+      type: "ARRANGEMENT" as const,
+      songId: arrangement.songId,
+      arrangementId: arrangement.id,
+      label: arrangement.name,
+      lyrics: arrangement.lyrics || "",
+    })),
+  ];
+
+  async function saveLyricsDirectly(target: SongLyricsEditorTarget, lyrics: string) {
+    if (canManageLyrics !== true) throw new Error("No tienes permiso para publicar letras directamente.");
+    if (target.type === "ARRANGEMENT" && target.arrangementId) {
+      const updated = await apiFetch<Arrangement>(`/arrangements/${encodeURIComponent(target.arrangementId)}`, {
         method: "PUT",
-        body: JSON.stringify({ lyrics: activeArrangement.lyrics }),
+        body: JSON.stringify({ lyrics }),
+        sensitiveBody: true,
       });
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setSaving(false);
+      setArrangements((current) => current.map((item) => item.id === updated.id ? updated : item));
+      if (activeArrangement?.id === updated.id) setActiveArrangement(updated);
+      return;
     }
+    const updated = await apiFetch<Song>(`/songs/${encodeURIComponent(target.songId)}`, {
+      method: "PUT",
+      body: JSON.stringify({ lyrics }),
+      sensitiveBody: true,
+    });
+    setSong(updated);
+  }
+
+  async function refreshLyricsTarget(target: SongLyricsEditorTarget) {
+    const [songData, arrData] = await Promise.all([
+      apiFetch<Song>(`/songs/${encodeURIComponent(target.songId)}`, { cache: "no-store" }),
+      apiFetch<Arrangement[]>(`/songs/${encodeURIComponent(target.songId)}/arrangements`, { cache: "no-store" }),
+    ]);
+    setSong(songData);
+    setArrangements(arrData);
+    const selected = target.type === "ARRANGEMENT" ? arrData.find((item) => item.id === target.arrangementId)?.lyrics || "" : songData.lyrics || "";
+    return canonicalizeChordPro(selected);
   }
 
   if (loading) {
@@ -280,9 +313,14 @@ export default function SongDetail() {
               </a>
             </Button>
           )}
-          <Button variant="ghost" size="sm" className="h-10 w-10 rounded-2xl text-red-500" onClick={() => setShowDeleteSong(true)}>
-            <Trash2 className="w-4 h-4" />
+          <Button variant="outline" size="sm" className="h-10 w-10 rounded-2xl p-0" onClick={() => navigate("/app/songs/proposals")} aria-label="Ver propuestas de letras">
+            <FileClock className="w-4 h-4" />
           </Button>
+          {canManageLyrics === true && (
+            <Button variant="ghost" size="sm" className="h-10 w-10 rounded-2xl text-red-500" onClick={() => setShowDeleteSong(true)} aria-label="Eliminar canción">
+              <Trash2 className="w-4 h-4" />
+            </Button>
+          )}
         </div>
 
         <div className="px-4 pb-3">
@@ -306,34 +344,35 @@ export default function SongDetail() {
               <CardContent className="p-4 space-y-4">
                 <div className="space-y-2">
                   <Label>Título</Label>
-                  <Input value={infoForm.title} onChange={(e) => setInfoForm({ ...infoForm, title: e.target.value })} onBlur={() => saveField("title", infoForm.title)} />
+                  <Input disabled={canManageLyrics !== true} value={infoForm.title} onChange={(e) => setInfoForm({ ...infoForm, title: e.target.value })} onBlur={() => saveField("title", infoForm.title)} />
                 </div>
                 <div className="space-y-2">
                   <Label>Autor</Label>
-                  <Input value={infoForm.author} onChange={(e) => setInfoForm({ ...infoForm, author: e.target.value })} onBlur={() => saveField("author", infoForm.author)} placeholder="Ej. Tradicional, Bethel Music" />
+                  <Input disabled={canManageLyrics !== true} value={infoForm.author} onChange={(e) => setInfoForm({ ...infoForm, author: e.target.value })} onBlur={() => saveField("author", infoForm.author)} placeholder="Ej. Tradicional, Bethel Music" />
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-2">
                     <Label>CCLI #</Label>
-                    <Input value={infoForm.ccliNumber} onChange={(e) => setInfoForm({ ...infoForm, ccliNumber: e.target.value })} onBlur={() => saveField("ccliNumber", infoForm.ccliNumber)} />
+                    <Input disabled={canManageLyrics !== true} value={infoForm.ccliNumber} onChange={(e) => setInfoForm({ ...infoForm, ccliNumber: e.target.value })} onBlur={() => saveField("ccliNumber", infoForm.ccliNumber)} />
                   </div>
                   <div className="space-y-2">
                   <Label>Copyright</Label>
-                    <Input value={infoForm.copyright} onChange={(e) => setInfoForm({ ...infoForm, copyright: e.target.value })} onBlur={() => saveField("copyright", infoForm.copyright)} />
+                    <Input disabled={canManageLyrics !== true} value={infoForm.copyright} onChange={(e) => setInfoForm({ ...infoForm, copyright: e.target.value })} onBlur={() => saveField("copyright", infoForm.copyright)} />
                   </div>
                 </div>
                 <div className="space-y-2">
                   <Label>Etiquetas</Label>
-                  <Input value={infoForm.tags} onChange={(e) => setInfoForm({ ...infoForm, tags: e.target.value })} onBlur={() => saveField("tags", infoForm.tags)} placeholder="adoración, alabanza, coro" />
+                  <Input disabled={canManageLyrics !== true} value={infoForm.tags} onChange={(e) => setInfoForm({ ...infoForm, tags: e.target.value })} onBlur={() => saveField("tags", infoForm.tags)} placeholder="adoración, alabanza, coro" />
                 </div>
                 <div className="space-y-2">
                   <Label>Referencia bíblica</Label>
-                  <Input value={infoForm.scriptureRef} onChange={(e) => setInfoForm({ ...infoForm, scriptureRef: e.target.value })} onBlur={() => saveField("scriptureRef", infoForm.scriptureRef)} placeholder="Ej. Salmo 23" />
+                  <Input disabled={canManageLyrics !== true} value={infoForm.scriptureRef} onChange={(e) => setInfoForm({ ...infoForm, scriptureRef: e.target.value })} onBlur={() => saveField("scriptureRef", infoForm.scriptureRef)} placeholder="Ej. Salmo 23" />
                 </div>
                 <div className="space-y-2">
                   <Label>Link de YouTube</Label>
                   <Input
                     type="url"
+                    disabled={canManageLyrics !== true}
                     value={infoForm.youtubeUrl}
                     onChange={(e) => setInfoForm({ ...infoForm, youtubeUrl: e.target.value })}
                     placeholder="https://youtube.com/watch?v=..."
@@ -342,7 +381,7 @@ export default function SongDetail() {
                 <div className="grid grid-cols-3 gap-3">
                   <div className="space-y-2">
                     <Label>Tono</Label>
-                    <Select value={infoForm.key} onValueChange={(v) => { setInfoForm({ ...infoForm, key: v }); saveField("key", v); }}>
+                    <Select disabled={canManageLyrics !== true} value={infoForm.key} onValueChange={(v) => { setInfoForm({ ...infoForm, key: v }); saveField("key", v); }}>
                       <SelectTrigger><SelectValue placeholder="Tono" /></SelectTrigger>
                       <SelectContent>
                         {MUSICAL_KEYS.map((k) => <SelectItem key={k} value={k}>{k}</SelectItem>)}
@@ -351,11 +390,11 @@ export default function SongDetail() {
                   </div>
                   <div className="space-y-2">
                     <Label>BPM</Label>
-                    <Input type="number" value={infoForm.bpm} onChange={(e) => setInfoForm({ ...infoForm, bpm: e.target.value })} onBlur={() => saveField("bpm", infoForm.bpm)} placeholder="120" />
+                    <Input disabled={canManageLyrics !== true} type="number" value={infoForm.bpm} onChange={(e) => setInfoForm({ ...infoForm, bpm: e.target.value })} onBlur={() => saveField("bpm", infoForm.bpm ? Number.parseInt(infoForm.bpm, 10) : null)} placeholder="120" />
                   </div>
                   <div className="space-y-2">
                     <Label>Compás</Label>
-                    <Select value={infoForm.meter} onValueChange={(v) => { setInfoForm({ ...infoForm, meter: v }); saveField("meter", v); }}>
+                    <Select disabled={canManageLyrics !== true} value={infoForm.meter} onValueChange={(v) => { setInfoForm({ ...infoForm, meter: v }); saveField("meter", v); }}>
                       <SelectTrigger><SelectValue placeholder="Compás" /></SelectTrigger>
                       <SelectContent>
                         {COMMON_METERS.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
@@ -366,16 +405,17 @@ export default function SongDetail() {
                 <div className="space-y-2">
                   <Label>Notas para el equipo</Label>
                   <Textarea
+                    disabled={canManageLyrics !== true}
                     value={infoForm.notes}
                     onChange={(e) => setInfoForm({ ...infoForm, notes: e.target.value })}
                     placeholder="Notas de arreglo, capo, intro, detalles de ensayo..."
                   />
                 </div>
-                <div className="flex justify-end">
+                {canManageLyrics === true && <div className="flex justify-end">
                   <Button size="sm" onClick={handleSaveInfo} disabled={saving}>
                     {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Guardar detalles"}
                   </Button>
-                </div>
+                </div>}
               </CardContent>
             </Card>
           </div>
@@ -384,11 +424,11 @@ export default function SongDetail() {
         {/* ARRANGEMENTS TAB */}
         {activeSection === "arrangements" && (
           <div className="space-y-4">
-            <div className="flex justify-end">
+            {canManageLyrics === true && <div className="flex justify-end">
               <Button size="sm" onClick={() => setShowAddArrangement(true)}>
                 <Plus className="w-4 h-4 mr-1" /> Agregar arreglo
               </Button>
-            </div>
+            </div>}
 
             {arrangements.length === 0 ? (
               <Card className="app-card">
@@ -413,12 +453,13 @@ export default function SongDetail() {
                           {[arr.key, arr.bpm ? `${arr.bpm} BPM` : null, arr.meter].filter(Boolean).join(" · ") || "Sin detalles"}
                         </p>
                       </div>
-                      <button
+                      {canManageLyrics === true && <button
                         onClick={(e) => { e.stopPropagation(); handleDeleteArrangement(arr.id); }}
-                        className="p-1.5 rounded-lg hover:bg-red-50 text-zinc-400 hover:text-red-500 transition-colors"
+                        className="flex h-11 w-11 items-center justify-center rounded-xl text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-500"
+                        aria-label={`Eliminar arreglo ${arr.name}`}
                       >
                         <Trash2 className="w-4 h-4" />
-                      </button>
+                      </button>}
                     </CardContent>
                   </Card>
                 ))}
@@ -429,32 +470,12 @@ export default function SongDetail() {
 
         {/* LYRICS TAB */}
         {activeSection === "lyrics" && (
-          <div className="space-y-3">
-            {activeArrangement ? (
-              <>
-                <div className="flex items-center justify-between">
-                  <p className="text-sm font-medium text-zinc-600">{activeArrangement.name} — Letras</p>
-                  <Button size="sm" variant="outline" onClick={handleSaveLyrics} disabled={saving}>
-                    {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Guardar"}
-                  </Button>
-                </div>
-                <Textarea
-                  value={activeArrangement.lyrics || ""}
-                  onChange={(e) => setActiveArrangement({ ...activeArrangement, lyrics: e.target.value })}
-                  className="min-h-96 font-mono text-sm"
-                  placeholder={`[Verso 1]\nLetra aquí...\n\n[Coro]\nLetra aquí...`}
-                />
-                <p className="text-xs text-zinc-400">Usa líneas en blanco para separar slides. Encabezados en [corchetes].</p>
-              </>
-            ) : (
-              <Card className="app-card">
-                <CardContent className="p-8 text-center">
-                  <Music2 className="w-8 h-8 mx-auto text-zinc-300 mb-2" />
-                  <p className="text-sm text-muted-foreground">Selecciona un arreglo para editar letras, o crea uno primero.</p>
-                </CardContent>
-              </Card>
-            )}
-          </div>
+          <SongLyricsProposalEditor
+            targets={lyricsTargets}
+            onCanManageChange={setCanManageLyrics}
+            onDirectSave={saveLyricsDirectly}
+            onRefreshTarget={refreshLyricsTarget}
+          />
         )}
 
         {/* PREVIEW TAB */}

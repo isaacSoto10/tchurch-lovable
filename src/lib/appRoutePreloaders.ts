@@ -12,6 +12,7 @@ export const appRouteLoaders = {
   AppLayout: () => import("@/layouts/AppLayout"),
   Dashboard: () => import("@/pages/app/Dashboard"),
   Songs: () => import("@/pages/app/Songs"),
+  SongLyricsProposals: () => import("@/pages/app/SongLyricsProposals"),
   SongDetail: () => import("@/pages/app/SongDetail"),
   Services: () => import("@/pages/app/Services"),
   ServiceDetail: () => import("@/pages/app/ServiceDetail"),
@@ -87,6 +88,11 @@ export function preloadAppRoute(route: string) {
 
   if (path === "/app/songs") {
     preload([...baseLoaders, appRouteLoaders.Songs]);
+    return;
+  }
+
+  if (path === "/app/songs/proposals") {
+    preload([...baseLoaders, appRouteLoaders.SongLyricsProposals]);
     return;
   }
 
@@ -205,6 +211,7 @@ export function preloadPrimaryAppRoutes() {
     appRouteLoaders.AppLayout,
     appRouteLoaders.Dashboard,
     appRouteLoaders.Songs,
+    appRouteLoaders.SongLyricsProposals,
     appRouteLoaders.SongDetail,
     appRouteLoaders.Services,
     appRouteLoaders.ServiceDetail,
