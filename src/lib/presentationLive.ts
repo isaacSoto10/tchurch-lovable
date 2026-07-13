@@ -144,6 +144,8 @@ export type PresentationLiveSnapshot = {
   serviceVersion: string;
   /** Opaque authorization/view fingerprint. Empty only while rolling against a legacy backend. */
   viewerVersion: string;
+  /** Opaque controller/presence fingerprint. Empty only while rolling against a legacy backend. */
+  controllerVersion: string;
   serverNow: string;
   viewer: PresentationLiveViewer;
   viewerLayout: PresentationViewerLayout | null;
@@ -685,6 +687,7 @@ export function normalizePresentationLiveSnapshot(
     serviceId: stringValue(raw.serviceId),
     serviceVersion: stringValue(raw.serviceVersion),
     viewerVersion: stringValue(raw.viewerVersion),
+    controllerVersion: stringValue(raw.controllerVersion),
     serverNow,
     viewer,
     viewerLayout: normalizeViewerLayout(raw.viewerLayout, viewer),
@@ -796,10 +799,12 @@ export function presentationSessionPath(
   clientId: string,
   sinceRevision?: number,
   viewerVersion?: string,
+  controllerVersion?: string,
 ) {
   const query = new URLSearchParams({ view, clientId });
   if (typeof sinceRevision === "number") query.set("sinceRevision", String(Math.max(0, Math.floor(sinceRevision))));
   if (viewerVersion?.trim()) query.set("viewerVersion", viewerVersion.trim());
+  if (controllerVersion?.trim()) query.set("controllerVersion", controllerVersion.trim());
   return `/services/${encodeURIComponent(serviceId)}/presentation-session?${query.toString()}`;
 }
 
@@ -809,10 +814,12 @@ export function presentationRehearsalSessionPath(
   clientId: string,
   sinceRevision?: number,
   viewerVersion?: string,
+  controllerVersion?: string,
 ) {
   const query = new URLSearchParams({ view, clientId });
   if (typeof sinceRevision === "number") query.set("sinceRevision", String(Math.max(0, Math.floor(sinceRevision))));
   if (viewerVersion?.trim()) query.set("viewerVersion", viewerVersion.trim());
+  if (controllerVersion?.trim()) query.set("controllerVersion", controllerVersion.trim());
   return `/services/${encodeURIComponent(serviceId)}/presentation-rehearsal-session?${query.toString()}`;
 }
 
@@ -822,8 +829,9 @@ export async function fetchPresentationLiveSnapshot(
   clientId: string,
   sinceRevision?: number,
   viewerVersion?: string,
+  controllerVersion?: string,
 ) {
-  const raw = await apiFetch<unknown>(presentationSessionPath(serviceId, view, clientId, sinceRevision, viewerVersion), { cache: "no-store" });
+  const raw = await apiFetch<unknown>(presentationSessionPath(serviceId, view, clientId, sinceRevision, viewerVersion, controllerVersion), { cache: "no-store" });
   return raw === undefined ? null : normalizePresentationLiveSnapshot(raw, view, clientId, Date.now(), "live");
 }
 
@@ -833,8 +841,9 @@ export async function fetchPresentationRehearsalSnapshot(
   clientId: string,
   sinceRevision?: number,
   viewerVersion?: string,
+  controllerVersion?: string,
 ) {
-  const raw = await apiFetch<unknown>(presentationRehearsalSessionPath(serviceId, view, clientId, sinceRevision, viewerVersion), { cache: "no-store" });
+  const raw = await apiFetch<unknown>(presentationRehearsalSessionPath(serviceId, view, clientId, sinceRevision, viewerVersion, controllerVersion), { cache: "no-store" });
   return raw === undefined ? null : normalizePresentationLiveSnapshot(raw, view, clientId, Date.now(), "rehearsal");
 }
 

@@ -33,6 +33,7 @@ function snapshot(mode: "live" | "rehearsal", revision: number): PresentationLiv
     serviceId: "service-1",
     serviceVersion: "service-v1",
     viewerVersion: "sha256:viewer",
+    controllerVersion: `sha256:controller-${mode}`,
     serverNow: now.toISOString(),
     receivedAtMs: now.getTime(),
     viewer: { view: "operator", roles: ["operator"], canEdit: true, canStart: true, canControl: true, canForceTakeover: true },

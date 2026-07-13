@@ -25,12 +25,18 @@ vi.mock("@/lib/presentationLive", async () => {
 
 import { usePresentationLive } from "./usePresentationLive";
 
-function snapshot(serviceId: string, viewerVersion: string, revision = 1): PresentationLiveSnapshot {
+function snapshot(
+  serviceId: string,
+  viewerVersion: string,
+  revision = 1,
+  controllerVersion = `${serviceId}-controller-v1`,
+): PresentationLiveSnapshot {
   return {
     schemaVersion: 2,
     serviceId,
     serviceVersion: `${serviceId}-v1`,
     viewerVersion,
+    controllerVersion,
     serverNow: "2026-07-11T19:00:00.000Z",
     receivedAtMs: Date.parse("2026-07-11T19:00:00.000Z"),
     viewer: {
@@ -193,6 +199,15 @@ describe("usePresentationLive authority generation", () => {
     await waitFor(() => expect(result.current.presentationPackage?.scope.view).toBe("operator"));
     await act(async () => { await result.current.refresh(false); });
 
+    expect(liveMocks.fetchSnapshot).toHaveBeenLastCalledWith(
+      "service-1",
+      "operator",
+      expect.any(String),
+      1,
+      "viewer-editor",
+      "service-1-controller-v1",
+    );
+
     expect(result.current.snapshot?.viewer.view).toBe("remote");
     if (result.current.snapshot?.viewer.view !== "audience") {
       expect(result.current.snapshot?.viewer.roles).toEqual(["band"]);
@@ -204,8 +219,8 @@ describe("usePresentationLive authority generation", () => {
   });
 
   it("keeps the verified package visible for a viewerVersion-only refresh", async () => {
-    const initial = snapshot("service-1", "viewer-v1");
-    const versionOnly = snapshot("service-1", "viewer-v2");
+    const initial = snapshot("service-1", "viewer-v1", 1, "controller-v1");
+    const versionOnly = snapshot("service-1", "viewer-v2", 1, "controller-v1");
     liveMocks.fetchSnapshot.mockImplementation((_serviceId: string, _view: PresentationPrivateLiveView, _clientId: string, sinceRevision?: number) => (
       Promise.resolve(sinceRevision === undefined ? initial : versionOnly)
     ));
@@ -225,6 +240,43 @@ describe("usePresentationLive authority generation", () => {
     await act(async () => { await result.current.refresh(false); });
 
     expect(result.current.snapshot?.viewerVersion).toBe("viewer-v2");
+    expect(result.current.snapshot?.controllerVersion).toBe("controller-v1");
+    expect(result.current.presentationPackage).toBe(verifiedPackage);
+    expect(liveMocks.fetchPackage).toHaveBeenCalledTimes(1);
+    expect(liveMocks.fetchSnapshot).toHaveBeenLastCalledWith(
+      "service-1",
+      "operator",
+      expect.any(String),
+      1,
+      "viewer-v1",
+      "controller-v1",
+    );
+  });
+
+  it("accepts a controllerVersion-only refresh without changing viewer permissions", async () => {
+    const initial = snapshot("service-1", "viewer-v1", 1, "controller-v1");
+    const controllerOnly = snapshot("service-1", "viewer-v1", 1, "controller-v2");
+    liveMocks.fetchSnapshot.mockImplementation((_serviceId: string, _view: PresentationPrivateLiveView, _clientId: string, sinceRevision?: number) => (
+      Promise.resolve(sinceRevision === undefined ? initial : controllerOnly)
+    ));
+    liveMocks.fetchPackage.mockResolvedValue(presentationPackage("service-1", "account-1", "church-1"));
+    mockPackageSave();
+    const offlineContext = { steps: [], plannedTiming: { serviceSeconds: 0, itemSecondsById: {} } };
+    const { result } = renderHook(() => usePresentationLive({
+      serviceId: "service-1",
+      accountId: "account-1",
+      churchId: "church-1",
+      preferredView: "operator",
+      offlineContext,
+    }));
+
+    await waitFor(() => expect(result.current.presentationPackage).not.toBeNull());
+    const verifiedPackage = result.current.presentationPackage;
+    await act(async () => { await result.current.refresh(false); });
+
+    expect(result.current.snapshot?.viewerVersion).toBe("viewer-v1");
+    expect(result.current.snapshot?.controllerVersion).toBe("controller-v2");
+    expect(result.current.snapshot?.viewer).toEqual(initial.viewer);
     expect(result.current.presentationPackage).toBe(verifiedPackage);
     expect(liveMocks.fetchPackage).toHaveBeenCalledTimes(1);
   });

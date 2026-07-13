@@ -99,13 +99,24 @@ export function usePresentationRehearsal({
     setSnapshot(next);
   }, []);
 
-  const fetchAllowed = useCallback(async (sinceRevision?: number, viewerVersion?: string) => {
+  const fetchAllowed = useCallback(async (
+    sinceRevision?: number,
+    viewerVersion?: string,
+    controllerVersion?: string,
+  ) => {
     if (!serviceId) return null;
     const candidates = sinceRevision === undefined ? viewCandidates(preferredView) : [activeViewRef.current];
     let lastForbidden: unknown = null;
     for (const view of candidates) {
       try {
-        const next = await fetchPresentationRehearsalSnapshot(serviceId, view, clientId, sinceRevision, viewerVersion);
+        const next = await fetchPresentationRehearsalSnapshot(
+          serviceId,
+          view,
+          clientId,
+          sinceRevision,
+          viewerVersion,
+          controllerVersion,
+        );
         if (next?.viewer.view !== "audience") {
           activeViewRef.current = next?.viewer.view || view;
           setActiveView(activeViewRef.current);
@@ -127,7 +138,11 @@ export function usePresentationRehearsal({
     if (!enabled || !serviceId || pendingRef.current) return snapshotRef.current;
     try {
       const current = snapshotRef.current;
-      const next = await fetchAllowed(current?.session?.revision, current?.viewerVersion);
+      const next = await fetchAllowed(
+        current?.session?.revision,
+        current?.viewerVersion,
+        current?.controllerVersion,
+      );
       if (generation !== generationRef.current) return snapshotRef.current;
       if (next) acceptSnapshot(next);
       setNetworkState("online");

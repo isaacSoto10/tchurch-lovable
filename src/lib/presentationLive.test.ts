@@ -31,6 +31,7 @@ import {
   savePresentationPackage,
   savePresentationOfflineState,
   isPresentationAuthorizationError,
+  presentationRehearsalSessionPath,
   verifyPresentationPackageIntegrity,
   type CachedPresentationPackage,
   type PresentationLiveSnapshot,
@@ -48,6 +49,7 @@ function snapshotRaw(view: "operator" | "stage" | "remote" | "audience" = "stage
     serviceId: "service-1",
     serviceVersion: "svc-v2",
     viewerVersion: "sha256:viewer-operator",
+    controllerVersion: "sha256:controller-present",
     serverNow,
     viewer: view === "audience" ? {
       view,
@@ -240,15 +242,39 @@ describe("Tchurch Live Stage 2 contract", () => {
     expect(PRESENTATION_POLL_MS).toBeLessThanOrEqual(1_250);
   });
 
-  it("round-trips viewerVersion on quiet polls while omitting it for a legacy snapshot", () => {
-    const versioned = presentationSessionPath("service-1", "stage", "client-1", 14, "sha256:viewer-stage");
+  it("round-trips independent viewer and controller versions while accepting legacy snapshots", () => {
+    const versioned = presentationSessionPath(
+      "service-1",
+      "stage",
+      "client-1",
+      14,
+      "sha256:viewer-stage",
+      "sha256:controller-stage",
+    );
     expect(versioned).toContain("sinceRevision=14");
     expect(versioned).toContain("viewerVersion=sha256%3Aviewer-stage");
-    expect(presentationSessionPath("service-1", "stage", "client-1", 14, "")).not.toContain("viewerVersion");
+    expect(versioned).toContain("controllerVersion=sha256%3Acontroller-stage");
+    const rehearsal = presentationRehearsalSessionPath(
+      "service-1",
+      "remote",
+      "client-1",
+      14,
+      "sha256:viewer-remote",
+      "sha256:controller-remote",
+    );
+    expect(rehearsal).toContain("viewerVersion=sha256%3Aviewer-remote");
+    expect(rehearsal).toContain("controllerVersion=sha256%3Acontroller-remote");
+
+    const legacyPath = presentationSessionPath("service-1", "stage", "client-1", 14, "", "");
+    expect(legacyPath).not.toContain("viewerVersion");
+    expect(legacyPath).not.toContain("controllerVersion");
 
     const legacy = snapshotRaw("stage");
     delete (legacy as { viewerVersion?: string }).viewerVersion;
-    expect(normalizePresentationLiveSnapshot(legacy, "stage", "client-1").viewerVersion).toBe("");
+    delete (legacy as { controllerVersion?: string }).controllerVersion;
+    const normalized = normalizePresentationLiveSnapshot(legacy, "stage", "client-1");
+    expect(normalized.viewerVersion).toBe("");
+    expect(normalized.controllerVersion).toBe("");
   });
 
   it("fails closed when a live or rehearsal route returns the other session mode", () => {
@@ -588,6 +614,7 @@ describe("Tchurch Live Stage 2 contract", () => {
     const changedRaw = snapshotRaw("remote");
     changedRaw.session.revision = previous.session!.revision;
     changedRaw.viewerVersion = "sha256:viewer-assigned";
+    changedRaw.controllerVersion = previous.controllerVersion;
     changedRaw.viewer.roles = ["stage", "worship_leader"];
     changedRaw.viewer.canEdit = false;
     changedRaw.viewer.canStart = false;
@@ -597,6 +624,7 @@ describe("Tchurch Live Stage 2 contract", () => {
 
     expect(changed.session?.revision).toBe(previous.session?.revision);
     expect(changed.viewerVersion).not.toBe(previous.viewerVersion);
+    expect(changed.controllerVersion).toBe(previous.controllerVersion);
     expect(presentationWorkspaceMatchesLiveViewer(editorWorkspace, changed.viewer)).toBe(false);
     expect(presentationPackageMatchesLiveViewer(cachedPackage().package, changed.viewer, {
       accountId: "account-1",

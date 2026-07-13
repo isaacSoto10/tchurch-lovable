@@ -55,6 +55,7 @@ function snapshot(owned = true): PresentationLiveSnapshot {
     serviceId: "service-1",
     serviceVersion: "svc-v2",
     viewerVersion: "sha256:viewer-operator",
+    controllerVersion: "sha256:controller-present",
     serverNow: "2026-07-11T19:00:00.000Z",
     receivedAtMs: Date.parse("2026-07-11T19:00:00.000Z"),
     viewer: { view: "operator", roles: ["operator"], canEdit: true, canStart: true, canControl: true, canForceTakeover: true },

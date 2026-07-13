@@ -215,14 +215,25 @@ export function usePresentationLive({
     setOfflineState(base);
   }, [accountId, churchId, serviceId, setOfflineState]);
 
-  const fetchAllowedSnapshot = useCallback(async (sinceRevision?: number, viewerVersion?: string) => {
+  const fetchAllowedSnapshot = useCallback(async (
+    sinceRevision?: number,
+    viewerVersion?: string,
+    controllerVersion?: string,
+  ) => {
     const generation = authorityGenerationRef.current;
     if (!serviceId) throw new Error("Falta el servicio de Tchurch Live.");
     let lastForbidden: unknown = null;
     const candidates = sinceRevision === undefined ? viewCandidates(preferredView) : [activeViewRef.current];
     for (const view of candidates) {
       try {
-        const next = await fetchPresentationLiveSnapshot(serviceId, view, clientId, sinceRevision, viewerVersion);
+        const next = await fetchPresentationLiveSnapshot(
+          serviceId,
+          view,
+          clientId,
+          sinceRevision,
+          viewerVersion,
+          controllerVersion,
+        );
         if (generation !== authorityGenerationRef.current) return null;
         if (next) setActiveView(next.viewer.view === "audience" ? view : next.viewer.view);
         return next;
@@ -370,8 +381,9 @@ export function usePresentationLive({
     const pollEpoch = mutationEpochRef.current;
     const currentRevision = snapshotRef.current?.session?.revision;
     const currentViewerVersion = snapshotRef.current?.viewerVersion;
+    const currentControllerVersion = snapshotRef.current?.controllerVersion;
     try {
-      const next = await fetchAllowedSnapshot(currentRevision, currentViewerVersion);
+      const next = await fetchAllowedSnapshot(currentRevision, currentViewerVersion, currentControllerVersion);
       if (generation !== authorityGenerationRef.current || pollEpoch !== mutationEpochRef.current || commandPendingRef.current) return snapshotRef.current;
       if (next) {
         setSnapshot(next);
