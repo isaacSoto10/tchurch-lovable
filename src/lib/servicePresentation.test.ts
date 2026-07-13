@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildPresentationRunSteps, buildServicePresentationSlides, type PresentationService } from "./servicePresentation";
+import { buildPresentationRunSteps, buildServicePresentationSlides, presentationSongSlideHasChords, type PresentationService } from "./servicePresentation";
 import { derivePresentationWorkspaceItem, type PresentationWorkspace } from "./presentationWorkspace";
 
 const PRESENTATION_WRAP_COLUMNS = 34;
@@ -62,6 +62,17 @@ function estimateRenderedRows(slide: ReturnType<typeof buildServicePresentationS
 }
 
 describe("buildServicePresentationSlides", () => {
+  it("detects real chord content in both sheet and slide modes", () => {
+    const service = buildService("{verse}\n[F#m]Con acordes\n[E]Otra línea");
+    const sheet = buildServicePresentationSlides(service, { layout: "phone", songMode: "scroll" })[0];
+    const slides = buildServicePresentationSlides(service, { layout: "phone", songMode: "paged" });
+
+    expect(presentationSongSlideHasChords(sheet)).toBe(true);
+    expect(slides.every((slide) => presentationSongSlideHasChords(slide))).toBe(true);
+    expect(presentationSongSlideHasChords(buildServicePresentationSlides(buildService("Solo letra"))[0])).toBe(false);
+    expect(presentationSongSlideHasChords(null)).toBe(false);
+  });
+
   it("paginates long resolved Scripture with stable public IDs and cursor parts", () => {
     const service = buildService("");
     service.items = [{

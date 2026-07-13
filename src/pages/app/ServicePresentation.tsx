@@ -28,6 +28,7 @@ import {
   buildPresentationRunSteps,
   canUseServicePresentation,
   getDefaultPresentationSongMode,
+  presentationSongSlideHasChords,
   type PresentationLayout,
   type PresentationService,
   type PresentationSlide,
@@ -868,7 +869,7 @@ export default function ServicePresentation() {
   };
   const authoritativePrivateViewer = runtimeSnapshot?.viewer.view !== "audience" ? runtimeSnapshot?.viewer : null;
   const workspaceScopeMismatch = Boolean(
-    workspace
+    workspace?.source === "api"
     && authoritativePrivateViewer
     && !presentationWorkspaceMatchesLiveViewer(workspace, authoritativePrivateViewer),
   );
@@ -922,7 +923,8 @@ export default function ServicePresentation() {
   const stageRole = presentationStageRoleForViewer(viewerRoles, viewerCanEdit);
   const scopedViewerLayout = runtimeSnapshot?.viewerLayout?.targetRole === stageRole ? runtimeSnapshot.viewerLayout : null;
   const stageLayout = outputConfig?.resolvedRoleLayouts[stageRole] || scopedViewerLayout || DEFAULT_PRESENTATION_STAGE_LAYOUTS[stageRole];
-  const effectiveShowChords = stageLayout.show.chords && showChords;
+  const currentSongHasChords = presentationSongSlideHasChords(currentSlide);
+  const effectiveShowChords = currentSongHasChords && showChords;
   const audiencePreviewSlide = useMemo(() => buildAudiencePreviewSlide(stageCurrentSlide), [stageCurrentSlide]);
   const stageCountdownDuration = stageCurrentSlide?.kind === "content" && stageCurrentSlide.audienceSlide.kind === "countdown"
     ? stageCurrentSlide.audienceSlide.durationSeconds
@@ -1428,7 +1430,7 @@ export default function ServicePresentation() {
             onClick={toggleBlackout}
           >{blackout ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}<span>{blackout ? "Restaurar" : "Salida en negro"}</span></Button>
           <Button variant="ghost" className="hidden h-11 rounded-xl border border-white/10 bg-white/[0.08] px-3 text-white hover:bg-white/[0.15] hover:text-white sm:flex" disabled={runtimeSession ? !liveCanMutate || safeStepIndex === 0 : !historyCount} onClick={undoNavigation}><Undo2 className="h-4 w-4" /><span className="hidden xl:inline">Atrás</span></Button>
-          {currentSlide?.kind === "song" && stageLayout.show.chords && <Button
+          {currentSongHasChords && <Button
             variant="ghost"
             aria-label={showChords ? "Ocultar acordes" : "Mostrar acordes"}
             aria-pressed={showChords}

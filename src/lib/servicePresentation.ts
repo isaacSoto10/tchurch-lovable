@@ -124,6 +124,13 @@ export type PresentationRunStep = {
   totalPages: number;
 };
 
+export function presentationSongSlideHasChords(slide: PresentationSlide | null | undefined) {
+  return Boolean(
+    slide?.kind === "song"
+    && slide.lines.some((line) => line.kind === "line" && line.chords.trim().length > 0),
+  );
+}
+
 type PlanningNoteKey = "vocals" | "band" | "audioVisual" | "person";
 
 const NOTE_LABELS: Record<PlanningNoteKey, string> = {

@@ -190,6 +190,32 @@ function stageService(): PresentationService {
   };
 }
 
+function chordSheetService(): PresentationService {
+  return {
+    id: "service-shared",
+    title: "Chord sheet fixture",
+    date: "2026-07-11T19:00:00.000Z",
+    type: "service",
+    notes: null,
+    items: [{
+      id: "song-item",
+      title: "Song with chords",
+      type: "song",
+      position: 0,
+      duration: 4,
+      details: { serviceKey: "B" },
+      song: {
+        id: "song-1",
+        title: "Song with chords",
+        author: "Tchurch",
+        key: "B",
+        lyrics: "{title: Song with chords}\n{key: B}\n{start_of_verse}\n[F#m]Con acordes visibles\n[E]Siguiente línea\n{end_of_verse}",
+        arrangements: [],
+      },
+    }],
+  };
+}
+
 function timing(targetAt = "2026-07-11T19:00:47.000Z"): PresentationTiming {
   return {
     service: { status: "paused", plannedSeconds: 360, elapsedSeconds: 0, remainingSeconds: 360, overrunSeconds: 0, projectedEndAt: null, startedAt: null, pausedAt: null, accumulatedPausedMs: 0 },
@@ -283,6 +309,7 @@ describe("ServicePresentation load authority", () => {
     mocks.fetchWorkspace.mockResolvedValue(workspace());
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
     Object.defineProperty(window, "innerHeight", { configurable: true, value: 844 });
+    Element.prototype.scrollIntoView = vi.fn();
   });
 
   it("fails closed and ignores a late load when account and church change with the same role", async () => {
@@ -387,6 +414,37 @@ describe("ServicePresentation load authority", () => {
     expect(screen.getByText("Siguiente")).toBeInTheDocument();
     expect(screen.getByText("Segundo elemento privado")).toBeInTheDocument();
     expect(screen.queryByText("Entrada después del contador")).not.toBeInTheDocument();
+  });
+
+  it("keeps the chord toggle and chord chart available when private notes fail and the production layout hides chords", async () => {
+    const snapshot = liveSnapshot({ next: true, notes: true });
+    snapshot.session = null;
+    mocks.liveSnapshot = snapshot;
+    mocks.apiFetch.mockImplementation((path: string) => path === "/users/me"
+      ? Promise.resolve({ id: mocks.accountId, email: "operator@example.com" })
+      : Promise.resolve(chordSheetService()));
+    mocks.fetchWorkspace.mockRejectedValue(new Error("presentation-config unavailable"));
+
+    render(<ServicePresentation />);
+    await screen.findByText("Chord sheet fixture");
+    expect(await screen.findByText(/Las notas guardadas no están disponibles ahora/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Hoja" }));
+    expect(screen.getByRole("button", { name: "Ocultar acordes" })).toBeEnabled();
+    expect(screen.getByText("F#m")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Ocultar acordes" }));
+    expect(screen.getByRole("button", { name: "Mostrar acordes" })).toBeEnabled();
+    expect(screen.queryByText("F#m")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Slides" }));
+    expect(screen.getByRole("button", { name: "Mostrar acordes" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Mostrar acordes" }));
+    expect(screen.getByText("F#m")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Usar ensayo aislado" }));
+    expect(screen.getByText(/Ensayo aislado · no cambia la sesión en vivo/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ocultar acordes" })).toBeEnabled();
   });
 
   it("switches directly when this device does not own the current controller", async () => {
