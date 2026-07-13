@@ -26,7 +26,7 @@ vi.mock("@/lib/presentationLive", async () => {
 });
 
 import { usePresentationLive } from "./usePresentationLive";
-import { bindPresentationMediaCommand } from "@/lib/presentationLive";
+import { PRESENTATION_HEARTBEAT_MS, bindPresentationMediaCommand } from "@/lib/presentationLive";
 
 function snapshot(
   serviceId: string,
@@ -309,6 +309,52 @@ describe("usePresentationLive authority generation", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(Date.parse(controlled.session!.controller!.leaseExpiresAt)).toBeLessThan(Date.now());
     expect(result.current.controllerLeaseActive).toBe(true);
+  });
+
+  it.each([
+    ["11111111-1111-4111-8111-111111111111", true],
+    ["22222222-2222-4222-8222-222222222222", false],
+  ] as const)("schedules heartbeats only for the exact local controller client (%s)", async (controllerClientId, expectedHeartbeat) => {
+    const localClientId = "11111111-1111-4111-8111-111111111111";
+    localStorage.setItem("tchurch_live_installation_client_id", localClientId);
+    const controlled = snapshot("service-1", "viewer-v1");
+    controlled.session!.controller = {
+      clientId: controllerClientId,
+      displayName: controllerClientId === localClientId ? "Este iPad" : "Otro iPad",
+      leaseExpiresAt: "2099-07-11T19:01:00.000Z",
+      ownedByViewer: true,
+    };
+    liveMocks.fetchSnapshot.mockResolvedValue(controlled);
+    liveMocks.fetchPackage.mockResolvedValue(presentationPackage("service-1", "account-1", "church-1"));
+    mockPackageSave();
+    const intervalSpy = vi.spyOn(window, "setInterval");
+    const offlineContext = { steps: [], plannedTiming: { serviceSeconds: 0, itemSecondsById: {} } };
+    const { result, unmount } = renderHook(() => usePresentationLive({
+      serviceId: "service-1",
+      accountId: "account-1",
+      churchId: "church-1",
+      preferredView: "operator",
+      offlineContext,
+      maintainController: true,
+    }));
+
+    try {
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      const heartbeat = intervalSpy.mock.calls.find(([, milliseconds]) => milliseconds === PRESENTATION_HEARTBEAT_MS);
+      expect(Boolean(heartbeat)).toBe(expectedHeartbeat);
+      if (heartbeat) {
+        await act(async () => {
+          (heartbeat[0] as () => void)();
+          await Promise.resolve();
+        });
+        expect(liveMocks.sendCommand).toHaveBeenCalled();
+      } else {
+        expect(liveMocks.sendCommand).not.toHaveBeenCalled();
+      }
+    } finally {
+      unmount();
+      intervalSpy.mockRestore();
+    }
   });
 
   it("rejects a late media ACK from session B with the same revision without accepting or retrying it", async () => {

@@ -157,12 +157,14 @@ export function PresentationLiveNotice({
 
 export function PresentationOwnershipControls({
   snapshot,
+  localClientId,
   controllerLeaseActive,
   pending,
   onCommand,
   compact = false,
 }: {
   snapshot: PresentationLiveSnapshot | null;
+  localClientId: string | null;
   controllerLeaseActive: boolean;
   pending: boolean;
   onCommand: PresentationLiveCommandSender;
@@ -171,7 +173,12 @@ export function PresentationOwnershipControls({
   const viewer = snapshot?.viewer;
   const session = snapshot?.session;
   const controller = session?.controller;
-  const owned = Boolean(controller?.ownedByViewer && controllerLeaseActive);
+  const owned = Boolean(
+    localClientId
+    && controller?.ownedByViewer
+    && controller.clientId === localClientId
+    && controllerLeaseActive,
+  );
   if (!viewer) return null;
 
   if (!session) {
@@ -394,7 +401,7 @@ export function PresentationRemoteSurface({
       <div className="mx-auto grid w-full max-w-6xl gap-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(20rem,.75fr)]">
         <section className="space-y-4">
           <div className="overflow-hidden rounded-[1.75rem] border border-white/10 bg-[linear-gradient(145deg,rgba(124,58,237,.24),rgba(12,11,18,.85)_45%)] p-4 shadow-2xl shadow-black/30 sm:p-5">
-            <div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex items-center gap-2"><Cast className="h-4 w-4 text-violet-200" /><p className="text-[10px] font-black uppercase tracking-[0.2em] text-violet-200">Control remoto · {activeView}</p></div><h1 className="mt-2 text-2xl font-black tracking-tight sm:text-3xl">{active?.sectionLabel || active?.title || "Sesión lista"}</h1><p className="mt-1 text-sm font-semibold text-slate-400">{active?.title || "Inicia la sesión para controlar la presentación"}</p></div><PresentationOwnershipControls snapshot={snapshot} controllerLeaseActive={controllerLeaseActive} pending={actionPending} onCommand={onCommand} /></div>
+            <div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex items-center gap-2"><Cast className="h-4 w-4 text-violet-200" /><p className="text-[10px] font-black uppercase tracking-[0.2em] text-violet-200">Control remoto · {activeView}</p></div><h1 className="mt-2 text-2xl font-black tracking-tight sm:text-3xl">{active?.sectionLabel || active?.title || "Sesión lista"}</h1><p className="mt-1 text-sm font-semibold text-slate-400">{active?.title || "Inicia la sesión para controlar la presentación"}</p></div><PresentationOwnershipControls snapshot={snapshot} localClientId={localClientId} controllerLeaseActive={controllerLeaseActive} pending={actionPending} onCommand={onCommand} /></div>
             <div className="mt-5 rounded-2xl border border-white/10 bg-black/25 p-3"><p className="text-[10px] font-black uppercase tracking-[0.17em] text-slate-500">Siguiente</p><p className="mt-1 truncate text-base font-black text-white">{nextLabel}</p></div>
 
             {remoteAvailable && onRemoteIntent ? (

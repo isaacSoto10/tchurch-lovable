@@ -248,6 +248,73 @@ describe("presentation remote intent idempotency and deadline", () => {
   });
 
   it.each([
+    [9_999, "applied"],
+    [10_000, "expired"],
+    [10_001, "expired"],
+  ] as const)("fails closed when a valid applied response returns at local millisecond %i", async (returnedAt, expectedPhase) => {
+    let clock = 0;
+    const states: string[] = [];
+    const result = await dispatchPresentationRemoteIntent({
+      churchId: CHURCH_ID,
+      serviceId: SERVICE_ID,
+      sessionId: SESSION_ID,
+      clientId: CLIENT_ID,
+      intentId: INTENT_ID,
+      type: "take",
+      payload: {},
+      request: async () => {
+        clock = returnedAt;
+        return submission("applied", true);
+      },
+      now: () => clock,
+      onState: (next) => states.push(next.phase),
+    });
+
+    expect(result.phase).toBe(expectedPhase);
+    if (returnedAt >= PRESENTATION_REMOTE_INTENT_TTL_MS) {
+      expect(states).not.toContain("applied");
+      expect(result.message).toMatch(/expiró/i);
+    }
+  });
+
+  it.each([
+    [999, "applied"],
+    [1_000, "expired"],
+    [1_001, "expired"],
+  ] as const)("honors a shorter server TTL when applied returns at local millisecond %i", async (returnedAt, expectedPhase) => {
+    let clock = 0;
+    const states: string[] = [];
+    const result = await dispatchPresentationRemoteIntent({
+      churchId: CHURCH_ID,
+      serviceId: SERVICE_ID,
+      sessionId: SESSION_ID,
+      clientId: CLIENT_ID,
+      intentId: INTENT_ID,
+      type: "take",
+      payload: {},
+      request: async () => {
+        clock = returnedAt;
+        const applied = submission("applied", true);
+        return {
+          ...applied,
+          intent: {
+            ...applied.intent,
+            expiresAt: "2026-07-13T12:00:01.000Z",
+          },
+        };
+      },
+      now: () => clock,
+      onState: (next) => states.push(next.phase),
+    });
+
+    expect(result.phase).toBe(expectedPhase);
+    if (returnedAt >= 1_000) {
+      expect(states).not.toContain("applied");
+      expect(result.message).toMatch(/expiró/i);
+    }
+  });
+
+  it.each([
     ["rejected", "rejected"],
     ["invalidated", "rejected"],
     ["expired", "expired"],

@@ -404,6 +404,9 @@ export async function dispatchPresentationRemoteIntent<T extends PresentationRem
       attempt.cleanup();
     }
     if (!isOperationCurrent()) return cancelledState();
+    if (now() >= deadlineAtMs) {
+      return emit(state("expired", built.intentId, options.type, "La acción expiró antes de recibir confirmación."));
+    }
 
     let submission: PresentationRemoteIntentSubmission;
     try {
@@ -431,9 +434,11 @@ export async function dispatchPresentationRemoteIntent<T extends PresentationRem
     acceptedDelivery ||= delivery;
     const serverTtlMs = Date.parse(submission.intent.expiresAt) - Date.parse(submission.intent.createdAt);
     deadlineAtMs = Math.min(deadlineAtMs, startedAtMs + serverTtlMs);
+    if (now() >= deadlineAtMs) {
+      return emit(state("expired", built.intentId, options.type, "La acción expiró antes de recibir confirmación."));
+    }
     const terminal = terminalState(submission);
     if (terminal) return emit(terminal);
-    if (now() >= deadlineAtMs) break;
     emit(state("pending", built.intentId, options.type, "Enviado; esperando confirmación del controlador…"));
     if (!await waitForPoll()) return isOperationCurrent()
       ? emit(state("expired", built.intentId, options.type, "La acción expiró antes de recibir confirmación."))

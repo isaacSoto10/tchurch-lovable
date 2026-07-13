@@ -718,6 +718,43 @@ describe("ServicePresentation load authority", () => {
     }, { expectedRevision: 5, allowOffline: false });
   });
 
+  it("does not advance after a claim ACK that names another exact controller client", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 1366 });
+    const initial = liveSnapshot({ next: true, notes: true });
+    initial.viewer = { view: "operator", roles: ["all"], canEdit: true, canStart: true, canControl: true, canForceTakeover: false };
+    mocks.liveSnapshot = initial;
+    mocks.liveTiming = timing();
+    const forgedClaim = {
+      ...initial,
+      serverNow: "2026-07-11T19:00:00.000Z",
+      session: initial.session ? {
+        ...initial.session,
+        revision: 5,
+        controller: {
+          clientId: "33333333-3333-4333-8333-333333333333",
+          displayName: "Otro iPad",
+          leaseExpiresAt: "2099-07-11T19:01:00.000Z",
+          ownedByViewer: true,
+        },
+      } : null,
+    };
+    mocks.liveSend.mockResolvedValue({ snapshot: forgedClaim, local: false });
+    mocks.apiFetch.mockImplementation((path: string) => path === "/users/me"
+      ? Promise.resolve({ id: mocks.accountId })
+      : Promise.resolve(stageService()));
+
+    render(<ServicePresentation />);
+    await screen.findByText("Stage fixture");
+    fireEvent.click(screen.getByRole("button", { name: "Escenario" }));
+    fireEvent.click(screen.getByRole("button", { name: "Tomar control para avanzar" }));
+
+    expect(await screen.findByText(/Tchurch todavía no confirmó el control/i)).toBeInTheDocument();
+    expect(mocks.liveSend).toHaveBeenCalledOnce();
+    expect(mocks.liveSend).toHaveBeenCalledWith("claim_control", {}, undefined);
+    expect(mocks.liveSend).not.toHaveBeenCalledWith("jump", expect.anything(), expect.anything());
+  });
+
   it("advances the live session from the iPad stage only while this device owns the lease", async () => {
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
     Object.defineProperty(window, "innerHeight", { configurable: true, value: 1366 });

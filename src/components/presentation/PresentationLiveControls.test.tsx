@@ -223,9 +223,11 @@ describe("Tchurch Live controls", () => {
       />,
     );
 
+    expect(screen.queryByText("Tú controlas")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Soltar" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Programa siguiente" }));
     expect(remoteMock).toHaveBeenCalledWith("program_next", {});
-    expect(onCommand).not.toHaveBeenCalledWith("jump", expect.anything());
+    expect(onCommand).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -278,7 +280,7 @@ describe("Tchurch Live controls", () => {
   it("keeps compact ownership and workspace notice actions at least 44px tall", () => {
     const idle = { ...snapshot(), session: null };
     const onCommand = vi.fn(async () => undefined) as unknown as PresentationLiveCommandSender;
-    render(<PresentationOwnershipControls snapshot={idle} controllerLeaseActive={false} pending={false} onCommand={onCommand} compact />);
+    render(<PresentationOwnershipControls snapshot={idle} localClientId="this-client" controllerLeaseActive={false} pending={false} onCommand={onCommand} compact />);
     expect(screen.getByRole("button", { name: "Iniciar sesión" }).className).toContain("h-11");
 
     const source = readFileSync(`${process.cwd()}/src/pages/app/ServicePresentation.tsx`, "utf8");

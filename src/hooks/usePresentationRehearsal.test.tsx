@@ -17,7 +17,7 @@ vi.mock("@/lib/presentationLive", async () => {
 });
 
 import { usePresentationRehearsal } from "./usePresentationRehearsal";
-import { bindPresentationMediaCommand } from "@/lib/presentationLive";
+import { PRESENTATION_HEARTBEAT_MS, bindPresentationMediaCommand } from "@/lib/presentationLive";
 
 function snapshot(viewerVersion: string, controllerVersion: string): PresentationLiveSnapshot {
   return {
@@ -141,6 +141,48 @@ describe("usePresentationRehearsal conditional polling", () => {
     expect(result.current.snapshot?.session?.display.blackout).toBe(true);
     expect(result.current.snapshot?.viewerVersion).toBe("viewer-v2");
     unmount();
+  });
+
+  it.each([
+    ["11111111-1111-4111-8111-111111111111", true],
+    ["22222222-2222-4222-8222-222222222222", false],
+  ] as const)("schedules rehearsal heartbeats only for the exact local controller client (%s)", async (controllerClientId, expectedHeartbeat) => {
+    const localClientId = "11111111-1111-4111-8111-111111111111";
+    localStorage.setItem("tchurch_live_installation_client_id", localClientId);
+    const controlled = snapshot("viewer-v1", "controller-v1");
+    controlled.session!.controller = {
+      clientId: controllerClientId,
+      displayName: controllerClientId === localClientId ? "Este iPad" : "Otro iPad",
+      leaseExpiresAt: "2099-07-13T14:01:00.000Z",
+      ownedByViewer: true,
+    };
+    rehearsalMocks.fetchSnapshot.mockResolvedValue(controlled);
+    const intervalSpy = vi.spyOn(window, "setInterval");
+    const { result, unmount } = renderHook(() => usePresentationRehearsal({
+      serviceId: "service-1",
+      preferredView: "operator",
+      churchId: "church-1",
+      accountId: "account-1",
+      maintainController: true,
+    }));
+
+    try {
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      const heartbeat = intervalSpy.mock.calls.find(([, milliseconds]) => milliseconds === PRESENTATION_HEARTBEAT_MS);
+      expect(Boolean(heartbeat)).toBe(expectedHeartbeat);
+      if (heartbeat) {
+        await act(async () => {
+          (heartbeat[0] as () => void)();
+          await Promise.resolve();
+        });
+        expect(rehearsalMocks.sendCommand).toHaveBeenCalled();
+      } else {
+        expect(rehearsalMocks.sendCommand).not.toHaveBeenCalled();
+      }
+    } finally {
+      unmount();
+      intervalSpy.mockRestore();
+    }
   });
 
   it("rejects a rehearsal media ACK from another session without accepting or retrying it", async () => {

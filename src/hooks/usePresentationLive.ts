@@ -673,14 +673,21 @@ export function usePresentationLive({
     }
   }, [cacheAuthoritativeSnapshot, clientId, clientName, revokePrivateAuthority, serviceId, setNetworkState, setOfflineState, setSnapshot]);
 
+  const heartbeatControllerClientId = snapshot?.session?.controller?.clientId;
+  const heartbeatControllerOwnedByViewer = snapshot?.session?.controller?.ownedByViewer;
   useEffect(() => {
-    if (!maintainController || !snapshot?.session?.controller?.ownedByViewer || networkState !== "online") return undefined;
+    if (
+      !maintainController
+      || !heartbeatControllerOwnedByViewer
+      || heartbeatControllerClientId !== clientId
+      || networkState !== "online"
+    ) return undefined;
     const timer = window.setInterval(() => {
       if (commandPendingRef.current) return;
       void sendCommand("heartbeat", {}).catch(() => undefined);
     }, PRESENTATION_HEARTBEAT_MS);
     return () => window.clearInterval(timer);
-  }, [maintainController, networkState, sendCommand, snapshot?.session?.controller?.ownedByViewer]);
+  }, [clientId, heartbeatControllerClientId, heartbeatControllerOwnedByViewer, maintainController, networkState, sendCommand]);
 
   const discardOfflineChanges = useCallback(async () => {
     const generation = authorityGenerationRef.current;

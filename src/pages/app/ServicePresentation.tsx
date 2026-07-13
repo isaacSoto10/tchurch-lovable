@@ -1167,6 +1167,7 @@ export default function ServicePresentation() {
         const claimedController = claimedSession?.controller;
         const claimedLeaseActive = Boolean(
           claimedController?.ownedByViewer
+          && claimedController.clientId === runtime.clientId
           && Date.parse(claimedController.leaseExpiresAt) > Date.parse(claimResult.snapshot?.serverNow || "")
         );
         if (!claimedSession || claimResult.local || !claimedLeaseActive) {
@@ -1577,7 +1578,7 @@ export default function ServicePresentation() {
           <button type="button" aria-label="Usar sesión en vivo" aria-pressed={runMode === "live"} disabled={switchingRunMode} className={`flex min-w-11 items-center justify-center gap-1.5 px-2 text-xs font-black disabled:opacity-50 sm:min-w-[5.75rem] sm:px-3 ${runMode === "live" ? "bg-emerald-400/20 text-emerald-100" : "text-slate-400 hover:bg-white/[0.05] hover:text-slate-200"}`} onClick={() => requestRunModeChange("live")}><Radio className="h-4 w-4" /><span className="hidden sm:inline">En vivo</span></button>
           <button type="button" aria-label="Usar ensayo aislado" aria-pressed={runMode === "rehearsal"} disabled={switchingRunMode} className={`flex min-w-11 items-center justify-center gap-1.5 border-l border-white/10 px-2 text-xs font-black disabled:opacity-50 sm:min-w-[5.75rem] sm:px-3 ${runMode === "rehearsal" ? "bg-amber-300/20 text-amber-100" : "text-slate-400 hover:bg-white/[0.05] hover:text-slate-200"}`} onClick={() => requestRunModeChange("rehearsal")}><TestTube2 className="h-4 w-4" /><span className="hidden sm:inline">Ensayo</span></button>
         </div>
-        <div className="hidden min-w-0 flex-1 lg:block"><PresentationOwnershipControls snapshot={runtimeSnapshot} controllerLeaseActive={runtimeControllerLeaseActive} pending={runtimeCommandPending} onCommand={runtimeSendCommand} compact /></div>
+        <div className="hidden min-w-0 flex-1 lg:block"><PresentationOwnershipControls snapshot={runtimeSnapshot} localClientId={runtime.clientId} controllerLeaseActive={runtimeControllerLeaseActive} pending={runtimeCommandPending} onCommand={runtimeSendCommand} compact /></div>
         <div className="ml-auto flex h-11 overflow-hidden rounded-xl border border-white/10 bg-white/[0.06]">
           {isTabletPresentation && <button type="button" aria-pressed={effectiveSurface === "operator"} className={`min-w-20 px-3 text-xs font-black ${effectiveSurface === "operator" ? "bg-violet-500 text-white" : "text-slate-300"}`} onClick={() => setSurface("operator")}>Operador</button>}
           <button type="button" aria-pressed={effectiveSurface === "stage"} className={`min-w-20 border-l border-white/10 px-3 text-xs font-black ${effectiveSurface === "stage" ? "bg-violet-500 text-white" : "text-slate-300"}`} onClick={() => setSurface("stage")}>Escenario</button>
@@ -1665,7 +1666,7 @@ export default function ServicePresentation() {
           <section className="min-h-0 overflow-hidden border-r border-white/10 bg-black/15">{stageOutput}</section>
           <aside className="min-h-0 overflow-y-auto bg-black/20 p-4" onClick={stopStageEvent}>
             <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-violet-200">Ahora</p><h2 className="mt-1 truncate text-lg font-black">{currentStep?.sectionLabel || currentStep?.title || "Sin contenido"}</h2><p className="truncate text-xs text-slate-400">{currentStep?.title}</p></div>{stageLayout.show.clock ? <span className="text-lg font-black tabular-nums text-white">{clock}</span> : null}</div>
-            <div className="mt-3"><PresentationOwnershipControls snapshot={runtimeSnapshot} controllerLeaseActive={runtimeControllerLeaseActive} pending={runtimeCommandPending} onCommand={runtimeSendCommand} /></div>
+            <div className="mt-3"><PresentationOwnershipControls snapshot={runtimeSnapshot} localClientId={runtime.clientId} controllerLeaseActive={runtimeControllerLeaseActive} pending={runtimeCommandPending} onCommand={runtimeSendCommand} /></div>
             {currentSlide?.kind === "content" && (currentSlide.audienceSlide.kind === "video" || currentSlide.audienceSlide.kind === "audio" || currentSlide.audienceSlide.kind === "announcement") ? (
               <PresentationMediaControls
                 slide={currentSlide}
