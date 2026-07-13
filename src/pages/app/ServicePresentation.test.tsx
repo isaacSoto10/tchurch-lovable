@@ -19,12 +19,14 @@ const mocks = vi.hoisted(() => ({
   rehearsalNetworkState: "online" as PresentationNetworkState,
   reconcileObsAuthority: vi.fn(),
   liveSend: vi.fn(),
+  remoteSend: vi.fn(),
   rehearsalSend: vi.fn(),
   livePrepareRelease: vi.fn(),
   rehearsalPrepareRelease: vi.fn(),
   liveResume: vi.fn(),
   rehearsalResume: vi.fn(),
   audienceOutputProps: [] as Array<Record<string, unknown>>,
+  remoteSurfaceProps: [] as Array<Record<string, unknown>>,
   apiFetch: vi.fn(),
   fetchWorkspace: vi.fn(),
 }));
@@ -104,6 +106,26 @@ vi.mock("@/hooks/usePresentationRehearsal", () => ({
   }),
 }));
 
+vi.mock("@/hooks/usePresentationRemoteIntents", () => ({
+  usePresentationRemoteIntents: () => {
+    const controller = mocks.liveSnapshot?.session?.controller;
+    const owned = Boolean(controller?.ownedByViewer && mocks.liveControllerLeaseActive);
+    const available = Boolean(
+      controller
+      && !owned
+      && mocks.liveSnapshot?.viewer.canControl
+      && mocks.liveNetworkState === "online",
+    );
+    return {
+      available,
+      pending: false,
+      status: { phase: "idle", intentId: null, type: null, message: null },
+      send: mocks.remoteSend,
+      clearStatus: vi.fn(),
+    };
+  },
+}));
+
 vi.mock("@/hooks/usePresentationAutomations", () => ({
   usePresentationAutomationRuleThresholds: () => ({ thresholds: { live: [], rehearsal: [] }, error: null }),
   usePresentationAutomations: ({ mode }: { mode: "live" | "rehearsal" }) => ({
@@ -126,7 +148,11 @@ vi.mock("@/components/presentation/PresentationLiveControls", () => ({
   LiveConnectionBadge: () => null,
   PresentationLiveNotice: () => null,
   PresentationOwnershipControls: () => null,
-  PresentationRemoteSurface: () => null,
+  PresentationRemoteIntentStatus: () => null,
+  PresentationRemoteSurface: (props: Record<string, unknown>) => {
+    mocks.remoteSurfaceProps.push(props);
+    return null;
+  },
   PresentationStageMessages: () => null,
   PresentationTimingPanel: () => null,
 }));
@@ -305,6 +331,21 @@ function ownedSnapshot(mode: "live" | "rehearsal") {
   return value;
 }
 
+function observedLiveSnapshot() {
+  const value = liveSnapshot({ next: true, notes: true });
+  value.viewer = { view: "operator", roles: ["all"], canEdit: true, canStart: true, canControl: true, canForceTakeover: false };
+  value.session = value.session ? {
+    ...value.session,
+    controller: {
+      clientId: "33333333-3333-4333-8333-333333333333",
+      displayName: "Mac del santuario",
+      leaseExpiresAt: "2099-07-11T19:01:00.000Z",
+      ownedByViewer: false,
+    },
+  } : null;
+  return value;
+}
+
 function ownedVideoSnapshot(sessionId: string, revision: number, playing = false) {
   const value = ownedSnapshot("live");
   if (!value.session) return value;
@@ -347,16 +388,19 @@ describe("ServicePresentation load authority", () => {
     mocks.rehearsalNetworkState = "online";
     mocks.reconcileObsAuthority.mockReset();
     mocks.liveSend.mockReset();
+    mocks.remoteSend.mockReset();
     mocks.rehearsalSend.mockReset();
     mocks.livePrepareRelease.mockReset();
     mocks.rehearsalPrepareRelease.mockReset();
     mocks.liveResume.mockReset();
     mocks.rehearsalResume.mockReset();
     mocks.liveSend.mockResolvedValue(undefined);
+    mocks.remoteSend.mockResolvedValue({ phase: "applied", intentId: "remote-intent", type: "program_next", message: "Aplicado" });
     mocks.rehearsalSend.mockResolvedValue(undefined);
     mocks.livePrepareRelease.mockResolvedValue(4);
     mocks.rehearsalPrepareRelease.mockResolvedValue(4);
     mocks.audienceOutputProps = [];
+    mocks.remoteSurfaceProps = [];
     mocks.apiFetch.mockReset();
     mocks.fetchWorkspace.mockReset();
     mocks.fetchWorkspace.mockResolvedValue(workspace());
@@ -696,6 +740,46 @@ describe("ServicePresentation load authority", () => {
       partIndex: 0,
     }, undefined));
     expect(mocks.liveSend).not.toHaveBeenCalledWith("claim_control", expect.anything(), expect.anything());
+    expect(mocks.remoteSend).not.toHaveBeenCalled();
+  });
+
+  it("uses the remote-intent path for the same account on a different controller client without claiming control", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 1366 });
+    mocks.liveSnapshot = observedLiveSnapshot();
+    mocks.liveTiming = mocks.liveSnapshot.session!.timing;
+    mocks.liveControllerLeaseActive = true;
+    mocks.apiFetch.mockImplementation((path: string) => path === "/users/me"
+      ? Promise.resolve({ id: mocks.accountId })
+      : Promise.resolve(stageService()));
+
+    render(<ServicePresentation />);
+    await screen.findByText("Stage fixture");
+    fireEvent.click(screen.getByRole("button", { name: "Escenario" }));
+    fireEvent.click(screen.getByRole("button", { name: "Enviar siguiente al Programa" }));
+
+    await waitFor(() => expect(mocks.remoteSend).toHaveBeenCalledWith("program_next", {}));
+    expect(mocks.liveSend).not.toHaveBeenCalledWith("claim_control", expect.anything(), expect.anything());
+    expect(mocks.liveSend).not.toHaveBeenCalledWith("jump", expect.anything(), expect.anything());
+  });
+
+  it("wires the current remote authority, status, pending flag and sender into the Control surface", async () => {
+    mocks.liveSnapshot = observedLiveSnapshot();
+    mocks.liveTiming = mocks.liveSnapshot.session!.timing;
+    mocks.liveControllerLeaseActive = true;
+    mocks.apiFetch.mockImplementation((path: string) => path === "/users/me"
+      ? Promise.resolve({ id: mocks.accountId })
+      : Promise.resolve(stageService()));
+
+    render(<ServicePresentation />);
+    await screen.findByText("Stage fixture");
+    await waitFor(() => expect(mocks.remoteSurfaceProps.length).toBeGreaterThan(0));
+    expect(mocks.remoteSurfaceProps.at(-1)).toMatchObject({
+      remoteAvailable: true,
+      remotePending: false,
+      remoteStatus: { phase: "idle" },
+      onRemoteIntent: mocks.remoteSend,
+    });
   });
 
   it("offers a safe control claim from the iPad previous arrow instead of failing silently", async () => {

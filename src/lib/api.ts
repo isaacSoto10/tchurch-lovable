@@ -39,6 +39,8 @@ export class ApiError extends Error {
 export type ApiFetchOptions = RequestInit & {
   /** Never pass this request body to diagnostics. Used for lyrics, decisions, and other private drafts. */
   sensitiveBody?: boolean;
+  /** Pin this request to an already-authorized church scope instead of reading mutable local selection. */
+  churchId?: string | null;
 };
 
 type ClerkTokenWindow = Window & {
@@ -66,7 +68,7 @@ export async function apiFetch<T = unknown>(
   options: ApiFetchOptions = {},
   token?: string | null
 ): Promise<T> {
-  const { sensitiveBody = false, ...requestOptions } = options;
+  const { sensitiveBody = false, churchId: churchIdOverride, ...requestOptions } = options;
   const isFormData = typeof FormData !== "undefined" && requestOptions.body instanceof FormData;
   const method = (requestOptions.method || "GET").toUpperCase();
   const shouldNoStore = method === "GET" || method === "POST" || method === "PUT" || method === "PATCH" || method === "DELETE";
@@ -97,7 +99,7 @@ export async function apiFetch<T = unknown>(
     headers["Authorization"] = `Bearer ${resolvedToken}`;
   }
 
-  const churchId = getChurchId();
+  const churchId = churchIdOverride === undefined ? getChurchId() : churchIdOverride;
   if (churchId) {
     headers["x-church-id"] = churchId;
   }

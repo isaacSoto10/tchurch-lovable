@@ -13,12 +13,14 @@ import {
   LiveConnectionBadge,
   PresentationLiveNotice,
   PresentationOwnershipControls,
+  PresentationRemoteIntentStatus,
   PresentationRemoteSurface,
   PresentationStageMessages,
   PresentationTimingPanel,
 } from "@/components/presentation/PresentationLiveControls";
 import { usePresentationLive } from "@/hooks/usePresentationLive";
 import { usePresentationRehearsal } from "@/hooks/usePresentationRehearsal";
+import { usePresentationRemoteIntents } from "@/hooks/usePresentationRemoteIntents";
 import { usePresentationAutomations, usePresentationAutomationRuleThresholds } from "@/hooks/usePresentationAutomations";
 import { useAppAuth } from "@/hooks/useAppAuth";
 import { useChurch } from "@/providers/ChurchProvider";
@@ -844,6 +846,18 @@ export default function ServicePresentation() {
     enabled: Boolean(id && selectedChurch?.id && authenticatedUserId),
     maintainController: runMode === "rehearsal",
   });
+  const remoteIntents = usePresentationRemoteIntents({
+    accountId: authenticatedUserId,
+    churchId: selectedChurch?.id,
+    serviceId: id,
+    sessionId: live.snapshot?.session?.id,
+    clientId: live.clientId,
+    controllerClientId: live.snapshot?.session?.controller?.clientId,
+    enabled: runMode === "live",
+    online: live.networkState === "online",
+    viewerCanControl: live.snapshot?.viewer.canControl === true,
+    controllerOwned: Boolean(live.snapshot?.session?.controller?.ownedByViewer && live.controllerLeaseActive),
+  });
   const runtime = runMode === "rehearsal" ? rehearsal : live;
   const runtimeSnapshot = runtime.snapshot;
   const runtimeSession = runtimeSnapshot?.session || null;
@@ -1111,6 +1125,8 @@ export default function ServicePresentation() {
         } else {
           void runtimeSendCommand("next", {}).catch(() => undefined);
         }
+      } else if (remoteIntents.available && !remoteIntents.pending && safeStepIndex < runSteps.length - 1) {
+        void remoteIntents.send("program_next", {});
       }
       return;
     }
@@ -1121,6 +1137,10 @@ export default function ServicePresentation() {
     if (!runtimeSession || liveCanMutate) {
       if (direction === "next") goNext();
       else goPrevious();
+      return;
+    }
+    if (remoteIntents.available) {
+      await remoteIntents.send(direction === "next" ? "program_next" : "program_previous", {});
       return;
     }
     if (!runtimeSnapshot?.viewer.canControl) {
@@ -1171,6 +1191,8 @@ export default function ServicePresentation() {
         } else {
           void runtimeSendCommand("previous", {}).catch(() => undefined);
         }
+      } else if (remoteIntents.available && !remoteIntents.pending && safeStepIndex > 0) {
+        void remoteIntents.send("program_previous", {});
       }
       return;
     }
@@ -1196,6 +1218,7 @@ export default function ServicePresentation() {
   function toggleBlackout() {
     if (runtimeSession) {
       if (liveCanMutate) void runtimeSendCommand("set_blackout", { blackout: !blackout }).catch(() => undefined);
+      else if (remoteIntents.available && !remoteIntents.pending) void remoteIntents.send("set_blackout", { enabled: !blackout });
       return;
     }
     setBlackout((current) => !current);
@@ -1204,6 +1227,7 @@ export default function ServicePresentation() {
   function toggleChords() {
     if (runtimeSession) {
       if (liveCanMutate) void runtimeSendCommand("set_chords", { chordsVisible: !showChords }).catch(() => undefined);
+      else if (remoteIntents.available && !remoteIntents.pending) void remoteIntents.send("set_chords", { visible: !showChords });
       return;
     }
     setShowChords((current) => !current);
@@ -1479,6 +1503,8 @@ export default function ServicePresentation() {
   );
   const stageAdvanceLabel = !stageNeedsControl
     ? "Siguiente"
+    : remoteIntents.available
+      ? "Enviar siguiente al Programa"
     : !runtimeSnapshot?.viewer.canControl
       ? "Solo seguimiento"
       : stageCanClaimControl
@@ -1486,14 +1512,17 @@ export default function ServicePresentation() {
         : "Solicitar control para avanzar";
   const stagePreviousLabel = !stageNeedsControl
     ? "Anterior"
+    : remoteIntents.available
+      ? "Enviar anterior al Programa"
     : !runtimeSnapshot?.viewer.canControl
       ? "Solo seguimiento"
       : stageCanClaimControl
         ? "Tomar control para retroceder"
         : "Solicitar control para retroceder";
   const stageControlDisabled = runtimeCommandPending
+    || remoteIntents.pending
     || stageCanClaimControl && runtimeNetworkState !== "online"
-    || stageNeedsControl && !runtimeSnapshot?.viewer.canControl;
+    || stageNeedsControl && !runtimeSnapshot?.viewer.canControl && !remoteIntents.available;
   const stageAdvanceDisabled = stageAtEnd || stageControlDisabled;
   const stagePreviousDisabled = stageAtStart || stageControlDisabled;
 
@@ -1513,16 +1542,16 @@ export default function ServicePresentation() {
             aria-label={blackout ? "Restaurar salida de presentación" : "Poner salida de presentación en negro"}
             aria-pressed={blackout}
             className={`h-11 rounded-xl border px-2 text-[11px] font-black text-white hover:text-white sm:px-3 sm:text-xs ${blackout ? "border-red-400/60 bg-red-500/30 hover:bg-red-500/40" : "border-white/10 bg-black/70 hover:bg-black"}`}
-            disabled={Boolean(runtimeSession) && !liveCanMutate}
+            disabled={(Boolean(runtimeSession) && !liveCanMutate && !remoteIntents.available) || remoteIntents.pending}
             onClick={toggleBlackout}
           >{blackout ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}<span>{blackout ? "Restaurar" : "Salida en negro"}</span></Button>
-          <Button variant="ghost" className="hidden h-11 rounded-xl border border-white/10 bg-white/[0.08] px-3 text-white hover:bg-white/[0.15] hover:text-white sm:flex" disabled={runtimeSession ? !liveCanMutate || safeStepIndex === 0 : !historyCount} onClick={undoNavigation}><Undo2 className="h-4 w-4" /><span className="hidden xl:inline">Atrás</span></Button>
+          <Button variant="ghost" className="hidden h-11 rounded-xl border border-white/10 bg-white/[0.08] px-3 text-white hover:bg-white/[0.15] hover:text-white sm:flex" disabled={runtimeSession ? (!liveCanMutate && !remoteIntents.available) || remoteIntents.pending || safeStepIndex === 0 : !historyCount} onClick={undoNavigation}><Undo2 className="h-4 w-4" /><span className="hidden xl:inline">Atrás</span></Button>
           {currentSongHasChords && <Button
             variant="ghost"
             aria-label={showChords ? "Ocultar acordes" : "Mostrar acordes"}
             aria-pressed={showChords}
             className={`h-11 min-w-[5.5rem] rounded-xl border px-2 text-xs font-black text-white hover:text-white sm:px-3 ${showChords ? "border-emerald-300/25 bg-emerald-300/10 hover:bg-emerald-300/15" : "border-white/10 bg-white/[0.05] hover:bg-white/10"}`}
-            disabled={Boolean(runtimeSession) && !liveCanMutate}
+            disabled={(Boolean(runtimeSession) && !liveCanMutate && !remoteIntents.available) || remoteIntents.pending}
             onClick={toggleChords}
           >{showChords ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}<span>Acordes</span><span className="text-[9px] opacity-70">{showChords ? "sí" : "no"}</span></Button>}
           {stageLayout.show.clock ? <div className="flex h-11 min-w-14 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.08] px-2 text-xs font-black tabular-nums sm:px-3"><Clock3 className="hidden h-4 w-4 text-violet-200 sm:block" /><span><span className="block leading-none">{clock}</span><span className="mt-1 block text-center text-[8px] leading-none text-slate-400 sm:hidden">{runSteps.length ? safeStepIndex + 1 : 0}/{runSteps.length}</span></span></div> : null}
@@ -1566,6 +1595,12 @@ export default function ServicePresentation() {
         onDiscard={live.discardOfflineChanges}
       /> : rehearsal.notice ? <div className="relative z-30 flex min-h-11 shrink-0 items-center justify-between gap-3 border-b border-amber-300/20 bg-amber-300/10 px-4 py-2 text-xs font-semibold text-amber-100" role="status" onClick={stopStageEvent}><span>{rehearsal.notice}</span><Button variant="ghost" className="h-11 rounded-xl text-amber-100 hover:bg-amber-200/10 hover:text-amber-50" onClick={rehearsal.clearNotice}>Cerrar</Button></div> : null}
 
+      {effectiveSurface !== "remote" && remoteIntents.status.phase !== "idle" ? (
+        <div className="relative z-30 shrink-0 border-b border-white/[0.06] bg-[#0b0914] px-3 py-2 sm:px-5" onClick={stopStageEvent}>
+          <PresentationRemoteIntentStatus status={remoteIntents.status} />
+        </div>
+      ) : null}
+
       {currentSlide?.kind === "song" && (
         <div className="relative z-30 flex shrink-0 items-center justify-center gap-2 border-b border-white/[0.05] px-3 py-2" onClick={stopStageEvent}>
           <div className="flex h-11 overflow-hidden rounded-xl border border-white/10 bg-white/[0.08]">
@@ -1602,7 +1637,11 @@ export default function ServicePresentation() {
           blackout={blackout}
           chordsVisible={showChords}
           pending={runtimeCommandPending || runtimeNetworkState === "diverged"}
+          remoteAvailable={remoteIntents.available}
+          remotePending={remoteIntents.pending}
+          remoteStatus={remoteIntents.status}
           onCommand={runtimeSendCommand}
+          onRemoteIntent={remoteIntents.send}
         />
       ) : effectiveSurface === "operator" ? (
         <main className="relative z-10 grid min-h-0 flex-1 grid-cols-[12rem_minmax(20rem,1fr)_15rem] overflow-hidden xl:grid-cols-[16rem_minmax(0,1fr)_19rem]">
@@ -1665,8 +1704,8 @@ export default function ServicePresentation() {
             {stageLayout.show.notes ? <div className="mt-4"><p className="mb-2 text-[10px] font-black uppercase tracking-[0.18em] text-violet-200">Notas del equipo</p><AnnotationList annotations={operatorAnnotations} emptyLabel="Sin indicaciones en este momento." /></div> : null}
             {stageLayout.show.notes && currentLegacyNotes.length ? <div className="mt-4 space-y-2"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Notas anteriores</p>{currentLegacyNotes.map((note, index) => <p key={`${note}-${index}`} className="rounded-xl bg-white/[0.05] p-3 text-xs leading-5 text-slate-300">{note}</p>)}</div> : null}
             <div className="sticky bottom-0 mt-5 grid grid-cols-[3rem_minmax(0,1fr)_3rem] gap-2 bg-[#08070d]/95 py-3">
-              <Button variant="ghost" className="h-12 rounded-xl bg-white/10 text-white hover:bg-white/15 hover:text-white" disabled={safeStepIndex === 0 || Boolean(runtimeSession) && !liveCanMutate} onClick={goPrevious}><ChevronLeft className="h-5 w-5" /></Button>
-              <Button className="h-12 rounded-xl bg-violet-500 font-black hover:bg-violet-400" disabled={safeStepIndex >= runSteps.length - 1 || Boolean(runtimeSession) && !liveCanMutate} onClick={goNext}>Siguiente</Button>
+              <Button variant="ghost" className="h-12 rounded-xl bg-white/10 text-white hover:bg-white/15 hover:text-white" disabled={safeStepIndex === 0 || remoteIntents.pending || Boolean(runtimeSession) && !liveCanMutate && !remoteIntents.available} onClick={goPrevious}><ChevronLeft className="h-5 w-5" /></Button>
+              <Button className="h-12 rounded-xl bg-violet-500 font-black hover:bg-violet-400" disabled={safeStepIndex >= runSteps.length - 1 || remoteIntents.pending || Boolean(runtimeSession) && !liveCanMutate && !remoteIntents.available} onClick={goNext}>Siguiente</Button>
               <Button variant="ghost" aria-label="Abrir control remoto" className="h-12 rounded-xl bg-white/10 text-white hover:bg-white/15 hover:text-white" onClick={() => setSurface("remote")}><Settings2 className="h-5 w-5" /></Button>
             </div>
           </aside>

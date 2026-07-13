@@ -5,11 +5,13 @@ import {
   LiveConnectionBadge,
   PresentationLiveNotice,
   PresentationOwnershipControls,
+  PresentationRemoteIntentStatus,
   PresentationRemoteSurface,
   PresentationStageMessages,
   type PresentationLiveCommandSender,
 } from "./PresentationLiveControls";
 import type { PresentationLiveSnapshot, PresentationOfflineStep, PresentationTiming } from "@/lib/presentationLive";
+import type { PresentationRemoteIntentSender, PresentationRemoteIntentUiState } from "@/lib/presentationRemoteIntents";
 import type { PresentationRunStep } from "@/lib/servicePresentation";
 
 const timing: PresentationTiming = {
@@ -126,7 +128,7 @@ describe("Tchurch Live controls", () => {
 
   it("uses exact partIndex jumps for adjacent pages and null cue step IDs", () => {
     const onCommand = renderRemote();
-    fireEvent.click(screen.getByRole("button", { name: /Siguiente/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Programa siguiente" }));
     expect(onCommand).toHaveBeenCalledWith("jump", { itemId: "item-1", stepId: "step-a", partIndex: 1 });
 
     fireEvent.click(screen.getByRole("button", { name: "Orden" }));
@@ -141,6 +143,65 @@ describe("Tchurch Live controls", () => {
     fireEvent.click(screen.getByRole("button", { name: "Forzar" }));
     expect(onCommand).toHaveBeenCalledWith("request_control", {});
     expect(onCommand).toHaveBeenCalledWith("claim_control", { force: true });
+  });
+
+  it("maps all seven observer controls to remote intents without claiming control", () => {
+    const onCommand = vi.fn(async () => undefined) as unknown as PresentationLiveCommandSender;
+    const remoteMock = vi.fn(async () => ({ phase: "applied", intentId: "intent", type: "take", message: "Aplicado" }));
+    const onRemoteIntent = remoteMock as unknown as PresentationRemoteIntentSender;
+    render(
+      <PresentationRemoteSurface
+        snapshot={snapshot(false)}
+        activeView="operator"
+        controllerLeaseActive
+        timing={timing}
+        steps={steps}
+        liveSteps={liveSteps}
+        activeIndex={1}
+        nextLabel="Oración"
+        blackout={false}
+        chordsVisible
+        pending={false}
+        remoteAvailable
+        remotePending={false}
+        remoteStatus={{ phase: "idle", intentId: null, type: null, message: null }}
+        onCommand={onCommand}
+        onRemoteIntent={onRemoteIntent}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Vista previa anterior" }));
+    fireEvent.click(screen.getByRole("button", { name: "Vista previa siguiente" }));
+    fireEvent.click(screen.getByRole("button", { name: "Pasar a Programa" }));
+    fireEvent.click(screen.getByRole("button", { name: "Programa anterior" }));
+    fireEvent.click(screen.getByRole("button", { name: "Programa siguiente" }));
+    fireEvent.click(screen.getByRole("button", { name: "Poner salida de presentación en negro" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ocultar acordes" }));
+
+    expect(remoteMock.mock.calls).toEqual([
+      ["preview_previous", {}],
+      ["preview_next", {}],
+      ["take", {}],
+      ["program_previous", {}],
+      ["program_next", {}],
+      ["set_blackout", { enabled: true }],
+      ["set_chords", { visible: false }],
+    ]);
+    expect(onCommand).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["sending", "Enviando al controlador en vivo…"],
+    ["applied", "Aplicado por el controlador en vivo."],
+    ["rejected", "El controlador rechazó la acción."],
+    ["expired", "La acción expiró antes de aplicarse."],
+    ["error", "El controlador no pudo aplicar la acción."],
+  ] as const)("announces the remote UI state %s without treating pending as success", (phase, message) => {
+    const status: PresentationRemoteIntentUiState = { phase, intentId: "intent-1", type: "take", message };
+    const view = render(<PresentationRemoteIntentStatus status={status} />);
+    expect(screen.getByRole("status")).toHaveTextContent(message);
+    if (phase !== "applied") expect(screen.queryByText("Aplicado por el controlador en vivo.")).not.toBeInTheDocument();
+    view.unmount();
   });
 
   it("offers a requested handoff target and exposes overrun/countdown clocks", () => {

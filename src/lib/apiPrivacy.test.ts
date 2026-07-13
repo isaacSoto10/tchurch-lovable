@@ -16,18 +16,21 @@ vi.mock("@/lib/nativeApiCache", () => ({
   writeNativeApiCache: vi.fn(),
 }));
 
-import { apiFetch } from "./api";
+import { apiFetch, setChurchId } from "./api";
 
 describe("apiFetch private request diagnostics", () => {
   beforeEach(() => {
     logApiRequestSummaryMock.mockClear();
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => new Response(JSON.stringify({ ok: true }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     })));
   });
 
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    setChurchId(null);
+    vi.unstubAllGlobals();
+  });
 
   it("sends a sensitive proposal body to the server but never to the action logger", async () => {
     const privateBody = JSON.stringify({ lyrics: "[C]Texto privado", decisionReason: "Motivo privado" });
@@ -43,6 +46,26 @@ describe("apiFetch private request diagnostics", () => {
       expect(entry.body).toBeUndefined();
       expect(JSON.stringify(entry)).not.toContain("Texto privado");
       expect(JSON.stringify(entry)).not.toContain("Motivo privado");
+    }
+  });
+
+  it("keeps an explicitly scoped church header stable when local selection changes", async () => {
+    setChurchId("church-selected-before");
+    const options = {
+      method: "POST",
+      body: JSON.stringify({ private: true }),
+      sensitiveBody: true,
+      churchId: "church-authorized-for-intent",
+    } as const;
+
+    await apiFetch("/presentation-remote-intents", options, "test-token");
+    setChurchId("church-selected-after");
+    await apiFetch("/presentation-remote-intents", options, "test-token");
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    for (const [, request] of vi.mocked(fetch).mock.calls) {
+      expect((request?.headers as Record<string, string>)["x-church-id"]).toBe("church-authorized-for-intent");
+      expect(request).not.toHaveProperty("churchId");
     }
   });
 
