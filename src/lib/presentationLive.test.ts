@@ -334,8 +334,8 @@ describe("Tchurch Live Stage 2 contract", () => {
     const normalized = normalizePresentationLiveSnapshot(raw, "operator", "client-1");
     expect(normalized.session?.playback).toMatchObject({ kind: "video", status: "playing", positionMs: 2_000, rate: 1 });
     expect(buildPresentationCommand("client", "iPad", "media_seek", { ...target, positionMs: 4_000 }, 15)).toMatchObject({ type: "media_seek", payload: { ...target, positionMs: 4_000 }, expectedRevision: 15 });
-    const state = createPresentationOfflineState(cachedPackage(), normalized);
-    expect(() => queueOfflinePresentationCommand(state, { commandId: "media", type: "media_seek" as never, payload: { ...target, positionMs: 4_000 } as never }, offlineContext)).toThrow();
+    const state = createPresentationOfflineState(cachedPackage(), normalized, "client-1");
+    expect(() => queueOfflinePresentationCommand(state, { commandId: "media", type: "media_seek" as never, payload: { ...target, positionMs: 4_000 } as never }, offlineContext, "client-1")).toThrow();
   });
 
   it("binds every media action to the exact session, cursor, playback and revision without ABA rebasing", () => {
@@ -643,7 +643,7 @@ describe("Tchurch Live Stage 2 contract", () => {
       view: "operator",
       roles: ["operator"],
     }, { ...editorSource, packageId: editorDigest, checksum: editorDigest });
-    await savePresentationOfflineState(createPresentationOfflineState(editorCached, liveSnapshot("operator")));
+    await savePresentationOfflineState(createPresentationOfflineState(editorCached, liveSnapshot("operator"), "client-1"), "client-1");
 
     const assignedRoles = ["stage", "worship_leader"] as const;
     await purgePresentationCacheForViewerDowngrade({
@@ -660,7 +660,7 @@ describe("Tchurch Live Stage 2 contract", () => {
       view: "operator",
       roles: ["operator"],
     })).toBeNull();
-    expect(await loadPresentationOfflineState(editorCached.key)).toBeNull();
+    expect(await loadPresentationOfflineState(editorCached.key, "client-1")).toBeNull();
 
     const assignedSource = {
       ...editorSource,
@@ -760,17 +760,17 @@ describe("Tchurch Live Stage 2 contract", () => {
 
   it("queues original command IDs and builds one conflict-safe reconcile", () => {
     const cache = cachedPackage();
-    let state = createPresentationOfflineState(cache, liveSnapshot("operator"));
+    let state = createPresentationOfflineState(cache, liveSnapshot("operator"), "client-1");
     state = queueOfflinePresentationCommand(state, {
       commandId: "original-next",
       type: "next",
       payload: {},
-    }, offlineContext, Date.parse(serverNow) + 1_000);
+    }, offlineContext, "client-1", Date.parse(serverNow) + 1_000);
     state = queueOfflinePresentationCommand(state, {
       commandId: "original-blackout",
       type: "set_blackout",
       payload: { blackout: true },
-    }, offlineContext, Date.parse(serverNow) + 2_000);
+    }, offlineContext, "client-1", Date.parse(serverNow) + 2_000);
     const reconcile = buildOfflineReconcileCommand(state, "client-1", "Tchurch iPad");
 
     expect(state.baseRevision).toBe(14);
@@ -783,20 +783,87 @@ describe("Tchurch Live Stage 2 contract", () => {
     expect(reconcile.commandId).not.toBe("original-next");
   });
 
-  it("refuses local continuation without controller ownership or beyond 100 actions", () => {
+  it("binds offline create, queue, persistence, restore and reconcile to client A", async () => {
+    const cache = cachedPackage();
+    let state = createPresentationOfflineState(cache, liveSnapshot("operator"), "client-1");
+    expect(state.clientId).toBe("client-1");
+
+    state = queueOfflinePresentationCommand(state, {
+      commandId: "client-a-next",
+      type: "next",
+      payload: {},
+    }, offlineContext, "client-1", Date.parse(serverNow) + 1_000);
+    expect(buildOfflineReconcileCommand(state, "client-1", "Tchurch iPad")).toMatchObject({
+      clientId: "client-1",
+      type: "offline_reconcile",
+      payload: { baseRevision: 14, commands: [{ commandId: "client-a-next" }] },
+    });
+
+    await savePresentationOfflineState(state, "client-1");
+    await expect(loadPresentationOfflineState(cache.key, "client-1")).resolves.toMatchObject({
+      clientId: "client-1",
+      commands: [{ commandId: "client-a-next" }],
+    });
+  });
+
+  it("fails closed when client B tries to queue, persist, restore or reconcile client A state", async () => {
+    const cache = cachedPackage();
+    let state = createPresentationOfflineState(cache, liveSnapshot("operator"), "client-1");
+
+    expect(() => queueOfflinePresentationCommand(state, {
+      commandId: "client-b-next",
+      type: "next",
+      payload: {},
+    }, offlineContext, "client-2")).toThrow(/no tenía el control/);
+    await expect(savePresentationOfflineState(state, "client-2")).rejects.toThrow(/no pertenece/);
+
+    state = queueOfflinePresentationCommand(state, {
+      commandId: "client-a-next",
+      type: "next",
+      payload: {},
+    }, offlineContext, "client-1");
+    expect(() => buildOfflineReconcileCommand(state, "client-2", "Otro iPad")).toThrow(/otro dispositivo/);
+
+    await savePresentationOfflineState(state, "client-1");
+    await expect(loadPresentationOfflineState(cache.key, "client-2")).resolves.toBeNull();
+    await expect(loadPresentationOfflineState(cache.key, "client-1")).resolves.toBeNull();
+  });
+
+  it("discards legacy or snapshot-mismatched offline state instead of re-emitting it", async () => {
+    const cache = cachedPackage();
+    const valid = createPresentationOfflineState(cache, liveSnapshot("operator"), "client-1");
+    const legacy = { ...valid } as Partial<PresentationOfflineState>;
+    delete legacy.clientId;
+    localStorage.setItem("tchurch_live_offline_v1", JSON.stringify([legacy]));
+
+    await expect(loadPresentationOfflineState(cache.key, "client-1")).resolves.toBeNull();
+    expect(JSON.parse(localStorage.getItem("tchurch_live_offline_v1") || "[]")).toEqual([]);
+
+    const mismatchedSnapshot = structuredClone(valid);
+    mismatchedSnapshot.localSnapshot.session!.controller!.clientId = "client-2";
+    localStorage.setItem("tchurch_live_offline_v1", JSON.stringify([mismatchedSnapshot]));
+    await expect(loadPresentationOfflineState(cache.key, "client-1")).resolves.toBeNull();
+    expect(JSON.parse(localStorage.getItem("tchurch_live_offline_v1") || "[]")).toEqual([]);
+  });
+
+  it("refuses local continuation without exact controller ownership or beyond 100 actions", () => {
     const cache = cachedPackage();
     const withoutControl = liveSnapshot("operator");
     withoutControl.session!.controller!.ownedByViewer = false;
-    const state = createPresentationOfflineState(cache, withoutControl);
-    expect(() => queueOfflinePresentationCommand(state, { commandId: "x", type: "next", payload: {} }, offlineContext)).toThrow(/no tenía el control/);
+    expect(() => createPresentationOfflineState(cache, withoutControl, "client-1")).toThrow(/control exacto/);
 
-    const controlled = createPresentationOfflineState(cache, liveSnapshot("operator"));
+    const otherDeviceControl = liveSnapshot("operator");
+    otherDeviceControl.session!.controller!.clientId = "client-2";
+    expect(() => createPresentationOfflineState(cache, otherDeviceControl, "client-1")).toThrow(/control exacto/);
+
+    const controlled = createPresentationOfflineState(cache, liveSnapshot("operator"), "client-1");
+    expect(() => queueOfflinePresentationCommand(controlled, { commandId: "x", type: "next", payload: {} }, offlineContext, "client-2")).toThrow(/no tenía el control/);
     controlled.commands = Array.from({ length: MAX_OFFLINE_PRESENTATION_COMMANDS }, (_, index) => ({
       commandId: `command-${index}`,
       type: "next",
       payload: {},
     })) as PresentationQueuedCommand[];
-    expect(() => queueOfflinePresentationCommand(controlled, { commandId: "overflow", type: "next", payload: {} }, offlineContext)).toThrow(/100 acciones/);
+    expect(() => queueOfflinePresentationCommand(controlled, { commandId: "overflow", type: "next", payload: {} }, offlineContext, "client-1")).toThrow(/100 acciones/);
   });
 
   it("surfaces OFFLINE_DIVERGED and accepts the server-filtered current snapshot", () => {

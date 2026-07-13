@@ -491,6 +491,7 @@ type StoredPresentationPackage = Omit<CachedPresentationPackage, "package"> & {
 export type PresentationOfflineState = {
   key: string;
   packageKey: string;
+  clientId: string;
   accountId: string;
   churchId: string;
   serviceId: string;
@@ -1383,16 +1384,27 @@ export function applyOfflinePresentationCommand<T extends PresentationOfflineCom
   };
 }
 
+function presentationOfflineStateMatchesClient(state: PresentationOfflineState, clientId: string) {
+  const controller = state.localSnapshot?.session?.controller;
+  return Boolean(
+    clientId
+    && state.clientId === clientId
+    && controller?.ownedByViewer
+    && controller.clientId === clientId,
+  );
+}
+
 export function queueOfflinePresentationCommand<T extends PresentationOfflineCommandType>(
   state: PresentationOfflineState,
   command: PresentationQueuedCommand<T>,
   context: PresentationOfflineContext,
+  clientId: string,
   nowMs = Date.now(),
 ): PresentationOfflineState {
   if (!isOfflinePresentationCommand(command.type as PresentationCommandType)) {
     throw new Error("Este control requiere conexión con la sesión oficial.");
   }
-  if (!state.localSnapshot.session?.controller?.ownedByViewer) {
+  if (!presentationOfflineStateMatchesClient(state, clientId)) {
     throw new Error("Este dispositivo no tenía el control cuando se perdió la conexión.");
   }
   if (state.commands.length >= MAX_OFFLINE_PRESENTATION_COMMANDS) {
@@ -1412,6 +1424,9 @@ export function buildOfflineReconcileCommand(
   clientId: string,
   clientName: string,
 ) {
+  if (!presentationOfflineStateMatchesClient(state, clientId)) {
+    throw new Error("La cola offline pertenece a otro dispositivo y no se puede reconciliar aquí.");
+  }
   if (!state.commands.length) throw new Error("No hay acciones offline pendientes.");
   return buildPresentationCommand(
     clientId,
@@ -1458,11 +1473,17 @@ export function presentationPackageCacheKey(scope: PresentationCacheScope) {
 export function createPresentationOfflineState(
   cachedPackage: CachedPresentationPackage,
   snapshot: PresentationLiveSnapshot,
+  clientId: string,
 ): PresentationOfflineState {
   if (!snapshot.session) throw new Error("No hay una sesión activa para continuar offline.");
+  const controller = snapshot.session.controller;
+  if (!controller?.ownedByViewer || controller.clientId !== clientId) {
+    throw new Error("Este dispositivo no tiene el control exacto para continuar offline.");
+  }
   return {
     key: cachedPackage.key,
     packageKey: cachedPackage.key,
+    clientId,
     accountId: cachedPackage.accountId,
     churchId: cachedPackage.churchId,
     serviceId: cachedPackage.serviceId,
@@ -1779,14 +1800,23 @@ export async function loadLatestPresentationPackageForIdentity(
   return null;
 }
 
-export async function savePresentationOfflineState(state: PresentationOfflineState) {
+export async function savePresentationOfflineState(state: PresentationOfflineState, clientId: string) {
+  if (!presentationOfflineStateMatchesClient(state, clientId)) {
+    throw new Error("La cola offline no pertenece a este dispositivo.");
+  }
   await putLiveRecord(OFFLINE_STORE, FALLBACK_OFFLINE_KEY, state);
   return state;
 }
 
-export async function loadPresentationOfflineState(packageKey: string) {
+export async function loadPresentationOfflineState(packageKey: string, clientId: string) {
   const records = await getAllLiveRecords<PresentationOfflineState>(OFFLINE_STORE, FALLBACK_OFFLINE_KEY);
-  return records.find((record) => record.key === packageKey) || null;
+  const saved = records.find((record) => record.key === packageKey) || null;
+  if (!saved) return null;
+  if (saved.packageKey !== packageKey || !presentationOfflineStateMatchesClient(saved, clientId)) {
+    await deleteLiveRecord(OFFLINE_STORE, FALLBACK_OFFLINE_KEY, saved.key);
+    return null;
+  }
+  return saved;
 }
 
 export function removePresentationOfflineState(packageKey: string) {

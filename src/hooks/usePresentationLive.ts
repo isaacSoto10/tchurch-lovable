@@ -210,14 +210,20 @@ export function usePresentationLive({
       || !serviceId
       || !presentationPackageMatchesLiveViewer(cached.package, nextSnapshot.viewer, { accountId, churchId, serviceId })
     ) return;
-    const base = createPresentationOfflineState(cached, nextSnapshot);
-    await savePresentationOfflineState(base);
+    const controller = nextSnapshot.session.controller;
+    if (!controller?.ownedByViewer || controller.clientId !== clientId) {
+      await removePresentationOfflineState(cached.key);
+      if (expectedGeneration === authorityGenerationRef.current) setOfflineState(null);
+      return;
+    }
+    const base = createPresentationOfflineState(cached, nextSnapshot, clientId);
+    await savePresentationOfflineState(base, clientId);
     if (expectedGeneration !== authorityGenerationRef.current) {
       await removePresentationOfflineState(base.key);
       return;
     }
     setOfflineState(base);
-  }, [accountId, churchId, serviceId, setOfflineState]);
+  }, [accountId, churchId, clientId, serviceId, setOfflineState]);
 
   const fetchAllowedSnapshot = useCallback(async (
     sinceRevision?: number,
@@ -311,7 +317,7 @@ export function usePresentationLive({
     );
     if (generation !== authorityGenerationRef.current) return false;
     if (!cached) return false;
-    const savedOffline = await loadPresentationOfflineState(cached.key);
+    const savedOffline = await loadPresentationOfflineState(cached.key, clientId);
     if (generation !== authorityGenerationRef.current) return false;
     cachedPackageRef.current = cached;
     if (mountedRef.current) setPresentationPackageState(cached.package);
@@ -325,7 +331,7 @@ export function usePresentationLive({
       ? "Modo local activo. Los cambios quedan en este dispositivo hasta reconectar."
       : "Paquete offline disponible en modo lectura; no hay control local guardado.");
     return true;
-  }, [accountId, churchId, preferredView, serviceId, setActiveView, setNetworkState, setOfflineState, setSnapshot]);
+  }, [accountId, churchId, clientId, preferredView, serviceId, setActiveView, setNetworkState, setOfflineState, setSnapshot]);
 
   const reconcileOffline = useCallback(async () => {
     const generation = authorityGenerationRef.current;
@@ -407,21 +413,29 @@ export function usePresentationLive({
       if (isConnectivityError(refreshError)) {
         const cached = cachedPackageRef.current;
         if (cached && snapshotRef.current?.session) {
-          const localBase = offlineStateRef.current || createPresentationOfflineState(cached, snapshotRef.current);
-          await savePresentationOfflineState(localBase);
-          if (generation !== authorityGenerationRef.current) {
-            await removePresentationOfflineState(localBase.key);
-            return snapshotRef.current;
+          const currentSnapshot = snapshotRef.current;
+          const controller = currentSnapshot.session.controller;
+          const localBase = offlineStateRef.current || (
+            controller?.ownedByViewer && controller.clientId === clientId
+              ? createPresentationOfflineState(cached, currentSnapshot, clientId)
+              : null
+          );
+          if (localBase) {
+            await savePresentationOfflineState(localBase, clientId);
+            if (generation !== authorityGenerationRef.current) {
+              await removePresentationOfflineState(localBase.key);
+              return snapshotRef.current;
+            }
+            setOfflineState(localBase);
+            setSnapshot(localBase.localSnapshot);
           }
-          setOfflineState(localBase);
-          setSnapshot(localBase.localSnapshot);
         }
         setNetworkState("offline");
         return snapshotRef.current;
       }
       throw refreshError;
     }
-  }, [cacheAuthoritativeSnapshot, enabled, fetchAllowedSnapshot, reconcileOffline, revokePrivateAuthority, serviceId, setNetworkState, setOfflineState, setSnapshot]);
+  }, [cacheAuthoritativeSnapshot, clientId, enabled, fetchAllowedSnapshot, reconcileOffline, revokePrivateAuthority, serviceId, setNetworkState, setOfflineState, setSnapshot]);
 
   useEffect(() => {
     const generation = authorityGenerationRef.current;
@@ -465,7 +479,7 @@ export function usePresentationLive({
           const cached = await downloadPackage(initial);
           if (cancelled || generation !== authorityGenerationRef.current) return;
           if (cached) {
-            const pending = await loadPresentationOfflineState(cached.key);
+            const pending = await loadPresentationOfflineState(cached.key, clientId);
             if (cancelled || generation !== authorityGenerationRef.current) return;
             if (pending?.commands.length) {
               setOfflineState(pending);
@@ -501,7 +515,7 @@ export function usePresentationLive({
       cancelled = true;
       mountedRef.current = false;
     };
-  }, [accountId, cacheAuthoritativeSnapshot, churchId, downloadPackage, enabled, fetchAllowedSnapshot, preferredView, reconcileOffline, restoreOfflinePackage, revokePrivateAuthority, serviceId, setActiveView, setNetworkState, setOfflineState, setSnapshot]);
+  }, [accountId, cacheAuthoritativeSnapshot, churchId, clientId, downloadPackage, enabled, fetchAllowedSnapshot, preferredView, reconcileOffline, restoreOfflinePackage, revokePrivateAuthority, serviceId, setActiveView, setNetworkState, setOfflineState, setSnapshot]);
 
   useEffect(() => {
     const current = snapshot;
@@ -635,15 +649,15 @@ export function usePresentationLive({
       }
       if (isConnectivityError(commandError) && isOfflinePresentationCommand(type) && options?.allowOffline !== false) {
         const cached = cachedPackageRef.current;
-        const base = offlineStateRef.current || (cached && current?.session ? createPresentationOfflineState(cached, current) : null);
+        const base = offlineStateRef.current || (cached && current?.session ? createPresentationOfflineState(cached, current, clientId) : null);
         if (!base) throw new Error("No hay un paquete seguro para continuar offline.");
         const queued = {
           commandId: request.commandId,
           type,
           payload,
         } as PresentationQueuedCommand<typeof type>;
-        const nextOffline = queueOfflinePresentationCommand(base, queued, offlineContextRef.current);
-        await savePresentationOfflineState(nextOffline);
+        const nextOffline = queueOfflinePresentationCommand(base, queued, offlineContextRef.current, clientId);
+        await savePresentationOfflineState(nextOffline, clientId);
         if (generation !== authorityGenerationRef.current) {
           await removePresentationOfflineState(nextOffline.key);
           throw new Error("La cuenta activa cambió antes de guardar la acción local.");
