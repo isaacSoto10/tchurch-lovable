@@ -59,12 +59,14 @@ import {
   type PresentationWorkspaceItem,
 } from "@/lib/presentationWorkspace";
 import {
+  bindPresentationMediaCommand,
   presentationPackageMatchesLiveViewer,
   presentationWorkspaceMatchesLiveViewer,
   resolvePresentationCursorIndex,
   type PresentationCommandPayloads,
   type PresentationCommandType,
   type PresentationLiveSnapshot,
+  type PresentationMediaCommandBinding,
   type PresentationPrivateLiveView,
 } from "@/lib/presentationLive";
 import {
@@ -587,9 +589,9 @@ function PresentationMediaControls({
   const playing = matches && playback?.status === "playing";
 
   return (
-    <div className="mt-4 rounded-2xl border border-amber-300/15 bg-amber-300/[0.06] p-3">
-      <div className="flex items-center justify-between gap-3"><div><p className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-200">Reproducción</p><p className="mt-1 text-xs text-slate-400">{mediaKind === "announcement" ? "Intervalo del anuncio" : mediaKind === "video" ? "Video de audiencia" : "Audio de audiencia"}</p></div><span className="text-xs font-black tabular-nums">{formatLiveDuration(seekMs / 1_000)}</span></div>
-      <input type="range" min={0} max={Math.max(1_000, maximumMs)} step={1_000} value={Math.min(seekMs, Math.max(1_000, maximumMs))} onChange={(event) => setSeekMs(Number(event.target.value))} className="mt-3 h-8 w-full accent-amber-300" aria-label="Posición del contenido" disabled={disabled || !matches} />
+    <div className="mt-4 rounded-2xl border border-violet-300/20 bg-violet-400/[0.08] p-3">
+      <div className="flex items-center justify-between gap-3"><div><p className="text-[10px] font-black uppercase tracking-[0.18em] text-violet-200">Reproducción</p><p className="mt-1 text-xs text-slate-300">{mediaKind === "announcement" ? "Intervalo del anuncio" : mediaKind === "video" ? "Video de audiencia" : "Audio de audiencia"}</p></div><span className="text-xs font-black tabular-nums text-white">{formatLiveDuration(seekMs / 1_000)}</span></div>
+      <input type="range" min={0} max={Math.max(1_000, maximumMs)} step={1_000} value={Math.min(seekMs, Math.max(1_000, maximumMs))} onChange={(event) => setSeekMs(Number(event.target.value))} className="mt-3 h-8 w-full accent-violet-400" aria-label="Posición del contenido" disabled={disabled || !matches} />
       <div className="mt-2 grid grid-cols-5 gap-1.5">
         <Button type="button" variant="ghost" size="icon" className="h-11 w-full rounded-xl bg-white/[0.07] text-white hover:bg-white/10 hover:text-white" disabled={disabled} onClick={() => onPlay(matches ? projected : 0)} aria-label="Reproducir"><Play className="h-4 w-4" /></Button>
         <Button type="button" variant="ghost" size="icon" className="h-11 w-full rounded-xl bg-white/[0.07] text-white hover:bg-white/10 hover:text-white" disabled={disabled || !playing} onClick={onPause} aria-label="Pausar"><Pause className="h-4 w-4" /></Button>
@@ -854,7 +856,7 @@ export default function ServicePresentation() {
   const runtimeSendCommand = async <T extends PresentationCommandType>(
     type: T,
     payload: PresentationCommandPayloads[T],
-    options?: { commandId?: string; expectedRevision?: number; allowOffline?: boolean },
+    options?: { commandId?: string; expectedRevision?: number; allowOffline?: boolean; mediaBinding?: PresentationMediaCommandBinding },
   ) => {
     if (type === "end_session") {
       const prepare = prepareSessionEndRef.current;
@@ -897,6 +899,17 @@ export default function ServicePresentation() {
   const currentStep = runSteps[safeStepIndex];
   const nextStep = runSteps[safeStepIndex + 1] || null;
   const currentSlide = currentStep ? slides[currentStep.slideIndex] : null;
+  const currentLiveStep = liveRunSteps[safeStepIndex] || null;
+  const currentMediaCommandBinding = currentSlide?.kind === "content"
+    && (currentSlide.audienceSlide.kind === "video" || currentSlide.audienceSlide.kind === "audio" || currentSlide.audienceSlide.kind === "announcement")
+    ? bindPresentationMediaCommand({
+        snapshot: runtimeSnapshot,
+        activeCursor: currentLiveStep,
+        itemId: currentSlide.itemId,
+        slideId: currentSlide.audienceSlide.id,
+        kind: currentSlide.audienceSlide.kind,
+      })
+    : null;
   const contentAudienceSlides = useMemo(() => slides.flatMap((slide) => slide.kind === "content" ? [slide.audienceSlide] : []), [slides]);
   const audiencePlayback = runtimeSession?.playback || null;
   const announcementNowMs = useProjectionClock(audiencePlayback?.kind === "announcement" && audiencePlayback.status === "playing");
@@ -1608,12 +1621,43 @@ export default function ServicePresentation() {
                 serverNow={runtimeSnapshot?.serverNow || new Date().toISOString()}
                 receivedAtMs={runtimeSnapshot?.receivedAtMs || Date.now()}
                 pending={runtimeCommandPending}
-                canControl={liveCanMutate && runtimeNetworkState === "online"}
-                onPlay={(positionMs) => { const media = currentSlide.audienceSlide; if (media.kind === "video" || media.kind === "audio" || media.kind === "announcement") void runtimeSendCommand("media_play", { itemId: currentSlide.itemId, slideId: media.id, kind: media.kind, positionMs: Math.round(positionMs), loop: media.loop }).catch(() => undefined); }}
-                onPause={() => { void runtimeSendCommand("media_pause", {}).catch(() => undefined); }}
-                onSeek={(positionMs) => { void runtimeSendCommand("media_seek", { positionMs: Math.round(positionMs) }).catch(() => undefined); }}
-                onRestart={() => { void runtimeSendCommand("media_restart", {}).catch(() => undefined); }}
-                onStop={() => { void runtimeSendCommand("media_stop", {}).catch(() => undefined); }}
+                canControl={liveCanMutate && runtimeNetworkState === "online" && Boolean(currentMediaCommandBinding)}
+                onPlay={(positionMs) => {
+                  const media = currentSlide.audienceSlide;
+                  if (!currentMediaCommandBinding || (media.kind !== "video" && media.kind !== "audio" && media.kind !== "announcement")) return;
+                  void runtimeSendCommand("media_play", {
+                    ...currentMediaCommandBinding.target,
+                    kind: media.kind,
+                    positionMs: Math.round(positionMs),
+                    loop: media.loop,
+                  }, { expectedRevision: currentMediaCommandBinding.expectedRevision, allowOffline: false, mediaBinding: currentMediaCommandBinding }).catch(() => {
+                    setWorkspaceNotice("No se confirmó la acción multimedia. Actualiza la sesión antes de reintentar.");
+                  });
+                }}
+                onPause={() => {
+                  if (!currentMediaCommandBinding?.playbackMatches) return;
+                  void runtimeSendCommand("media_pause", currentMediaCommandBinding.target, { expectedRevision: currentMediaCommandBinding.expectedRevision, allowOffline: false, mediaBinding: currentMediaCommandBinding }).catch(() => {
+                    setWorkspaceNotice("No se confirmó la acción multimedia. Actualiza la sesión antes de reintentar.");
+                  });
+                }}
+                onSeek={(positionMs) => {
+                  if (!currentMediaCommandBinding?.playbackMatches) return;
+                  void runtimeSendCommand("media_seek", { ...currentMediaCommandBinding.target, positionMs: Math.round(positionMs) }, { expectedRevision: currentMediaCommandBinding.expectedRevision, allowOffline: false, mediaBinding: currentMediaCommandBinding }).catch(() => {
+                    setWorkspaceNotice("No se confirmó la acción multimedia. Actualiza la sesión antes de reintentar.");
+                  });
+                }}
+                onRestart={() => {
+                  if (!currentMediaCommandBinding?.playbackMatches) return;
+                  void runtimeSendCommand("media_restart", currentMediaCommandBinding.target, { expectedRevision: currentMediaCommandBinding.expectedRevision, allowOffline: false, mediaBinding: currentMediaCommandBinding }).catch(() => {
+                    setWorkspaceNotice("No se confirmó la acción multimedia. Actualiza la sesión antes de reintentar.");
+                  });
+                }}
+                onStop={() => {
+                  if (!currentMediaCommandBinding?.playbackMatches) return;
+                  void runtimeSendCommand("media_stop", currentMediaCommandBinding.target, { expectedRevision: currentMediaCommandBinding.expectedRevision, allowOffline: false, mediaBinding: currentMediaCommandBinding }).catch(() => {
+                    setWorkspaceNotice("No se confirmó la acción multimedia. Actualiza la sesión antes de reintentar.");
+                  });
+                }}
               />
             ) : null}
             {stageLayout.show.next ? <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.05] p-3"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Siguiente</p><p className="mt-1 truncate text-sm font-black">{nextStep?.sectionLabel || nextStep?.title || "Fin del servicio"}</p><p className="truncate text-xs text-slate-400">{nextStep?.title}</p></div> : null}

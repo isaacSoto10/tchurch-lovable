@@ -61,7 +61,7 @@ jobs:
       ASC_EXPIRE_SUPERSEDED_BETA_BUILD: "false"
       ASC_BUILD_LOOKBACK: "20"
       ASC_TARGET_MARKETING_VERSION: "4.0.9"
-      ASC_TARGET_BUILD_NUMBER: "206"
+      ASC_TARGET_BUILD_NUMBER: "207"
     steps:
       - name: Checkout
         uses: actions/checkout@v4

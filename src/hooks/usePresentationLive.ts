@@ -5,6 +5,8 @@ import {
   PRESENTATION_HEARTBEAT_MS,
   PRESENTATION_POLL_MS,
   activatePresentationCacheIdentity,
+  assertPresentationMediaCommandAcknowledged,
+  assertPresentationMediaCommandBound,
   buildOfflineReconcileCommand,
   buildPresentationCommand,
   createPresentationOfflineState,
@@ -18,6 +20,7 @@ import {
   getPresentationConflictSnapshot,
   getPresentationViewerRoles,
   isOfflinePresentationCommand,
+  isPresentationMediaCommandType,
   isPresentationAuthorizationError,
   loadLatestPresentationPackageForIdentity,
   loadPresentationOfflineState,
@@ -35,6 +38,7 @@ import {
   type PresentationCommandPayloads,
   type PresentationCommandType,
   type PresentationLiveSnapshot,
+  type PresentationMediaCommandBinding,
   type PresentationNetworkState,
   type PresentationOfflineContext,
   type PresentationOfflineState,
@@ -580,7 +584,7 @@ export function usePresentationLive({
   const sendCommand = useCallback(async <T extends PresentationCommandType>(
     type: T,
     payload: PresentationCommandPayloads[T],
-    options?: { commandId?: string; expectedRevision?: number; allowOffline?: boolean },
+    options?: { commandId?: string; expectedRevision?: number; allowOffline?: boolean; mediaBinding?: PresentationMediaCommandBinding },
   ): Promise<CommandResult> => {
     const generation = authorityGenerationRef.current;
     if (!serviceId || commandPendingRef.current) throw new Error("Espera a que termine la acción anterior.");
@@ -588,7 +592,17 @@ export function usePresentationLive({
       throw new Error("Resuelve primero el conflicto entre la copia local y la sesión oficial.");
     }
     const current = snapshotRef.current;
-    const expectedRevision = NO_EXPECTED_REVISION.has(type) ? undefined : options?.expectedRevision ?? current?.session?.revision;
+    if (isPresentationMediaCommandType(type)) {
+      assertPresentationMediaCommandBound({
+        snapshot: current,
+        type,
+        payload: payload as PresentationCommandPayloads[typeof type],
+        binding: options?.mediaBinding,
+      });
+    }
+    const expectedRevision = isPresentationMediaCommandType(type)
+      ? options?.mediaBinding?.expectedRevision
+      : NO_EXPECTED_REVISION.has(type) ? undefined : options?.expectedRevision ?? current?.session?.revision;
     if (type !== "start_session" && !current?.session) throw new Error("Inicia la sesión antes de usar este control.");
     const request = buildPresentationCommand(clientId, clientName, type, payload, expectedRevision, options?.commandId);
     commandPendingRef.current = true;
@@ -600,6 +614,14 @@ export function usePresentationLive({
       if (networkStateRef.current === "offline") throw new ApiError("Offline", 0, { error: "OFFLINE" });
       const next = await sendPresentationCommand(serviceId, request, activeViewRef.current);
       if (generation !== authorityGenerationRef.current) throw new Error("La cuenta activa cambió antes de completar la acción.");
+      if (isPresentationMediaCommandType(type)) {
+        assertPresentationMediaCommandAcknowledged({
+          snapshot: next,
+          type,
+          payload: payload as PresentationCommandPayloads[typeof type],
+          binding: options!.mediaBinding!,
+        });
+      }
       setSnapshot(next);
       setNetworkState("online");
       setNotice(null);

@@ -232,6 +232,28 @@ export type PresentationCommandType =
   | "stage_message_dismiss"
   | "offline_reconcile";
 
+export type PresentationMediaCommandType =
+  | "media_play"
+  | "media_pause"
+  | "media_seek"
+  | "media_restart"
+  | "media_stop";
+
+export type PresentationMediaCommandTarget = {
+  sessionId: string;
+  itemId: string;
+  slideId: string;
+};
+
+export type PresentationMediaCursorAnchor = Pick<PresentationCursor, "itemId" | "stepId" | "partIndex">;
+
+export type PresentationMediaCommandBinding = {
+  target: PresentationMediaCommandTarget;
+  activeCursor: PresentationMediaCursorAnchor;
+  expectedRevision: number;
+  playbackMatches: boolean;
+};
+
 export type PresentationOfflineCommandType =
   | "next"
   | "previous"
@@ -263,11 +285,11 @@ export type PresentationCommandPayloads = {
   timer_reset: { scope: "service" | "item" };
   countdown_set: { durationSeconds: number };
   countdown_clear: Record<string, never>;
-  media_play: { itemId: string; slideId: string; kind: "video" | "audio" | "announcement"; positionMs?: number; loop?: boolean };
-  media_pause: Record<string, never>;
-  media_seek: { positionMs: number };
-  media_restart: Record<string, never>;
-  media_stop: Record<string, never>;
+  media_play: PresentationMediaCommandTarget & { kind: "video" | "audio" | "announcement"; positionMs: number; loop: boolean };
+  media_pause: PresentationMediaCommandTarget;
+  media_seek: PresentationMediaCommandTarget & { positionMs: number };
+  media_restart: PresentationMediaCommandTarget;
+  media_stop: PresentationMediaCommandTarget;
   stage_message_send: {
     body: string;
     tone: "info" | "urgent";
@@ -296,6 +318,140 @@ export type PresentationCommandRequest<T extends PresentationCommandType = Prese
   type: T;
   payload: PresentationCommandPayloads[T];
 };
+
+const PRESENTATION_MEDIA_COMMAND_TYPES = new Set<PresentationMediaCommandType>([
+  "media_play",
+  "media_pause",
+  "media_seek",
+  "media_restart",
+  "media_stop",
+]);
+
+export function isPresentationMediaCommandType(type: PresentationCommandType): type is PresentationMediaCommandType {
+  return PRESENTATION_MEDIA_COMMAND_TYPES.has(type as PresentationMediaCommandType);
+}
+
+export function bindPresentationMediaCommand(params: {
+  snapshot: PresentationLiveSnapshot | null;
+  activeCursor: PresentationMediaCursorAnchor | null;
+  itemId: string;
+  slideId: string;
+  kind: PresentationMediaPlayback["kind"];
+}): PresentationMediaCommandBinding | null {
+  const session = params.snapshot?.session;
+  const activeCursor = params.activeCursor;
+  if (
+    !session
+    || !activeCursor
+    || activeCursor.itemId !== params.itemId
+    || session.cursor.itemId !== activeCursor.itemId
+    || session.cursor.stepId !== activeCursor.stepId
+    || session.cursor.partIndex !== activeCursor.partIndex
+  ) return null;
+  const target = { sessionId: session.id, itemId: params.itemId, slideId: params.slideId };
+  return {
+    target,
+    activeCursor: {
+      itemId: activeCursor.itemId,
+      stepId: activeCursor.stepId,
+      partIndex: activeCursor.partIndex,
+    },
+    expectedRevision: session.revision,
+    playbackMatches: session.playback?.itemId === target.itemId
+      && session.playback.slideId === target.slideId
+      && session.playback.kind === params.kind,
+  };
+}
+
+export function assertPresentationMediaCommandBound<T extends PresentationMediaCommandType>(params: {
+  snapshot: PresentationLiveSnapshot | null;
+  type: T;
+  payload: PresentationCommandPayloads[T];
+  binding: PresentationMediaCommandBinding | undefined;
+}) {
+  const session = params.snapshot?.session;
+  if (!session) throw new Error("La sesión multimedia ya no está activa.");
+  const binding = params.binding;
+  if (!binding) {
+    throw new Error("Actualiza la presentación antes de usar este control multimedia.");
+  }
+  if (binding.expectedRevision !== session.revision) {
+    throw new Error("La presentación cambió antes de aplicar el control multimedia.");
+  }
+  const target = params.payload as PresentationMediaCommandTarget;
+  if (
+    binding.target.sessionId !== target.sessionId
+    || binding.target.itemId !== target.itemId
+    || binding.target.slideId !== target.slideId
+  ) {
+    throw new Error("El control multimedia ya no corresponde al contenido renderizado.");
+  }
+  if (target.sessionId !== session.id) {
+    throw new Error("Este control multimedia pertenece a otra sesión.");
+  }
+  if (
+    target.itemId !== session.cursor.itemId
+    || binding.activeCursor.itemId !== target.itemId
+    || binding.activeCursor.stepId !== session.cursor.stepId
+    || binding.activeCursor.partIndex !== session.cursor.partIndex
+  ) {
+    throw new Error("El contenido en Program cambió antes de aplicar el control multimedia.");
+  }
+  if (
+    params.type !== "media_play"
+    && (session.playback?.itemId !== target.itemId || session.playback.slideId !== target.slideId)
+  ) {
+    throw new Error("La reproducción activa cambió antes de aplicar el control multimedia.");
+  }
+}
+
+export function assertPresentationMediaCommandAcknowledged<T extends PresentationMediaCommandType>(params: {
+  snapshot: PresentationLiveSnapshot;
+  type: T;
+  payload: PresentationCommandPayloads[T];
+  binding: PresentationMediaCommandBinding;
+}) {
+  const session = params.snapshot.session;
+  const target = params.payload as PresentationMediaCommandTarget;
+  if (!session || session.id !== target.sessionId || session.id !== params.binding.target.sessionId) {
+    throw new Error("La confirmación multimedia pertenece a otra sesión.");
+  }
+  if (session.revision <= params.binding.expectedRevision) {
+    throw new Error("La confirmación multimedia no avanzó la revisión de la sesión.");
+  }
+  if (
+    session.cursor.itemId !== target.itemId
+    || params.binding.activeCursor.itemId !== target.itemId
+    || session.cursor.stepId !== params.binding.activeCursor.stepId
+    || session.cursor.partIndex !== params.binding.activeCursor.partIndex
+  ) {
+    throw new Error("Program cambió antes de confirmar el control multimedia.");
+  }
+  if (params.type === "media_stop") {
+    if (session.playback !== null) throw new Error("El servidor no confirmó que la reproducción se detuvo.");
+    return;
+  }
+  const playback = session.playback;
+  if (!playback || playback.itemId !== target.itemId || playback.slideId !== target.slideId) {
+    throw new Error("La confirmación multimedia apunta a otra reproducción.");
+  }
+  if (params.type === "media_play") {
+    const payload = params.payload as PresentationCommandPayloads["media_play"];
+    if (
+      playback.kind !== payload.kind
+      || playback.status !== "playing"
+      || playback.positionMs !== payload.positionMs
+      || playback.loop !== payload.loop
+    ) throw new Error("El servidor no confirmó la reproducción solicitada.");
+  } else if (params.type === "media_pause" && playback.status !== "paused") {
+    throw new Error("El servidor no confirmó la pausa solicitada.");
+  } else if (params.type === "media_seek") {
+    const payload = params.payload as PresentationCommandPayloads["media_seek"];
+    if (playback.positionMs !== payload.positionMs) throw new Error("El servidor no confirmó la posición solicitada.");
+  } else if (params.type === "media_restart" && (playback.status !== "playing" || playback.positionMs !== 0)) {
+    throw new Error("El servidor no confirmó el reinicio solicitado.");
+  }
+}
 
 export type PresentationOfflineStep = {
   itemId: string;

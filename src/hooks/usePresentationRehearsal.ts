@@ -4,6 +4,8 @@ import {
   PRESENTATION_BACKGROUND_POLL_MS,
   PRESENTATION_HEARTBEAT_MS,
   PRESENTATION_POLL_MS,
+  assertPresentationMediaCommandAcknowledged,
+  assertPresentationMediaCommandBound,
   buildPresentationCommand,
   fetchPresentationRehearsalSnapshot,
   getPresentationApiErrorCode,
@@ -11,11 +13,13 @@ import {
   getPresentationClientName,
   getPresentationConflictSnapshot,
   isPresentationAuthorizationError,
+  isPresentationMediaCommandType,
   projectPresentationTiming,
   sendPresentationRehearsalCommand,
   type PresentationCommandPayloads,
   type PresentationCommandType,
   type PresentationLiveSnapshot,
+  type PresentationMediaCommandBinding,
   type PresentationNetworkState,
   type PresentationPrivateLiveView,
 } from "@/lib/presentationLive";
@@ -79,6 +83,7 @@ export function usePresentationRehearsal({
   const snapshotRef = useRef<PresentationLiveSnapshot | null>(null);
   const activeViewRef = useRef(preferredView);
   const pendingRef = useRef(false);
+  const mutationEpochRef = useRef(0);
   const generationRef = useRef(0);
   const scope = [serviceId || "none", churchId || "none", accountId || "none", preferredView, enabled].join("::");
   const scopeRef = useRef(scope);
@@ -136,6 +141,7 @@ export function usePresentationRehearsal({
   const refresh = useCallback(async () => {
     const generation = generationRef.current;
     if (!enabled || !serviceId || pendingRef.current) return snapshotRef.current;
+    const pollEpoch = mutationEpochRef.current;
     try {
       const current = snapshotRef.current;
       const next = await fetchAllowed(
@@ -143,7 +149,7 @@ export function usePresentationRehearsal({
         current?.viewerVersion,
         current?.controllerVersion,
       );
-      if (generation !== generationRef.current) return snapshotRef.current;
+      if (generation !== generationRef.current || pollEpoch !== mutationEpochRef.current || pendingRef.current) return snapshotRef.current;
       if (next) acceptSnapshot(next);
       setNetworkState("online");
       return next || snapshotRef.current;
@@ -156,6 +162,7 @@ export function usePresentationRehearsal({
           : "Ya no tienes permiso para abrir este ensayo.");
         return null;
       }
+      if (pollEpoch !== mutationEpochRef.current || pendingRef.current) return snapshotRef.current;
       if (isConnectivityError(refreshError)) {
         setNetworkState("offline");
         return snapshotRef.current;
@@ -221,20 +228,39 @@ export function usePresentationRehearsal({
   const sendCommand = useCallback(async <T extends PresentationCommandType>(
     type: T,
     payload: PresentationCommandPayloads[T],
-    options?: { commandId?: string; expectedRevision?: number },
+    options?: { commandId?: string; expectedRevision?: number; mediaBinding?: PresentationMediaCommandBinding },
   ) => {
     const generation = generationRef.current;
     if (!serviceId || pendingRef.current) throw new Error("Espera a que termine la acción anterior.");
     const current = snapshotRef.current;
     if (type !== "start_session" && !current?.session) throw new Error("Inicia el ensayo antes de usar este control.");
-    const expectedRevision = NO_EXPECTED_REVISION.has(type) ? undefined : options?.expectedRevision ?? current?.session?.revision;
+    if (isPresentationMediaCommandType(type)) {
+      assertPresentationMediaCommandBound({
+        snapshot: current,
+        type,
+        payload: payload as PresentationCommandPayloads[typeof type],
+        binding: options?.mediaBinding,
+      });
+    }
+    const expectedRevision = isPresentationMediaCommandType(type)
+      ? options?.mediaBinding?.expectedRevision
+      : NO_EXPECTED_REVISION.has(type) ? undefined : options?.expectedRevision ?? current?.session?.revision;
     const request = buildPresentationCommand(clientId, clientName, type, payload, expectedRevision, options?.commandId);
     pendingRef.current = true;
+    mutationEpochRef.current += 1;
     setCommandPending(true);
     setError(null);
     try {
       const next = await sendPresentationRehearsalCommand(serviceId, request, activeViewRef.current);
       if (generation !== generationRef.current) throw new Error("La cuenta activa cambió antes de completar el ensayo.");
+      if (isPresentationMediaCommandType(type)) {
+        assertPresentationMediaCommandAcknowledged({
+          snapshot: next,
+          type,
+          payload: payload as PresentationCommandPayloads[typeof type],
+          binding: options!.mediaBinding!,
+        });
+      }
       acceptSnapshot(next);
       setNetworkState("online");
       setNotice(null);

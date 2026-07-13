@@ -4,6 +4,7 @@ import type { PresentationLiveSnapshot, PresentationPrivateLiveView } from "@/li
 
 const rehearsalMocks = vi.hoisted(() => ({
   fetchSnapshot: vi.fn(),
+  sendCommand: vi.fn(),
 }));
 
 vi.mock("@/lib/presentationLive", async () => {
@@ -11,10 +12,12 @@ vi.mock("@/lib/presentationLive", async () => {
   return {
     ...actual,
     fetchPresentationRehearsalSnapshot: rehearsalMocks.fetchSnapshot,
+    sendPresentationRehearsalCommand: rehearsalMocks.sendCommand,
   };
 });
 
 import { usePresentationRehearsal } from "./usePresentationRehearsal";
+import { bindPresentationMediaCommand } from "@/lib/presentationLive";
 
 function snapshot(viewerVersion: string, controllerVersion: string): PresentationLiveSnapshot {
   return {
@@ -61,6 +64,7 @@ describe("usePresentationRehearsal conditional polling", () => {
   beforeEach(() => {
     localStorage.clear();
     rehearsalMocks.fetchSnapshot.mockReset();
+    rehearsalMocks.sendCommand.mockReset();
   });
 
   it("sends both opaque versions on a quiet-revision refresh", async () => {
@@ -93,6 +97,100 @@ describe("usePresentationRehearsal conditional polling", () => {
     );
     expect(result.current.snapshot?.viewerVersion).toBe("viewer-v1");
     expect(result.current.snapshot?.controllerVersion).toBe("controller-v2");
+    unmount();
+  });
+
+  it("does not let a poll started before a command overwrite its newer ACK", async () => {
+    const initial = snapshot("viewer-v1", "controller-v1");
+    const stalePoll = snapshot("viewer-stale", "controller-stale");
+    const acknowledged = snapshot("viewer-v2", "controller-v2");
+    acknowledged.session = {
+      ...acknowledged.session!,
+      revision: 8,
+      display: { ...acknowledged.session!.display, blackout: true },
+    };
+    let resolvePoll: (value: PresentationLiveSnapshot) => void = () => undefined;
+    const deferredPoll = new Promise<PresentationLiveSnapshot>((resolve) => { resolvePoll = resolve; });
+    rehearsalMocks.fetchSnapshot.mockImplementation((
+      _serviceId: string,
+      _view: PresentationPrivateLiveView,
+      _clientId: string,
+      sinceRevision?: number,
+    ) => sinceRevision === undefined ? Promise.resolve(initial) : deferredPoll);
+    rehearsalMocks.sendCommand.mockResolvedValue(acknowledged);
+
+    const { result, unmount } = renderHook(() => usePresentationRehearsal({
+      serviceId: "service-1",
+      preferredView: "operator",
+      churchId: "church-1",
+      accountId: "account-1",
+    }));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const refreshPromise = result.current.refresh();
+    await waitFor(() => expect(rehearsalMocks.fetchSnapshot).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      await result.current.sendCommand("set_blackout", { blackout: true });
+    });
+    await act(async () => {
+      resolvePoll(stalePoll);
+      await refreshPromise;
+    });
+
+    expect(result.current.snapshot?.session?.revision).toBe(8);
+    expect(result.current.snapshot?.session?.display.blackout).toBe(true);
+    expect(result.current.snapshot?.viewerVersion).toBe("viewer-v2");
+    unmount();
+  });
+
+  it("rejects a rehearsal media ACK from another session without accepting or retrying it", async () => {
+    const initial = snapshot("viewer-v1", "controller-v1");
+    initial.session = {
+      ...initial.session!,
+      id: "rehearsal-session-a",
+      cursor: { itemId: "video-item", itemIndex: 0, stepId: null, stepIndex: 0, partIndex: 0, sectionAnchorId: null },
+    };
+    const late = snapshot("viewer-v1", "controller-v1");
+    late.session = {
+      ...late.session!,
+      id: "rehearsal-session-b",
+      cursor: { itemId: "video-item", itemIndex: 0, stepId: null, stepIndex: 0, partIndex: 0, sectionAnchorId: null },
+      playback: { itemId: "video-item", slideId: "video-item:video:0", kind: "video", status: "playing", positionMs: 0, startedAt: "2026-07-13T14:00:00.000Z", rate: 1, loop: false },
+    };
+    rehearsalMocks.fetchSnapshot.mockResolvedValue(initial);
+    rehearsalMocks.sendCommand.mockResolvedValue(late);
+
+    const { result, unmount } = renderHook(() => usePresentationRehearsal({
+      serviceId: "service-1",
+      preferredView: "operator",
+      churchId: "church-1",
+      accountId: "account-1",
+    }));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const binding = bindPresentationMediaCommand({
+      snapshot: result.current.snapshot,
+      activeCursor: { itemId: "video-item", stepId: null, partIndex: 0 },
+      itemId: "video-item",
+      slideId: "video-item:video:0",
+      kind: "video",
+    });
+    expect(binding).not.toBeNull();
+
+    await act(async () => {
+      await expect(result.current.sendCommand("media_play", {
+        sessionId: "rehearsal-session-a",
+        itemId: "video-item",
+        slideId: "video-item:video:0",
+        kind: "video",
+        positionMs: 0,
+        loop: false,
+      }, { expectedRevision: 7, mediaBinding: binding! })).rejects.toThrow(/otra sesión/);
+    });
+
+    expect(rehearsalMocks.sendCommand).toHaveBeenCalledOnce();
+    expect(result.current.snapshot?.session?.id).toBe("rehearsal-session-a");
+    expect(result.current.snapshot?.session?.playback).toBeNull();
     unmount();
   });
 });

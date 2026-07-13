@@ -216,6 +216,36 @@ function chordSheetService(): PresentationService {
   };
 }
 
+function videoService(): PresentationService {
+  return {
+    id: "service-shared",
+    title: "Video fixture",
+    date: "2026-07-11T19:00:00.000Z",
+    type: "service",
+    notes: null,
+    items: [{
+      id: "video-item",
+      title: "Video de bienvenida",
+      type: "video",
+      position: 0,
+      duration: 1,
+      song: null,
+      details: {
+        presentation: {
+          kind: "video",
+          src: "https://cdn.example.com/welcome.mp4",
+          posterSrc: null,
+          mimeType: "video/mp4",
+          muted: false,
+          autoplay: false,
+          loop: true,
+          durationMs: 60_000,
+        },
+      },
+    }],
+  };
+}
+
 function timing(targetAt = "2026-07-11T19:00:47.000Z"): PresentationTiming {
   return {
     service: { status: "paused", plannedSeconds: 360, elapsedSeconds: 0, remainingSeconds: 360, overrunSeconds: 0, projectedEndAt: null, startedAt: null, pausedAt: null, accumulatedPausedMs: 0 },
@@ -272,6 +302,28 @@ function ownedSnapshot(mode: "live" | "rehearsal") {
     mode,
     controller: { clientId: mode === "live" ? "11111111-1111-4111-8111-111111111111" : "22222222-2222-4222-8222-222222222222", displayName: "Test controller", leaseExpiresAt: "2099-07-11T19:01:00.000Z", ownedByViewer: true },
   } : null;
+  return value;
+}
+
+function ownedVideoSnapshot(sessionId: string, revision: number, playing = false) {
+  const value = ownedSnapshot("live");
+  if (!value.session) return value;
+  value.session = {
+    ...value.session,
+    id: sessionId,
+    revision,
+    cursor: { itemId: "video-item", itemIndex: 0, stepId: null, stepIndex: 0, partIndex: 0, sectionAnchorId: null },
+    playback: playing ? {
+      itemId: "video-item",
+      slideId: "video-item:video:0",
+      kind: "video",
+      status: "playing",
+      positionMs: 2_000,
+      startedAt: "2026-07-11T19:00:00.000Z",
+      rate: 1,
+      loop: true,
+    } : null,
+  };
   return value;
 }
 
@@ -481,6 +533,107 @@ describe("ServicePresentation load authority", () => {
 
     fireEvent.click(stage);
     expect(stage).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("sends media controls with the exact live target and never rebases them across a new session", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 1366 });
+    mocks.liveSnapshot = ownedVideoSnapshot("video-session-a", 20);
+    mocks.liveTiming = mocks.liveSnapshot.session!.timing;
+    mocks.liveControllerLeaseActive = true;
+    mocks.apiFetch.mockImplementation((path: string) => path === "/users/me"
+      ? Promise.resolve({ id: mocks.accountId })
+      : Promise.resolve(videoService()));
+
+    const view = render(<ServicePresentation />);
+    await screen.findByText("Video fixture");
+    const mediaPanel = screen.getByText("Reproducción").closest("div.mt-4");
+    expect(mediaPanel).toHaveClass("border-violet-300/20", "bg-violet-400/[0.08]");
+    expect(mediaPanel?.className).not.toContain("amber");
+    fireEvent.click(screen.getByRole("button", { name: "Reproducir" }));
+    await waitFor(() => expect(mocks.liveSend).toHaveBeenCalledWith("media_play", {
+      sessionId: "video-session-a",
+      itemId: "video-item",
+      slideId: "video-item:video:0",
+      kind: "video",
+      positionMs: 0,
+      loop: true,
+    }, expect.objectContaining({
+      expectedRevision: 20,
+      allowOffline: false,
+      mediaBinding: expect.objectContaining({
+        target: { sessionId: "video-session-a", itemId: "video-item", slideId: "video-item:video:0" },
+        activeCursor: { itemId: "video-item", stepId: null, partIndex: 0 },
+        expectedRevision: 20,
+        playbackMatches: false,
+      }),
+    })));
+
+    mocks.liveSend.mockClear();
+    mocks.liveSnapshot = ownedVideoSnapshot("video-session-b", 3, true);
+    mocks.liveTiming = mocks.liveSnapshot.session!.timing;
+    view.rerender(<ServicePresentation />);
+
+    const position = screen.getByRole("slider", { name: "Posición del contenido" });
+    fireEvent.change(position, { target: { value: "12000" } });
+    fireEvent.click(screen.getByRole("button", { name: "Pausar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Buscar posición" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reiniciar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Detener" }));
+
+    const target = { sessionId: "video-session-b", itemId: "video-item", slideId: "video-item:video:0" };
+    await waitFor(() => {
+      const options = expect.objectContaining({ expectedRevision: 3, allowOffline: false, mediaBinding: expect.objectContaining({ target, expectedRevision: 3, playbackMatches: true }) });
+      expect(mocks.liveSend).toHaveBeenCalledWith("media_pause", target, options);
+      expect(mocks.liveSend).toHaveBeenCalledWith("media_seek", { ...target, positionMs: 12_000 }, options);
+      expect(mocks.liveSend).toHaveBeenCalledWith("media_restart", target, options);
+      expect(mocks.liveSend).toHaveBeenCalledWith("media_stop", target, options);
+    });
+    expect(mocks.liveSend.mock.calls.flatMap((call) => JSON.stringify(call))).not.toContain("video-session-a");
+  });
+
+  it("disables media mutations when Program or connectivity no longer matches the rendered video", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 1366 });
+    const snapshot = ownedVideoSnapshot("video-session", 7, true);
+    snapshot.session!.cursor.itemId = "another-item";
+    mocks.liveSnapshot = snapshot;
+    mocks.liveTiming = snapshot.session!.timing;
+    mocks.liveControllerLeaseActive = true;
+    mocks.apiFetch.mockImplementation((path: string) => path === "/users/me"
+      ? Promise.resolve({ id: mocks.accountId })
+      : Promise.resolve(videoService()));
+
+    const view = render(<ServicePresentation />);
+    await screen.findByText("Video fixture");
+    expect(screen.getByRole("button", { name: "Reproducir" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Pausar" })).toBeDisabled();
+
+    mocks.liveSnapshot = ownedVideoSnapshot("video-session", 8, true);
+    mocks.liveTiming = mocks.liveSnapshot.session!.timing;
+    mocks.liveNetworkState = "offline";
+    view.rerender(<ServicePresentation />);
+    expect(screen.getByRole("button", { name: "Reproducir" })).toBeDisabled();
+    expect(screen.getByText(/Toma el control y conéctate/i)).toBeInTheDocument();
+  });
+
+  it("shows a fail-closed notice when a media ACK is not confirmed and does not retry", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 1366 });
+    mocks.liveSnapshot = ownedVideoSnapshot("video-session", 7);
+    mocks.liveTiming = mocks.liveSnapshot.session!.timing;
+    mocks.liveControllerLeaseActive = true;
+    mocks.liveSend.mockRejectedValue(new Error("late media ACK"));
+    mocks.apiFetch.mockImplementation((path: string) => path === "/users/me"
+      ? Promise.resolve({ id: mocks.accountId })
+      : Promise.resolve(videoService()));
+
+    render(<ServicePresentation />);
+    await screen.findByText("Video fixture");
+    fireEvent.click(screen.getByRole("button", { name: "Reproducir" }));
+
+    expect(await screen.findByText(/No se confirmó la acción multimedia. Actualiza la sesión antes de reintentar./i)).toBeInTheDocument();
+    expect(mocks.liveSend).toHaveBeenCalledTimes(1);
   });
 
   it("takes control from the iPad stage before allowing a live advance", async () => {

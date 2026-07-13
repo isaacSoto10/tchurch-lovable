@@ -5,6 +5,9 @@ import {
   PRESENTATION_POLL_MS,
   activatePresentationCacheIdentity,
   applyOfflinePresentationCommand,
+  assertPresentationMediaCommandAcknowledged,
+  assertPresentationMediaCommandBound,
+  bindPresentationMediaCommand,
   buildOfflineReconcileCommand,
   buildPresentationCommand,
   canonicalPresentationPackageJson,
@@ -323,13 +326,100 @@ describe("Tchurch Live Stage 2 contract", () => {
   });
 
   it("normalizes authoritative media playback and keeps media commands online-only", () => {
+    const target = { sessionId: "session-1", itemId: "video-item", slideId: "video-item:video:0" };
     const raw = snapshotRaw("operator");
+    raw.session.id = target.sessionId;
+    raw.session.cursor.itemId = target.itemId;
     raw.session.playback = { itemId: "video-item", slideId: "video-item:video:0", kind: "video", status: "playing", positionMs: 2_000, startedAt: "2026-07-11T18:29:58.000Z", rate: 1, loop: false };
     const normalized = normalizePresentationLiveSnapshot(raw, "operator", "client-1");
     expect(normalized.session?.playback).toMatchObject({ kind: "video", status: "playing", positionMs: 2_000, rate: 1 });
-    expect(buildPresentationCommand("client", "iPad", "media_seek", { positionMs: 4_000 }, 15)).toMatchObject({ type: "media_seek", payload: { positionMs: 4_000 }, expectedRevision: 15 });
-    const state = createPresentationOfflineState(cachedPackage(), liveSnapshot());
-    expect(() => queueOfflinePresentationCommand(state, { commandId: "media", type: "media_seek" as never, payload: { positionMs: 4_000 } as never }, offlineContext)).toThrow();
+    expect(buildPresentationCommand("client", "iPad", "media_seek", { ...target, positionMs: 4_000 }, 15)).toMatchObject({ type: "media_seek", payload: { ...target, positionMs: 4_000 }, expectedRevision: 15 });
+    const state = createPresentationOfflineState(cachedPackage(), normalized);
+    expect(() => queueOfflinePresentationCommand(state, { commandId: "media", type: "media_seek" as never, payload: { ...target, positionMs: 4_000 } as never }, offlineContext)).toThrow();
+  });
+
+  it("binds every media action to the exact session, cursor, playback and revision without ABA rebasing", () => {
+    const current = liveSnapshot();
+    const session = current.session!;
+    const target = { sessionId: session.id, itemId: "item-1", slideId: "item-1:video:0" };
+    session.playback = { itemId: target.itemId, slideId: target.slideId, kind: "video", status: "playing", positionMs: 2_000, startedAt: serverNow, rate: 1, loop: false };
+    const binding = bindPresentationMediaCommand({
+      snapshot: current,
+      activeCursor: { itemId: "item-1", stepId: "step-1", partIndex: 0 },
+      itemId: target.itemId,
+      slideId: target.slideId,
+      kind: "video",
+    });
+
+    expect(binding).toEqual({
+      target,
+      activeCursor: { itemId: "item-1", stepId: "step-1", partIndex: 0 },
+      expectedRevision: session.revision,
+      playbackMatches: true,
+    });
+    expect(() => assertPresentationMediaCommandBound({
+      snapshot: current,
+      type: "media_pause",
+      payload: target,
+      binding: binding!,
+    })).not.toThrow();
+    expect(() => assertPresentationMediaCommandBound({
+      snapshot: current,
+      type: "media_play",
+      payload: { ...target, kind: "video", positionMs: 0, loop: false },
+      binding: { ...binding!, expectedRevision: session.revision - 1 },
+    })).toThrow(/cambió antes/);
+    expect(() => assertPresentationMediaCommandBound({
+      snapshot: current,
+      type: "media_stop",
+      payload: { ...target, sessionId: "session-anterior" },
+      binding: binding!,
+    })).toThrow(/contenido renderizado/);
+    expect(() => assertPresentationMediaCommandBound({
+      snapshot: current,
+      type: "media_seek",
+      payload: { ...target, slideId: "item-1:video:anterior", positionMs: 4_000 },
+      binding: { ...binding!, target: { ...binding!.target, slideId: "item-1:video:anterior" } },
+    })).toThrow(/reproducción activa cambió/);
+    const lateOtherSession = {
+      ...current,
+      session: { ...session, id: "session-b", revision: session.revision },
+    };
+    expect(() => assertPresentationMediaCommandAcknowledged({
+      snapshot: lateOtherSession,
+      type: "media_pause",
+      payload: target,
+      binding: binding!,
+    })).toThrow(/otra sesión/);
+    const sameRevisionExactEffect = {
+      ...current,
+      session: {
+        ...session,
+        playback: { ...session.playback!, status: "paused" as const },
+      },
+    };
+    expect(() => assertPresentationMediaCommandAcknowledged({
+      snapshot: sameRevisionExactEffect,
+      type: "media_pause",
+      payload: target,
+      binding: binding!,
+    })).toThrow(/no avanzó la revisión/);
+    expect(() => assertPresentationMediaCommandAcknowledged({
+      snapshot: {
+        ...sameRevisionExactEffect,
+        session: { ...sameRevisionExactEffect.session!, revision: session.revision + 1 },
+      },
+      type: "media_pause",
+      payload: target,
+      binding: binding!,
+    })).not.toThrow();
+    expect(bindPresentationMediaCommand({
+      snapshot: current,
+      activeCursor: { itemId: "item-1", stepId: "step-2", partIndex: 0 },
+      itemId: target.itemId,
+      slideId: target.slideId,
+      kind: "video",
+    })).toBeNull();
   });
 
   it("never infers controller ownership from a matching installation client ID", () => {

@@ -11,6 +11,7 @@ const liveMocks = vi.hoisted(() => ({
   fetchSnapshot: vi.fn(),
   fetchPackage: vi.fn(),
   savePackage: vi.fn(),
+  sendCommand: vi.fn(),
 }));
 
 vi.mock("@/lib/presentationLive", async () => {
@@ -20,10 +21,12 @@ vi.mock("@/lib/presentationLive", async () => {
     fetchPresentationLiveSnapshot: liveMocks.fetchSnapshot,
     fetchPresentationPackage: liveMocks.fetchPackage,
     savePresentationPackage: liveMocks.savePackage,
+    sendPresentationCommand: liveMocks.sendCommand,
   };
 });
 
 import { usePresentationLive } from "./usePresentationLive";
+import { bindPresentationMediaCommand } from "@/lib/presentationLive";
 
 function snapshot(
   serviceId: string,
@@ -118,6 +121,7 @@ describe("usePresentationLive authority generation", () => {
     liveMocks.fetchSnapshot.mockReset();
     liveMocks.fetchPackage.mockReset();
     liveMocks.savePackage.mockReset();
+    liveMocks.sendCommand.mockReset();
   });
 
   it("ignores a deferred old-service poll after account/church/service scope changes", async () => {
@@ -305,5 +309,111 @@ describe("usePresentationLive authority generation", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(Date.parse(controlled.session!.controller!.leaseExpiresAt)).toBeLessThan(Date.now());
     expect(result.current.controllerLeaseActive).toBe(true);
+  });
+
+  it("rejects a late media ACK from session B with the same revision without accepting or retrying it", async () => {
+    const initial = snapshot("service-1", "viewer-v1", 7);
+    initial.session = {
+      ...initial.session!,
+      id: "session-a",
+      cursor: { itemId: "video-item", itemIndex: 0, stepId: null, stepIndex: 0, partIndex: 0, sectionAnchorId: null },
+    };
+    const late = snapshot("service-1", "viewer-v1", 7);
+    late.session = {
+      ...late.session!,
+      id: "session-b",
+      cursor: { itemId: "video-item", itemIndex: 0, stepId: null, stepIndex: 0, partIndex: 0, sectionAnchorId: null },
+      playback: { itemId: "video-item", slideId: "video-item:video:0", kind: "video", status: "playing", positionMs: 0, startedAt: "2026-07-11T19:00:00.000Z", rate: 1, loop: false },
+    };
+    liveMocks.fetchSnapshot.mockResolvedValue(initial);
+    liveMocks.fetchPackage.mockResolvedValue(presentationPackage("service-1", "account-1", "church-1"));
+    liveMocks.sendCommand.mockResolvedValue(late);
+    mockPackageSave();
+    const offlineContext = { steps: [], plannedTiming: { serviceSeconds: 0, itemSecondsById: {} } };
+    const { result } = renderHook(() => usePresentationLive({
+      serviceId: "service-1",
+      accountId: "account-1",
+      churchId: "church-1",
+      preferredView: "operator",
+      offlineContext,
+    }));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const binding = bindPresentationMediaCommand({
+      snapshot: result.current.snapshot,
+      activeCursor: { itemId: "video-item", stepId: null, partIndex: 0 },
+      itemId: "video-item",
+      slideId: "video-item:video:0",
+      kind: "video",
+    });
+    expect(binding).not.toBeNull();
+
+    await act(async () => {
+      await expect(result.current.sendCommand("media_play", {
+        sessionId: "session-a",
+        itemId: "video-item",
+        slideId: "video-item:video:0",
+        kind: "video",
+        positionMs: 0,
+        loop: false,
+      }, { expectedRevision: 7, allowOffline: false, mediaBinding: binding! })).rejects.toThrow(/otra sesión/);
+    });
+
+    expect(liveMocks.sendCommand).toHaveBeenCalledOnce();
+    expect(result.current.snapshot?.session?.id).toBe("session-a");
+    expect(result.current.snapshot?.session?.playback).toBeNull();
+  });
+
+  it("rejects an exact media effect when its ACK keeps the expected revision without accepting or retrying it", async () => {
+    const initial = snapshot("service-1", "viewer-v1", 7);
+    initial.session = {
+      ...initial.session!,
+      id: "session-a",
+      cursor: { itemId: "video-item", itemIndex: 0, stepId: null, stepIndex: 0, partIndex: 0, sectionAnchorId: null },
+    };
+    const sameRevision = snapshot("service-1", "viewer-v1", 7);
+    sameRevision.session = {
+      ...sameRevision.session!,
+      id: "session-a",
+      cursor: { itemId: "video-item", itemIndex: 0, stepId: null, stepIndex: 0, partIndex: 0, sectionAnchorId: null },
+      playback: { itemId: "video-item", slideId: "video-item:video:0", kind: "video", status: "playing", positionMs: 0, startedAt: "2026-07-11T19:00:00.000Z", rate: 1, loop: false },
+    };
+    liveMocks.fetchSnapshot.mockResolvedValue(initial);
+    liveMocks.fetchPackage.mockResolvedValue(presentationPackage("service-1", "account-1", "church-1"));
+    liveMocks.sendCommand.mockResolvedValue(sameRevision);
+    mockPackageSave();
+    const offlineContext = { steps: [], plannedTiming: { serviceSeconds: 0, itemSecondsById: {} } };
+    const { result } = renderHook(() => usePresentationLive({
+      serviceId: "service-1",
+      accountId: "account-1",
+      churchId: "church-1",
+      preferredView: "operator",
+      offlineContext,
+    }));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const binding = bindPresentationMediaCommand({
+      snapshot: result.current.snapshot,
+      activeCursor: { itemId: "video-item", stepId: null, partIndex: 0 },
+      itemId: "video-item",
+      slideId: "video-item:video:0",
+      kind: "video",
+    });
+    expect(binding).not.toBeNull();
+
+    await act(async () => {
+      await expect(result.current.sendCommand("media_play", {
+        sessionId: "session-a",
+        itemId: "video-item",
+        slideId: "video-item:video:0",
+        kind: "video",
+        positionMs: 0,
+        loop: false,
+      }, { expectedRevision: 7, allowOffline: false, mediaBinding: binding! })).rejects.toThrow(/no avanzó la revisión/);
+    });
+
+    expect(liveMocks.sendCommand).toHaveBeenCalledOnce();
+    expect(result.current.snapshot?.session?.revision).toBe(7);
+    expect(result.current.snapshot?.session?.playback).toBeNull();
   });
 });
