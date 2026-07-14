@@ -1318,7 +1318,7 @@ export default function ServicePresentation() {
     exit: () => navigate(`/app/services/${id}`),
   };
 
-  usePresentationHardwareInputs({
+  const hardwareInputRuntime = usePresentationHardwareInputs({
     settings: hardwareSettings,
     scope: [authenticatedUserId || "signed-out", selectedChurch?.id || "no-church", id || "no-service", runMode, runtimeSession?.id || "no-session"].join("::"),
     context: {
@@ -1860,8 +1860,11 @@ export default function ServicePresentation() {
         hardwareSettings={hardwareSettings}
         hardwareAppActive={presentationAppActive}
         hardwareCommandPending={runtimeCommandPending}
+        hardwareNativeStatus={hardwareInputRuntime.nativeStatus}
         onHardwareSettingsChange={changeHardwareSettings}
         onHardwareCaptureChange={setHardwareCaptureActive}
+        onLearnNativeHardwareInput={hardwareInputRuntime.learnNativeInput}
+        onCancelNativeHardwareLearning={hardwareInputRuntime.cancelNativeLearning}
       />
       {pendingRunMode ? (
         <div className="fixed inset-0 z-[120] flex items-end justify-center bg-black/75 p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:items-center" role="dialog" aria-modal="true" aria-label="Confirmar cambio de modo" onClick={() => { if (!switchingRunMode) setPendingRunMode(null); }}>

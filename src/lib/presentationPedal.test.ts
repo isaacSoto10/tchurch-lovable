@@ -3,6 +3,7 @@ import {
   DEFAULT_PRESENTATION_HARDWARE_SETTINGS,
   MAX_PRESENTATION_HARDWARE_BINDINGS,
   PRESENTATION_HARDWARE_SCHEMA_VERSION,
+  calibratePresentationMidiInput,
   createPresentationInputDeduper,
   isAllowedPresentationHardwareKeyCode,
   legacyPresentationPedalStorageKey,
@@ -12,12 +13,16 @@ import {
   presentationHardwareMigrationGuardKey,
   presentationHardwareMigrationQuarantineKey,
   presentationHardwareStorageKey,
+  presentationGamepadBindingsForAction,
   presentationKeyboardBindingsForAction,
   readPresentationHardwareSettings,
   resolvePresentationHardwareAction,
   resolvePresentationHardwareInput,
+  resolvePresentationNativeHardwareInput,
   setPresentationHardwareSourceEnabled,
   updatePresentationKeyboardBinding,
+  updatePresentationGamepadBinding,
+  updatePresentationMidiBinding,
   writePresentationHardwareSettings,
   type PresentationHardwareContext,
 } from "./presentationPedal";
@@ -219,6 +224,35 @@ describe("presentation hardware schema v5", () => {
     expect(presentationKeyboardBindingsForAction(changed, "previous").map((binding) => binding.code)).toEqual(["ArrowUp", "PageUp"]);
   });
 
+  it("persists device-scoped gamepad and calibrated MIDI bindings inside schema v5", () => {
+    const gamepad = updatePresentationGamepadBinding(DEFAULT_PRESENTATION_HARDWARE_SETTINGS, "next", {
+      deviceId: "gamepad-a",
+      control: "dpad_right",
+    });
+    expect(presentationGamepadBindingsForAction(gamepad, "next")).toEqual([
+      expect.objectContaining({ source: "gamepad", deviceId: "gamepad-a", control: "dpad_right" }),
+    ]);
+
+    const midiZero = updatePresentationMidiBinding(gamepad, "toggle_blackout", {
+      source: "midi",
+      deviceId: "midi-a",
+      deviceName: "MIDI A",
+      message: "control_change",
+      channel: 0,
+      number: 64,
+      value: 0,
+    });
+    expect(midiZero.bindings).toContainEqual(expect.objectContaining({
+      source: "midi",
+      deviceId: "midi-a",
+      activation: "zero",
+      threshold: 0,
+      releaseThreshold: 1,
+    }));
+    expect(calibratePresentationMidiInput({ message: "control_change", value: 1 })).toEqual({ activation: "positive", threshold: 1, releaseThreshold: 0 });
+    expect(calibratePresentationMidiInput({ message: "note_on", value: 127 })).toEqual({ activation: "positive", threshold: 1, releaseThreshold: 0 });
+  });
+
   it("rejects navigation, destructive, system, and media keys from stored or learned bindings", () => {
     for (const code of ["Tab", "Enter", "NumpadEnter", "Backspace", "Delete", "Escape", "Home", "End", "F1", "MediaPlayPause", "AudioVolumeUp", "BrowserBack", "LaunchMail", "BrightnessUp"]) {
       expect(isAllowedPresentationHardwareKeyCode(code)).toBe(false);
@@ -328,5 +362,24 @@ describe("presentation hardware execution gates", () => {
     const runtimeDeduper = { accept: vi.fn(() => false), reset: vi.fn() };
     expect(resolvePresentationHardwareAction({ code: "PageDown" }, DEFAULT_PRESENTATION_HARDWARE_SETTINGS, readyContext, runtimeDeduper)).toBeNull();
     expect(runtimeDeduper.accept).toHaveBeenCalledWith("keyboard:PageDown");
+  });
+
+  it("revalidates native device edges through every authority gate and 200 ms dedupe", () => {
+    const settings = updatePresentationGamepadBinding(setPresentationHardwareSourceEnabled(DEFAULT_PRESENTATION_HARDWARE_SETTINGS, "gamepad", true), "next", {
+      deviceId: "gamepad-a",
+      control: "button_a",
+    });
+    const event = { source: "gamepad" as const, deviceId: "gamepad-a", deviceName: "Control", control: "button_a" as const };
+    const deduper = createPresentationInputDeduper();
+
+    expect(resolvePresentationNativeHardwareInput(event, settings, readyContext, deduper)).toBe("next");
+    expect(resolvePresentationNativeHardwareInput(event, settings, readyContext, deduper)).toBeNull();
+    deduper.reset();
+    expect(resolvePresentationNativeHardwareInput({ ...event, deviceId: "gamepad-b" }, settings, readyContext, deduper)).toBeNull();
+    expect(resolvePresentationNativeHardwareInput(event, settings, { ...readyContext, commandPending: true }, deduper)).toBeNull();
+    expect(resolvePresentationNativeHardwareInput(event, settings, { ...readyContext, captureActive: true }, deduper)).toBeNull();
+    expect(resolvePresentationNativeHardwareInput(event, settings, { ...readyContext, modalOpen: true }, deduper)).toBeNull();
+    expect(resolvePresentationNativeHardwareInput(event, settings, { ...readyContext, appActive: false }, deduper)).toBeNull();
+    expect(resolvePresentationNativeHardwareInput(event, settings, { ...readyContext, networkDiverged: true }, deduper)).toBeNull();
   });
 });

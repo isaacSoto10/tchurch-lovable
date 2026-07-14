@@ -13,6 +13,8 @@ function renderHub(overrides: Partial<Parameters<typeof PresentationProductionHu
   const onOpenChange = vi.fn();
   const onHardwareSettingsChange = vi.fn();
   const onHardwareCaptureChange = vi.fn();
+  const onLearnNativeHardwareInput = vi.fn(async () => null);
+  const onCancelNativeHardwareLearning = vi.fn();
   render(<PresentationProductionHub
     open
     onOpenChange={onOpenChange}
@@ -31,35 +33,41 @@ function renderHub(overrides: Partial<Parameters<typeof PresentationProductionHu
     hardwareSettings={DEFAULT_PRESENTATION_HARDWARE_SETTINGS}
     hardwareAppActive
     hardwareCommandPending={false}
+    hardwareNativeStatus={{ supported: true, active: true, gamepads: [{ id: "gamepad-one", name: "Control Uno" }], midiSources: [{ id: "midi-one", name: "Interfaz Uno" }], learningSource: null, message: null }}
     onHardwareSettingsChange={onHardwareSettingsChange}
     onHardwareCaptureChange={onHardwareCaptureChange}
+    onLearnNativeHardwareInput={onLearnNativeHardwareInput}
+    onCancelNativeHardwareLearning={onCancelNativeHardwareLearning}
     initialTab="pedal"
     {...overrides}
   />);
-  return { onOpenChange, onHardwareSettingsChange, onHardwareCaptureChange };
+  return { onOpenChange, onHardwareSettingsChange, onHardwareCaptureChange, onLearnNativeHardwareInput, onCancelNativeHardwareLearning };
 }
 
 describe("PresentationProductionHub hardware panel", () => {
-  it("shows the current HID source and reserves gamepad and MIDI without enabling them", () => {
+  it("shows native Gamepad/MIDI devices and keeps every source opt-in", () => {
     renderHub();
     expect(screen.getByText("Teclado HID")).toBeInTheDocument();
-    expect(screen.getByText("Gamepad")).toBeInTheDocument();
-    expect(screen.getByText("MIDI")).toBeInTheDocument();
-    expect(screen.getAllByText("Reservado para la siguiente etapa")).toHaveLength(2);
+    expect(screen.getAllByText("Gamepad").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("MIDI").length).toBeGreaterThan(0);
+    expect(screen.getByText("Control Uno")).toBeInTheDocument();
+    expect(screen.getByText("Interfaz Uno")).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "Habilitar teclado HID" })).toBeChecked();
+    expect(screen.getByRole("switch", { name: "Habilitar Gamepad" })).not.toBeChecked();
+    expect(screen.getByRole("switch", { name: "Habilitar MIDI" })).not.toBeChecked();
     expect(screen.getByRole("status")).toHaveTextContent(/Listo para aprender entradas/i);
   });
 
   it("learns one keyboard input, reports capture state, and does not close on capture Escape", async () => {
     const { onOpenChange, onHardwareSettingsChange, onHardwareCaptureChange } = renderHub();
-    fireEvent.click(screen.getByRole("button", { name: "Aprender entrada para Siguiente" }));
+    fireEvent.click(screen.getByRole("button", { name: "Aprender teclado para Siguiente" }));
     await waitFor(() => expect(onHardwareCaptureChange).toHaveBeenLastCalledWith(true));
 
     fireEvent.keyDown(window, { key: "Escape", code: "Escape" });
     expect(onOpenChange).not.toHaveBeenCalled();
     await waitFor(() => expect(onHardwareCaptureChange).toHaveBeenLastCalledWith(false));
 
-    fireEvent.click(screen.getByRole("button", { name: "Aprender entrada para Siguiente" }));
+    fireEvent.click(screen.getByRole("button", { name: "Aprender teclado para Siguiente" }));
     fireEvent.keyDown(window, { key: "n", code: "KeyN" });
     expect(onHardwareSettingsChange).toHaveBeenCalledTimes(1);
     const learned = onHardwareSettingsChange.mock.calls[0][0];
@@ -74,7 +82,7 @@ describe("PresentationProductionHub hardware panel", () => {
 
   it("does not learn navigation, destructive, or media keys", () => {
     const { onHardwareSettingsChange } = renderHub();
-    fireEvent.click(screen.getByRole("button", { name: "Aprender entrada para Siguiente" }));
+    fireEvent.click(screen.getByRole("button", { name: "Aprender teclado para Siguiente" }));
 
     for (const code of ["Tab", "Enter", "NumpadEnter", "Backspace", "Delete", "Home", "End", "MediaPlayPause"]) {
       fireEvent.keyDown(window, { key: code === "Tab" ? "Tab" : "", code });
@@ -82,6 +90,37 @@ describe("PresentationProductionHub hardware panel", () => {
 
     expect(onHardwareSettingsChange).not.toHaveBeenCalled();
     expect(screen.getByText(/reservada para navegación, accesibilidad o controles del sistema/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Aprender entrada para Siguiente" })).toHaveTextContent(/Presiona una tecla/i);
+    expect(screen.getByRole("button", { name: "Aprender teclado para Siguiente" })).toHaveTextContent(/Cancelar/i);
+  });
+
+  it("learns a native gamepad edge without executing it inside the modal", async () => {
+    const enabled = {
+      ...DEFAULT_PRESENTATION_HARDWARE_SETTINGS,
+      sources: { ...DEFAULT_PRESENTATION_HARDWARE_SETTINGS.sources, gamepad: true },
+    };
+    const learned = { source: "gamepad" as const, deviceId: "gamepad-one", deviceName: "Control Uno", control: "button_a" as const };
+    const onLearnNativeHardwareInput = vi.fn(async () => learned);
+    const { onHardwareSettingsChange, onHardwareCaptureChange } = renderHub({ hardwareSettings: enabled, onLearnNativeHardwareInput });
+
+    fireEvent.click(screen.getByRole("button", { name: "Aprender Gamepad para Siguiente" }));
+    await waitFor(() => expect(onLearnNativeHardwareInput).toHaveBeenCalledWith("gamepad", 10_000));
+    await waitFor(() => expect(onHardwareSettingsChange).toHaveBeenCalledTimes(1));
+    expect(onHardwareSettingsChange.mock.calls[0][0].bindings).toContainEqual(expect.objectContaining({ source: "gamepad", deviceId: "gamepad-one", control: "button_a", action: "next" }));
+    expect(onHardwareCaptureChange).toHaveBeenCalledWith(true);
+    await waitFor(() => expect(onHardwareCaptureChange).toHaveBeenLastCalledWith(false));
+  });
+
+  it("learns MIDI CC value zero with calibrated inverse thresholds", async () => {
+    const enabled = {
+      ...DEFAULT_PRESENTATION_HARDWARE_SETTINGS,
+      sources: { ...DEFAULT_PRESENTATION_HARDWARE_SETTINGS.sources, midi: true },
+    };
+    const learned = { source: "midi" as const, deviceId: "midi-one", deviceName: "Interfaz Uno", message: "control_change" as const, channel: 0, number: 64, value: 0, activation: "zero" as const, threshold: 0, releaseThreshold: 1 };
+    const onLearnNativeHardwareInput = vi.fn(async () => learned);
+    const { onHardwareSettingsChange } = renderHub({ hardwareSettings: enabled, onLearnNativeHardwareInput });
+
+    fireEvent.click(screen.getByRole("button", { name: "Aprender MIDI para Salida en negro" }));
+    await waitFor(() => expect(onHardwareSettingsChange).toHaveBeenCalledTimes(1));
+    expect(onHardwareSettingsChange.mock.calls[0][0].bindings).toContainEqual(expect.objectContaining({ source: "midi", activation: "zero", threshold: 0, releaseThreshold: 1, action: "toggle_blackout" }));
   });
 });

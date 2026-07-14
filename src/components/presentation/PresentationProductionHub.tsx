@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { BarChart3, Bluetooth, Bot, Cable, Gamepad2, Keyboard, MessageCircle, Music2, Radio, RotateCcw, Settings2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -12,13 +12,19 @@ import {
   formatPresentationKeyCode,
   isAllowedPresentationHardwareKeyCode,
   normalizePresentationHardwareSettings,
+  presentationGamepadBindingsForAction,
   presentationKeyboardBindingsForAction,
+  presentationMidiBindingsForAction,
   presentationKeyCode,
   setPresentationHardwareSourceEnabled,
+  updatePresentationGamepadBinding,
   updatePresentationKeyboardBinding,
+  updatePresentationMidiBinding,
   type PresentationHardwareAction,
   type PresentationHardwareSettings,
+  type PresentationNativeHardwareLearnedInput,
 } from "@/lib/presentationPedal";
+import type { PresentationNativeHardwareStatus } from "@/lib/presentationNativeHardware";
 import type { PresentationChatChannel, PresentationRunMode } from "@/lib/presentationProduction";
 import type { PresentationTargetRole } from "@/lib/presentationWorkspace";
 import type { PresentationAutomationRuntimeState } from "@/hooks/usePresentationAutomations";
@@ -48,8 +54,11 @@ type PresentationProductionHubProps = {
   hardwareSettings: PresentationHardwareSettings;
   hardwareAppActive: boolean;
   hardwareCommandPending: boolean;
+  hardwareNativeStatus: PresentationNativeHardwareStatus;
   onHardwareSettingsChange: (settings: PresentationHardwareSettings) => void;
   onHardwareCaptureChange: (capturing: boolean) => void;
+  onLearnNativeHardwareInput: (source: "gamepad" | "midi", timeoutMs?: number) => Promise<PresentationNativeHardwareLearnedInput | null>;
+  onCancelNativeHardwareLearning: () => void;
   initialTab?: ProductionTab;
 };
 
@@ -88,8 +97,11 @@ export function PresentationProductionHub({
   hardwareSettings,
   hardwareAppActive,
   hardwareCommandPending,
+  hardwareNativeStatus,
   onHardwareSettingsChange,
   onHardwareCaptureChange,
+  onLearnNativeHardwareInput,
+  onCancelNativeHardwareLearning,
   initialTab = "chat",
 }: PresentationProductionHubProps) {
   const [tab, setTab] = useState<ProductionTab>(initialTab);
@@ -115,9 +127,9 @@ export function PresentationProductionHub({
 
   return (
     <div className="fixed inset-0 z-[100] flex flex-col bg-[#080b10] text-white" role="dialog" aria-modal="true" aria-label="Centro de producción Tchurch Live" onClick={(event) => event.stopPropagation()} style={{ paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}>
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_10%_0%,rgba(34,211,238,0.09),transparent_32%),radial-gradient(circle_at_90%_0%,rgba(244,114,182,0.08),transparent_28%)]" />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_10%_0%,rgba(139,92,246,0.14),transparent_34%),radial-gradient(circle_at_90%_0%,rgba(192,132,252,0.09),transparent_30%)]" />
       <header className="relative z-10 flex min-h-16 shrink-0 items-center gap-3 border-b border-white/10 px-3 sm:px-5">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-cyan-300/15 bg-cyan-300/10 text-cyan-200"><Settings2 className="h-5 w-5" /></div>
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-violet-300/20 bg-violet-300/10 text-violet-200"><Settings2 className="h-5 w-5" /></div>
         <div className="min-w-0 flex-1"><p className="truncate text-sm font-black">Centro de producción</p><p className="truncate text-[10px] text-slate-500">{serviceTitle} · {mode === "rehearsal" ? "Ensayo aislado" : "Sesión en vivo"}</p></div>
         <div className={`hidden rounded-lg px-2 py-1 text-[9px] font-black uppercase tracking-[0.14em] sm:block ${mode === "rehearsal" ? "bg-amber-300/10 text-amber-200" : "bg-emerald-300/10 text-emerald-200"}`}>{mode === "rehearsal" ? "Sin salida pública" : controllerOwned ? "Control activo" : "Solo lectura"}</div>
         <Button variant="ghost" aria-label="Cerrar centro de producción" className="h-11 w-11 rounded-xl text-slate-300 hover:bg-white/5 hover:text-white" onClick={() => onOpenChange(false)}><X className="h-5 w-5" /></Button>
@@ -131,7 +143,7 @@ export function PresentationProductionHub({
         {tab === "report" ? <PresentationReportPanel serviceId={serviceId} mode={mode} /> : null}
         {tab === "integrations" ? <PresentationIntegrationsPanel serviceId={serviceId} serviceTitle={serviceTitle} mode={mode} churchId={churchId} externalAuthorityScope={externalAuthorityScope} canOperateExternal={canOperateExternal} canExportPublic={canUseProductionTools} /> : null}
         {tab === "broadcast" ? <PresentationBroadcastPanel serviceId={serviceId} mode={mode} churchId={churchId} privacyScope={externalAuthorityScope} canEdit={canEdit} canOperateExternal={canOperateExternal} /> : null}
-        {tab === "pedal" ? <PresentationHardwarePanel settings={hardwareSettings} controllerOwned={controllerOwned} mode={mode} appActive={hardwareAppActive} commandPending={hardwareCommandPending} networkState={networkState} onChange={onHardwareSettingsChange} onCaptureChange={onHardwareCaptureChange} /> : null}
+        {tab === "pedal" ? <PresentationHardwarePanel settings={hardwareSettings} controllerOwned={controllerOwned} mode={mode} appActive={hardwareAppActive} commandPending={hardwareCommandPending} networkState={networkState} nativeStatus={hardwareNativeStatus} onChange={onHardwareSettingsChange} onCaptureChange={onHardwareCaptureChange} onLearnNative={onLearnNativeHardwareInput} onCancelNativeLearning={onCancelNativeHardwareLearning} /> : null}
       </div></main>
     </div>
   );
@@ -144,21 +156,73 @@ const HARDWARE_ACTION_LABELS: Record<PresentationHardwareAction, string> = {
   toggle_chords: "Mostrar acordes",
 };
 
-function PresentationHardwarePanel({ settings, controllerOwned, mode, appActive, commandPending, networkState, onChange, onCaptureChange }: {
+type HardwareCapture = {
+  action: PresentationHardwareAction;
+  source: "keyboard" | "gamepad" | "midi";
+};
+
+const GAMEPAD_CONTROL_LABELS: Record<string, string> = {
+  button_a: "Botón A",
+  button_b: "Botón B",
+  button_x: "Botón X",
+  button_y: "Botón Y",
+  left_shoulder: "Botón superior izquierdo",
+  right_shoulder: "Botón superior derecho",
+  left_trigger: "Gatillo izquierdo",
+  right_trigger: "Gatillo derecho",
+  left_thumbstick_button: "Click de stick izquierdo",
+  right_thumbstick_button: "Click de stick derecho",
+  dpad_up: "Cruceta arriba",
+  dpad_down: "Cruceta abajo",
+  dpad_left: "Cruceta izquierda",
+  dpad_right: "Cruceta derecha",
+  left_stick_up: "Stick izquierdo arriba",
+  left_stick_down: "Stick izquierdo abajo",
+  left_stick_left: "Stick izquierdo izquierda",
+  left_stick_right: "Stick izquierdo derecha",
+  right_stick_up: "Stick derecho arriba",
+  right_stick_down: "Stick derecho abajo",
+  right_stick_left: "Stick derecho izquierda",
+  right_stick_right: "Stick derecho derecha",
+};
+
+function connectedDeviceName(status: PresentationNativeHardwareStatus, source: "gamepad" | "midi", id: string | null) {
+  if (!id) return "Cualquier dispositivo";
+  const devices = source === "gamepad" ? status.gamepads : status.midiSources;
+  return devices.find((device) => device.id === id)?.name || "Dispositivo guardado";
+}
+
+function PresentationHardwarePanel({ settings, controllerOwned, mode, appActive, commandPending, networkState, nativeStatus, onChange, onCaptureChange, onLearnNative, onCancelNativeLearning }: {
   settings: PresentationHardwareSettings;
   controllerOwned: boolean;
   mode: PresentationRunMode;
   appActive: boolean;
   commandPending: boolean;
   networkState: PresentationNetworkState;
+  nativeStatus: PresentationNativeHardwareStatus;
   onChange: (settings: PresentationHardwareSettings) => void;
   onCaptureChange: (capturing: boolean) => void;
+  onLearnNative: (source: "gamepad" | "midi", timeoutMs?: number) => Promise<PresentationNativeHardwareLearnedInput | null>;
+  onCancelNativeLearning: () => void;
 }) {
-  const [capturing, setCapturing] = useState<PresentationHardwareAction | null>(null);
+  const [capturing, setCapturing] = useState<HardwareCapture | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const captureGenerationRef = useRef(0);
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
   const keyboardEnabled = settings.enabled && settings.sources.keyboard;
+  const gamepadEnabled = settings.enabled && settings.sources.gamepad && nativeStatus.supported;
+  const midiEnabled = settings.enabled && settings.sources.midi && nativeStatus.supported;
   const networkDiverged = networkState === "diverged";
-  const ready = keyboardEnabled && controllerOwned && appActive && !commandPending && !networkDiverged;
+  const anySourceEnabled = keyboardEnabled || gamepadEnabled || midiEnabled;
+  const ready = anySourceEnabled && controllerOwned && appActive && !commandPending && !networkDiverged;
+
+  function cancelCapture(message?: string) {
+    captureGenerationRef.current += 1;
+    if (capturing?.source !== "keyboard") onCancelNativeLearning();
+    setCapturing(null);
+    if (message) setNotice(message);
+  }
 
   useEffect(() => {
     onCaptureChange(Boolean(capturing));
@@ -166,16 +230,29 @@ function PresentationHardwarePanel({ settings, controllerOwned, mode, appActive,
   }, [capturing, onCaptureChange]);
 
   useEffect(() => {
-    if (!keyboardEnabled && capturing) setCapturing(null);
-  }, [capturing, keyboardEnabled]);
+    if (!capturing) return undefined;
+    const timer = setTimeout(() => cancelCapture("Tiempo agotado. Vuelve a presionar Aprender e intenta de nuevo."), 10_250);
+    return () => clearTimeout(timer);
+  }, [capturing]);
+
+  useEffect(() => () => {
+    captureGenerationRef.current += 1;
+    onCancelNativeLearning();
+  }, [onCancelNativeLearning]);
 
   useEffect(() => {
-    if (!capturing) return undefined;
+    if (!capturing) return;
+    const sourceStillEnabled = capturing.source === "keyboard" ? keyboardEnabled : capturing.source === "gamepad" ? gamepadEnabled : midiEnabled;
+    if (!sourceStillEnabled) cancelCapture();
+  }, [capturing, gamepadEnabled, keyboardEnabled, midiEnabled]);
+
+  useEffect(() => {
+    if (!capturing || capturing.source !== "keyboard") return undefined;
     function capture(event: KeyboardEvent) {
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopImmediatePropagation();
-        setCapturing(null);
+        cancelCapture("Aprendizaje cancelado.");
         return;
       }
       if (event.repeat || event.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
@@ -186,17 +263,44 @@ function PresentationHardwarePanel({ settings, controllerOwned, mode, appActive,
       }
       event.preventDefault();
       event.stopImmediatePropagation();
-      onChange(updatePresentationKeyboardBinding(settings, capturing, code));
-      setNotice(`${HARDWARE_ACTION_LABELS[capturing]} ahora usa ${formatPresentationKeyCode(code)}.`);
+      onChange(updatePresentationKeyboardBinding(settingsRef.current, capturing.action, code));
+      setNotice(`${HARDWARE_ACTION_LABELS[capturing.action]} ahora usa ${formatPresentationKeyCode(code)}.`);
       setCapturing(null);
     }
     window.addEventListener("keydown", capture, true);
     return () => window.removeEventListener("keydown", capture, true);
-  }, [capturing, onChange, settings]);
+  }, [capturing, onChange]);
+
+  async function beginNativeCapture(action: PresentationHardwareAction, source: "gamepad" | "midi") {
+    if (capturing?.action === action && capturing.source === source) {
+      cancelCapture("Aprendizaje cancelado.");
+      return;
+    }
+    if (capturing) cancelCapture();
+    const generation = ++captureGenerationRef.current;
+    setNotice(source === "gamepad" ? "Presiona un botón, cruceta o mueve un stick." : "Envía una nota o control MIDI. Se aceptan valores CC 0 y 1.");
+    setCapturing({ action, source });
+    const learned = await onLearnNative(source, 10_000);
+    if (generation !== captureGenerationRef.current) return;
+    if (!learned || learned.source !== source) {
+      setCapturing(null);
+      setNotice("No se detectó una entrada. Verifica la conexión e intenta de nuevo.");
+      return;
+    }
+    if (learned.source === "gamepad") {
+      onChange(updatePresentationGamepadBinding(settingsRef.current, action, learned));
+      setNotice(`${HARDWARE_ACTION_LABELS[action]} ahora usa ${GAMEPAD_CONTROL_LABELS[learned.control] || learned.control} de ${learned.deviceName}.`);
+    } else {
+      onChange(updatePresentationMidiBinding(settingsRef.current, action, learned));
+      const message = learned.message === "note_on" ? "Nota" : "CC";
+      setNotice(`${HARDWARE_ACTION_LABELS[action]} ahora usa ${message} ${learned.number} · canal ${learned.channel + 1} de ${learned.deviceName}.`);
+    }
+    setCapturing(null);
+  }
 
   let readiness = "Listo para aprender entradas. Al cerrar este panel, el teclado controlará la sesión.";
   if (!settings.enabled) readiness = "Las entradas físicas están desactivadas en este dispositivo.";
-  else if (!settings.sources.keyboard) readiness = "El teclado y el pedal HID están desactivados.";
+  else if (!anySourceEnabled) readiness = "Activa al menos una fuente de entrada.";
   else if (!appActive) readiness = "En espera: Tchurch debe estar visible y en primer plano.";
   else if (!controllerOwned) readiness = `Solo lectura: toma el control de ${mode === "live" ? "la sesión en vivo" : "este ensayo"}.`;
   else if (commandPending) readiness = "En espera: Tchurch está confirmando el comando anterior.";
@@ -204,17 +308,22 @@ function PresentationHardwarePanel({ settings, controllerOwned, mode, appActive,
 
   return (
     <section>
-      <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_18rem] md:items-start"><div><p className="text-[10px] font-black uppercase tracking-[0.18em] text-violet-200">Entradas físicas</p><h3 className="mt-1 text-xl font-black text-white">Pedal, teclado y controles</h3><p className="mt-1 max-w-2xl text-xs leading-5 text-slate-400">Los pedales Bluetooth o USB que se presentan como teclado HID funcionan ahora. Tchurch ignora repeticiones, modificadores, campos editables y entradas mientras otro panel está abierto.</p></div><div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4"><div className="flex min-h-11 items-center justify-between gap-3"><div><p className="text-xs font-black text-slate-200">Entradas habilitadas</p><p className="text-[10px] text-slate-600">Guardadas para esta cuenta e iglesia</p></div><Switch aria-label="Habilitar entradas físicas" checked={settings.enabled} onCheckedChange={(enabled) => onChange({ ...settings, enabled })} /></div></div></div>
+      <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_18rem] md:items-start"><div><p className="text-[10px] font-black uppercase tracking-[0.18em] text-violet-200">Entradas físicas</p><h3 className="mt-1 text-xl font-black text-white">Pedal, teclado y controles</h3><p className="mt-1 max-w-2xl text-xs leading-5 text-slate-400">Conecta un pedal HID, gamepad o interfaz MIDI. Tchurch filtra rebotes y solo ejecuta entradas con control exacto de la sesión.</p></div><div className="rounded-2xl border border-violet-300/15 bg-violet-300/[0.055] p-4"><div className="flex min-h-11 items-center justify-between gap-3"><div><p className="text-xs font-black text-slate-100">Entradas habilitadas</p><p className="text-[10px] text-slate-500">Guardadas para esta cuenta e iglesia</p></div><Switch aria-label="Habilitar entradas físicas" checked={settings.enabled} onCheckedChange={(enabled) => onChange({ ...settings, enabled })} /></div></div></div>
       <div className={`mt-4 rounded-xl border px-3 py-2 text-xs font-semibold ${ready ? "border-emerald-300/15 bg-emerald-300/[0.07] text-emerald-100" : "border-amber-300/15 bg-amber-300/[0.07] text-amber-100"}`} role="status">{readiness}</div>
       {notice ? <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.05] px-3 py-2 text-xs text-slate-200" role="status">{notice}</div> : null}
       <div className="mt-5 grid gap-3 md:grid-cols-3">
         <div className="rounded-2xl border border-violet-300/15 bg-violet-300/[0.06] p-4"><div className="flex min-h-11 items-center gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-300/10 text-violet-200"><Keyboard className="h-5 w-5" /></div><div className="min-w-0 flex-1"><p className="text-sm font-black text-white">Teclado HID</p><p className="text-[10px] text-slate-400">Disponible ahora</p></div><Switch aria-label="Habilitar teclado HID" checked={settings.sources.keyboard} disabled={!settings.enabled} onCheckedChange={(enabled) => onChange(setPresentationHardwareSourceEnabled(settings, "keyboard", enabled))} /></div></div>
-        <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-4 opacity-75"><div className="flex min-h-11 items-center gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/[0.06] text-slate-400"><Gamepad2 className="h-5 w-5" /></div><div><p className="text-sm font-black text-slate-200">Gamepad</p><p className="text-[10px] text-slate-500">Reservado para la siguiente etapa</p></div></div></div>
-        <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-4 opacity-75"><div className="flex min-h-11 items-center gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/[0.06] text-slate-400"><Music2 className="h-5 w-5" /></div><div><p className="text-sm font-black text-slate-200">MIDI</p><p className="text-[10px] text-slate-500">Reservado para la siguiente etapa</p></div></div></div>
+        <div className="rounded-2xl border border-violet-300/15 bg-violet-300/[0.045] p-4"><div className="flex min-h-11 items-center gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-300/10 text-violet-200"><Gamepad2 className="h-5 w-5" /></div><div className="min-w-0 flex-1"><p className="text-sm font-black text-white">Gamepad</p><p className="truncate text-[10px] text-slate-400">{nativeStatus.supported ? nativeStatus.gamepads.map((device) => device.name).join(" · ") || "Sin controles conectados" : "Solo en iPhone o iPad"}</p></div><Switch aria-label="Habilitar Gamepad" checked={settings.sources.gamepad} disabled={!settings.enabled || !nativeStatus.supported} onCheckedChange={(enabled) => onChange(setPresentationHardwareSourceEnabled(settings, "gamepad", enabled))} /></div></div>
+        <div className="rounded-2xl border border-violet-300/15 bg-violet-300/[0.045] p-4"><div className="flex min-h-11 items-center gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-300/10 text-violet-200"><Music2 className="h-5 w-5" /></div><div className="min-w-0 flex-1"><p className="text-sm font-black text-white">MIDI</p><p className="truncate text-[10px] text-slate-400">{nativeStatus.supported ? nativeStatus.midiSources.map((device) => device.name).join(" · ") || "Sin fuentes conectadas" : "Solo en iPhone o iPad"}</p></div><Switch aria-label="Habilitar MIDI" checked={settings.sources.midi} disabled={!settings.enabled || !nativeStatus.supported} onCheckedChange={(enabled) => onChange(setPresentationHardwareSourceEnabled(settings, "midi", enabled))} /></div></div>
       </div>
       <div className="mt-5 grid gap-3 sm:grid-cols-2">{(Object.keys(HARDWARE_ACTION_LABELS) as PresentationHardwareAction[]).map((action) => {
-        const bindings = presentationKeyboardBindingsForAction(settings, action);
-        return <div key={action} className="rounded-2xl border border-white/10 bg-white/[0.035] p-4"><div className="flex items-start gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-300/10 text-violet-200"><Bluetooth className="h-5 w-5" /></div><div className="min-w-0 flex-1"><p className="text-sm font-black text-white">{HARDWARE_ACTION_LABELS[action]}</p><p className="mt-1 text-[10px] leading-4 text-slate-500">{bindings.length ? bindings.map((binding) => formatPresentationKeyCode(binding.code)).join(" · ") : "Sin tecla asignada"}</p></div></div><Button variant="outline" aria-label={`Aprender entrada para ${HARDWARE_ACTION_LABELS[action]}`} className={`mt-4 h-11 w-full rounded-xl border-white/10 text-white hover:text-white ${capturing === action ? "bg-violet-300/15 hover:bg-violet-300/20" : "bg-black/20 hover:bg-white/[0.06]"}`} disabled={!keyboardEnabled || Boolean(capturing && capturing !== action)} onClick={() => setCapturing(capturing === action ? null : action)}>{capturing === action ? "Presiona una tecla…" : "Aprender entrada"}</Button></div>;
+        const keyboardBindings = presentationKeyboardBindingsForAction(settings, action);
+        const gamepadBindings = presentationGamepadBindingsForAction(settings, action);
+        const midiBindings = presentationMidiBindingsForAction(settings, action);
+        const keyboardCapture = capturing?.action === action && capturing.source === "keyboard";
+        const gamepadCapture = capturing?.action === action && capturing.source === "gamepad";
+        const midiCapture = capturing?.action === action && capturing.source === "midi";
+        return <div key={action} className="rounded-2xl border border-white/10 bg-white/[0.035] p-4"><div className="flex items-start gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-300/10 text-violet-200"><Bluetooth className="h-5 w-5" /></div><div className="min-w-0 flex-1"><p className="text-sm font-black text-white">{HARDWARE_ACTION_LABELS[action]}</p><div className="mt-1 space-y-0.5 text-[10px] leading-4 text-slate-500"><p>Teclado: {keyboardBindings.length ? keyboardBindings.map((binding) => formatPresentationKeyCode(binding.code)).join(" · ") : "sin asignar"}</p><p>Gamepad: {gamepadBindings.length ? gamepadBindings.map((binding) => `${GAMEPAD_CONTROL_LABELS[binding.control] || binding.control} · ${connectedDeviceName(nativeStatus, "gamepad", binding.deviceId)}`).join(" · ") : "sin asignar"}</p><p>MIDI: {midiBindings.length ? midiBindings.map((binding) => `${binding.message === "note_on" ? "Nota" : "CC"} ${binding.number} · canal ${binding.channel === null ? "cualquiera" : binding.channel + 1} · ${connectedDeviceName(nativeStatus, "midi", binding.deviceId)}`).join(" · ") : "sin asignar"}</p></div></div></div><div className="mt-4 grid gap-2 sm:grid-cols-3"><Button variant="outline" aria-label={`Aprender teclado para ${HARDWARE_ACTION_LABELS[action]}`} className={`h-11 rounded-xl border-white/10 text-white hover:text-white ${keyboardCapture ? "bg-violet-300/15 hover:bg-violet-300/20" : "bg-black/20 hover:bg-white/[0.06]"}`} disabled={!keyboardEnabled || Boolean(capturing && !keyboardCapture)} onClick={() => keyboardCapture ? cancelCapture("Aprendizaje cancelado.") : setCapturing({ action, source: "keyboard" })}>{keyboardCapture ? "Cancelar" : "Teclado"}</Button><Button variant="outline" aria-label={`Aprender Gamepad para ${HARDWARE_ACTION_LABELS[action]}`} className={`h-11 rounded-xl border-white/10 text-white hover:text-white ${gamepadCapture ? "bg-violet-300/15 hover:bg-violet-300/20" : "bg-black/20 hover:bg-white/[0.06]"}`} disabled={!gamepadEnabled || Boolean(capturing && !gamepadCapture)} onClick={() => void beginNativeCapture(action, "gamepad")}>{gamepadCapture ? "Cancelar" : "Gamepad"}</Button><Button variant="outline" aria-label={`Aprender MIDI para ${HARDWARE_ACTION_LABELS[action]}`} className={`h-11 rounded-xl border-white/10 text-white hover:text-white ${midiCapture ? "bg-violet-300/15 hover:bg-violet-300/20" : "bg-black/20 hover:bg-white/[0.06]"}`} disabled={!midiEnabled || Boolean(capturing && !midiCapture)} onClick={() => void beginNativeCapture(action, "midi")}>{midiCapture ? "Cancelar" : "MIDI"}</Button></div></div>;
       })}</div>
       <div className="mt-5 flex justify-end"><Button variant="ghost" className="h-11 rounded-xl text-slate-400 hover:bg-white/5 hover:text-white" onClick={() => { onChange(normalizePresentationHardwareSettings(DEFAULT_PRESENTATION_HARDWARE_SETTINGS)); setNotice("Asignaciones predeterminadas restauradas."); }}><RotateCcw className="h-4 w-4" />Restaurar</Button></div>
     </section>
