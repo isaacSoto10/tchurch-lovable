@@ -51,6 +51,51 @@ export class MobileAuthApiError extends Error {
   }
 }
 
+type MobileAuthErrorBody = {
+  error?: unknown;
+  message?: unknown;
+  code?: unknown;
+};
+
+function isBackendDiagnosticMessage(message: string) {
+  return [
+    /column .+ does not exist/i,
+    /relation .+ does not exist/i,
+    /syntax error at or near/i,
+    /invalid input syntax for type/i,
+    /violates .+ constraint/i,
+    /duplicate key value violates unique constraint/i,
+    /\bpostgres\b/i,
+    /\bprisma\b/i,
+    /\bsqlstate\b/i,
+    /\bquery failed\b/i,
+  ].some((pattern) => pattern.test(message));
+}
+
+function mobileAuthErrorMessage(data: unknown, status: number) {
+  const error = data as MobileAuthErrorBody | null | undefined;
+  const rawMessage =
+    error && typeof error === "object"
+      ? error.error || error.message
+      : typeof data === "string"
+        ? data
+        : "";
+  const message = String(rawMessage || "").trim();
+  const lowerMessage = message.toLowerCase();
+
+  if (
+    !message ||
+    status >= 500 ||
+    lowerMessage.includes("unprocessable entity") ||
+    lowerMessage.startsWith("unable to ") ||
+    isBackendDiagnosticMessage(message)
+  ) {
+    return `No pudimos completar la autenticación móvil (${status}). Intenta de nuevo.`;
+  }
+
+  return message;
+}
+
 function isExpired(session: MobileAuthSession) {
   return new Date(session.expiresAt).getTime() <= Date.now();
 }
@@ -95,9 +140,9 @@ async function postJson<T>(path: string, body: Record<string, unknown>): Promise
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const error = data as { error?: unknown; code?: unknown };
+    const error = data as MobileAuthErrorBody;
     throw new MobileAuthApiError(
-      String(error?.error || `Request failed with ${response.status}`),
+      mobileAuthErrorMessage(data, response.status),
       response.status,
       typeof error?.code === "string" ? error.code : undefined
     );

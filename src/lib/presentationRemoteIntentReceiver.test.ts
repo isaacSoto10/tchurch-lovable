@@ -24,7 +24,9 @@ const CLIENT_ID = "22222222-2222-4222-8222-222222222222";
 const OTHER_CLIENT_ID = "33333333-3333-4333-8333-333333333333";
 const INTENT_ID = "44444444-4444-4444-8444-444444444444";
 const DELIVERY_ID = "55555555-5555-4555-8555-555555555555";
-const NOW_MS = Date.parse("2026-07-13T18:00:05.000Z");
+// Keep receipt fixtures inside the 24-hour retention window regardless of the
+// wall-clock date on the machine running the suite.
+const NOW_MS = Date.now();
 const CONTROLLER_AUTHORITY_VERSION = `sha256:${"a".repeat(64)}`;
 
 function authority(overrides: Partial<PresentationRemoteIntentReceiverAuthority> = {}): PresentationRemoteIntentReceiverAuthority {

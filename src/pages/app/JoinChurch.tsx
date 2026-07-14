@@ -10,6 +10,7 @@ import { apiFetch, setChurchId } from "@/lib/api";
 import { useAppAuth } from "@/hooks/useAppAuth";
 import {
   isNativeMobileAuth,
+  MobileAuthApiError,
   requestMobileJoinAuthCode,
   verifyMobileJoinAuthCode,
   type MobileJoinChurch,
@@ -37,6 +38,27 @@ function normalizeJoinCode(value: string) {
 function getFriendlyError(error: unknown, fallback: string) {
   if (error instanceof Error && error.message) return error.message;
   return fallback;
+}
+
+function getMobileJoinError(error: unknown, fallback: string) {
+  if (error instanceof MobileAuthApiError) {
+    const message = error.message.trim();
+    const lowerMessage = message.toLowerCase();
+
+    if (
+      error.status >= 500 ||
+      error.status === 422 ||
+      (error.status === 400 && !error.code) ||
+      lowerMessage.includes("unprocessable entity") ||
+      lowerMessage.includes("no pudimos completar la autenticación móvil")
+    ) {
+      return fallback;
+    }
+
+    return message || fallback;
+  }
+
+  return getFriendlyError(error, fallback);
 }
 
 export default function JoinChurch() {
@@ -173,7 +195,7 @@ export default function JoinChurch() {
       setChurch(result.church);
       setStep("verify");
     } catch (err) {
-      setError(getFriendlyError(err, "No pudimos enviar el código de verificación."));
+      setError(getMobileJoinError(err, "No pudimos enviar el código de verificación. Intenta de nuevo."));
     } finally {
       setLoading(false);
     }
@@ -192,7 +214,7 @@ export default function JoinChurch() {
       const session = await verifyMobileJoinAuthCode(email, cleanCode, cleanVerification);
       await finishJoin(session.church);
     } catch (err) {
-      setError(getFriendlyError(err, "Ese código no funcionó. Intenta de nuevo."));
+      setError(getMobileJoinError(err, "No pudimos terminar tu acceso. Solicita un nuevo código e intenta de nuevo."));
     } finally {
       setLoading(false);
     }
