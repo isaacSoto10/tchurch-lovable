@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   rehearsalSnapshot: null as PresentationLiveSnapshot | null,
   rehearsalTiming: null as PresentationTiming | null,
   liveControllerLeaseActive: false,
+  liveCommandPending: false,
   rehearsalControllerLeaseActive: false,
   rehearsalError: null as string | null,
   liveNetworkState: "online" as PresentationNetworkState,
@@ -80,7 +81,7 @@ vi.mock("@/hooks/usePresentationLive", () => ({
     loading: false,
     error: null,
     notice: null,
-    commandPending: false,
+    commandPending: mocks.liveCommandPending,
     clientId: "11111111-1111-4111-8111-111111111111",
     sendCommand: mocks.liveSend,
     refresh: vi.fn(async () => undefined),
@@ -382,6 +383,7 @@ function releasedSnapshot(value: PresentationLiveSnapshot) {
 
 describe("ServicePresentation load authority", () => {
   beforeEach(() => {
+    localStorage.clear();
     mocks.accountId = "account-old";
     mocks.church = { id: "church-old", role: "ADMIN" };
     mocks.livePackage = null;
@@ -390,6 +392,7 @@ describe("ServicePresentation load authority", () => {
     mocks.rehearsalSnapshot = null;
     mocks.rehearsalTiming = null;
     mocks.liveControllerLeaseActive = false;
+    mocks.liveCommandPending = false;
     mocks.rehearsalControllerLeaseActive = false;
     mocks.rehearsalError = null;
     mocks.liveNetworkState = "online";
@@ -817,6 +820,52 @@ describe("ServicePresentation load authority", () => {
     }, undefined));
     expect(mocks.liveSend).not.toHaveBeenCalledWith("claim_control", expect.anything(), expect.anything());
     expect(mocks.remoteSend).not.toHaveBeenCalled();
+  });
+
+  it("routes account-scoped HID actions through the exact live controller and pauses them behind production UI", async () => {
+    mocks.liveSnapshot = ownedSnapshot("live");
+    mocks.liveTiming = mocks.liveSnapshot.session!.timing;
+    mocks.liveControllerLeaseActive = true;
+    mocks.apiFetch.mockImplementation((path: string) => path === "/users/me"
+      ? Promise.resolve({ id: mocks.accountId })
+      : Promise.resolve(stageService()));
+    localStorage.setItem("tchurch_live_pedal_v1:church-old", JSON.stringify({
+      schemaVersion: 1,
+      enabled: true,
+      bindings: {
+        next: ["PageDown"],
+        previous: ["PageUp"],
+        toggle_blackout: ["KeyB"],
+        toggle_chords: ["KeyC"],
+      },
+    }));
+
+    const view = render(<ServicePresentation />);
+    await screen.findByText("Stage fixture");
+    fireEvent.keyDown(window, { code: "PageDown" });
+    fireEvent.keyDown(window, { code: "PageDown" });
+    await waitFor(() => expect(mocks.liveSend).toHaveBeenCalledTimes(1));
+    expect(mocks.liveSend).toHaveBeenCalledWith("jump", {
+      itemId: "next-item",
+      stepId: null,
+      partIndex: 0,
+    }, undefined);
+    expect(localStorage.getItem("tchurch.presentation.hardware.v5:account-old:church-old")).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Abrir centro de producción" }));
+    fireEvent.keyDown(window, { code: "KeyB" });
+    expect(mocks.liveSend).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar centro de producción" }));
+
+    mocks.liveCommandPending = true;
+    view.rerender(<ServicePresentation />);
+    fireEvent.keyDown(window, { code: "KeyC" });
+    expect(mocks.liveSend).toHaveBeenCalledTimes(1);
+
+    mocks.liveCommandPending = false;
+    view.rerender(<ServicePresentation />);
+    fireEvent.keyDown(window, { code: "KeyB" });
+    await waitFor(() => expect(mocks.liveSend).toHaveBeenCalledWith("set_blackout", { blackout: true }, undefined));
   });
 
   it("uses the remote-intent path for the same account on a different controller client without claiming control", async () => {

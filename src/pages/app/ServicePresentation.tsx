@@ -23,6 +23,7 @@ import { usePresentationRehearsal } from "@/hooks/usePresentationRehearsal";
 import { usePresentationRemoteIntents } from "@/hooks/usePresentationRemoteIntents";
 import { usePresentationRemoteIntentReceiver } from "@/hooks/usePresentationRemoteIntentReceiver";
 import { usePresentationAutomations, usePresentationAutomationRuleThresholds } from "@/hooks/usePresentationAutomations";
+import { usePresentationHardwareInputs } from "@/hooks/usePresentationHardwareInputs";
 import { useAppAuth } from "@/hooks/useAppAuth";
 import { useChurch } from "@/providers/ChurchProvider";
 import {
@@ -80,10 +81,9 @@ import {
   reconcileActivePresentationObsAuthority,
 } from "@/lib/presentationLocalConnectors";
 import {
-  readPresentationPedalMapping,
-  resolvePresentationPedalAction,
-  writePresentationPedalMapping,
-  type PresentationPedalMapping,
+  readPresentationHardwareSettings,
+  writePresentationHardwareSettings,
+  type PresentationHardwareSettings,
 } from "@/lib/presentationPedal";
 import type { PresentationRunMode } from "@/lib/presentationProduction";
 import { resolvePresentationSongTypography, resolvePresentationSurface, type PresentationSurface } from "@/lib/presentationSurface";
@@ -148,6 +148,38 @@ function useWakeLock() {
       wakeLockRef.current = null;
     };
   }, []);
+}
+
+function usePresentationAppActive() {
+  const [appActive, setAppActive] = useState(() => document.visibilityState !== "hidden");
+
+  useEffect(() => {
+    let disposed = false;
+    let nativeActive = true;
+    let listener: { remove: () => Promise<void> } | null = null;
+    const sync = () => {
+      if (!disposed) setAppActive(nativeActive && document.visibilityState !== "hidden");
+    };
+    const handleVisibility = () => sync();
+
+    document.addEventListener("visibilitychange", handleVisibility);
+    void CapacitorApp.addListener("appStateChange", ({ isActive }) => {
+      nativeActive = isActive;
+      sync();
+    }).then((handle) => {
+      if (disposed) void handle.remove();
+      else listener = handle;
+    }).catch(() => undefined);
+
+    sync();
+    return () => {
+      disposed = true;
+      document.removeEventListener("visibilitychange", handleVisibility);
+      if (listener) void listener.remove();
+    };
+  }, []);
+
+  return appActive;
 }
 
 function useTabletPresentationLayout() {
@@ -643,6 +675,7 @@ export default function ServicePresentation() {
   const { selectedChurch } = useChurch();
   const { userId: authenticatedUserId } = useAppAuth();
   const isTabletPresentation = useTabletPresentationLayout();
+  const presentationAppActive = usePresentationAppActive();
   const clock = usePresentationClock();
   const [service, setService] = useState<PresentationService | null>(null);
   const [workspace, setWorkspace] = useState<PresentationWorkspace | null>(null);
@@ -662,10 +695,11 @@ export default function ServicePresentation() {
   const [showEditor, setShowEditor] = useState(false);
   const [showOutputManager, setShowOutputManager] = useState(false);
   const [showProductionHub, setShowProductionHub] = useState(false);
+  const [hardwareCaptureActive, setHardwareCaptureActive] = useState(false);
   const [runMode, setRunMode] = useState<PresentationRunMode>("live");
   const [pendingRunMode, setPendingRunMode] = useState<PresentationRunMode | null>(null);
   const [switchingRunMode, setSwitchingRunMode] = useState(false);
-  const [pedalMapping, setPedalMapping] = useState<PresentationPedalMapping>(() => readPresentationPedalMapping(selectedChurch?.id));
+  const [hardwareSettings, setHardwareSettings] = useState<PresentationHardwareSettings>(() => readPresentationHardwareSettings(authenticatedUserId, selectedChurch?.id));
   const [outputConfig, setOutputConfig] = useState<PresentationOutputConfig | null>(null);
   const [savingWorkspace, setSavingWorkspace] = useState(false);
   const historyRef = useRef<string[]>([]);
@@ -676,11 +710,6 @@ export default function ServicePresentation() {
     toggleBlackout: () => undefined,
     toggleChords: () => undefined,
     exit: () => undefined,
-  });
-  const keyboardContextRef = useRef({
-    mapping: pedalMapping,
-    mode: runMode,
-    controllerOwned: false,
   });
   const surfaceInitializedRef = useRef(false);
   const touchStartXRef = useRef<number | null>(null);
@@ -727,13 +756,14 @@ export default function ServicePresentation() {
     setShowEditor(false);
     setShowOutputManager(false);
     setShowProductionHub(false);
+    setHardwareCaptureActive(false);
     setRunMode("live");
     setPendingRunMode(null);
     setSwitchingRunMode(false);
-    setPedalMapping(readPresentationPedalMapping(selectedChurch?.id));
+    setHardwareSettings(readPresentationHardwareSettings(authenticatedUserId, selectedChurch?.id));
     setOutputConfig(null);
     setSavingWorkspace(false);
-  }, [presentationLoadIdentity, id, selectedChurch?.id]);
+  }, [authenticatedUserId, presentationLoadIdentity, id, selectedChurch?.id]);
 
   useEffect(() => {
     if (!id) return undefined;
@@ -1047,7 +1077,6 @@ export default function ServicePresentation() {
   });
   const liveControllerOwned = runMode === "rehearsal" ? rehearsalControllerOwnedByClient : liveControllerOwnedByClient;
   const liveCanMutate = liveControllerOwned && !runtimeCommandPending && runtimeNetworkState !== "diverged";
-  keyboardContextRef.current = { mapping: pedalMapping, mode: runMode, controllerOwned: liveControllerOwned };
   const liveAutomationControllerOwned = liveControllerOwnedByClient;
   const rehearsalAutomationControllerOwned = rehearsalControllerOwnedByClient;
   const liveAutomationPrivacyScope = [authenticatedUserId || "signed-out", selectedChurch?.id || "no-church", selectedChurch?.role || "no-role", id || "no-service", "live", live.snapshot?.session?.id || "no-session", live.clientId].join("::");
@@ -1287,27 +1316,39 @@ export default function ServicePresentation() {
     exit: () => navigate(`/app/services/${id}`),
   };
 
+  usePresentationHardwareInputs({
+    settings: hardwareSettings,
+    scope: [authenticatedUserId || "signed-out", selectedChurch?.id || "no-church", id || "no-service", runMode, runtimeSession?.id || "no-session"].join("::"),
+    context: {
+      mode: runMode,
+      controllerOwned: liveControllerOwned,
+      commandPending: runtimeCommandPending,
+      appActive: presentationAppActive,
+      modalOpen: showRundown || showOutputManager || showProductionHub || Boolean(pendingRunMode),
+      editorOpen: showEditor,
+      captureActive: hardwareCaptureActive,
+      networkDiverged: runtimeNetworkState === "diverged",
+    },
+    onAction(action) {
+      if (action === "next") keyboardActionsRef.current.goNext();
+      else if (action === "previous") keyboardActionsRef.current.goPrevious();
+      else if (action === "toggle_blackout") keyboardActionsRef.current.toggleBlackout();
+      else if (action === "toggle_chords") keyboardActionsRef.current.toggleChords();
+    },
+  });
+
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       const target = event.target;
-      if (target instanceof HTMLElement && target.closest("[role=dialog]")) return;
-      const action = resolvePresentationPedalAction(event, keyboardContextRef.current.mapping, {
-        mode: keyboardContextRef.current.mode,
-        controllerOwned: keyboardContextRef.current.controllerOwned,
-      });
-      if (action === "next") {
-        event.preventDefault();
-        keyboardActionsRef.current.goNext();
-      } else if (action === "previous") {
-        event.preventDefault();
-        keyboardActionsRef.current.goPrevious();
-      } else if (action === "toggle_blackout") {
-        event.preventDefault();
-        keyboardActionsRef.current.toggleBlackout();
-      } else if (action === "toggle_chords") {
-        event.preventDefault();
-        keyboardActionsRef.current.toggleChords();
-      } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
+      if (
+        showRundown
+        || showEditor
+        || showOutputManager
+        || showProductionHub
+        || pendingRunMode
+        || (target instanceof HTMLElement && target.closest("[role=dialog]"))
+      ) return;
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
         event.preventDefault();
         keyboardActionsRef.current.undo();
       } else if (event.key === "Escape") {
@@ -1317,7 +1358,7 @@ export default function ServicePresentation() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [pendingRunMode, showEditor, showOutputManager, showProductionHub, showRundown]);
 
   function changeSongMode(nextMode: PresentationSongMode) {
     setSongModeOverride(nextMode);
@@ -1412,8 +1453,8 @@ export default function ServicePresentation() {
     }
   }
 
-  function changePedalMapping(next: PresentationPedalMapping) {
-    setPedalMapping(writePresentationPedalMapping(selectedChurch?.id, next));
+  function changeHardwareSettings(next: PresentationHardwareSettings) {
+    setHardwareSettings(writePresentationHardwareSettings(authenticatedUserId, selectedChurch?.id, next));
   }
 
   function switchRunModeWithoutOwnedControl(nextMode: PresentationRunMode) {
@@ -1814,8 +1855,11 @@ export default function ServicePresentation() {
         snapshot={runtimeSnapshot}
         clientId={runtime.clientId}
         automationState={runMode === "rehearsal" ? rehearsalAutomations.state : liveAutomations.state}
-        pedalMapping={pedalMapping}
-        onPedalMappingChange={changePedalMapping}
+        hardwareSettings={hardwareSettings}
+        hardwareAppActive={presentationAppActive}
+        hardwareCommandPending={runtimeCommandPending}
+        onHardwareSettingsChange={changeHardwareSettings}
+        onHardwareCaptureChange={setHardwareCaptureActive}
       />
       {pendingRunMode ? (
         <div className="fixed inset-0 z-[120] flex items-end justify-center bg-black/75 p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:items-center" role="dialog" aria-modal="true" aria-label="Confirmar cambio de modo" onClick={() => { if (!switchingRunMode) setPendingRunMode(null); }}>

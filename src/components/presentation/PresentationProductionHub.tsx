@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { BarChart3, Bluetooth, Bot, Cable, MessageCircle, Radio, RotateCcw, Settings2, X } from "lucide-react";
+import { BarChart3, Bluetooth, Bot, Cable, Gamepad2, Keyboard, MessageCircle, Music2, Radio, RotateCcw, Settings2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { PresentationAutomationPanel } from "@/components/presentation/PresentationAutomationPanel";
@@ -8,12 +8,15 @@ import { PresentationIntegrationsPanel } from "@/components/presentation/Present
 import { PresentationPrivateChat } from "@/components/presentation/PresentationPrivateChat";
 import { PresentationReportPanel } from "@/components/presentation/PresentationReportPanel";
 import {
-  DEFAULT_PRESENTATION_PEDAL_MAPPING,
+  DEFAULT_PRESENTATION_HARDWARE_SETTINGS,
   formatPresentationKeyCode,
+  normalizePresentationHardwareSettings,
+  presentationKeyboardBindingsForAction,
   presentationKeyCode,
-  updatePresentationPedalBinding,
-  type PresentationPedalAction,
-  type PresentationPedalMapping,
+  setPresentationHardwareSourceEnabled,
+  updatePresentationKeyboardBinding,
+  type PresentationHardwareAction,
+  type PresentationHardwareSettings,
 } from "@/lib/presentationPedal";
 import type { PresentationChatChannel, PresentationRunMode } from "@/lib/presentationProduction";
 import type { PresentationTargetRole } from "@/lib/presentationWorkspace";
@@ -41,8 +44,11 @@ type PresentationProductionHubProps = {
   snapshot: PresentationLiveSnapshot | null;
   clientId: string;
   automationState: PresentationAutomationRuntimeState;
-  pedalMapping: PresentationPedalMapping;
-  onPedalMappingChange: (mapping: PresentationPedalMapping) => void;
+  hardwareSettings: PresentationHardwareSettings;
+  hardwareAppActive: boolean;
+  hardwareCommandPending: boolean;
+  onHardwareSettingsChange: (settings: PresentationHardwareSettings) => void;
+  onHardwareCaptureChange: (capturing: boolean) => void;
   initialTab?: ProductionTab;
 };
 
@@ -78,8 +84,11 @@ export function PresentationProductionHub({
   snapshot,
   clientId,
   automationState,
-  pedalMapping,
-  onPedalMappingChange,
+  hardwareSettings,
+  hardwareAppActive,
+  hardwareCommandPending,
+  onHardwareSettingsChange,
+  onHardwareCaptureChange,
   initialTab = "chat",
 }: PresentationProductionHubProps) {
   const [tab, setTab] = useState<ProductionTab>(initialTab);
@@ -95,7 +104,7 @@ export function PresentationProductionHub({
   useEffect(() => {
     if (!open) return undefined;
     function closeOnEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") onOpenChange(false);
+      if (!event.defaultPrevented && event.key === "Escape") onOpenChange(false);
     }
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
@@ -121,28 +130,50 @@ export function PresentationProductionHub({
         {tab === "report" ? <PresentationReportPanel serviceId={serviceId} mode={mode} /> : null}
         {tab === "integrations" ? <PresentationIntegrationsPanel serviceId={serviceId} serviceTitle={serviceTitle} mode={mode} churchId={churchId} externalAuthorityScope={externalAuthorityScope} canOperateExternal={canOperateExternal} canExportPublic={canUseProductionTools} /> : null}
         {tab === "broadcast" ? <PresentationBroadcastPanel serviceId={serviceId} mode={mode} churchId={churchId} privacyScope={externalAuthorityScope} canEdit={canEdit} canOperateExternal={canOperateExternal} /> : null}
-        {tab === "pedal" ? <PresentationPedalPanel mapping={pedalMapping} controllerOwned={controllerOwned} mode={mode} onChange={onPedalMappingChange} /> : null}
+        {tab === "pedal" ? <PresentationHardwarePanel settings={hardwareSettings} controllerOwned={controllerOwned} mode={mode} appActive={hardwareAppActive} commandPending={hardwareCommandPending} networkState={networkState} onChange={onHardwareSettingsChange} onCaptureChange={onHardwareCaptureChange} /> : null}
       </div></main>
     </div>
   );
 }
 
-const PEDAL_LABELS: Record<PresentationPedalAction, string> = {
+const HARDWARE_ACTION_LABELS: Record<PresentationHardwareAction, string> = {
   next: "Siguiente",
   previous: "Anterior",
   toggle_blackout: "Salida en negro",
   toggle_chords: "Mostrar acordes",
 };
 
-function PresentationPedalPanel({ mapping, controllerOwned, mode, onChange }: { mapping: PresentationPedalMapping; controllerOwned: boolean; mode: PresentationRunMode; onChange: (mapping: PresentationPedalMapping) => void }) {
-  const [capturing, setCapturing] = useState<PresentationPedalAction | null>(null);
+function PresentationHardwarePanel({ settings, controllerOwned, mode, appActive, commandPending, networkState, onChange, onCaptureChange }: {
+  settings: PresentationHardwareSettings;
+  controllerOwned: boolean;
+  mode: PresentationRunMode;
+  appActive: boolean;
+  commandPending: boolean;
+  networkState: PresentationNetworkState;
+  onChange: (settings: PresentationHardwareSettings) => void;
+  onCaptureChange: (capturing: boolean) => void;
+}) {
+  const [capturing, setCapturing] = useState<PresentationHardwareAction | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const keyboardEnabled = settings.enabled && settings.sources.keyboard;
+  const networkDiverged = networkState === "diverged";
+  const ready = keyboardEnabled && controllerOwned && appActive && !commandPending && !networkDiverged;
+
+  useEffect(() => {
+    onCaptureChange(Boolean(capturing));
+    return () => onCaptureChange(false);
+  }, [capturing, onCaptureChange]);
+
+  useEffect(() => {
+    if (!keyboardEnabled && capturing) setCapturing(null);
+  }, [capturing, keyboardEnabled]);
 
   useEffect(() => {
     if (!capturing) return undefined;
     function capture(event: KeyboardEvent) {
       if (event.key === "Escape") {
         event.preventDefault();
+        event.stopImmediatePropagation();
         setCapturing(null);
         return;
       }
@@ -150,22 +181,38 @@ function PresentationPedalPanel({ mapping, controllerOwned, mode, onChange }: { 
       const code = presentationKeyCode(event);
       if (!code || code === "Unidentified" || code === "Dead" || code === "Process") return;
       event.preventDefault();
-      event.stopPropagation();
-      onChange(updatePresentationPedalBinding(mapping, capturing, code));
-      setNotice(`${PEDAL_LABELS[capturing]} ahora usa ${formatPresentationKeyCode(code)}.`);
+      event.stopImmediatePropagation();
+      onChange(updatePresentationKeyboardBinding(settings, capturing, code));
+      setNotice(`${HARDWARE_ACTION_LABELS[capturing]} ahora usa ${formatPresentationKeyCode(code)}.`);
       setCapturing(null);
     }
     window.addEventListener("keydown", capture, true);
     return () => window.removeEventListener("keydown", capture, true);
-  }, [capturing, mapping, onChange]);
+  }, [capturing, onChange, settings]);
+
+  let readiness = "Listo para aprender entradas. Al cerrar este panel, el teclado controlará la sesión.";
+  if (!settings.enabled) readiness = "Las entradas físicas están desactivadas en este dispositivo.";
+  else if (!settings.sources.keyboard) readiness = "El teclado y el pedal HID están desactivados.";
+  else if (!appActive) readiness = "En espera: Tchurch debe estar visible y en primer plano.";
+  else if (!controllerOwned) readiness = `Solo lectura: toma el control de ${mode === "live" ? "la sesión en vivo" : "este ensayo"}.`;
+  else if (commandPending) readiness = "En espera: Tchurch está confirmando el comando anterior.";
+  else if (networkDiverged) readiness = "En espera: revisa la cola divergente antes de usar entradas físicas.";
 
   return (
     <section>
-      <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_18rem] md:items-start"><div><p className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-200">Bluetooth HID</p><h3 className="mt-1 text-xl font-black text-white">Pedal y clicker</h3><p className="mt-1 max-w-2xl text-xs leading-5 text-slate-400">Funciona con controles que envían flechas, Page Up/Down o Espacio. Ignora repetición, modificadores, composición y campos editables.</p></div><div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4"><div className="flex min-h-11 items-center justify-between gap-3"><div><p className="text-xs font-black text-slate-200">Pedal habilitado</p><p className="text-[10px] text-slate-600">Guardado solo en esta iglesia</p></div><Switch checked={mapping.enabled} onCheckedChange={(enabled) => onChange({ ...mapping, enabled })} /></div></div></div>
-      <div className={`mt-4 rounded-xl border px-3 py-2 text-xs font-semibold ${controllerOwned ? "border-emerald-300/15 bg-emerald-300/[0.07] text-emerald-100" : "border-amber-300/15 bg-amber-300/[0.07] text-amber-100"}`}>{controllerOwned ? `Listo para controlar ${mode === "live" ? "la sesión en vivo" : "el ensayo aislado"}.` : `Solo lectura: el pedal se ignora hasta que este dispositivo tenga el control de ${mode === "live" ? "la sesión en vivo" : "este ensayo"}.`}</div>
+      <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_18rem] md:items-start"><div><p className="text-[10px] font-black uppercase tracking-[0.18em] text-violet-200">Entradas físicas</p><h3 className="mt-1 text-xl font-black text-white">Pedal, teclado y controles</h3><p className="mt-1 max-w-2xl text-xs leading-5 text-slate-400">Los pedales Bluetooth o USB que se presentan como teclado HID funcionan ahora. Tchurch ignora repeticiones, modificadores, campos editables y entradas mientras otro panel está abierto.</p></div><div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4"><div className="flex min-h-11 items-center justify-between gap-3"><div><p className="text-xs font-black text-slate-200">Entradas habilitadas</p><p className="text-[10px] text-slate-600">Guardadas para esta cuenta e iglesia</p></div><Switch aria-label="Habilitar entradas físicas" checked={settings.enabled} onCheckedChange={(enabled) => onChange({ ...settings, enabled })} /></div></div></div>
+      <div className={`mt-4 rounded-xl border px-3 py-2 text-xs font-semibold ${ready ? "border-emerald-300/15 bg-emerald-300/[0.07] text-emerald-100" : "border-amber-300/15 bg-amber-300/[0.07] text-amber-100"}`} role="status">{readiness}</div>
       {notice ? <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.05] px-3 py-2 text-xs text-slate-200" role="status">{notice}</div> : null}
-      <div className="mt-5 grid gap-3 sm:grid-cols-2">{(Object.keys(PEDAL_LABELS) as PresentationPedalAction[]).map((action) => <div key={action} className="rounded-2xl border border-white/10 bg-white/[0.035] p-4"><div className="flex items-start gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-300/10 text-amber-200"><Bluetooth className="h-5 w-5" /></div><div className="min-w-0 flex-1"><p className="text-sm font-black text-white">{PEDAL_LABELS[action]}</p><p className="mt-1 text-[10px] leading-4 text-slate-500">{mapping.bindings[action].length ? mapping.bindings[action].map(formatPresentationKeyCode).join(" · ") : "Sin tecla asignada"}</p></div></div><Button variant="outline" className={`mt-4 h-11 w-full rounded-xl border-white/10 text-white hover:text-white ${capturing === action ? "bg-amber-300/15 hover:bg-amber-300/20" : "bg-black/20 hover:bg-white/[0.06]"}`} disabled={!mapping.enabled || Boolean(capturing && capturing !== action)} onClick={() => setCapturing(capturing === action ? null : action)}>{capturing === action ? "Presiona una tecla…" : "Cambiar tecla"}</Button></div>)}</div>
-      <div className="mt-5 flex justify-end"><Button variant="ghost" className="h-11 rounded-xl text-slate-400 hover:bg-white/5 hover:text-white" onClick={() => { onChange({ ...DEFAULT_PRESENTATION_PEDAL_MAPPING, bindings: { next: [...DEFAULT_PRESENTATION_PEDAL_MAPPING.bindings.next], previous: [...DEFAULT_PRESENTATION_PEDAL_MAPPING.bindings.previous], toggle_blackout: [...DEFAULT_PRESENTATION_PEDAL_MAPPING.bindings.toggle_blackout], toggle_chords: [...DEFAULT_PRESENTATION_PEDAL_MAPPING.bindings.toggle_chords] } }); setNotice("Asignaciones predeterminadas restauradas."); }}><RotateCcw className="h-4 w-4" />Restaurar</Button></div>
+      <div className="mt-5 grid gap-3 md:grid-cols-3">
+        <div className="rounded-2xl border border-violet-300/15 bg-violet-300/[0.06] p-4"><div className="flex min-h-11 items-center gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-300/10 text-violet-200"><Keyboard className="h-5 w-5" /></div><div className="min-w-0 flex-1"><p className="text-sm font-black text-white">Teclado HID</p><p className="text-[10px] text-slate-400">Disponible ahora</p></div><Switch aria-label="Habilitar teclado HID" checked={settings.sources.keyboard} disabled={!settings.enabled} onCheckedChange={(enabled) => onChange(setPresentationHardwareSourceEnabled(settings, "keyboard", enabled))} /></div></div>
+        <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-4 opacity-75"><div className="flex min-h-11 items-center gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/[0.06] text-slate-400"><Gamepad2 className="h-5 w-5" /></div><div><p className="text-sm font-black text-slate-200">Gamepad</p><p className="text-[10px] text-slate-500">Reservado para la siguiente etapa</p></div></div></div>
+        <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-4 opacity-75"><div className="flex min-h-11 items-center gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/[0.06] text-slate-400"><Music2 className="h-5 w-5" /></div><div><p className="text-sm font-black text-slate-200">MIDI</p><p className="text-[10px] text-slate-500">Reservado para la siguiente etapa</p></div></div></div>
+      </div>
+      <div className="mt-5 grid gap-3 sm:grid-cols-2">{(Object.keys(HARDWARE_ACTION_LABELS) as PresentationHardwareAction[]).map((action) => {
+        const bindings = presentationKeyboardBindingsForAction(settings, action);
+        return <div key={action} className="rounded-2xl border border-white/10 bg-white/[0.035] p-4"><div className="flex items-start gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-300/10 text-violet-200"><Bluetooth className="h-5 w-5" /></div><div className="min-w-0 flex-1"><p className="text-sm font-black text-white">{HARDWARE_ACTION_LABELS[action]}</p><p className="mt-1 text-[10px] leading-4 text-slate-500">{bindings.length ? bindings.map((binding) => formatPresentationKeyCode(binding.code)).join(" · ") : "Sin tecla asignada"}</p></div></div><Button variant="outline" aria-label={`Aprender entrada para ${HARDWARE_ACTION_LABELS[action]}`} className={`mt-4 h-11 w-full rounded-xl border-white/10 text-white hover:text-white ${capturing === action ? "bg-violet-300/15 hover:bg-violet-300/20" : "bg-black/20 hover:bg-white/[0.06]"}`} disabled={!keyboardEnabled || Boolean(capturing && capturing !== action)} onClick={() => setCapturing(capturing === action ? null : action)}>{capturing === action ? "Presiona una tecla…" : "Aprender entrada"}</Button></div>;
+      })}</div>
+      <div className="mt-5 flex justify-end"><Button variant="ghost" className="h-11 rounded-xl text-slate-400 hover:bg-white/5 hover:text-white" onClick={() => { onChange(normalizePresentationHardwareSettings(DEFAULT_PRESENTATION_HARDWARE_SETTINGS)); setNotice("Asignaciones predeterminadas restauradas."); }}><RotateCcw className="h-4 w-4" />Restaurar</Button></div>
     </section>
   );
 }
