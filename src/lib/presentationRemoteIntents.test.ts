@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
 import {
   PRESENTATION_REMOTE_INTENT_ATTEMPT_TIMEOUT_MS,
+  PRESENTATION_REMOTE_INTENT_CAPABILITY_FRESHNESS_MS,
   PRESENTATION_REMOTE_INTENT_CAPABILITY_TIMEOUT_MS,
+  PRESENTATION_REMOTE_INTENT_LEGACY_RECEIVER_CAPABILITY_VERSION,
   PRESENTATION_REMOTE_INTENT_POLL_MS,
   PRESENTATION_REMOTE_INTENT_PREVIEW_TYPES,
   PRESENTATION_REMOTE_INTENT_TTL_MS,
@@ -14,6 +16,7 @@ import {
   fetchPresentationRemoteIntentCapabilities,
   parsePresentationRemoteIntentCapabilities,
   parsePresentationRemoteIntentSubmission,
+  presentationRemoteIntentPollDelayMs,
   presentationRemoteIntentScopeKey,
   type PresentationRemoteIntentType,
 } from "./presentationRemoteIntents";
@@ -52,7 +55,7 @@ function submission(status: "pending" | "applied" | "rejected" | "failed" | "exp
 function capabilities(receiver: Record<string, unknown> | null = {
   capabilityVersion: 1,
   supportedIntents: [...PRESENTATION_REMOTE_INTENT_TYPES],
-  expiresAt: "2026-07-13T12:00:10.000Z",
+  expiresAt: "2026-07-13T12:00:03.000Z",
 }) {
   return {
     schemaVersion: 1,
@@ -151,39 +154,80 @@ describe("presentation remote intent capability negotiation", () => {
     serviceId: SERVICE_ID,
     sessionId: SESSION_ID,
     controllerAuthorityVersion: `sha256:${"a".repeat(64)}`,
+    requestStartedAtMonotonicMs: 25_000,
+    responseReceivedAtMonotonicMs: 26_000,
   };
 
-  it("parses only an exact current receiver and translates server time into a local deadline", () => {
-    const parsed = parsePresentationRemoteIntentCapabilities(capabilities(), expected, 25_000);
+  it("keeps nominal polls start-to-start and removes all extra delay after a slow or timed-out request", () => {
+    expect(presentationRemoteIntentPollDelayMs(1_000, 10_000, 10_200)).toBe(800);
+    expect(presentationRemoteIntentPollDelayMs(750, 10_000, 10_200)).toBe(550);
+    expect(presentationRemoteIntentPollDelayMs(1_000, 10_000, 11_500)).toBe(0);
+    expect(presentationRemoteIntentPollDelayMs(750, 10_000, 12_500)).toBe(0);
+  });
+
+  it("parses exact v1 and legacy v0 receivers into a conservative monotonic deadline", () => {
+    const parsed = parsePresentationRemoteIntentCapabilities(capabilities(), expected);
     expect(parsed.receiver).toMatchObject({
       capabilityVersion: 1,
       supportedIntents: PRESENTATION_REMOTE_INTENT_TYPES,
-      expiresAt: "2026-07-13T12:00:10.000Z",
-      deadlineAtMs: 35_000,
+      expiresAt: "2026-07-13T12:00:03.000Z",
+      expiresAtMonotonicMs: 28_000,
     });
-    expect(parsePresentationRemoteIntentCapabilities(capabilities(null), expected, 25_000).receiver).toBeNull();
+    const legacy = parsePresentationRemoteIntentCapabilities(capabilities({
+      capabilityVersion: PRESENTATION_REMOTE_INTENT_LEGACY_RECEIVER_CAPABILITY_VERSION,
+      supportedIntents: [...PRESENTATION_REMOTE_INTENT_UNIVERSAL_TYPES],
+      expiresAt: "2026-07-13T12:00:03.000Z",
+    }), expected);
+    expect(legacy.receiver).toMatchObject({
+      capabilityVersion: 0,
+      supportedIntents: PRESENTATION_REMOTE_INTENT_UNIVERSAL_TYPES,
+    });
+    expect(parsePresentationRemoteIntentCapabilities(capabilities(null), expected).receiver).toBeNull();
   });
 
   it.each([
-    ["unknown capability version", capabilities({ capabilityVersion: 2, supportedIntents: ["program_next"], expiresAt: "2026-07-13T12:00:10.000Z" })],
-    ["unknown intent", capabilities({ capabilityVersion: 1, supportedIntents: ["program_next", "warp"], expiresAt: "2026-07-13T12:00:10.000Z" })],
-    ["duplicate intent", capabilities({ capabilityVersion: 1, supportedIntents: ["program_next", "program_next"], expiresAt: "2026-07-13T12:00:10.000Z" })],
+    ["unknown capability version", capabilities({ capabilityVersion: 2, supportedIntents: ["program_next"], expiresAt: "2026-07-13T12:00:03.000Z" })],
+    ["empty v1 list", capabilities({ capabilityVersion: 1, supportedIntents: [], expiresAt: "2026-07-13T12:00:03.000Z" })],
+    ["unknown intent", capabilities({ capabilityVersion: 1, supportedIntents: ["program_next", "warp"], expiresAt: "2026-07-13T12:00:03.000Z" })],
+    ["duplicate intent", capabilities({ capabilityVersion: 1, supportedIntents: ["program_next", "program_next"], expiresAt: "2026-07-13T12:00:03.000Z" })],
+    ["non-canonical order", capabilities({ capabilityVersion: 1, supportedIntents: ["program_next", "program_previous"], expiresAt: "2026-07-13T12:00:03.000Z" })],
+    ["partial legacy list", capabilities({ capabilityVersion: 0, supportedIntents: ["program_next"], expiresAt: "2026-07-13T12:00:03.000Z" })],
     ["expired receiver", capabilities({ capabilityVersion: 1, supportedIntents: ["program_next"], expiresAt: "2026-07-13T12:00:00.000Z" })],
-    ["unexpected receiver field", capabilities({ capabilityVersion: 1, supportedIntents: ["program_next"], expiresAt: "2026-07-13T12:00:10.000Z", extra: true })],
+    ["excessive freshness", capabilities({ capabilityVersion: 1, supportedIntents: ["program_next"], expiresAt: new Date(Date.parse("2026-07-13T12:00:00.000Z") + PRESENTATION_REMOTE_INTENT_CAPABILITY_FRESHNESS_MS + 1).toISOString() })],
+    ["unexpected receiver field", capabilities({ capabilityVersion: 1, supportedIntents: ["program_next"], expiresAt: "2026-07-13T12:00:03.000Z", extra: true })],
     ["unexpected envelope field", { ...capabilities(), extra: true }],
   ])("fails closed for %s", (_label, raw) => {
-    expect(() => parsePresentationRemoteIntentCapabilities(raw, expected, 25_000)).toThrow(/capabilit|acción|expir/i);
+    expect(() => parsePresentationRemoteIntentCapabilities(raw, expected)).toThrow(/capabilit|canónica|vigencia/i);
+  });
+
+  it("never lets response transit extend trust and treats an expired-on-arrival response as unavailable", () => {
+    const inTransit = parsePresentationRemoteIntentCapabilities(capabilities(), {
+      ...expected,
+      requestStartedAtMonotonicMs: 10_000,
+      responseReceivedAtMonotonicMs: 12_500,
+    });
+    expect(inTransit.receiver?.expiresAtMonotonicMs).toBe(13_000);
+
+    const expiredOnArrival = parsePresentationRemoteIntentCapabilities(capabilities(), {
+      ...expected,
+      requestStartedAtMonotonicMs: 10_000,
+      responseReceivedAtMonotonicMs: 13_000,
+    });
+    expect(expiredOnArrival.receiver).toBeNull();
   });
 
   it("fails closed when the capability authority does not exactly match the live snapshot", () => {
     expect(() => parsePresentationRemoteIntentCapabilities(capabilities(), {
       ...expected,
       controllerAuthorityVersion: `sha256:${"b".repeat(64)}`,
-    }, 25_000)).toThrow(/inválidas/i);
+    })).toThrow(/inválidas/i);
   });
 
   it("requests the exact session capability endpoint with a bounded no-store GET", async () => {
     const request = vi.fn(async () => capabilities());
+    const now = vi.fn()
+      .mockReturnValueOnce(25_000)
+      .mockReturnValueOnce(26_000);
     const controller = new AbortController();
     const parsed = await fetchPresentationRemoteIntentCapabilities({
       churchId: CHURCH_ID,
@@ -192,10 +236,10 @@ describe("presentation remote intent capability negotiation", () => {
       controllerAuthorityVersion: expected.controllerAuthorityVersion,
       request,
       signal: controller.signal,
-      now: () => 25_000,
+      now,
     });
 
-    expect(parsed.receiver?.deadlineAtMs).toBe(35_000);
+    expect(parsed.receiver?.expiresAtMonotonicMs).toBe(28_000);
     expect(request).toHaveBeenCalledWith(
       `/services/${SERVICE_ID}/presentation-remote-intents/capabilities?sessionId=${SESSION_ID}`,
       expect.objectContaining({
@@ -228,6 +272,33 @@ describe("presentation remote intent idempotency and deadline", () => {
     });
 
     expect(result).toMatchObject({ phase: "rejected", message: "El receptor actual no admite Preview." });
+    expect(request).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    "SESSION_CHANGED",
+    "CONTROL_REQUIRED",
+    "REMOTE_RECEIVER_OFFLINE",
+    "REMOTE_INTENT_UNSUPPORTED",
+  ])("invalidates receiver capabilities immediately for 409 %s", async (code) => {
+    const onReceiverContractRejected = vi.fn();
+    const request = vi.fn(async () => {
+      throw new ApiError("Rejected", 409, { error: code, message: "Contrato cambió." });
+    });
+    await dispatchPresentationRemoteIntent({
+      churchId: CHURCH_ID,
+      serviceId: SERVICE_ID,
+      sessionId: SESSION_ID,
+      clientId: CLIENT_ID,
+      intentId: INTENT_ID,
+      type: "program_next",
+      payload: {},
+      request,
+      onReceiverContractRejected,
+    });
+
+    expect(onReceiverContractRejected).toHaveBeenCalledOnce();
+    expect(onReceiverContractRejected).toHaveBeenCalledWith(code);
     expect(request).toHaveBeenCalledOnce();
   });
 

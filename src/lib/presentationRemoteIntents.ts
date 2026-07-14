@@ -2,12 +2,14 @@ import { ApiError, apiFetch } from "@/lib/api";
 import { createPresentationId } from "@/lib/presentationLive";
 
 export const PRESENTATION_REMOTE_INTENT_SCHEMA_VERSION = 1 as const;
+export const PRESENTATION_REMOTE_INTENT_LEGACY_RECEIVER_CAPABILITY_VERSION = 0 as const;
 export const PRESENTATION_REMOTE_INTENT_RECEIVER_CAPABILITY_VERSION = 1 as const;
 export const PRESENTATION_REMOTE_INTENT_TTL_MS = 10_000;
 export const PRESENTATION_REMOTE_INTENT_POLL_MS = 450;
 export const PRESENTATION_REMOTE_INTENT_ATTEMPT_TIMEOUT_MS = 2_500;
 export const PRESENTATION_REMOTE_INTENT_CAPABILITY_POLL_MS = 1_000;
 export const PRESENTATION_REMOTE_INTENT_CAPABILITY_TIMEOUT_MS = 2_500;
+export const PRESENTATION_REMOTE_INTENT_CAPABILITY_FRESHNESS_MS = 3_000;
 const PRESENTATION_REMOTE_INTENT_AUTHORITY_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
 
 export const PRESENTATION_REMOTE_INTENT_TYPES = [
@@ -115,10 +117,10 @@ export type PresentationRemoteIntentCapabilitiesRequest = (
 ) => Promise<unknown>;
 
 export type PresentationRemoteIntentReceiverCapabilities = {
-  capabilityVersion: 1;
+  capabilityVersion: 0 | 1;
   supportedIntents: PresentationRemoteIntentType[];
   expiresAt: string;
-  deadlineAtMs: number;
+  expiresAtMonotonicMs: number;
 };
 
 export type PresentationRemoteIntentCapabilities = {
@@ -128,7 +130,7 @@ export type PresentationRemoteIntentCapabilities = {
   serverNow: string;
   controllerAuthorityVersion: string;
   receiver: PresentationRemoteIntentReceiverCapabilities | null;
-  receivedAtMs: number;
+  responseReceivedAtMonotonicMs: number;
 };
 
 export type PresentationRemoteIntentWait = (
@@ -150,6 +152,7 @@ export type DispatchPresentationRemoteIntentOptions<T extends PresentationRemote
   signal?: AbortSignal;
   isScopeCurrent?: () => boolean;
   onState?: (state: PresentationRemoteIntentUiState) => void;
+  onReceiverContractRejected?: (code: string) => void;
 };
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -358,16 +361,47 @@ function rejectedTransportMessage(error: unknown) {
   }
   if (code === "SESSION_CHANGED") return "La sesión en vivo cambió antes de aplicar el control.";
   if (code === "CONTROL_REQUIRED") return "Ya no hay un controlador activo para recibir la acción.";
+  if (code === "REMOTE_RECEIVER_OFFLINE") return "El controlador en vivo no tiene abierto el receptor remoto.";
   if (error instanceof ApiError && (error.status === 401 || error.status === 403)) return "Tu acceso ya no permite controlar esta presentación.";
   return error instanceof Error ? error.message : "El controlador rechazó la acción.";
 }
 
+const RECEIVER_CONTRACT_REJECTION_CODES = new Set([
+  "SESSION_CHANGED",
+  "CONTROL_REQUIRED",
+  "REMOTE_RECEIVER_OFFLINE",
+  "REMOTE_INTENT_UNSUPPORTED",
+]);
+
+export function presentationRemoteIntentMonotonicNow() {
+  return typeof performance === "undefined" ? Date.now() : performance.now();
+}
+
+export function presentationRemoteIntentPollDelayMs(
+  intervalMs: number,
+  startedAtMs: number,
+  completedAtMs: number,
+) {
+  const safeIntervalMs = Number.isFinite(intervalMs) ? Math.max(0, intervalMs) : 0;
+  const elapsedMs = Number.isFinite(startedAtMs) && Number.isFinite(completedAtMs)
+    ? Math.max(0, completedAtMs - startedAtMs)
+    : safeIntervalMs;
+  return Math.max(0, safeIntervalMs - elapsedMs);
+}
+
 export function parsePresentationRemoteIntentCapabilities(
   raw: unknown,
-  expected: { serviceId: string; sessionId: string; controllerAuthorityVersion: string },
-  receivedAtMs = Date.now(),
+  expected: {
+    serviceId: string;
+    sessionId: string;
+    controllerAuthorityVersion: string;
+    requestStartedAtMonotonicMs: number;
+    responseReceivedAtMonotonicMs: number;
+  },
 ): PresentationRemoteIntentCapabilities {
-  if (!Number.isFinite(receivedAtMs)
+  if (!Number.isFinite(expected.requestStartedAtMonotonicMs)
+    || !Number.isFinite(expected.responseReceivedAtMonotonicMs)
+    || expected.responseReceivedAtMonotonicMs < expected.requestStartedAtMonotonicMs
     || !isRecord(raw)
     || !hasExactKeys(raw, ["schemaVersion", "serviceId", "sessionId", "serverNow", "controllerAuthorityVersion", "receiver"])
     || raw.schemaVersion !== PRESENTATION_REMOTE_INTENT_SCHEMA_VERSION
@@ -388,26 +422,48 @@ export function parsePresentationRemoteIntentCapabilities(
       serverNow: raw.serverNow,
       controllerAuthorityVersion: raw.controllerAuthorityVersion,
       receiver: null,
-      receivedAtMs,
+      responseReceivedAtMonotonicMs: expected.responseReceivedAtMonotonicMs,
     };
   }
 
   if (!isRecord(raw.receiver)
     || !hasExactKeys(raw.receiver, ["capabilityVersion", "supportedIntents", "expiresAt"])
-    || raw.receiver.capabilityVersion !== PRESENTATION_REMOTE_INTENT_RECEIVER_CAPABILITY_VERSION
+    || (raw.receiver.capabilityVersion !== PRESENTATION_REMOTE_INTENT_LEGACY_RECEIVER_CAPABILITY_VERSION
+      && raw.receiver.capabilityVersion !== PRESENTATION_REMOTE_INTENT_RECEIVER_CAPABILITY_VERSION)
     || !Array.isArray(raw.receiver.supportedIntents)
+    || raw.receiver.supportedIntents.length === 0
+    || raw.receiver.supportedIntents.length > PRESENTATION_REMOTE_INTENT_TYPES.length
     || !isIsoDate(raw.receiver.expiresAt)) {
     throw new Error("El receptor remoto devolvió capabilities inválidas.");
   }
-  const supportedIntents = raw.receiver.supportedIntents;
-  if (new Set(supportedIntents).size !== supportedIntents.length
-    || supportedIntents.some((type) => typeof type !== "string" || !PRESENTATION_REMOTE_INTENT_TYPES.includes(type as PresentationRemoteIntentType))) {
-    throw new Error("El receptor remoto anunció una acción desconocida.");
+  const advertised = raw.receiver.supportedIntents;
+  const unique = new Set(advertised);
+  const supportedIntents = PRESENTATION_REMOTE_INTENT_TYPES.filter((type) => unique.has(type));
+  if (unique.size !== advertised.length
+    || supportedIntents.length !== advertised.length
+    || supportedIntents.some((type, index) => type !== advertised[index])) {
+    throw new Error("El receptor remoto anunció una lista no canónica.");
+  }
+  if (raw.receiver.capabilityVersion === PRESENTATION_REMOTE_INTENT_LEGACY_RECEIVER_CAPABILITY_VERSION
+    && (supportedIntents.length !== PRESENTATION_REMOTE_INTENT_UNIVERSAL_TYPES.length
+      || supportedIntents.some((type, index) => type !== PRESENTATION_REMOTE_INTENT_UNIVERSAL_TYPES[index]))) {
+    throw new Error("El receptor remoto anunció capabilities heredadas inválidas.");
   }
   const remainingMs = Date.parse(raw.receiver.expiresAt) - Date.parse(raw.serverNow);
-  if (!Number.isFinite(remainingMs) || remainingMs <= 0) {
-    throw new Error("Las capabilities del receptor remoto expiraron.");
+  if (!Number.isFinite(remainingMs)
+    || remainingMs <= 0
+    || remainingMs > PRESENTATION_REMOTE_INTENT_CAPABILITY_FRESHNESS_MS) {
+    throw new Error("El receptor remoto anunció una vigencia inválida.");
   }
+  const expiresAtMonotonicMs = expected.requestStartedAtMonotonicMs + remainingMs;
+  const receiver = expected.responseReceivedAtMonotonicMs >= expiresAtMonotonicMs
+    ? null
+    : {
+        capabilityVersion: raw.receiver.capabilityVersion,
+        supportedIntents: [...supportedIntents],
+        expiresAt: raw.receiver.expiresAt,
+        expiresAtMonotonicMs,
+      } satisfies PresentationRemoteIntentReceiverCapabilities;
 
   return {
     schemaVersion: PRESENTATION_REMOTE_INTENT_SCHEMA_VERSION,
@@ -415,13 +471,8 @@ export function parsePresentationRemoteIntentCapabilities(
     sessionId: expected.sessionId,
     serverNow: raw.serverNow,
     controllerAuthorityVersion: raw.controllerAuthorityVersion,
-    receiver: {
-      capabilityVersion: PRESENTATION_REMOTE_INTENT_RECEIVER_CAPABILITY_VERSION,
-      supportedIntents: [...supportedIntents] as PresentationRemoteIntentType[],
-      expiresAt: raw.receiver.expiresAt,
-      deadlineAtMs: receivedAtMs + remainingMs,
-    },
-    receivedAtMs,
+    receiver,
+    responseReceivedAtMonotonicMs: expected.responseReceivedAtMonotonicMs,
   };
 }
 
@@ -441,6 +492,8 @@ export async function fetchPresentationRemoteIntentCapabilities(options: {
     throw new Error("La autoridad remota no es válida.");
   }
   const request = options.request || defaultCapabilitiesRequest;
+  const now = options.now || presentationRemoteIntentMonotonicNow;
+  const requestStartedAtMonotonicMs = now();
   const attempt = createAttemptAbortScope(options.signal, PRESENTATION_REMOTE_INTENT_CAPABILITY_TIMEOUT_MS);
   try {
     const raw = await raceWithAbort(Promise.resolve().then(() => request(
@@ -456,7 +509,9 @@ export async function fetchPresentationRemoteIntentCapabilities(options: {
       serviceId: options.serviceId,
       sessionId: options.sessionId.toLowerCase(),
       controllerAuthorityVersion: options.controllerAuthorityVersion,
-    }, (options.now || Date.now)());
+      requestStartedAtMonotonicMs,
+      responseReceivedAtMonotonicMs: now(),
+    });
   } finally {
     attempt.cleanup();
   }
@@ -542,6 +597,13 @@ export async function dispatchPresentationRemoteIntent<T extends PresentationRem
       attempt.cleanup();
       if (!isOperationCurrent()) return cancelledState();
       if (!attemptTimedOut && !isAmbiguousTransportError(error)) {
+        const code = errorCode(error);
+        if (error instanceof ApiError
+          && error.status === 409
+          && code
+          && RECEIVER_CONTRACT_REJECTION_CODES.has(code)) {
+          options.onReceiverContractRejected?.(code);
+        }
         const phase = error instanceof ApiError && [401, 403, 404, 409].includes(error.status) ? "rejected" : "error";
         return emit(state(phase, built.intentId, options.type, rejectedTransportMessage(error)));
       }
