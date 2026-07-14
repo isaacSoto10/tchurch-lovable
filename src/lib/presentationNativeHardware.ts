@@ -1,6 +1,7 @@
 import { Capacitor, registerPlugin, type PluginListenerHandle } from "@capacitor/core";
 import {
   MAX_PRESENTATION_HARDWARE_BINDINGS,
+  presentationHardwareBindingFingerprint,
   type PresentationGamepadBinding,
   type PresentationHardwareSettings,
   type PresentationMidiBinding,
@@ -25,11 +26,11 @@ export type PresentationNativeHardwareStatus = {
 
 type NativeStatusPayload = Omit<PresentationNativeHardwareStatus, "supported">;
 
-type PresentationNativeHardwareStartOptions = {
+export type PresentationNativeHardwareStartOptions = {
   gamepadEnabled: boolean;
   midiEnabled: boolean;
   gamepadBindings: Array<Pick<PresentationGamepadBinding, "deviceId" | "control">>;
-  midiBindings: Array<Pick<PresentationMidiBinding, "deviceId" | "message" | "channel" | "number" | "activation" | "threshold" | "releaseThreshold">>;
+  midiBindings: Array<Pick<PresentationMidiBinding, "deviceId" | "message" | "channel" | "number" | "activation" | "threshold" | "releaseThreshold"> & { ruleKey: string }>;
 };
 
 type LearningEndedEvent = {
@@ -81,6 +82,7 @@ export function presentationNativeHardwareStartOptions(settings: PresentationHar
       .filter((binding): binding is PresentationMidiBinding => binding.source === "midi" && binding.enabled)
       .slice(0, MAX_PRESENTATION_HARDWARE_BINDINGS)
       .map(({ deviceId, message, channel, number, activation, threshold, releaseThreshold }) => ({
+        ruleKey: presentationHardwareBindingFingerprint({ source: "midi", deviceId, message, channel, number }),
         deviceId,
         message,
         channel,

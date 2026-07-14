@@ -13,11 +13,23 @@
 		504EC3081FED79650016851F /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 504EC3071FED79650016851F /* AppDelegate.swift */; };
 		A4C200010000000000000001 /* PresentationHardwarePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4C200010000000000000002 /* PresentationHardwarePlugin.swift */; };
 		A4C200010000000000000003 /* TchurchBridgeViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4C200010000000000000004 /* TchurchBridgeViewController.swift */; };
+		B4D300010000000000000001 /* PresentationHardwareCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4D300010000000000000002 /* PresentationHardwareCore.swift */; };
+		B4D300010000000000000003 /* PresentationHardwareCoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4D300010000000000000004 /* PresentationHardwareCoreTests.swift */; };
 		504EC30D1FED79650016851F /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30B1FED79650016851F /* Main.storyboard */; };
 		504EC30F1FED79650016851F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30E1FED79650016851F /* Assets.xcassets */; };
 		504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC3101FED79650016851F /* LaunchScreen.storyboard */; };
 		50B271D11FEDC1A000F3C39B /* public in Resources */ = {isa = PBXBuildFile; fileRef = 50B271D01FEDC1A000F3C39B /* public */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		B4D300010000000000000006 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 504EC2FC1FED79650016851F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 504EC3031FED79650016851F;
+			remoteInfo = Tchurch;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
@@ -26,6 +38,9 @@
 		504EC3071FED79650016851F /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		A4C200010000000000000002 /* PresentationHardwarePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresentationHardwarePlugin.swift; sourceTree = "<group>"; };
 		A4C200010000000000000004 /* TchurchBridgeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TchurchBridgeViewController.swift; sourceTree = "<group>"; };
+		B4D300010000000000000002 /* PresentationHardwareCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresentationHardwareCore.swift; sourceTree = "<group>"; };
+		B4D300010000000000000004 /* PresentationHardwareCoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresentationHardwareCoreTests.swift; sourceTree = "<group>"; };
+		B4D300010000000000000005 /* TchurchNativeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TchurchNativeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		504EC30C1FED79650016851F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
 		504EC30E1FED79650016851F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		504EC3111FED79650016851F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
@@ -35,6 +50,13 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		B4D300010000000000000009 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		504EC3011FED79650016851F /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -51,6 +73,7 @@
 			children = (
 				958DCC722DB07C7200EA8C5F /* debug.xcconfig */,
 				504EC3061FED79650016851F /* App */,
+				B4D30001000000000000000F /* TchurchNativeTests */,
 				504EC3051FED79650016851F /* Products */,
 			);
 			sourceTree = "<group>";
@@ -59,6 +82,7 @@
 			isa = PBXGroup;
 			children = (
 				504EC3041FED79650016851F /* Tchurch.app */,
+				B4D300010000000000000005 /* TchurchNativeTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -68,6 +92,7 @@
 			children = (
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
 				504EC3071FED79650016851F /* AppDelegate.swift */,
+				B4D300010000000000000002 /* PresentationHardwareCore.swift */,
 				A4C200010000000000000002 /* PresentationHardwarePlugin.swift */,
 				A4C200010000000000000004 /* TchurchBridgeViewController.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
@@ -80,9 +105,37 @@
 			path = App;
 			sourceTree = "<group>";
 		};
+		B4D30001000000000000000F /* TchurchNativeTests */ = {
+			isa = PBXGroup;
+			children = (
+				B4D300010000000000000004 /* PresentationHardwareCoreTests.swift */,
+			);
+			path = TchurchNativeTests;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		B4D30001000000000000000B /* TchurchNativeTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B4D30001000000000000000E /* Build configuration list for PBXNativeTarget "TchurchNativeTests" */;
+			buildPhases = (
+				B4D300010000000000000008 /* Sources */,
+				B4D300010000000000000009 /* Frameworks */,
+				B4D30001000000000000000A /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				B4D300010000000000000007 /* PBXTargetDependency */,
+			);
+			name = TchurchNativeTests;
+			packageProductDependencies = (
+			);
+			productName = TchurchNativeTests;
+			productReference = B4D300010000000000000005 /* TchurchNativeTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		504EC3031FED79650016851F /* Tchurch */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 504EC3161FED79650016851F /* Build configuration list for PBXNativeTarget "Tchurch" */;
@@ -117,6 +170,10 @@
 						LastSwiftMigration = 1100;
 						ProvisioningStyle = Automatic;
 					};
+					B4D30001000000000000000B = {
+						CreatedOnToolsVersion = 16.0;
+						TestTargetID = 504EC3031FED79650016851F;
+					};
 				};
 			};
 			buildConfigurationList = 504EC2FF1FED79650016851F /* Build configuration list for PBXProject "Tchurch" */;
@@ -136,11 +193,19 @@
 			projectRoot = "";
 			targets = (
 				504EC3031FED79650016851F /* Tchurch */,
+				B4D30001000000000000000B /* TchurchNativeTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		B4D30001000000000000000A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		504EC3021FED79650016851F /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -157,17 +222,34 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		B4D300010000000000000008 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B4D300010000000000000003 /* PresentationHardwareCoreTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		504EC3001FED79650016851F /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
+				B4D300010000000000000001 /* PresentationHardwareCore.swift in Sources */,
 				A4C200010000000000000001 /* PresentationHardwarePlugin.swift in Sources */,
 				A4C200010000000000000003 /* TchurchBridgeViewController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		B4D300010000000000000007 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 504EC3031FED79650016851F /* Tchurch */;
+			targetProxy = B4D300010000000000000006 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin PBXVariantGroup section */
 		504EC30B1FED79650016851F /* Main.storyboard */ = {
@@ -189,6 +271,49 @@
 /* End PBXVariantGroup section */
 
 /* Begin XCBuildConfiguration section */
+		B4D30001000000000000000C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = LGLQM6AAZM;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = app.lovable.e5ddf50ff80d4eb7a86a937f7a9f8a62.tchurch.nativeTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Tchurch.app/Tchurch";
+			};
+			name = Debug;
+		};
+		B4D30001000000000000000D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = LGLQM6AAZM;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = app.lovable.e5ddf50ff80d4eb7a86a937f7a9f8a62.tchurch.nativeTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Tchurch.app/Tchurch";
+			};
+			name = Release;
+		};
 		504EC3141FED79650016851F /* Debug */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 958DCC722DB07C7200EA8C5F /* debug.xcconfig */;
@@ -349,6 +474,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		B4D30001000000000000000E /* Build configuration list for PBXNativeTarget "TchurchNativeTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B4D30001000000000000000C /* Debug */,
+				B4D30001000000000000000D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		504EC2FF1FED79650016851F /* Build configuration list for PBXProject "Tchurch" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

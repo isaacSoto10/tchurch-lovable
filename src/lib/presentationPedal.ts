@@ -117,6 +117,7 @@ export type PresentationNativeHardwareInput = {
   source: "midi";
   deviceId: string;
   deviceName: string;
+  ruleKey?: string;
   message: "note_on" | "control_change";
   channel: number;
   number: number;
@@ -660,7 +661,22 @@ export function resolvePresentationNativeHardwareInput(
       && (candidate.channel === null || candidate.channel === channel)
       && (candidate.deviceId === null || candidate.deviceId === deviceId)
     ));
-    binding = candidates.find((candidate) => candidate.deviceId === deviceId) ?? candidates.find((candidate) => candidate.deviceId === null);
+    const activeCandidates = candidates.filter((candidate) => (
+      candidate.activation === "zero" ? value <= candidate.threshold : value >= candidate.threshold
+    ));
+    const eventRuleKey = typeof event.ruleKey === "string" && event.ruleKey.length <= 240
+      ? event.ruleKey
+      : null;
+    if (eventRuleKey) {
+      binding = activeCandidates.find((candidate) => presentationHardwareBindingFingerprint(candidate) === eventRuleKey);
+    } else {
+      binding = [...activeCandidates].sort((left, right) => {
+        const leftSpecificity = (left.deviceId === deviceId ? 2 : 0) + (left.channel === channel ? 1 : 0);
+        const rightSpecificity = (right.deviceId === deviceId ? 2 : 0) + (right.channel === channel ? 1 : 0);
+        if (leftSpecificity !== rightSpecificity) return rightSpecificity - leftSpecificity;
+        return presentationHardwareBindingFingerprint(left).localeCompare(presentationHardwareBindingFingerprint(right));
+      })[0];
+    }
   }
   if (!binding) return null;
   const fingerprint = presentationHardwareBindingFingerprint(binding);

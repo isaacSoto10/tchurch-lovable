@@ -31,6 +31,7 @@ describe("presentation native hardware bridge contract", () => {
       midiEnabled: true,
       gamepadBindings: [{ deviceId: "gamepad-one", control: "dpad_right" }],
       midiBindings: [{
+        ruleKey: "midi:midi-one:control_change:0:1",
         deviceId: "midi-one",
         message: "control_change",
         channel: 0,

@@ -18,98 +18,22 @@ private struct GamepadRule: Decodable {
     let control: String
 }
 
-private struct MIDIRule: Decodable {
-    let deviceId: String?
-    let message: String
-    let channel: Int?
-    let number: Int
-    let activation: String
-    let threshold: Int
-    let releaseThreshold: Int
-
-    var latchKey: String {
-        "\(deviceId ?? "any"):\(message):\(channel.map(String.init) ?? "any"):\(number)"
-    }
-}
-
 private struct StartOptions: Decodable {
     let gamepadEnabled: Bool
     let midiEnabled: Bool
     let gamepadBindings: [GamepadRule]
-    let midiBindings: [MIDIRule]
-}
-
-private struct MIDIChannelMessage {
-    let message: String
-    let channel: Int
-    let number: Int
-    let value: Int
-}
-
-/// A bounded MIDI 1.0 byte-stream parser. Running status survives packet boundaries,
-/// real-time bytes do not disturb it, and Note On velocity zero becomes a release.
-private struct MIDIByteStreamParser {
-    private var runningStatus: UInt8?
-    private var currentStatus: UInt8?
-    private var dataBytes: [UInt8] = []
-    private var insideSysEx = false
-
-    mutating func parse(_ bytes: [UInt8]) -> [MIDIChannelMessage] {
-        var messages: [MIDIChannelMessage] = []
-        for byte in bytes {
-            if byte >= 0xF8 { continue }
-            if byte == 0xF0 {
-                insideSysEx = true
-                runningStatus = nil
-                currentStatus = nil
-                dataBytes.removeAll(keepingCapacity: true)
-                continue
-            }
-            if insideSysEx {
-                if byte == 0xF7 { insideSysEx = false }
-                continue
-            }
-            if byte >= 0xF0 {
-                runningStatus = nil
-                currentStatus = nil
-                dataBytes.removeAll(keepingCapacity: true)
-                continue
-            }
-            if byte >= 0x80 {
-                runningStatus = byte
-                currentStatus = byte
-                dataBytes.removeAll(keepingCapacity: true)
-                continue
-            }
-
-            guard let status = currentStatus ?? runningStatus else { continue }
-            currentStatus = status
-            dataBytes.append(byte)
-            let family = status & 0xF0
-            let expectedCount = (family == 0xC0 || family == 0xD0) ? 1 : 2
-            guard dataBytes.count >= expectedCount else { continue }
-            let channel = Int(status & 0x0F)
-            if family == 0x80, dataBytes.count >= 2 {
-                messages.append(MIDIChannelMessage(message: "note_on", channel: channel, number: Int(dataBytes[0]), value: 0))
-            } else if family == 0x90, dataBytes.count >= 2 {
-                messages.append(MIDIChannelMessage(message: "note_on", channel: channel, number: Int(dataBytes[0]), value: Int(dataBytes[1])))
-            } else if family == 0xB0, dataBytes.count >= 2 {
-                messages.append(MIDIChannelMessage(message: "control_change", channel: channel, number: Int(dataBytes[0]), value: Int(dataBytes[1])))
-            }
-            dataBytes.removeAll(keepingCapacity: true)
-            currentStatus = runningStatus
-        }
-        return messages
-    }
+    let midiBindings: [PresentationMIDIRule]
 }
 
 private final class MIDISourceContext {
     let deviceId: String
     let deviceName: String
+    let routingKey: String
 
-    init(deviceId: String, deviceName: String) {
+    init(deviceId: String, deviceName: String, routingKey: String) {
         self.deviceId = deviceId
         self.deviceName = deviceName
+        self.routingKey = routingKey
     }
 }
 
@@ -130,20 +54,21 @@ public final class PresentationHardwarePlugin: CAPInstancePlugin, CAPBridgedPlug
     private var gamepadEnabled = false
     private var midiEnabled = false
     private var gamepadRules: [GamepadRule] = []
-    private var midiRules: [MIDIRule] = []
+    private var midiRules: [PresentationMIDIRule] = []
     private var statusMessage: String?
 
     private var lifecycleObservers: [NSObjectProtocol] = []
     private var gamepadObservers: [NSObjectProtocol] = []
     private var gamepadIds: [ObjectIdentifier: String] = [:]
-    private var gamepadLatches: Set<String> = []
+    private var gamepadRoutingIds: [ObjectIdentifier: String] = [:]
+    private var gamepadLatches = PresentationLevelLatchBank()
 
     private var midiClient = MIDIClientRef()
     private var midiPort = MIDIPortRef()
     private var midiContexts: [MIDIEndpointRef: MIDISourceContext] = [:]
     private var midiContextPointers: [MIDIEndpointRef: UnsafeMutableRawPointer] = [:]
-    private var midiParsers: [String: MIDIByteStreamParser] = [:]
-    private var midiLatches: Set<String> = []
+    private var midiParsers: [String: PresentationMIDIByteStreamParser] = [:]
+    private var midiRuleEngine = PresentationMIDIRuleEngine()
 
     private var learningSource: String?
     private var learningTimeout: DispatchWorkItem?
@@ -175,7 +100,10 @@ public final class PresentationHardwarePlugin: CAPInstancePlugin, CAPBridgedPlug
             self.gamepadRules = Array(options.gamepadBindings.prefix(32)).filter {
                 supportedGamepadControls.contains($0.control) && self.validDeviceId($0.deviceId)
             }
-            self.midiRules = Array(options.midiBindings.prefix(32)).filter { self.validMIDIRule($0) }
+            var seenMIDIRuleKeys = Set<String>()
+            self.midiRules = Array(options.midiBindings.prefix(32)).filter {
+                self.validMIDIRule($0) && seenMIDIRuleKeys.insert($0.ruleKey).inserted
+            }
             self.monitoringRequested = self.gamepadEnabled || self.midiEnabled
             self.statusMessage = nil
             self.activateIfPossible()
@@ -221,7 +149,8 @@ public final class PresentationHardwarePlugin: CAPInstancePlugin, CAPBridgedPlug
             self.finishLearning(reason: "cancelled", notify: self.learningSource != nil)
             self.learningSource = source
             self.gamepadLatches.removeAll()
-            self.midiLatches.removeAll()
+            self.midiRuleEngine.removeAll()
+            GCController.controllers().forEach { self.scanGamepad($0, priming: true) }
             let timeout = DispatchWorkItem { [weak self] in
                 self?.finishLearning(reason: "timeout", notify: true)
             }
@@ -278,7 +207,7 @@ public final class PresentationHardwarePlugin: CAPInstancePlugin, CAPBridgedPlug
         teardownGamepads()
         teardownMIDI()
         gamepadLatches.removeAll()
-        midiLatches.removeAll()
+        midiRuleEngine.removeAll()
         monitoringActive = false
     }
 
@@ -312,6 +241,7 @@ public final class PresentationHardwarePlugin: CAPInstancePlugin, CAPBridgedPlug
         gamepadObservers.removeAll()
         GCController.controllers().forEach(detachGamepad)
         gamepadIds.removeAll()
+        gamepadRoutingIds.removeAll()
     }
 
     private func refreshGamepads() {
@@ -323,77 +253,82 @@ public final class PresentationHardwarePlugin: CAPInstancePlugin, CAPBridgedPlug
     }
 
     private func attachGamepad(_ controller: GCController) {
+        let objectId = ObjectIdentifier(controller)
+        guard gamepadRoutingIds[objectId] == nil else { return }
         _ = gamepadId(for: controller)
+        gamepadRoutingIds[objectId] = UUID().uuidString
         if let profile = controller.extendedGamepad {
             profile.valueChangedHandler = { [weak self, weak controller] _, _ in
                 guard let controller else { return }
-                DispatchQueue.main.async { self?.scanGamepad(controller) }
+                DispatchQueue.main.async { self?.scanGamepad(controller, priming: false) }
             }
         } else if let profile = controller.microGamepad {
             profile.valueChangedHandler = { [weak self, weak controller] _, _ in
                 guard let controller else { return }
-                DispatchQueue.main.async { self?.scanGamepad(controller) }
+                DispatchQueue.main.async { self?.scanGamepad(controller, priming: false) }
             }
         }
+        scanGamepad(controller, priming: true)
     }
 
     private func detachGamepad(_ controller: GCController) {
         controller.extendedGamepad?.valueChangedHandler = nil
         controller.microGamepad?.valueChangedHandler = nil
         let identifier = ObjectIdentifier(controller)
-        if let deviceId = gamepadIds[identifier] {
-            gamepadLatches = gamepadLatches.filter { !$0.hasPrefix("\(deviceId):") }
+        if let routingKey = gamepadRoutingIds[identifier] {
+            gamepadLatches.remove(prefix: "\(routingKey):")
         }
         gamepadIds.removeValue(forKey: identifier)
+        gamepadRoutingIds.removeValue(forKey: identifier)
     }
 
-    private func scanGamepad(_ controller: GCController) {
+    private func scanGamepad(_ controller: GCController, priming: Bool) {
         guard monitoringActive, gamepadEnabled else { return }
         let deviceId = gamepadId(for: controller)
         let deviceName = gamepadName(controller)
+        guard let routingKey = gamepadRoutingIds[ObjectIdentifier(controller)] else { return }
         if let gamepad = controller.extendedGamepad {
-            processGamepadLevel(deviceId: deviceId, deviceName: deviceName, control: "button_a", value: gamepad.buttonA.value, analog: false)
-            processGamepadLevel(deviceId: deviceId, deviceName: deviceName, control: "button_b", value: gamepad.buttonB.value, analog: false)
-            processGamepadLevel(deviceId: deviceId, deviceName: deviceName, control: "button_x", value: gamepad.buttonX.value, analog: false)
-            processGamepadLevel(deviceId: deviceId, deviceName: deviceName, control: "button_y", value: gamepad.buttonY.value, analog: false)
-            processGamepadLevel(deviceId: deviceId, deviceName: deviceName, control: "left_shoulder", value: gamepad.leftShoulder.value, analog: false)
-            processGamepadLevel(deviceId: deviceId, deviceName: deviceName, control: "right_shoulder", value: gamepad.rightShoulder.value, analog: false)
-            processGamepadLevel(deviceId: deviceId, deviceName: deviceName, control: "left_trigger", value: gamepad.leftTrigger.value, analog: true)
-            processGamepadLevel(deviceId: deviceId, deviceName: deviceName, control: "right_trigger", value: gamepad.rightTrigger.value, analog: true)
+            processGamepadLevel(deviceId: deviceId, deviceName: deviceName, routingKey: routingKey, control: "button_a", value: gamepad.buttonA.value, analog: false, priming: priming)
+            processGamepadLevel(deviceId: deviceId, deviceName: deviceName, routingKey: routingKey, control: "button_b", value: gamepad.buttonB.value, analog: false, priming: priming)
+            processGamepadLevel(deviceId: deviceId, deviceName: deviceName, routingKey: routingKey, control: "button_x", value: gamepad.buttonX.value, analog: false, priming: priming)
+            processGamepadLevel(deviceId: deviceId, deviceName: deviceName, routingKey: routingKey, control: "button_y", value: gamepad.buttonY.value, analog: false, priming: priming)
+            processGamepadLevel(deviceId: deviceId, deviceName: deviceName, routingKey: routingKey, control: "left_shoulder", value: gamepad.leftShoulder.value, analog: false, priming: priming)
+            processGamepadLevel(deviceId: deviceId, deviceName: deviceName, routingKey: routingKey, control: "right_shoulder", value: gamepad.rightShoulder.value, analog: false, priming: priming)
+            processGamepadLevel(deviceId: deviceId, deviceName: deviceName, routingKey: routingKey, control: "left_trigger", value: gamepad.leftTrigger.value, analog: true, priming: priming)
+            processGamepadLevel(deviceId: deviceId, deviceName: deviceName, routingKey: routingKey, control: "right_trigger", value: gamepad.rightTrigger.value, analog: true, priming: priming)
             if let button = gamepad.leftThumbstickButton {
-                processGamepadLevel(deviceId: deviceId, deviceName: deviceName, control: "left_thumbstick_button", value: button.value, analog: false)
+                processGamepadLevel(deviceId: deviceId, deviceName: deviceName, routingKey: routingKey, control: "left_thumbstick_button", value: button.value, analog: false, priming: priming)
             }
             if let button = gamepad.rightThumbstickButton {
-                processGamepadLevel(deviceId: deviceId, deviceName: deviceName, control: "right_thumbstick_button", value: button.value, analog: false)
+                processGamepadLevel(deviceId: deviceId, deviceName: deviceName, routingKey: routingKey, control: "right_thumbstick_button", value: button.value, analog: false, priming: priming)
             }
-            scanDirectionPad(gamepad.dpad, prefix: "dpad", deviceId: deviceId, deviceName: deviceName, analog: false)
-            scanDirectionPad(gamepad.leftThumbstick, prefix: "left_stick", deviceId: deviceId, deviceName: deviceName, analog: true)
-            scanDirectionPad(gamepad.rightThumbstick, prefix: "right_stick", deviceId: deviceId, deviceName: deviceName, analog: true)
+            scanDirectionPad(gamepad.dpad, prefix: "dpad", deviceId: deviceId, deviceName: deviceName, routingKey: routingKey, analog: false, priming: priming)
+            scanDirectionPad(gamepad.leftThumbstick, prefix: "left_stick", deviceId: deviceId, deviceName: deviceName, routingKey: routingKey, analog: true, priming: priming)
+            scanDirectionPad(gamepad.rightThumbstick, prefix: "right_stick", deviceId: deviceId, deviceName: deviceName, routingKey: routingKey, analog: true, priming: priming)
         } else if let gamepad = controller.microGamepad {
-            processGamepadLevel(deviceId: deviceId, deviceName: deviceName, control: "button_a", value: gamepad.buttonA.value, analog: false)
-            processGamepadLevel(deviceId: deviceId, deviceName: deviceName, control: "button_x", value: gamepad.buttonX.value, analog: false)
-            scanDirectionPad(gamepad.dpad, prefix: "dpad", deviceId: deviceId, deviceName: deviceName, analog: false)
+            processGamepadLevel(deviceId: deviceId, deviceName: deviceName, routingKey: routingKey, control: "button_a", value: gamepad.buttonA.value, analog: false, priming: priming)
+            processGamepadLevel(deviceId: deviceId, deviceName: deviceName, routingKey: routingKey, control: "button_x", value: gamepad.buttonX.value, analog: false, priming: priming)
+            scanDirectionPad(gamepad.dpad, prefix: "dpad", deviceId: deviceId, deviceName: deviceName, routingKey: routingKey, analog: false, priming: priming)
         }
     }
 
-    private func scanDirectionPad(_ pad: GCControllerDirectionPad, prefix: String, deviceId: String, deviceName: String, analog: Bool) {
-        processGamepadLevel(deviceId: deviceId, deviceName: deviceName, control: "\(prefix)_up", value: max(0, pad.yAxis.value), analog: analog)
-        processGamepadLevel(deviceId: deviceId, deviceName: deviceName, control: "\(prefix)_down", value: max(0, -pad.yAxis.value), analog: analog)
-        processGamepadLevel(deviceId: deviceId, deviceName: deviceName, control: "\(prefix)_left", value: max(0, -pad.xAxis.value), analog: analog)
-        processGamepadLevel(deviceId: deviceId, deviceName: deviceName, control: "\(prefix)_right", value: max(0, pad.xAxis.value), analog: analog)
+    private func scanDirectionPad(_ pad: GCControllerDirectionPad, prefix: String, deviceId: String, deviceName: String, routingKey: String, analog: Bool, priming: Bool) {
+        processGamepadLevel(deviceId: deviceId, deviceName: deviceName, routingKey: routingKey, control: "\(prefix)_up", value: max(0, pad.yAxis.value), analog: analog, priming: priming)
+        processGamepadLevel(deviceId: deviceId, deviceName: deviceName, routingKey: routingKey, control: "\(prefix)_down", value: max(0, -pad.yAxis.value), analog: analog, priming: priming)
+        processGamepadLevel(deviceId: deviceId, deviceName: deviceName, routingKey: routingKey, control: "\(prefix)_left", value: max(0, -pad.xAxis.value), analog: analog, priming: priming)
+        processGamepadLevel(deviceId: deviceId, deviceName: deviceName, routingKey: routingKey, control: "\(prefix)_right", value: max(0, pad.xAxis.value), analog: analog, priming: priming)
     }
 
-    private func processGamepadLevel(deviceId: String, deviceName: String, control: String, value: Float, analog: Bool) {
+    private func processGamepadLevel(deviceId: String, deviceName: String, routingKey: String, control: String, value: Float, analog: Bool, priming: Bool) {
         guard supportedGamepadControls.contains(control) else { return }
-        let key = "\(deviceId):\(control)"
+        let key = "\(routingKey):\(control)"
         let pressThreshold: Float = analog ? 0.68 : 0.55
         let releaseThreshold: Float = analog ? 0.42 : 0.35
-        if gamepadLatches.contains(key) {
-            if value <= releaseThreshold { gamepadLatches.remove(key) }
+        if priming {
+            gamepadLatches.prime(key: key, value: value, releaseThreshold: releaseThreshold)
             return
         }
-        guard value >= pressThreshold else { return }
-        gamepadLatches.insert(key)
+        guard gamepadLatches.edge(key: key, value: value, pressThreshold: pressThreshold, releaseThreshold: releaseThreshold) else { return }
         if let learningSource {
             guard learningSource == "gamepad" else { return }
             notifyListeners("hardwareLearned", data: [
@@ -417,12 +352,9 @@ public final class PresentationHardwarePlugin: CAPInstancePlugin, CAPBridgedPlug
     private func gamepadId(for controller: GCController) -> String {
         let objectId = ObjectIdentifier(controller)
         if let existing = gamepadIds[objectId] { return existing }
-        let descriptor = "\(controller.vendorName ?? "unknown")|\(controller.productCategory)"
-        let base = "gamepad-\(stableDigest(descriptor))"
-        let used = Set(gamepadIds.values)
-        var ordinal = 1
-        while used.contains("\(base)-\(ordinal)") { ordinal += 1 }
-        let identifier = "\(base)-\(ordinal)"
+        let elementNames = controller.physicalInputProfile.elements.keys.sorted().joined(separator: ",")
+        let descriptor = "\(controller.vendorName ?? "unknown")|\(controller.productCategory)|\(elementNames)"
+        let identifier = PresentationHardwareIdentity.gamepadID(stableIdentifier: nil, descriptor: descriptor)
         gamepadIds[objectId] = identifier
         return identifier
     }
@@ -452,9 +384,10 @@ public final class PresentationHardwarePlugin: CAPInstancePlugin, CAPBridgedPlug
             let context = Unmanaged<MIDISourceContext>.fromOpaque(sourceRefCon).takeUnretainedValue()
             let deviceId = context.deviceId
             let deviceName = context.deviceName
-            let packets = Self.copyMIDIPackets(packetList)
+            let routingKey = context.routingKey
+            let packets = PresentationMIDIPacketCopier.copy(packetList)
             DispatchQueue.main.async {
-                self?.handleMIDIPackets(packets, deviceId: deviceId, deviceName: deviceName)
+                self?.handleMIDIPackets(packets, deviceId: deviceId, deviceName: deviceName, routingKey: routingKey)
             }
         }
         guard portStatus == noErr else {
@@ -489,8 +422,8 @@ public final class PresentationHardwarePlugin: CAPInstancePlugin, CAPBridgedPlug
         for index in 0..<count {
             let endpoint = MIDIGetSource(index)
             guard endpoint != 0 else { continue }
-            let info = midiSourceInfo(endpoint: endpoint, index: index)
-            let context = MIDISourceContext(deviceId: info.id, deviceName: info.name)
+            let info = midiSourceInfo(endpoint: endpoint)
+            let context = MIDISourceContext(deviceId: info.id, deviceName: info.name, routingKey: UUID().uuidString)
             let pointer = Unmanaged.passRetained(context).toOpaque()
             if MIDIPortConnectSource(midiPort, endpoint, pointer) == noErr {
                 midiContexts[endpoint] = context
@@ -502,43 +435,29 @@ public final class PresentationHardwarePlugin: CAPInstancePlugin, CAPBridgedPlug
         // Every topology refresh reconnects the sources, so no running status or
         // pressed latch may survive across the old CoreMIDI connection.
         midiParsers.removeAll()
-        midiLatches.removeAll()
+        midiRuleEngine.removeAll()
         emitStatus()
     }
 
-    private static func copyMIDIPackets(_ packetList: UnsafePointer<MIDIPacketList>) -> [[UInt8]] {
-        var copied: [[UInt8]] = []
-        let packetOffset = MemoryLayout<MIDIPacketList>.offset(of: \MIDIPacketList.packet)
-            ?? (MemoryLayout<MIDIPacketList>.size - MemoryLayout<MIDIPacket>.size)
-        var packetPointer = UnsafeMutableRawPointer(mutating: packetList)
-            .advanced(by: packetOffset)
-            .assumingMemoryBound(to: MIDIPacket.self)
-        for _ in 0..<packetList.pointee.numPackets {
-            let packet = packetPointer.pointee
-            let available = MemoryLayout.size(ofValue: packet.data)
-            let count = min(Int(packet.length), available)
-            let bytes = withUnsafeBytes(of: packet.data) { bytes in
-                Array(bytes.prefix(count))
-            }
-            copied.append(bytes)
-            packetPointer = MIDIPacketNext(packetPointer)
-        }
-        return copied
-    }
-
-    private func handleMIDIPackets(_ packets: [[UInt8]], deviceId: String, deviceName: String) {
+    private func handleMIDIPackets(_ packets: [[UInt8]], deviceId: String, deviceName: String, routingKey: String) {
         guard monitoringActive, midiEnabled else { return }
-        var parser = midiParsers[deviceId] ?? MIDIByteStreamParser()
+        var parser = midiParsers[routingKey] ?? PresentationMIDIByteStreamParser()
         for bytes in packets {
             for message in parser.parse(bytes) {
-                processMIDIMessage(message, deviceId: deviceId, deviceName: deviceName)
+                processMIDIMessage(message, deviceId: deviceId, deviceName: deviceName, routingKey: routingKey)
             }
         }
-        midiParsers[deviceId] = parser
+        midiParsers[routingKey] = parser
     }
 
-    private func processMIDIMessage(_ message: MIDIChannelMessage, deviceId: String, deviceName: String) {
+    private func processMIDIMessage(_ message: PresentationMIDIChannelMessage, deviceId: String, deviceName: String, routingKey: String) {
         guard (0...15).contains(message.channel), (0...127).contains(message.number), (0...127).contains(message.value) else { return }
+        let selectedRuleKey = midiRuleEngine.process(
+            message: message,
+            deviceId: deviceId,
+            routingKey: routingKey,
+            rules: midiRules
+        )
         if let learningSource {
             guard learningSource == "midi" else { return }
             if message.message == "note_on" && message.value == 0 { return }
@@ -558,36 +477,17 @@ public final class PresentationHardwarePlugin: CAPInstancePlugin, CAPBridgedPlug
             finishLearning(reason: "learned", notify: true)
             return
         }
-
-        var shouldEmit = false
-        for rule in midiRules where rule.message == message.message
-            && rule.number == message.number
-            && (rule.channel == nil || rule.channel == message.channel)
-            && (rule.deviceId == nil || rule.deviceId == deviceId) {
-            let key = "\(deviceId):\(rule.latchKey)"
-            let latched = midiLatches.contains(key)
-            if rule.activation == "zero" {
-                if latched {
-                    if message.value >= rule.releaseThreshold { midiLatches.remove(key) }
-                } else if message.value <= rule.threshold {
-                    midiLatches.insert(key)
-                    shouldEmit = true
-                }
-            } else if latched {
-                if message.value <= rule.releaseThreshold { midiLatches.remove(key) }
-            } else if message.value >= rule.threshold {
-                midiLatches.insert(key)
-                shouldEmit = true
-            }
+        if let selectedRuleKey {
+            emitMIDIInput(message, deviceId: deviceId, deviceName: deviceName, ruleKey: selectedRuleKey)
         }
-        if shouldEmit { emitMIDIInput(message, deviceId: deviceId, deviceName: deviceName) }
     }
 
-    private func emitMIDIInput(_ message: MIDIChannelMessage, deviceId: String, deviceName: String) {
+    private func emitMIDIInput(_ message: PresentationMIDIChannelMessage, deviceId: String, deviceName: String, ruleKey: String) {
         notifyListeners("hardwareInput", data: [
             "source": "midi",
             "deviceId": deviceId,
             "deviceName": deviceName,
+            "ruleKey": ruleKey,
             "message": message.message,
             "channel": message.channel,
             "number": message.number,
@@ -603,17 +503,32 @@ public final class PresentationHardwarePlugin: CAPInstancePlugin, CAPBridgedPlug
         return ("positive", threshold, max(0, threshold / 2))
     }
 
-    private func midiSourceInfo(endpoint: MIDIEndpointRef, index: Int) -> (id: String, name: String) {
+    private func midiSourceInfo(endpoint: MIDIEndpointRef) -> (id: String, name: String) {
         let name = midiStringProperty(endpoint, kMIDIPropertyDisplayName)
             ?? midiStringProperty(endpoint, kMIDIPropertyName)
-            ?? "Fuente MIDI \(index + 1)"
-        var uniqueId: Int32 = 0
-        if MIDIObjectGetIntegerProperty(endpoint, kMIDIPropertyUniqueID, &uniqueId) == noErr, uniqueId != 0 {
-            return ("midi-\(UInt32(bitPattern: uniqueId))", name)
+            ?? "Fuente MIDI"
+        if let uniqueId = midiUniqueId(endpoint) {
+            return (PresentationHardwareIdentity.midiID(uniqueID: uniqueId, descriptor: name), name)
         }
         let manufacturer = midiStringProperty(endpoint, kMIDIPropertyManufacturer) ?? "unknown"
         let model = midiStringProperty(endpoint, kMIDIPropertyModel) ?? "unknown"
-        return ("midi-\(stableDigest("\(manufacturer)|\(model)|\(name)"))-\(index + 1)", name)
+        var entity = MIDIEntityRef()
+        _ = MIDIEndpointGetEntity(endpoint, &entity)
+        var device = MIDIDeviceRef()
+        if entity != 0 { _ = MIDIEntityGetDevice(entity, &device) }
+        let parentIdentity = [midiUniqueId(device), midiUniqueId(entity)]
+            .compactMap { $0 }
+            .map { String(UInt32(bitPattern: $0)) }
+            .joined(separator: "|")
+        let descriptor = "\(parentIdentity)|\(manufacturer)|\(model)|\(name)"
+        return (PresentationHardwareIdentity.midiID(uniqueID: nil, descriptor: descriptor), name)
+    }
+
+    private func midiUniqueId(_ object: MIDIObjectRef) -> Int32? {
+        guard object != 0 else { return nil }
+        var uniqueId: Int32 = 0
+        guard MIDIObjectGetIntegerProperty(object, kMIDIPropertyUniqueID, &uniqueId) == noErr, uniqueId != 0 else { return nil }
+        return uniqueId
     }
 
     private func midiStringProperty(_ object: MIDIObjectRef, _ property: CFString) -> String? {
@@ -634,8 +549,8 @@ public final class PresentationHardwarePlugin: CAPInstancePlugin, CAPBridgedPlug
         return !value.isEmpty && value.count <= 160 && value.range(of: "^[A-Za-z0-9._:-]+$", options: .regularExpression) != nil
     }
 
-    private func validMIDIRule(_ rule: MIDIRule) -> Bool {
-        guard validDeviceId(rule.deviceId), ["note_on", "control_change"].contains(rule.message), (0...127).contains(rule.number), (0...127).contains(rule.threshold), (0...127).contains(rule.releaseThreshold) else { return false }
+    private func validMIDIRule(_ rule: PresentationMIDIRule) -> Bool {
+        guard rule.ruleKey == rule.canonicalRuleKey, rule.ruleKey.count <= 240, validDeviceId(rule.deviceId), ["note_on", "control_change"].contains(rule.message), (0...127).contains(rule.number), (0...127).contains(rule.threshold), (0...127).contains(rule.releaseThreshold) else { return false }
         if let channel = rule.channel, !(0...15).contains(channel) { return false }
         if rule.activation == "positive" { return rule.releaseThreshold < rule.threshold }
         if rule.activation == "zero" { return rule.releaseThreshold > rule.threshold }
@@ -676,12 +591,4 @@ public final class PresentationHardwarePlugin: CAPInstancePlugin, CAPBridgedPlug
         notifyListeners("hardwareStatus", data: statusPayload())
     }
 
-    private func stableDigest(_ value: String) -> String {
-        var hash: UInt64 = 14_695_981_039_346_656_037
-        for byte in value.utf8 {
-            hash ^= UInt64(byte)
-            hash &*= 1_099_511_628_211
-        }
-        return String(hash, radix: 16)
-    }
 }

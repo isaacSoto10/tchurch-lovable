@@ -382,4 +382,64 @@ describe("presentation hardware execution gates", () => {
     expect(resolvePresentationNativeHardwareInput(event, settings, { ...readyContext, appActive: false }, deduper)).toBeNull();
     expect(resolvePresentationNativeHardwareInput(event, settings, { ...readyContext, networkDiverged: true }, deduper)).toBeNull();
   });
+
+  it("resolves the exact MIDI rule that crossed instead of preferring an inactive specific rule", () => {
+    const settings = normalizePresentationHardwareSettings({
+      ...DEFAULT_PRESENTATION_HARDWARE_SETTINGS,
+      sources: { ...DEFAULT_PRESENTATION_HARDWARE_SETTINGS.sources, midi: true },
+      bindings: [
+        ...DEFAULT_PRESENTATION_HARDWARE_SETTINGS.bindings,
+        {
+          id: "midi-wildcard",
+          enabled: true,
+          source: "midi",
+          deviceId: null,
+          message: "control_change",
+          channel: 0,
+          number: 7,
+          activation: "positive",
+          threshold: 1,
+          releaseThreshold: 0,
+          action: "next",
+        },
+        {
+          id: "midi-specific",
+          enabled: true,
+          source: "midi",
+          deviceId: "midi-a",
+          message: "control_change",
+          channel: 0,
+          number: 7,
+          activation: "positive",
+          threshold: 80,
+          releaseThreshold: 40,
+          action: "toggle_blackout",
+        },
+      ],
+    });
+    const baseEvent = {
+      source: "midi" as const,
+      deviceId: "midi-a",
+      deviceName: "Pedal",
+      message: "control_change" as const,
+      channel: 0,
+      number: 7,
+      value: 1,
+    };
+
+    expect(resolvePresentationNativeHardwareInput({
+      ...baseEvent,
+      ruleKey: "midi:control_change:0:7",
+    }, settings, readyContext)).toBe("next");
+    expect(resolvePresentationNativeHardwareInput({
+      ...baseEvent,
+      ruleKey: "midi:midi-a:control_change:0:7",
+    }, settings, readyContext)).toBeNull();
+    expect(resolvePresentationNativeHardwareInput(baseEvent, settings, readyContext)).toBe("next");
+    expect(resolvePresentationNativeHardwareInput({
+      ...baseEvent,
+      value: 100,
+      ruleKey: "midi:midi-a:control_change:0:7",
+    }, settings, readyContext)).toBe("toggle_blackout");
+  });
 });
