@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 
-const EXPECTED_MARKETING_VERSION = "4.0.11";
-const EXPECTED_BUILD_NUMBER = "210";
+const EXPECTED_MARKETING_VERSION = "4.0.12";
+const EXPECTED_BUILD_NUMBER = "211";
 const projectPaths = [
   "ios/App/App.xcodeproj/project.pbxproj",
   "ios/App/Tchurch.xcodeproj/project.pbxproj",

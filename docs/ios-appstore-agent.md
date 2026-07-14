@@ -33,10 +33,10 @@ This repo includes an App Store Connect agent that looks for the latest valid iO
 - `ASC_REPLACE_IN_REVIEW`: `true` to remove an existing App Store submission before replacing its build.
 - `ASC_EXPIRE_SUPERSEDED_BETA_BUILD`: `true` to expire an older beta build when Apple blocks the new beta review.
 - `ASC_BUILD_LOOKBACK`: Number of recent builds to inspect. Default is `20`.
-- `ASC_TARGET_MARKETING_VERSION`: Optional App Store version filter. The current workflow pins this to `4.0.11` so another release train cannot be promoted by accident.
-- `ASC_TARGET_BUILD_NUMBER`: Optional build-number filter. The current workflow pins this to `210` so later CI-only builds cannot replace the tested build.
+- `ASC_TARGET_MARKETING_VERSION`: Optional App Store version filter. The current workflow pins this to `4.0.12` so another release train cannot be promoted by accident.
+- `ASC_TARGET_BUILD_NUMBER`: Optional build-number filter. The current workflow pins this to `211` so later CI-only builds cannot replace the tested build.
 
-For the `4.0.11` release, Xcode Cloud must run with `CI_BUILD_NUMBER=210`.
+For the `4.0.12` release, Xcode Cloud must run with `CI_BUILD_NUMBER=211`.
 `ios/App/ci_scripts/ci_post_clone.sh` intentionally reads that environment
 value and applies it to both Xcode projects; the release number is not
 hard-coded into the script's logic.
@@ -64,8 +64,8 @@ ASC_APP_ID=6762327867 \
 ASC_KEY_ID=... \
 ASC_ISSUER_ID=... \
 ASC_PRIVATE_KEY_PATH=/path/to/AuthKey_XXXX.p8 \
-ASC_TARGET_MARKETING_VERSION=4.0.11 \
-ASC_TARGET_BUILD_NUMBER=210 \
+ASC_TARGET_MARKETING_VERSION=4.0.12 \
+ASC_TARGET_BUILD_NUMBER=211 \
 ASC_DRY_RUN=true \
 npm run appstore:ios-agent
 ```
@@ -77,8 +77,8 @@ ASC_APP_ID=6762327867 \
 ASC_KEY_ID=... \
 ASC_ISSUER_ID=... \
 ASC_PRIVATE_KEY_PATH=/path/to/AuthKey_XXXX.p8 \
-ASC_TARGET_MARKETING_VERSION=4.0.11 \
-ASC_TARGET_BUILD_NUMBER=210 \
+ASC_TARGET_MARKETING_VERSION=4.0.12 \
+ASC_TARGET_BUILD_NUMBER=211 \
 ASC_DRY_RUN=false \
 ASC_SUBMIT_FOR_REVIEW=false \
 ASC_BETA_REVIEW=false \
