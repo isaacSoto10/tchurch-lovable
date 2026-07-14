@@ -631,6 +631,12 @@ export function usePresentationLive({
         }
         return null;
       } finally {
+        if (
+          generation === authorityGenerationRef.current
+          && eventGeneration === lifecycleEventGenerationRef.current
+          && expectedScope === authorityScopeRef.current
+          && mountedRef.current
+        ) setLoading(false);
         if (lifecycleRefreshRef.current === operation) lifecycleRefreshRef.current = null;
       }
     })();
@@ -810,9 +816,13 @@ export function usePresentationLive({
   }, [active, authoritativeReadyState, enabled, loading, refresh, serviceId]);
 
   useEffect(() => {
-    if (!enabled || !active || loading || !serviceId || !accountId || !churchId) return undefined;
+    if (!enabled || !active || !serviceId || !accountId || !churchId) return undefined;
     let disposed = false;
     let nativeListener: { remove: () => Promise<void> } | null = null;
+
+    // Install transport lifecycle listeners during the initial private-package
+    // request too. A suspend/resume in that window must invalidate the initial
+    // generation and complete through a validator-free authoritative refresh.
 
     const suspendTransport = (offline = false) => {
       if (disposed) return;
@@ -870,7 +880,7 @@ export function usePresentationLive({
       window.removeEventListener("offline", handleOffline);
       if (nativeListener) void nativeListener.remove();
     };
-  }, [accountId, active, churchId, enabled, loading, refreshAfterForeground, serviceId, setAuthoritativeReady, setNetworkState]);
+  }, [accountId, active, churchId, enabled, refreshAfterForeground, serviceId, setAuthoritativeReady, setNetworkState]);
 
   useEffect(() => {
     if (!active) return undefined;

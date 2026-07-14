@@ -232,6 +232,93 @@ describe("usePresentationLive authority generation", () => {
     expect(liveMocks.sendCommand).toHaveBeenCalledOnce();
   });
 
+  it("observes background and foreground while the initial package is deferred and never authorizes the stale snapshot", async () => {
+    const localClientId = "11111111-1111-4111-8111-111111111111";
+    const otherClientId = "22222222-2222-4222-8222-222222222222";
+    localStorage.setItem("tchurch_live_installation_client_id", localClientId);
+
+    const stale = snapshot("service-1", "viewer-stale", 4, "controller-stale");
+    stale.session!.controller = {
+      clientId: localClientId,
+      displayName: "Este iPad",
+      leaseExpiresAt: "2026-07-11T19:00:30.000Z",
+      ownedByViewer: true,
+    };
+    const authoritative = snapshot("service-1", "viewer-current", 5, "controller-current");
+    authoritative.session!.controller = {
+      clientId: otherClientId,
+      displayName: "Mac santuario",
+      leaseExpiresAt: "2099-07-13T18:01:00.000Z",
+      ownedByViewer: false,
+    };
+    const stalePackage = {
+      ...presentationPackage("service-1", "account-1", "church-1"),
+      packageId: `sha256:${"b".repeat(64)}`,
+      checksum: `sha256:${"b".repeat(64)}`,
+    };
+    const currentPackage = {
+      ...presentationPackage("service-1", "account-1", "church-1"),
+      packageId: `sha256:${"c".repeat(64)}`,
+      checksum: `sha256:${"c".repeat(64)}`,
+    };
+    let resolveInitialPackage: (value: PresentationPackage) => void = () => undefined;
+    const initialPackage = new Promise<PresentationPackage>((resolve) => {
+      resolveInitialPackage = resolve;
+    });
+
+    liveMocks.fetchSnapshot.mockResolvedValueOnce(stale).mockResolvedValue(authoritative);
+    liveMocks.fetchPackage
+      .mockImplementationOnce(() => initialPackage)
+      .mockResolvedValue(currentPackage);
+    mockPackageSave();
+
+    const view = renderHook(() => usePresentationLive({
+      serviceId: "service-1",
+      accountId: "account-1",
+      churchId: "church-1",
+      preferredView: "operator",
+      offlineContext: { steps: [], plannedTiming: { serviceSeconds: 0, itemSecondsById: {} } },
+    }));
+
+    await waitFor(() => expect(liveMocks.fetchPackage).toHaveBeenCalledOnce());
+    expect(view.result.current.loading).toBe(true);
+    await waitFor(() => expect(lifecycleMocks.appStateListeners).toHaveLength(1));
+
+    act(() => {
+      lifecycleMocks.appStateListeners[0]({ isActive: false });
+      lifecycleMocks.appStateListeners[0]({ isActive: true });
+    });
+
+    await waitFor(() => expect(liveMocks.fetchSnapshot).toHaveBeenCalledTimes(2));
+    expect(liveMocks.fetchSnapshot).toHaveBeenNthCalledWith(
+      2,
+      "service-1",
+      "operator",
+      localClientId,
+      undefined,
+      undefined,
+      undefined,
+    );
+    await waitFor(() => expect(view.result.current.authoritativeReady).toBe(true));
+    expect(view.result.current.loading).toBe(false);
+    expect(view.result.current.snapshot?.session?.revision).toBe(5);
+    expect(view.result.current.snapshot?.session?.controller?.clientId).toBe(otherClientId);
+    expect(liveMocks.sendCommand).not.toHaveBeenCalled();
+    await waitFor(() => expect(view.result.current.presentationPackage?.packageId).toBe(currentPackage.packageId));
+
+    await act(async () => {
+      resolveInitialPackage(stalePackage);
+      await initialPackage;
+      await Promise.resolve();
+    });
+
+    expect(view.result.current.authoritativeReady).toBe(true);
+    expect(view.result.current.snapshot?.session?.revision).toBe(5);
+    expect(view.result.current.presentationPackage?.packageId).toBe(currentPackage.packageId);
+    expect(liveMocks.savePackage).toHaveBeenCalledOnce();
+    expect(liveMocks.savePackage).toHaveBeenCalledWith(expect.any(Object), currentPackage);
+  });
+
   it("never reclaims when another client wins during the authoritative foreground refresh", async () => {
     const localClientId = "11111111-1111-4111-8111-111111111111";
     const otherClientId = "22222222-2222-4222-8222-222222222222";
