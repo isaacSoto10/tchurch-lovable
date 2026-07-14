@@ -2,12 +2,17 @@ import { describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
 import {
   PRESENTATION_REMOTE_INTENT_ATTEMPT_TIMEOUT_MS,
+  PRESENTATION_REMOTE_INTENT_CAPABILITY_TIMEOUT_MS,
   PRESENTATION_REMOTE_INTENT_POLL_MS,
+  PRESENTATION_REMOTE_INTENT_PREVIEW_TYPES,
   PRESENTATION_REMOTE_INTENT_TTL_MS,
   PRESENTATION_REMOTE_INTENT_TYPES,
+  PRESENTATION_REMOTE_INTENT_UNIVERSAL_TYPES,
   buildPresentationRemoteIntentRequest,
   canSendPresentationRemoteIntent,
   dispatchPresentationRemoteIntent,
+  fetchPresentationRemoteIntentCapabilities,
+  parsePresentationRemoteIntentCapabilities,
   parsePresentationRemoteIntentSubmission,
   presentationRemoteIntentScopeKey,
   type PresentationRemoteIntentType,
@@ -44,6 +49,21 @@ function submission(status: "pending" | "applied" | "rejected" | "failed" | "exp
   };
 }
 
+function capabilities(receiver: Record<string, unknown> | null = {
+  capabilityVersion: 1,
+  supportedIntents: [...PRESENTATION_REMOTE_INTENT_TYPES],
+  expiresAt: "2026-07-13T12:00:10.000Z",
+}) {
+  return {
+    schemaVersion: 1,
+    serviceId: SERVICE_ID,
+    sessionId: SESSION_ID,
+    serverNow: "2026-07-13T12:00:00.000Z",
+    controllerAuthorityVersion: `sha256:${"a".repeat(64)}`,
+    receiver,
+  };
+}
+
 describe("presentation remote intent v1 contract", () => {
   it("serializes all seven mappings with the exact versioned shape", () => {
     expect(PRESENTATION_REMOTE_INTENT_TYPES).toEqual([
@@ -73,6 +93,16 @@ describe("presentation remote intent v1 contract", () => {
       });
       expect(Object.keys(JSON.parse(built.body))).toEqual(["schemaVersion", "sessionId", "clientId", "intent"]);
     }
+  });
+
+  it("defines the three atomic Preview controls separately from the four universal receiver intents", () => {
+    expect(PRESENTATION_REMOTE_INTENT_PREVIEW_TYPES).toEqual(["preview_previous", "take", "preview_next"]);
+    expect(PRESENTATION_REMOTE_INTENT_UNIVERSAL_TYPES).toEqual([
+      "program_previous",
+      "program_next",
+      "set_blackout",
+      "set_chords",
+    ]);
   });
 
   it("rejects unknown or type-specific extra payload fields before transport", () => {
@@ -116,7 +146,91 @@ describe("presentation remote intent v1 contract", () => {
   });
 });
 
+describe("presentation remote intent capability negotiation", () => {
+  const expected = {
+    serviceId: SERVICE_ID,
+    sessionId: SESSION_ID,
+    controllerAuthorityVersion: `sha256:${"a".repeat(64)}`,
+  };
+
+  it("parses only an exact current receiver and translates server time into a local deadline", () => {
+    const parsed = parsePresentationRemoteIntentCapabilities(capabilities(), expected, 25_000);
+    expect(parsed.receiver).toMatchObject({
+      capabilityVersion: 1,
+      supportedIntents: PRESENTATION_REMOTE_INTENT_TYPES,
+      expiresAt: "2026-07-13T12:00:10.000Z",
+      deadlineAtMs: 35_000,
+    });
+    expect(parsePresentationRemoteIntentCapabilities(capabilities(null), expected, 25_000).receiver).toBeNull();
+  });
+
+  it.each([
+    ["unknown capability version", capabilities({ capabilityVersion: 2, supportedIntents: ["program_next"], expiresAt: "2026-07-13T12:00:10.000Z" })],
+    ["unknown intent", capabilities({ capabilityVersion: 1, supportedIntents: ["program_next", "warp"], expiresAt: "2026-07-13T12:00:10.000Z" })],
+    ["duplicate intent", capabilities({ capabilityVersion: 1, supportedIntents: ["program_next", "program_next"], expiresAt: "2026-07-13T12:00:10.000Z" })],
+    ["expired receiver", capabilities({ capabilityVersion: 1, supportedIntents: ["program_next"], expiresAt: "2026-07-13T12:00:00.000Z" })],
+    ["unexpected receiver field", capabilities({ capabilityVersion: 1, supportedIntents: ["program_next"], expiresAt: "2026-07-13T12:00:10.000Z", extra: true })],
+    ["unexpected envelope field", { ...capabilities(), extra: true }],
+  ])("fails closed for %s", (_label, raw) => {
+    expect(() => parsePresentationRemoteIntentCapabilities(raw, expected, 25_000)).toThrow(/capabilit|acción|expir/i);
+  });
+
+  it("fails closed when the capability authority does not exactly match the live snapshot", () => {
+    expect(() => parsePresentationRemoteIntentCapabilities(capabilities(), {
+      ...expected,
+      controllerAuthorityVersion: `sha256:${"b".repeat(64)}`,
+    }, 25_000)).toThrow(/inválidas/i);
+  });
+
+  it("requests the exact session capability endpoint with a bounded no-store GET", async () => {
+    const request = vi.fn(async () => capabilities());
+    const controller = new AbortController();
+    const parsed = await fetchPresentationRemoteIntentCapabilities({
+      churchId: CHURCH_ID,
+      serviceId: SERVICE_ID,
+      sessionId: SESSION_ID,
+      controllerAuthorityVersion: expected.controllerAuthorityVersion,
+      request,
+      signal: controller.signal,
+      now: () => 25_000,
+    });
+
+    expect(parsed.receiver?.deadlineAtMs).toBe(35_000);
+    expect(request).toHaveBeenCalledWith(
+      `/services/${SERVICE_ID}/presentation-remote-intents/capabilities?sessionId=${SESSION_ID}`,
+      expect.objectContaining({
+        cache: "no-store",
+        churchId: CHURCH_ID,
+        timeoutMs: PRESENTATION_REMOTE_INTENT_CAPABILITY_TIMEOUT_MS,
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+});
+
 describe("presentation remote intent idempotency and deadline", () => {
+  it("does not retry a 409 unsupported intent and surfaces the server message", async () => {
+    const request = vi.fn(async () => {
+      throw new ApiError("Unsupported", 409, {
+        error: "REMOTE_INTENT_UNSUPPORTED",
+        message: "El receptor actual no admite Preview.",
+      });
+    });
+    const result = await dispatchPresentationRemoteIntent({
+      churchId: CHURCH_ID,
+      serviceId: SERVICE_ID,
+      sessionId: SESSION_ID,
+      clientId: CLIENT_ID,
+      intentId: INTENT_ID,
+      type: "take",
+      payload: {},
+      request,
+    });
+
+    expect(result).toMatchObject({ phase: "rejected", message: "El receptor actual no admite Preview." });
+    expect(request).toHaveBeenCalledOnce();
+  });
+
   it("reuses byte-identical JSON and the same UUID through ambiguity, pending, and applied", async () => {
     let clock = 0;
     const bodies: string[] = [];

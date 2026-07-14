@@ -1,12 +1,33 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { usePresentationRemoteIntents } from "./usePresentationRemoteIntents";
+import { PRESENTATION_REMOTE_INTENT_TYPES, type PresentationRemoteIntentType } from "@/lib/presentationRemoteIntents";
 
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
 const CLIENT_ID = "22222222-2222-4222-8222-222222222222";
 const CONTROLLER_ID = "33333333-3333-4333-8333-333333333333";
 const CONTROLLER_AUTHORITY_VERSION = `sha256:${"a".repeat(64)}`;
+
+function capabilities(
+  supportedIntents: readonly PresentationRemoteIntentType[] = PRESENTATION_REMOTE_INTENT_TYPES,
+  authorityVersion = CONTROLLER_AUTHORITY_VERSION,
+) {
+  return {
+    schemaVersion: 1,
+    serviceId: "service-1",
+    sessionId: SESSION_ID,
+    serverNow: "2026-07-13T12:00:00.000Z",
+    controllerAuthorityVersion: authorityVersion,
+    receiver: {
+      capabilityVersion: 1,
+      supportedIntents: [...supportedIntents],
+      expiresAt: "2026-07-13T12:00:10.000Z",
+    },
+  };
+}
+
+const defaultCapabilitiesRequest = async () => capabilities();
 
 function options(overrides: Record<string, unknown> = {}) {
   return {
@@ -24,6 +45,7 @@ function options(overrides: Record<string, unknown> = {}) {
     online: true,
     viewerCanControl: true,
     controllerOwned: false,
+    capabilitiesRequest: defaultCapabilitiesRequest,
     ...overrides,
   };
 }
@@ -56,6 +78,7 @@ describe("usePresentationRemoteIntents authority lifecycle", () => {
       resolveRequest = resolve;
     });
     const view = renderHook((props) => usePresentationRemoteIntents(props), { initialProps: options({ request }) });
+    await waitFor(() => expect(view.result.current.available).toBe(true));
     let action: Promise<unknown> = Promise.resolve();
     act(() => { action = view.result.current.send("take", {}); });
     await waitFor(() => expect(view.result.current.status.phase).toBe("sending"));
@@ -87,6 +110,7 @@ describe("usePresentationRemoteIntents authority lifecycle", () => {
       resolveRequest = resolve;
     });
     const view = renderHook((props) => usePresentationRemoteIntents(props), { initialProps: options({ request }) });
+    await waitFor(() => expect(view.result.current.available).toBe(true));
     let action: Promise<unknown> = Promise.resolve();
     act(() => { action = view.result.current.send("take", {}); });
     await waitFor(() => expect(view.result.current.status.phase).toBe("sending"));
@@ -113,6 +137,7 @@ describe("usePresentationRemoteIntents authority lifecycle", () => {
       resolveRequest = resolve;
     });
     const view = renderHook((props) => usePresentationRemoteIntents(props), { initialProps: options({ request }) });
+    await waitFor(() => expect(view.result.current.available).toBe(true));
     let action: Promise<unknown> = Promise.resolve();
     act(() => { action = view.result.current.send("take", {}); });
     await waitFor(() => expect(view.result.current.status.phase).toBe("sending"));
@@ -134,6 +159,7 @@ describe("usePresentationRemoteIntents authority lifecycle", () => {
       requestSignal = requestOptions.signal;
     });
     const view = renderHook(() => usePresentationRemoteIntents(options({ request })));
+    await waitFor(() => expect(view.result.current.available).toBe(true));
     let action: Promise<unknown> = Promise.resolve();
     act(() => { action = view.result.current.send("take", {}); });
     await waitFor(() => expect(view.result.current.status.phase).toBe("sending"));
@@ -145,9 +171,9 @@ describe("usePresentationRemoteIntents authority lifecycle", () => {
     await action;
   });
 
-  it("turns off remote availability immediately for offline, read-only, or owned control", () => {
+  it("turns off remote availability immediately for offline, read-only, or owned control", async () => {
     const view = renderHook((props) => usePresentationRemoteIntents(props), { initialProps: options() });
-    expect(view.result.current.available).toBe(true);
+    await waitFor(() => expect(view.result.current.available).toBe(true));
     view.rerender(options({ online: false }));
     expect(view.result.current.available).toBe(false);
     view.rerender(options({ viewerCanControl: false }));
@@ -164,6 +190,7 @@ describe("usePresentationRemoteIntents authority lifecycle", () => {
       requestSignal = requestOptions.signal;
     });
     const view = renderHook((props) => usePresentationRemoteIntents(props), { initialProps: options({ request }) });
+    await waitFor(() => expect(view.result.current.available).toBe(true));
     let action: Promise<unknown> = Promise.resolve();
     act(() => { action = view.result.current.send("take", {}); });
     await waitFor(() => expect(requestSignal).not.toBeNull());
@@ -173,5 +200,89 @@ describe("usePresentationRemoteIntents authority lifecycle", () => {
     expect(requestSignal!.aborted).toBe(true);
     await action;
     expect(view.result.current.available).toBe(false);
+  });
+
+  it("fails closed until the current controller publishes exact capabilities", async () => {
+    let resolveCapabilities: (value: unknown) => void = () => undefined;
+    const capabilitiesRequest = vi.fn(() => new Promise<unknown>((resolve) => { resolveCapabilities = resolve; }));
+    const view = renderHook(() => usePresentationRemoteIntents(options({ capabilitiesRequest })));
+
+    expect(view.result.current.available).toBe(false);
+    expect(view.result.current.supportedIntents).toEqual([]);
+    await waitFor(() => expect(capabilitiesRequest).toHaveBeenCalledOnce());
+    await act(async () => { resolveCapabilities(capabilities(["program_next"])); });
+
+    await waitFor(() => expect(view.result.current.available).toBe(true));
+    expect(view.result.current.supportedIntents).toEqual(["program_next"]);
+    view.unmount();
+  });
+
+  it("rejects an unadvertised intent locally without posting it", async () => {
+    const request = vi.fn();
+    const capabilitiesRequest = vi.fn(async () => capabilities(["program_next"]));
+    const view = renderHook(() => usePresentationRemoteIntents(options({ request, capabilitiesRequest })));
+    await waitFor(() => expect(view.result.current.available).toBe(true));
+
+    await act(async () => {
+      await expect(view.result.current.send("take", {})).resolves.toMatchObject({
+        phase: "rejected",
+        message: expect.stringMatching(/compatibilidad/i),
+      });
+    });
+    expect(request).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it("aborts and ignores an old capability response when controller authority changes", async () => {
+    let resolveFirst: (value: unknown) => void = () => undefined;
+    let resolveSecond: (value: unknown) => void = () => undefined;
+    const signals: AbortSignal[] = [];
+    const capabilitiesRequest = vi.fn((_path: string, requestOptions: { signal: AbortSignal }) => {
+      signals.push(requestOptions.signal);
+      return new Promise<unknown>((resolve) => {
+        if (signals.length === 1) resolveFirst = resolve;
+        else resolveSecond = resolve;
+      });
+    });
+    const view = renderHook((props) => usePresentationRemoteIntents(props), {
+      initialProps: options({ capabilitiesRequest }),
+    });
+    await waitFor(() => expect(capabilitiesRequest).toHaveBeenCalledOnce());
+
+    const nextAuthority = `sha256:${"b".repeat(64)}`;
+    view.rerender(options({ capabilitiesRequest, controllerAuthorityVersion: nextAuthority }));
+    await waitFor(() => expect(capabilitiesRequest).toHaveBeenCalledTimes(2));
+    expect(signals[0].aborted).toBe(true);
+
+    await act(async () => { resolveFirst(capabilities(PRESENTATION_REMOTE_INTENT_TYPES)); });
+    expect(view.result.current.available).toBe(false);
+    await act(async () => { resolveSecond(capabilities(["set_blackout"], nextAuthority)); });
+    await waitFor(() => expect(view.result.current.supportedIntents).toEqual(["set_blackout"]));
+    view.unmount();
+  });
+
+  it("drops advertised controls exactly at capability expiry while a refresh is unresolved", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    try {
+      const expiring = capabilities(["program_next"]);
+      expiring.receiver.expiresAt = "2026-07-13T12:00:01.000Z";
+      const capabilitiesRequest = vi.fn()
+        .mockResolvedValueOnce(expiring)
+        .mockImplementation(() => new Promise<unknown>(() => undefined));
+      const view = renderHook(() => usePresentationRemoteIntents(options({ capabilitiesRequest })));
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(view.result.current.available).toBe(true);
+      expect(view.result.current.supportedIntents).toEqual(["program_next"]);
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+      expect(view.result.current.available).toBe(false);
+      expect(view.result.current.supportedIntents).toEqual([]);
+      expect(capabilitiesRequest).toHaveBeenCalledTimes(2);
+      view.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

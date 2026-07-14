@@ -905,6 +905,10 @@ export default function ServicePresentation() {
     viewerCanControl: live.snapshot?.viewer.canControl === true,
     controllerOwned: liveControllerOwnedByClient,
   });
+  const remoteSupportsProgramPrevious = remoteIntents.available && remoteIntents.supportedIntents.includes("program_previous");
+  const remoteSupportsProgramNext = remoteIntents.available && remoteIntents.supportedIntents.includes("program_next");
+  const remoteSupportsBlackout = remoteIntents.available && remoteIntents.supportedIntents.includes("set_blackout");
+  const remoteSupportsChords = remoteIntents.available && remoteIntents.supportedIntents.includes("set_chords");
   usePresentationRemoteIntentReceiver({
     accountId: authenticatedUserId,
     churchId: selectedChurch?.id,
@@ -1201,7 +1205,7 @@ export default function ServicePresentation() {
         } else {
           void runtimeSendCommand("next", {}).catch(() => undefined);
         }
-      } else if (remoteIntents.available && !remoteIntents.pending && safeStepIndex < runSteps.length - 1) {
+      } else if (remoteSupportsProgramNext && !remoteIntents.pending && safeStepIndex < runSteps.length - 1) {
         void remoteIntents.send("program_next", {});
       }
       return;
@@ -1215,7 +1219,7 @@ export default function ServicePresentation() {
       else goPrevious();
       return;
     }
-    if (remoteIntents.available) {
+    if (direction === "next" ? remoteSupportsProgramNext : remoteSupportsProgramPrevious) {
       await remoteIntents.send(direction === "next" ? "program_next" : "program_previous", {});
       return;
     }
@@ -1268,7 +1272,7 @@ export default function ServicePresentation() {
         } else {
           void runtimeSendCommand("previous", {}).catch(() => undefined);
         }
-      } else if (remoteIntents.available && !remoteIntents.pending && safeStepIndex > 0) {
+      } else if (remoteSupportsProgramPrevious && !remoteIntents.pending && safeStepIndex > 0) {
         void remoteIntents.send("program_previous", {});
       }
       return;
@@ -1296,7 +1300,7 @@ export default function ServicePresentation() {
     if (runtimeSession) {
       const nextBlackout = !runtimeSession.display.blackout;
       if (liveCanMutate) void runtimeSendCommand("set_blackout", { blackout: nextBlackout }).catch(() => undefined);
-      else if (remoteIntents.available && !remoteIntents.pending) void remoteIntents.send("set_blackout", { enabled: nextBlackout });
+      else if (remoteSupportsBlackout && !remoteIntents.pending) void remoteIntents.send("set_blackout", { enabled: nextBlackout });
       return;
     }
     setBlackout((current) => !current);
@@ -1306,7 +1310,7 @@ export default function ServicePresentation() {
     if (runtimeSession) {
       const nextChordsVisible = !runtimeSession.display.chordsVisible;
       if (liveCanMutate) void runtimeSendCommand("set_chords", { chordsVisible: nextChordsVisible }).catch(() => undefined);
-      else if (remoteIntents.available && !remoteIntents.pending) void remoteIntents.send("set_chords", { visible: nextChordsVisible });
+      else if (remoteSupportsChords && !remoteIntents.pending) void remoteIntents.send("set_chords", { visible: nextChordsVisible });
       return;
     }
     setShowChords((current) => !current);
@@ -1596,7 +1600,7 @@ export default function ServicePresentation() {
   );
   const stageAdvanceLabel = !stageNeedsControl
     ? "Siguiente"
-    : remoteIntents.available
+    : remoteSupportsProgramNext
       ? "Enviar siguiente al Programa"
     : !runtimeSnapshot?.viewer.canControl
       ? "Solo seguimiento"
@@ -1605,19 +1609,22 @@ export default function ServicePresentation() {
         : "Solicitar control para avanzar";
   const stagePreviousLabel = !stageNeedsControl
     ? "Anterior"
-    : remoteIntents.available
+    : remoteSupportsProgramPrevious
       ? "Enviar anterior al Programa"
     : !runtimeSnapshot?.viewer.canControl
       ? "Solo seguimiento"
       : stageCanClaimControl
         ? "Tomar control para retroceder"
         : "Solicitar control para retroceder";
-  const stageControlDisabled = runtimeCommandPending
+  const stageControlBusy = runtimeCommandPending
     || remoteIntents.pending
-    || stageCanClaimControl && runtimeNetworkState !== "online"
-    || stageNeedsControl && !runtimeSnapshot?.viewer.canControl && !remoteIntents.available;
-  const stageAdvanceDisabled = stageAtEnd || stageControlDisabled;
-  const stagePreviousDisabled = stageAtStart || stageControlDisabled;
+    || stageCanClaimControl && runtimeNetworkState !== "online";
+  const stageAdvanceDisabled = stageAtEnd
+    || stageControlBusy
+    || stageNeedsControl && !runtimeSnapshot?.viewer.canControl && !remoteSupportsProgramNext;
+  const stagePreviousDisabled = stageAtStart
+    || stageControlBusy
+    || stageNeedsControl && !runtimeSnapshot?.viewer.canControl && !remoteSupportsProgramPrevious;
 
   return (
     <div className="fixed inset-0 z-50 flex min-h-svh flex-col overflow-hidden bg-[radial-gradient(circle_at_top_left,#2f1e6a_0%,#090912_34%,#020204_100%)] text-white" style={{ paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}>
@@ -1635,16 +1642,16 @@ export default function ServicePresentation() {
             aria-label={blackout ? "Restaurar salida de presentación" : "Poner salida de presentación en negro"}
             aria-pressed={blackout}
             className={`h-11 rounded-xl border px-2 text-[11px] font-black text-white hover:text-white sm:px-3 sm:text-xs ${blackout ? "border-red-400/60 bg-red-500/30 hover:bg-red-500/40" : "border-white/10 bg-black/70 hover:bg-black"}`}
-            disabled={(Boolean(runtimeSession) && !liveCanMutate && !remoteIntents.available) || remoteIntents.pending}
+            disabled={(Boolean(runtimeSession) && !liveCanMutate && !remoteSupportsBlackout) || remoteIntents.pending}
             onClick={toggleBlackout}
           >{blackout ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}<span>{blackout ? "Restaurar" : "Salida en negro"}</span></Button>
-          <Button variant="ghost" className="hidden h-11 rounded-xl border border-white/10 bg-white/[0.08] px-3 text-white hover:bg-white/[0.15] hover:text-white sm:flex" disabled={runtimeSession ? (!liveCanMutate && !remoteIntents.available) || remoteIntents.pending || safeStepIndex === 0 : !historyCount} onClick={undoNavigation}><Undo2 className="h-4 w-4" /><span className="hidden xl:inline">Atrás</span></Button>
+          <Button variant="ghost" className="hidden h-11 rounded-xl border border-white/10 bg-white/[0.08] px-3 text-white hover:bg-white/[0.15] hover:text-white sm:flex" disabled={runtimeSession ? (!liveCanMutate && !remoteSupportsProgramPrevious) || remoteIntents.pending || safeStepIndex === 0 : !historyCount} onClick={undoNavigation}><Undo2 className="h-4 w-4" /><span className="hidden xl:inline">Atrás</span></Button>
           {currentSongHasChords && <Button
             variant="ghost"
             aria-label={showChords ? "Ocultar acordes" : "Mostrar acordes"}
             aria-pressed={showChords}
             className={`h-11 min-w-[5.5rem] rounded-xl border px-2 text-xs font-black text-white hover:text-white sm:px-3 ${showChords ? "border-emerald-300/25 bg-emerald-300/10 hover:bg-emerald-300/15" : "border-white/10 bg-white/[0.05] hover:bg-white/10"}`}
-            disabled={(Boolean(runtimeSession) && !liveCanMutate && !remoteIntents.available) || remoteIntents.pending}
+            disabled={(Boolean(runtimeSession) && !liveCanMutate && !remoteSupportsChords) || remoteIntents.pending}
             onClick={toggleChords}
           >{showChords ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}<span>Acordes</span><span className="text-[9px] opacity-70">{showChords ? "sí" : "no"}</span></Button>}
           {stageLayout.show.clock ? <div className="flex h-11 min-w-14 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.08] px-2 text-xs font-black tabular-nums sm:px-3"><Clock3 className="hidden h-4 w-4 text-violet-200 sm:block" /><span><span className="block leading-none">{clock}</span><span className="mt-1 block text-center text-[8px] leading-none text-slate-400 sm:hidden">{runSteps.length ? safeStepIndex + 1 : 0}/{runSteps.length}</span></span></div> : null}
@@ -1732,6 +1739,7 @@ export default function ServicePresentation() {
           chordsVisible={showChords}
           pending={runtimeCommandPending || runtimeNetworkState === "diverged"}
           remoteAvailable={remoteIntents.available}
+          remoteSupportedIntents={remoteIntents.supportedIntents}
           remotePending={remoteIntents.pending}
           remoteStatus={remoteIntents.status}
           onCommand={runtimeSendCommand}
@@ -1798,8 +1806,8 @@ export default function ServicePresentation() {
             {stageLayout.show.notes ? <div className="mt-4"><p className="mb-2 text-[10px] font-black uppercase tracking-[0.18em] text-violet-200">Notas del equipo</p><AnnotationList annotations={operatorAnnotations} emptyLabel="Sin indicaciones en este momento." /></div> : null}
             {stageLayout.show.notes && currentLegacyNotes.length ? <div className="mt-4 space-y-2"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Notas anteriores</p>{currentLegacyNotes.map((note, index) => <p key={`${note}-${index}`} className="rounded-xl bg-white/[0.05] p-3 text-xs leading-5 text-slate-300">{note}</p>)}</div> : null}
             <div className="sticky bottom-0 mt-5 grid grid-cols-[3rem_minmax(0,1fr)_3rem] gap-2 bg-[#08070d]/95 py-3">
-              <Button variant="ghost" className="h-12 rounded-xl bg-white/10 text-white hover:bg-white/15 hover:text-white" disabled={safeStepIndex === 0 || remoteIntents.pending || Boolean(runtimeSession) && !liveCanMutate && !remoteIntents.available} onClick={goPrevious}><ChevronLeft className="h-5 w-5" /></Button>
-              <Button className="h-12 rounded-xl bg-violet-500 font-black hover:bg-violet-400" disabled={safeStepIndex >= runSteps.length - 1 || remoteIntents.pending || Boolean(runtimeSession) && !liveCanMutate && !remoteIntents.available} onClick={goNext}>Siguiente</Button>
+              <Button variant="ghost" className="h-12 rounded-xl bg-white/10 text-white hover:bg-white/15 hover:text-white" disabled={safeStepIndex === 0 || remoteIntents.pending || Boolean(runtimeSession) && !liveCanMutate && !remoteSupportsProgramPrevious} onClick={goPrevious}><ChevronLeft className="h-5 w-5" /></Button>
+              <Button className="h-12 rounded-xl bg-violet-500 font-black hover:bg-violet-400" disabled={safeStepIndex >= runSteps.length - 1 || remoteIntents.pending || Boolean(runtimeSession) && !liveCanMutate && !remoteSupportsProgramNext} onClick={goNext}>Siguiente</Button>
               <Button variant="ghost" aria-label="Abrir control remoto" className="h-12 rounded-xl bg-white/10 text-white hover:bg-white/15 hover:text-white" onClick={() => setSurface("remote")}><Settings2 className="h-5 w-5" /></Button>
             </div>
           </aside>

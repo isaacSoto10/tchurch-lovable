@@ -6,13 +6,18 @@ import {
   canReceivePresentationRemoteIntents,
   clearPresentationRemoteIntentReceiverStorage,
   presentationRemoteIntentReceiverAuthorityScope,
+  presentationRemoteIntentReceiverPendingPath,
   processPresentationRemoteIntentOnce,
   readPresentationRemoteIntentReceiverReceipt,
   type PresentationRemoteIntentReceiverAuthority,
   type PresentationRemoteIntentReceiverCommandSender,
   type PresentationRemoteIntentReceiverRequest,
 } from "./presentationRemoteIntentReceiver";
-import type { PresentationRemoteIntentType } from "./presentationRemoteIntents";
+import {
+  PRESENTATION_REMOTE_INTENT_RECEIVER_CAPABILITY_VERSION,
+  PRESENTATION_REMOTE_INTENT_UNIVERSAL_TYPES,
+  type PresentationRemoteIntentType,
+} from "./presentationRemoteIntents";
 
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
 const CLIENT_ID = "22222222-2222-4222-8222-222222222222";
@@ -135,6 +140,16 @@ afterEach(() => {
 });
 
 describe("presentation remote intent receiver authority", () => {
+  it("advertises capability version 1 and each of the four universal intents on every pending GET", async () => {
+    const expectedPath = `/services/service-1/presentation-remote-intents/pending?clientId=${CLIENT_ID}&receiverCapabilityVersion=${PRESENTATION_REMOTE_INTENT_RECEIVER_CAPABILITY_VERSION}`
+      + PRESENTATION_REMOTE_INTENT_UNIVERSAL_TYPES.map((type) => `&supportedIntent=${type}`).join("");
+    expect(presentationRemoteIntentReceiverPendingPath(authority())).toBe(expectedPath);
+
+    const request = vi.fn(async (path: string) => path.includes("/pending") ? pending() : acknowledgement("applied")) as unknown as PresentationRemoteIntentReceiverRequest;
+    await processPresentationRemoteIntentOnce(processOptions({ request }));
+    expect((request as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(expectedPath);
+  });
+
   it("receives only as the exact controller client, not another client owned by the same viewer", () => {
     expect(canReceivePresentationRemoteIntents(authority())).toBe(true);
     expect(canReceivePresentationRemoteIntents(authority({ controllerClientId: OTHER_CLIENT_ID, controllerOwned: true }))).toBe(false);

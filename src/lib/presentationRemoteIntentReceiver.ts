@@ -5,9 +5,11 @@ import {
   type PresentationCommandType,
 } from "@/lib/presentationLive";
 import {
+  PRESENTATION_REMOTE_INTENT_RECEIVER_CAPABILITY_VERSION,
   PRESENTATION_REMOTE_INTENT_SCHEMA_VERSION,
   PRESENTATION_REMOTE_INTENT_TTL_MS,
   PRESENTATION_REMOTE_INTENT_TYPES,
+  PRESENTATION_REMOTE_INTENT_UNIVERSAL_TYPES,
   type PresentationRemoteIntentPayloads,
   type PresentationRemoteIntentType,
 } from "@/lib/presentationRemoteIntents";
@@ -343,6 +345,17 @@ export function canReceivePresentationRemoteIntents(authority: PresentationRemot
   );
 }
 
+export function presentationRemoteIntentReceiverPendingPath(authority: Pick<PresentationRemoteIntentReceiverAuthority, "serviceId" | "clientId">) {
+  if (!authority.serviceId?.trim() || !isUuid(authority.clientId)) {
+    throw new Error("Falta el alcance del receptor remoto.");
+  }
+  const query = new URLSearchParams();
+  query.set("clientId", authority.clientId.toLowerCase());
+  query.set("receiverCapabilityVersion", String(PRESENTATION_REMOTE_INTENT_RECEIVER_CAPABILITY_VERSION));
+  for (const type of PRESENTATION_REMOTE_INTENT_UNIVERSAL_TYPES) query.append("supportedIntent", type);
+  return `/services/${encodeURIComponent(authority.serviceId)}/presentation-remote-intents/pending?${query.toString()}`;
+}
+
 export function parsePresentationRemoteIntentPending(
   raw: unknown,
   expected: { serviceId: string; sessionId: string },
@@ -675,7 +688,7 @@ export async function processPresentationRemoteIntentOnce(options: ProcessOption
   let raw: unknown;
   try {
     raw = await runWithReceiverTimeout(options.signal, PRESENTATION_REMOTE_INTENT_RECEIVER_TIMEOUT_MS, (signal, timeoutMs) => request(
-      `/services/${encodeURIComponent(options.authority.serviceId!)}/presentation-remote-intents/pending?clientId=${encodeURIComponent(options.authority.clientId!)}`,
+      presentationRemoteIntentReceiverPendingPath(options.authority),
       {
         cache: "no-store",
         churchId: options.authority.churchId!,

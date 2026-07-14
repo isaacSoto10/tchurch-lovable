@@ -2,9 +2,12 @@ import { ApiError, apiFetch } from "@/lib/api";
 import { createPresentationId } from "@/lib/presentationLive";
 
 export const PRESENTATION_REMOTE_INTENT_SCHEMA_VERSION = 1 as const;
+export const PRESENTATION_REMOTE_INTENT_RECEIVER_CAPABILITY_VERSION = 1 as const;
 export const PRESENTATION_REMOTE_INTENT_TTL_MS = 10_000;
 export const PRESENTATION_REMOTE_INTENT_POLL_MS = 450;
 export const PRESENTATION_REMOTE_INTENT_ATTEMPT_TIMEOUT_MS = 2_500;
+export const PRESENTATION_REMOTE_INTENT_CAPABILITY_POLL_MS = 1_000;
+export const PRESENTATION_REMOTE_INTENT_CAPABILITY_TIMEOUT_MS = 2_500;
 const PRESENTATION_REMOTE_INTENT_AUTHORITY_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
 
 export const PRESENTATION_REMOTE_INTENT_TYPES = [
@@ -18,6 +21,19 @@ export const PRESENTATION_REMOTE_INTENT_TYPES = [
 ] as const;
 
 export type PresentationRemoteIntentType = (typeof PRESENTATION_REMOTE_INTENT_TYPES)[number];
+
+export const PRESENTATION_REMOTE_INTENT_PREVIEW_TYPES = [
+  "preview_previous",
+  "take",
+  "preview_next",
+] as const satisfies readonly PresentationRemoteIntentType[];
+
+export const PRESENTATION_REMOTE_INTENT_UNIVERSAL_TYPES = [
+  "program_previous",
+  "program_next",
+  "set_blackout",
+  "set_chords",
+] as const satisfies readonly PresentationRemoteIntentType[];
 
 export type PresentationRemoteIntentPayloads = {
   preview_previous: Record<string, never>;
@@ -87,6 +103,33 @@ export type PresentationRemoteIntentRequest = (
     signal: AbortSignal;
   },
 ) => Promise<unknown>;
+
+export type PresentationRemoteIntentCapabilitiesRequest = (
+  path: string,
+  options: {
+    cache: "no-store";
+    churchId: string;
+    signal: AbortSignal;
+    timeoutMs: number;
+  },
+) => Promise<unknown>;
+
+export type PresentationRemoteIntentReceiverCapabilities = {
+  capabilityVersion: 1;
+  supportedIntents: PresentationRemoteIntentType[];
+  expiresAt: string;
+  deadlineAtMs: number;
+};
+
+export type PresentationRemoteIntentCapabilities = {
+  schemaVersion: 1;
+  serviceId: string;
+  sessionId: string;
+  serverNow: string;
+  controllerAuthorityVersion: string;
+  receiver: PresentationRemoteIntentReceiverCapabilities | null;
+  receivedAtMs: number;
+};
 
 export type PresentationRemoteIntentWait = (
   milliseconds: number,
@@ -217,6 +260,10 @@ function defaultRequest(path: string, options: Parameters<PresentationRemoteInte
   return apiFetch<unknown>(path, options);
 }
 
+function defaultCapabilitiesRequest(path: string, options: Parameters<PresentationRemoteIntentCapabilitiesRequest>[1]) {
+  return apiFetch<unknown>(path, options);
+}
+
 function abortError(message: string) {
   if (typeof DOMException !== "undefined") return new DOMException(message, "AbortError");
   const error = new Error(message);
@@ -304,10 +351,115 @@ function isAmbiguousTransportError(error: unknown) {
 
 function rejectedTransportMessage(error: unknown) {
   const code = errorCode(error);
+  if (code === "REMOTE_INTENT_UNSUPPORTED") {
+    const body = error instanceof ApiError && isRecord(error.body) ? error.body : null;
+    const message = typeof body?.message === "string" ? body.message.trim().slice(0, 240) : "";
+    return message || "El controlador no admite esa acción remota.";
+  }
   if (code === "SESSION_CHANGED") return "La sesión en vivo cambió antes de aplicar el control.";
   if (code === "CONTROL_REQUIRED") return "Ya no hay un controlador activo para recibir la acción.";
   if (error instanceof ApiError && (error.status === 401 || error.status === 403)) return "Tu acceso ya no permite controlar esta presentación.";
   return error instanceof Error ? error.message : "El controlador rechazó la acción.";
+}
+
+export function parsePresentationRemoteIntentCapabilities(
+  raw: unknown,
+  expected: { serviceId: string; sessionId: string; controllerAuthorityVersion: string },
+  receivedAtMs = Date.now(),
+): PresentationRemoteIntentCapabilities {
+  if (!Number.isFinite(receivedAtMs)
+    || !isRecord(raw)
+    || !hasExactKeys(raw, ["schemaVersion", "serviceId", "sessionId", "serverNow", "controllerAuthorityVersion", "receiver"])
+    || raw.schemaVersion !== PRESENTATION_REMOTE_INTENT_SCHEMA_VERSION
+    || raw.serviceId !== expected.serviceId
+    || raw.sessionId !== expected.sessionId
+    || raw.controllerAuthorityVersion !== expected.controllerAuthorityVersion
+    || typeof raw.controllerAuthorityVersion !== "string"
+    || !PRESENTATION_REMOTE_INTENT_AUTHORITY_DIGEST_PATTERN.test(raw.controllerAuthorityVersion)
+    || !isIsoDate(raw.serverNow)) {
+    throw new Error("El servidor devolvió capabilities remotas inválidas.");
+  }
+
+  if (raw.receiver === null) {
+    return {
+      schemaVersion: PRESENTATION_REMOTE_INTENT_SCHEMA_VERSION,
+      serviceId: expected.serviceId,
+      sessionId: expected.sessionId,
+      serverNow: raw.serverNow,
+      controllerAuthorityVersion: raw.controllerAuthorityVersion,
+      receiver: null,
+      receivedAtMs,
+    };
+  }
+
+  if (!isRecord(raw.receiver)
+    || !hasExactKeys(raw.receiver, ["capabilityVersion", "supportedIntents", "expiresAt"])
+    || raw.receiver.capabilityVersion !== PRESENTATION_REMOTE_INTENT_RECEIVER_CAPABILITY_VERSION
+    || !Array.isArray(raw.receiver.supportedIntents)
+    || !isIsoDate(raw.receiver.expiresAt)) {
+    throw new Error("El receptor remoto devolvió capabilities inválidas.");
+  }
+  const supportedIntents = raw.receiver.supportedIntents;
+  if (new Set(supportedIntents).size !== supportedIntents.length
+    || supportedIntents.some((type) => typeof type !== "string" || !PRESENTATION_REMOTE_INTENT_TYPES.includes(type as PresentationRemoteIntentType))) {
+    throw new Error("El receptor remoto anunció una acción desconocida.");
+  }
+  const remainingMs = Date.parse(raw.receiver.expiresAt) - Date.parse(raw.serverNow);
+  if (!Number.isFinite(remainingMs) || remainingMs <= 0) {
+    throw new Error("Las capabilities del receptor remoto expiraron.");
+  }
+
+  return {
+    schemaVersion: PRESENTATION_REMOTE_INTENT_SCHEMA_VERSION,
+    serviceId: expected.serviceId,
+    sessionId: expected.sessionId,
+    serverNow: raw.serverNow,
+    controllerAuthorityVersion: raw.controllerAuthorityVersion,
+    receiver: {
+      capabilityVersion: PRESENTATION_REMOTE_INTENT_RECEIVER_CAPABILITY_VERSION,
+      supportedIntents: [...supportedIntents] as PresentationRemoteIntentType[],
+      expiresAt: raw.receiver.expiresAt,
+      deadlineAtMs: receivedAtMs + remainingMs,
+    },
+    receivedAtMs,
+  };
+}
+
+export async function fetchPresentationRemoteIntentCapabilities(options: {
+  churchId: string;
+  serviceId: string;
+  sessionId: string;
+  controllerAuthorityVersion: string;
+  request?: PresentationRemoteIntentCapabilitiesRequest;
+  signal: AbortSignal;
+  now?: () => number;
+}) {
+  if (!options.churchId.trim() || !options.serviceId.trim() || !isUuid(options.sessionId)) {
+    throw new Error("Falta el alcance de capabilities remotas.");
+  }
+  if (!PRESENTATION_REMOTE_INTENT_AUTHORITY_DIGEST_PATTERN.test(options.controllerAuthorityVersion)) {
+    throw new Error("La autoridad remota no es válida.");
+  }
+  const request = options.request || defaultCapabilitiesRequest;
+  const attempt = createAttemptAbortScope(options.signal, PRESENTATION_REMOTE_INTENT_CAPABILITY_TIMEOUT_MS);
+  try {
+    const raw = await raceWithAbort(Promise.resolve().then(() => request(
+      `/services/${encodeURIComponent(options.serviceId)}/presentation-remote-intents/capabilities?sessionId=${encodeURIComponent(options.sessionId.toLowerCase())}`,
+      {
+        cache: "no-store",
+        churchId: options.churchId,
+        signal: attempt.signal,
+        timeoutMs: PRESENTATION_REMOTE_INTENT_CAPABILITY_TIMEOUT_MS,
+      },
+    )), attempt.signal);
+    return parsePresentationRemoteIntentCapabilities(raw, {
+      serviceId: options.serviceId,
+      sessionId: options.sessionId.toLowerCase(),
+      controllerAuthorityVersion: options.controllerAuthorityVersion,
+    }, (options.now || Date.now)());
+  } finally {
+    attempt.cleanup();
+  }
 }
 
 function state(

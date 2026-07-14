@@ -41,7 +41,9 @@ import type {
   PresentationStageMessage,
   PresentationTiming,
 } from "@/lib/presentationLive";
-import type {
+import {
+  PRESENTATION_REMOTE_INTENT_PREVIEW_TYPES,
+  type PresentationRemoteIntentType,
   PresentationRemoteIntentSender,
   PresentationRemoteIntentUiState,
 } from "@/lib/presentationRemoteIntents";
@@ -335,6 +337,7 @@ export function PresentationRemoteSurface({
   chordsVisible,
   pending,
   remoteAvailable = false,
+  remoteSupportedIntents = [],
   remotePending = false,
   remoteStatus,
   onCommand,
@@ -353,6 +356,7 @@ export function PresentationRemoteSurface({
   chordsVisible: boolean;
   pending: boolean;
   remoteAvailable?: boolean;
+  remoteSupportedIntents?: readonly PresentationRemoteIntentType[];
   remotePending?: boolean;
   remoteStatus?: PresentationRemoteIntentUiState;
   onCommand: PresentationLiveCommandSender;
@@ -370,27 +374,35 @@ export function PresentationRemoteSurface({
   const previousLiveStep = liveSteps[activeIndex - 1];
   const nextLiveStep = liveSteps[activeIndex + 1];
   const actionPending = pending || remotePending;
-  const canOperateProgram = owned || remoteAvailable;
+  const remoteSupports = (type: PresentationRemoteIntentType) => remoteAvailable && remoteSupportedIntents.includes(type);
+  const previewControlsAvailable = Boolean(
+    onRemoteIntent
+    && PRESENTATION_REMOTE_INTENT_PREVIEW_TYPES.every((type) => remoteSupports(type)),
+  );
+  const canOperateProgramPrevious = owned || remoteSupports("program_previous");
+  const canOperateProgramNext = owned || remoteSupports("program_next");
+  const canOperateBlackout = owned || remoteSupports("set_blackout");
+  const canOperateChords = owned || remoteSupports("set_chords");
   const sendProgramPrevious = () => {
     if (owned) {
       if (previousLiveStep) return onCommand("jump", { itemId: previousLiveStep.itemId, stepId: previousLiveStep.stepId, partIndex: previousLiveStep.partIndex });
       return Promise.resolve();
     }
-    return onRemoteIntent?.("program_previous", {}) || Promise.resolve();
+    return remoteSupports("program_previous") ? onRemoteIntent?.("program_previous", {}) || Promise.resolve() : Promise.resolve();
   };
   const sendProgramNext = () => {
     if (owned) {
       if (nextLiveStep) return onCommand("jump", { itemId: nextLiveStep.itemId, stepId: nextLiveStep.stepId, partIndex: nextLiveStep.partIndex });
       return Promise.resolve();
     }
-    return onRemoteIntent?.("program_next", {}) || Promise.resolve();
+    return remoteSupports("program_next") ? onRemoteIntent?.("program_next", {}) || Promise.resolve() : Promise.resolve();
   };
   const sendBlackout = () => owned
     ? onCommand("set_blackout", { blackout: !blackout })
-    : onRemoteIntent?.("set_blackout", { enabled: !blackout }) || Promise.resolve();
+    : remoteSupports("set_blackout") ? onRemoteIntent?.("set_blackout", { enabled: !blackout }) || Promise.resolve() : Promise.resolve();
   const sendChords = () => owned
     ? onCommand("set_chords", { chordsVisible: !chordsVisible })
-    : onRemoteIntent?.("set_chords", { visible: !chordsVisible }) || Promise.resolve();
+    : remoteSupports("set_chords") ? onRemoteIntent?.("set_chords", { visible: !chordsVisible }) || Promise.resolve() : Promise.resolve();
   const presence = useMemo(
     () => (session?.presence || []).filter((candidate) => candidate.clientId !== session.controller?.clientId).sort((a, b) => Number(Boolean(b.controlRequestedAt)) - Number(Boolean(a.controlRequestedAt))),
     [session?.controller?.clientId, session?.presence],
@@ -404,7 +416,7 @@ export function PresentationRemoteSurface({
             <div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex items-center gap-2"><Cast className="h-4 w-4 text-violet-200" /><p className="text-[10px] font-black uppercase tracking-[0.2em] text-violet-200">Control remoto · {activeView}</p></div><h1 className="mt-2 text-2xl font-black tracking-tight sm:text-3xl">{active?.sectionLabel || active?.title || "Sesión lista"}</h1><p className="mt-1 text-sm font-semibold text-slate-400">{active?.title || "Inicia la sesión para controlar la presentación"}</p></div><PresentationOwnershipControls snapshot={snapshot} localClientId={localClientId} controllerLeaseActive={controllerLeaseActive} pending={actionPending} onCommand={onCommand} /></div>
             <div className="mt-5 rounded-2xl border border-white/10 bg-black/25 p-3"><p className="text-[10px] font-black uppercase tracking-[0.17em] text-slate-500">Siguiente</p><p className="mt-1 truncate text-base font-black text-white">{nextLabel}</p></div>
 
-            {remoteAvailable && onRemoteIntent ? (
+            {previewControlsAvailable && onRemoteIntent ? (
               <div className="mt-4 rounded-2xl border border-violet-300/20 bg-violet-300/[0.07] p-3">
                 <div className="flex items-center justify-between gap-3"><div><p className="text-[10px] font-black uppercase tracking-[0.18em] text-violet-200">Vista previa del Mac</p><p className="mt-1 text-xs text-slate-400">Prepara primero; Pasar actualiza Programa.</p></div><Cast className="h-5 w-5 text-violet-200" /></div>
                 <div className="mt-3 grid grid-cols-[minmax(0,1fr)_minmax(0,1.45fr)_minmax(0,1fr)] gap-2">
@@ -416,8 +428,8 @@ export function PresentationRemoteSurface({
             ) : null}
 
             <div className="mt-4 grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_minmax(0,1fr)] gap-2">
-              <Button aria-label="Programa anterior" className="h-16 rounded-2xl border border-white/10 bg-white/[0.08] text-white hover:bg-white/[0.14]" disabled={!canOperateProgram || actionPending || !previousLiveStep} onClick={() => run(sendProgramPrevious)}><ArrowLeft className="h-6 w-6" /><span className="hidden sm:inline">Anterior</span></Button>
-              <Button aria-label="Programa siguiente" className="h-16 rounded-2xl bg-violet-500 text-base font-black shadow-xl shadow-violet-950/40 hover:bg-violet-400" disabled={!canOperateProgram || actionPending || !nextLiveStep} onClick={() => run(sendProgramNext)}>Siguiente <ArrowRight className="h-5 w-5" /></Button>
+              <Button aria-label="Programa anterior" className="h-16 rounded-2xl border border-white/10 bg-white/[0.08] text-white hover:bg-white/[0.14]" disabled={!canOperateProgramPrevious || actionPending || !previousLiveStep} onClick={() => run(sendProgramPrevious)}><ArrowLeft className="h-6 w-6" /><span className="hidden sm:inline">Anterior</span></Button>
+              <Button aria-label="Programa siguiente" className="h-16 rounded-2xl bg-violet-500 text-base font-black shadow-xl shadow-violet-950/40 hover:bg-violet-400" disabled={!canOperateProgramNext || actionPending || !nextLiveStep} onClick={() => run(sendProgramNext)}>Siguiente <ArrowRight className="h-5 w-5" /></Button>
               <Button variant="outline" className="h-16 rounded-2xl border-white/10 bg-white/[0.06] text-white hover:bg-white/10 hover:text-white" disabled={!session} onClick={() => setShowOrder((current) => !current)}>Orden <ChevronRight className={`h-4 w-4 transition-transform ${showOrder ? "rotate-90" : ""}`} /></Button>
             </div>
 
@@ -426,7 +438,7 @@ export function PresentationRemoteSurface({
                 aria-label={blackout ? "Restaurar salida de presentación" : "Poner salida de presentación en negro"}
                 aria-pressed={blackout}
                 className={`h-14 rounded-2xl text-sm font-black ${blackout ? "bg-red-500 text-white hover:bg-red-400" : "border border-white/10 bg-black text-white hover:bg-zinc-900"}`}
-                disabled={!canOperateProgram || actionPending}
+                disabled={!canOperateBlackout || actionPending}
                 onClick={() => run(sendBlackout)}
               >
                 {blackout ? <Eye className="h-5 w-5" /> : <EyeOff className="h-5 w-5" />} {blackout ? "Restaurar salida" : "Salida en negro"}
@@ -435,7 +447,7 @@ export function PresentationRemoteSurface({
                 aria-label={chordsVisible ? "Ocultar acordes" : "Mostrar acordes"}
                 aria-pressed={chordsVisible}
                 className={`h-14 rounded-2xl border text-sm font-black ${chordsVisible ? "border-emerald-300/30 bg-emerald-300/15 text-emerald-50 hover:bg-emerald-300/20" : "border-white/10 bg-white/[0.06] text-slate-300 hover:bg-white/10"}`}
-                disabled={!canOperateProgram || actionPending}
+                disabled={!canOperateChords || actionPending}
                 onClick={() => run(sendChords)}
               >
                 {chordsVisible ? <Eye className="h-5 w-5" /> : <EyeOff className="h-5 w-5" />} Acordes {chordsVisible ? "sí" : "no"}

@@ -11,7 +11,11 @@ import {
   type PresentationLiveCommandSender,
 } from "./PresentationLiveControls";
 import type { PresentationLiveSnapshot, PresentationOfflineStep, PresentationTiming } from "@/lib/presentationLive";
-import type { PresentationRemoteIntentSender, PresentationRemoteIntentUiState } from "@/lib/presentationRemoteIntents";
+import {
+  PRESENTATION_REMOTE_INTENT_TYPES,
+  type PresentationRemoteIntentSender,
+  type PresentationRemoteIntentUiState,
+} from "@/lib/presentationRemoteIntents";
 import type { PresentationRunStep } from "@/lib/servicePresentation";
 
 const timing: PresentationTiming = {
@@ -166,6 +170,7 @@ describe("Tchurch Live controls", () => {
         chordsVisible
         pending={false}
         remoteAvailable
+        remoteSupportedIntents={PRESENTATION_REMOTE_INTENT_TYPES}
         remotePending={false}
         remoteStatus={{ phase: "idle", intentId: null, type: null, message: null }}
         onCommand={onCommand}
@@ -193,6 +198,39 @@ describe("Tchurch Live controls", () => {
     expect(onCommand).not.toHaveBeenCalled();
   });
 
+  it("shows the Preview block only for the atomic trio and gates each universal control independently", () => {
+    const onCommand = vi.fn(async () => undefined) as unknown as PresentationLiveCommandSender;
+    const remoteMock = vi.fn(async () => ({ phase: "applied", intentId: "intent", type: "program_next", message: "Aplicado" }));
+    render(
+      <PresentationRemoteSurface
+        snapshot={snapshot(false)}
+        localClientId="this-client"
+        activeView="operator"
+        controllerLeaseActive
+        timing={timing}
+        steps={steps}
+        liveSteps={liveSteps}
+        activeIndex={1}
+        nextLabel="Oración"
+        blackout={false}
+        chordsVisible
+        pending={false}
+        remoteAvailable
+        remoteSupportedIntents={["preview_previous", "take", "program_next", "set_blackout"]}
+        onCommand={onCommand}
+        onRemoteIntent={remoteMock as unknown as PresentationRemoteIntentSender}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Vista previa anterior" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Pasar a Programa" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Vista previa siguiente" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Programa anterior" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Programa siguiente" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Poner salida de presentación en negro" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Ocultar acordes" })).toBeDisabled();
+  });
+
   it("uses remote intents when ownedByViewer belongs to the same user on another exact client", () => {
     const sameViewerOtherClient = snapshot(true);
     sameViewerOtherClient.session!.controller = {
@@ -218,6 +256,7 @@ describe("Tchurch Live controls", () => {
         chordsVisible
         pending={false}
         remoteAvailable
+        remoteSupportedIntents={PRESENTATION_REMOTE_INTENT_TYPES}
         remotePending={false}
         onCommand={onCommand}
         onRemoteIntent={remoteMock as unknown as PresentationRemoteIntentSender}

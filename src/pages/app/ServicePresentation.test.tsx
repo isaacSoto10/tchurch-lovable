@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PresentationLiveSnapshot, PresentationNetworkState, PresentationTiming } from "@/lib/presentationLive";
+import type { PresentationRemoteIntentType } from "@/lib/presentationRemoteIntents";
 import type { PresentationService } from "@/lib/servicePresentation";
 import type { PresentationWorkspace } from "@/lib/presentationWorkspace";
 
@@ -22,6 +23,15 @@ const mocks = vi.hoisted(() => ({
   reconcileObsAuthority: vi.fn(),
   liveSend: vi.fn(),
   remoteSend: vi.fn(),
+  remoteSupportedIntents: [
+    "preview_previous",
+    "take",
+    "preview_next",
+    "program_previous",
+    "program_next",
+    "set_blackout",
+    "set_chords",
+  ] as PresentationRemoteIntentType[],
   rehearsalSend: vi.fn(),
   livePrepareRelease: vi.fn(),
   rehearsalPrepareRelease: vi.fn(),
@@ -132,6 +142,7 @@ vi.mock("@/hooks/usePresentationRemoteIntents", () => ({
     );
     return {
       available,
+      supportedIntents: mocks.remoteSupportedIntents,
       pending: false,
       status: { phase: "idle", intentId: null, type: null, message: null },
       send: mocks.remoteSend,
@@ -414,6 +425,15 @@ describe("ServicePresentation load authority", () => {
     mocks.reconcileObsAuthority.mockReset();
     mocks.liveSend.mockReset();
     mocks.remoteSend.mockReset();
+    mocks.remoteSupportedIntents = [
+      "preview_previous",
+      "take",
+      "preview_next",
+      "program_previous",
+      "program_next",
+      "set_blackout",
+      "set_chords",
+    ];
     mocks.rehearsalSend.mockReset();
     mocks.livePrepareRelease.mockReset();
     mocks.rehearsalPrepareRelease.mockReset();
@@ -974,6 +994,35 @@ describe("ServicePresentation load authority", () => {
     expect(mocks.liveSend).not.toHaveBeenCalledWith("jump", expect.anything(), expect.anything());
   });
 
+  it("gates observed-controller actions independently by negotiated remote capabilities", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 1366 });
+    mocks.remoteSupportedIntents = ["program_next"];
+    mocks.liveSnapshot = observedLiveSnapshot();
+    mocks.liveTiming = mocks.liveSnapshot.session!.timing;
+    mocks.liveControllerLeaseActive = true;
+    mocks.apiFetch.mockImplementation((path: string) => path === "/users/me"
+      ? Promise.resolve({ id: mocks.accountId })
+      : Promise.resolve(stageService()));
+
+    render(<ServicePresentation />);
+    await screen.findByText("Stage fixture");
+
+    const blackout = screen.getByRole("button", { name: "Poner salida de presentación en negro" });
+    expect(blackout).toBeDisabled();
+    fireEvent.click(blackout);
+    expect(mocks.remoteSend).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Escenario" }));
+    const next = screen.getByRole("button", { name: "Enviar siguiente al Programa" });
+    expect(next).toBeEnabled();
+    fireEvent.click(next);
+
+    await waitFor(() => expect(mocks.remoteSend).toHaveBeenCalledOnce());
+    expect(mocks.remoteSend).toHaveBeenCalledWith("program_next", {});
+    expect(mocks.remoteSend).not.toHaveBeenCalledWith("set_blackout", expect.anything());
+  });
+
   it("does not trust account-level ownedByViewer when the controller belongs to another client", async () => {
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
     Object.defineProperty(window, "innerHeight", { configurable: true, value: 1366 });
@@ -1007,6 +1056,7 @@ describe("ServicePresentation load authority", () => {
     await waitFor(() => expect(mocks.remoteSurfaceProps.length).toBeGreaterThan(0));
     expect(mocks.remoteSurfaceProps.at(-1)).toMatchObject({
       remoteAvailable: true,
+      remoteSupportedIntents: expect.arrayContaining(["preview_previous", "take", "preview_next", "program_next"]),
       remotePending: false,
       remoteStatus: { phase: "idle" },
       onRemoteIntent: mocks.remoteSend,
