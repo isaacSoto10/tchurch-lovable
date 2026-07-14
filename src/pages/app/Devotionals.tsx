@@ -19,6 +19,7 @@ import {
 } from "@/lib/devotionalsPagination";
 import { readSessionSnapshot, sessionSnapshotKey, writeSessionSnapshot } from "@/lib/sessionSnapshots";
 import { getYoutubeEmbedUrl } from "@/lib/youtube";
+import { YoutubePlayer } from "@/components/YoutubePlayer";
 
 type DevotionalStatus = "draft" | "published";
 
@@ -348,12 +349,10 @@ export default function Devotionals() {
         {embedUrl && (
           <div className="bg-zinc-950 p-2">
             <div className="aspect-video overflow-hidden rounded-xl bg-black">
-              <iframe
-                src={embedUrl}
+              <YoutubePlayer
+                sourceUrl={devotional.videoUrl || embedUrl}
+                embedUrl={embedUrl}
                 title={devotional.videoTitle || devotional.title}
-                className="h-full w-full"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                allowFullScreen
               />
             </div>
           </div>

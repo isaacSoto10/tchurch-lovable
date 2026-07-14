@@ -51,3 +51,13 @@ export function getYoutubeEmbedUrl(url: string | null | undefined): string | nul
 
   return `https://www.youtube.com/embed/${videoId}?${params.toString()}`;
 }
+
+export function getYoutubeWatchUrl(url: string | null | undefined): string | null {
+  const videoId = getYoutubeVideoId(url);
+  return videoId ? `https://www.youtube.com/watch?v=${videoId}` : null;
+}
+
+export function getYoutubeThumbnailUrl(url: string | null | undefined): string | null {
+  const videoId = getYoutubeVideoId(url);
+  return videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : null;
+}
