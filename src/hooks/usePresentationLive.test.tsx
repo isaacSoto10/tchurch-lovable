@@ -209,6 +209,57 @@ describe("usePresentationLive authority generation", () => {
     expect(commandResult).toMatchObject({ local: false, idempotent: true, snapshot: applied });
   });
 
+  it("clears command pending after a remote attempt abort and ignores a late transport completion", async () => {
+    const initial = snapshot("service-1", "viewer-v1", 1);
+    const late = snapshot("service-1", "viewer-v2", 2);
+    liveMocks.fetchSnapshot.mockResolvedValue(initial);
+    liveMocks.fetchPackage.mockResolvedValue(presentationPackage("service-1", "account-1", "church-1"));
+    let resolveLate: (value: PresentationLiveSnapshot) => void = () => undefined;
+    liveMocks.sendCommand.mockImplementation((_serviceId, _request, _view, transport) => new Promise<PresentationLiveSnapshot>((resolve, reject) => {
+      resolveLate = resolve;
+      const signal = transport?.signal as AbortSignal;
+      const rejectAborted = () => reject(new ApiError("Aborted", 0, { error: "ABORTED" }));
+      if (signal.aborted) rejectAborted();
+      else signal.addEventListener("abort", rejectAborted, { once: true });
+    }));
+    mockPackageSave();
+    const view = renderHook(() => usePresentationLive({
+      serviceId: "service-1",
+      accountId: "account-1",
+      churchId: "church-1",
+      preferredView: "operator",
+      offlineContext: { steps: [], plannedTiming: { serviceSeconds: 0, itemSecondsById: {} } },
+    }));
+    await waitFor(() => expect(view.result.current.loading).toBe(false));
+    const controller = new AbortController();
+    let command: ReturnType<typeof view.result.current.sendCommand> | null = null;
+
+    act(() => {
+      command = view.result.current.sendCommand("next", {}, {
+        commandId: "55555555-5555-4555-8555-555555555555",
+        expectedRevision: 1,
+        allowOffline: false,
+        signal: controller.signal,
+        timeoutMs: 2_500,
+      });
+    });
+    await waitFor(() => expect(view.result.current.commandPending).toBe(true));
+
+    controller.abort();
+    await act(async () => {
+      await expect(command!).rejects.toMatchObject({ status: 0 });
+    });
+    expect(view.result.current.commandPending).toBe(false);
+    expect(view.result.current.snapshot?.session?.revision).toBe(1);
+
+    await act(async () => {
+      resolveLate(late);
+      await Promise.resolve();
+    });
+    expect(view.result.current.commandPending).toBe(false);
+    expect(view.result.current.snapshot?.session?.revision).toBe(1);
+  });
+
   it("preserves an exact-client live queue while inactive and reconciles it only after Live reactivates", async () => {
     const localClientId = "11111111-1111-4111-8111-111111111111";
     localStorage.setItem("tchurch_live_installation_client_id", localClientId);

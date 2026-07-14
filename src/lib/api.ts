@@ -127,96 +127,100 @@ export async function apiFetch<T = unknown>(
   const url = `${API_BASE}${path}`;
   const startedAt = actionNow();
   const transport = apiRequestSignal(requestOptions.signal, timeoutMs);
-  let res: Response;
   try {
-    res = await fetch(url, {
-      ...requestOptions,
-      cache: requestOptions.cache ?? (shouldNoStore ? "no-store" : undefined),
-      headers,
-      signal: transport.signal,
-    });
-  } catch (error) {
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        ...requestOptions,
+        cache: requestOptions.cache ?? (shouldNoStore ? "no-store" : undefined),
+        headers,
+        signal: transport.signal,
+      });
+    } catch (error) {
+      logApiRequestSummary({
+        path,
+        method,
+        status: 0,
+        ok: false,
+        durationMs: actionNow() - startedAt,
+        body: sensitiveBody ? undefined : requestOptions.body,
+        source: "apiFetch",
+      });
+      if (nativeCache?.stale) {
+        console.warn("[apiFetch] Using stale native cache after network failure", { path });
+        return nativeCache.value;
+      }
+      console.error("API request failed before receiving a response", { path, url, error });
+      throw new ApiError(
+        "No se pudo conectar con Tchurch. Revisa tu conexión e intenta otra vez.",
+        0,
+        { error: error instanceof Error ? error.message : String(error), path }
+      );
+    }
+
     logApiRequestSummary({
       path,
       method,
-      status: 0,
-      ok: false,
+      status: res.status,
+      ok: res.ok,
       durationMs: actionNow() - startedAt,
       body: sensitiveBody ? undefined : requestOptions.body,
       source: "apiFetch",
     });
-    if (nativeCache?.stale) {
-      console.warn("[apiFetch] Using stale native cache after network failure", { path });
-      return nativeCache.value;
+
+    if (!res.ok) {
+      const text = await res.text();
+      let parsed: unknown = text;
+
+      try {
+        parsed = text ? JSON.parse(text) : null;
+      } catch {
+        parsed = text;
+      }
+
+      const rawMessage =
+        parsed && typeof parsed === "object"
+          ? String(
+              (parsed as { error?: unknown; message?: unknown }).error ||
+                (parsed as { message?: unknown }).message ||
+                `API error ${res.status}`
+            )
+          : String(parsed || `API error ${res.status}`);
+      const message = rawMessage.trim().startsWith("<")
+        ? `No se pudo completar la solicitud (${res.status}). Intenta de nuevo en un momento.`
+        : rawMessage;
+
+      if (nativeCache?.stale && res.status >= 500) {
+        console.warn("[apiFetch] Using stale native cache after server error", { path, status: res.status });
+        return nativeCache.value;
+      }
+
+      throw new ApiError(message, res.status, parsed);
     }
-    console.error("API request failed before receiving a response", { path, url, error });
-    throw new ApiError(
-      "No se pudo conectar con Tchurch. Revisa tu conexión e intenta otra vez.",
-      0,
-      { error: error instanceof Error ? error.message : String(error), path }
-    );
-  } finally {
-    transport.cleanup();
-  }
 
-  logApiRequestSummary({
-    path,
-    method,
-    status: res.status,
-    ok: res.ok,
-    durationMs: actionNow() - startedAt,
-    body: sensitiveBody ? undefined : requestOptions.body,
-    source: "apiFetch",
-  });
+    if (method !== "GET") {
+      if (isNativeMobileAuth) clearNativeApiCache();
+      clearMediaSnapshots(churchId);
+    }
 
-  if (!res.ok) {
+    if (res.status === 204) return undefined as T;
+
     const text = await res.text();
-    let parsed: unknown = text;
+    if (!text) return undefined as T;
 
     try {
-      parsed = text ? JSON.parse(text) : null;
+      const data = JSON.parse(text) as T;
+      if (shouldUseNativeCache) writeNativeApiCache(path, data);
+      return data;
     } catch {
-      parsed = text;
+      const data = text as T;
+      if (shouldUseNativeCache) writeNativeApiCache(path, data);
+      return data;
     }
-
-    const rawMessage =
-      parsed && typeof parsed === "object"
-        ? String(
-            (parsed as { error?: unknown; message?: unknown }).error ||
-              (parsed as { message?: unknown }).message ||
-              `API error ${res.status}`
-          )
-        : String(parsed || `API error ${res.status}`);
-    const message = rawMessage.trim().startsWith("<")
-      ? `No se pudo completar la solicitud (${res.status}). Intenta de nuevo en un momento.`
-      : rawMessage;
-
-    if (nativeCache?.stale && res.status >= 500) {
-      console.warn("[apiFetch] Using stale native cache after server error", { path, status: res.status });
-      return nativeCache.value;
-    }
-
-    throw new ApiError(message, res.status, parsed);
-  }
-
-  if (method !== "GET") {
-    if (isNativeMobileAuth) clearNativeApiCache();
-    clearMediaSnapshots(churchId);
-  }
-
-  if (res.status === 204) return undefined as T;
-
-  const text = await res.text();
-  if (!text) return undefined as T;
-
-  try {
-    const data = JSON.parse(text) as T;
-    if (shouldUseNativeCache) writeNativeApiCache(path, data);
-    return data;
-  } catch {
-    const data = text as T;
-    if (shouldUseNativeCache) writeNativeApiCache(path, data);
-    return data;
+  } finally {
+    // A fetch resolves when headers arrive, not when its body is consumed. Keep
+    // timeout and parent-abort propagation alive until every body path settles.
+    transport.cleanup();
   }
 }
 
