@@ -1,6 +1,8 @@
 import { Capacitor, registerPlugin, type PluginListenerHandle } from "@capacitor/core";
 import {
   MAX_PRESENTATION_HARDWARE_BINDINGS,
+  isCanonicalPresentationGamepadDeviceId,
+  isCanonicalPresentationMidiDeviceId,
   presentationHardwareBindingFingerprint,
   type PresentationGamepadBinding,
   type PresentationHardwareSettings,
@@ -52,6 +54,15 @@ interface PresentationHardwareNativePlugin {
 
 const PresentationHardwareNative = registerPlugin<PresentationHardwareNativePlugin>("PresentationHardware");
 
+const PRESENTATION_NATIVE_HARDWARE_FAILURE_MESSAGE = "Las entradas nativas no están disponibles. Mantén Tchurch en primer plano, vuelve a conectar el dispositivo y reactiva las entradas.";
+const SAFE_PRESENTATION_NATIVE_HARDWARE_MESSAGES = new Set([
+  "En espera: Tchurch está en segundo plano.",
+  "En espera: Tchurch debe estar visible y en primer plano.",
+  "No se pudo iniciar Gamepad. Vuelve a conectar el control y reactiva las entradas.",
+  "No se pudo iniciar MIDI. Vuelve a conectar la interfaz y reactiva las entradas.",
+  "No se pudieron iniciar Gamepad y MIDI. Vuelve a conectar los dispositivos y reactiva las entradas.",
+]);
+
 export const DEFAULT_PRESENTATION_NATIVE_HARDWARE_STATUS: PresentationNativeHardwareStatus = {
   supported: false,
   active: false,
@@ -65,8 +76,44 @@ export function isPresentationNativeHardwareSupported() {
   return Capacitor.isNativePlatform() && Capacitor.getPlatform() === "ios";
 }
 
+export function presentationNativeHardwareStatusMessage(value: unknown) {
+  if (value === null || value === undefined || value === "") return null;
+  return typeof value === "string" && SAFE_PRESENTATION_NATIVE_HARDWARE_MESSAGES.has(value)
+    ? value
+    : PRESENTATION_NATIVE_HARDWARE_FAILURE_MESSAGE;
+}
+
+function nativeDeviceList(source: "gamepad" | "midi", value: unknown): PresentationNativeHardwareDevice[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((candidate) => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return [];
+    const record = candidate as Record<string, unknown>;
+    const idIsCanonical = source === "gamepad"
+      ? isCanonicalPresentationGamepadDeviceId(record.id)
+      : isCanonicalPresentationMidiDeviceId(record.id);
+    if (!idIsCanonical) return [];
+    const name = typeof record.name === "string" ? record.name.trim().slice(0, 120) : "";
+    return [{ id: record.id as string, name: name || (source === "gamepad" ? "Control" : "Fuente MIDI") }];
+  });
+}
+
 function statusWithSupport(payload: NativeStatusPayload): PresentationNativeHardwareStatus {
-  return { supported: true, ...payload };
+  return {
+    supported: true,
+    active: payload?.active === true,
+    gamepads: nativeDeviceList("gamepad", payload?.gamepads),
+    midiSources: nativeDeviceList("midi", payload?.midiSources),
+    learningSource: payload?.learningSource === "gamepad" || payload?.learningSource === "midi" ? payload.learningSource : null,
+    message: presentationNativeHardwareStatusMessage(payload?.message),
+  };
+}
+
+function hasCanonicalEventDeviceId(event: unknown): event is PresentationNativeHardwareInput | PresentationNativeHardwareLearnedInput {
+  if (!event || typeof event !== "object" || Array.isArray(event)) return false;
+  const record = event as Record<string, unknown>;
+  if (record.source === "gamepad") return isCanonicalPresentationGamepadDeviceId(record.deviceId);
+  if (record.source === "midi") return isCanonicalPresentationMidiDeviceId(record.deviceId);
+  return false;
 }
 
 export function presentationNativeHardwareStartOptions(settings: PresentationHardwareSettings): PresentationNativeHardwareStartOptions {
@@ -75,11 +122,19 @@ export function presentationNativeHardwareStartOptions(settings: PresentationHar
     gamepadEnabled: enabled && settings.sources.gamepad,
     midiEnabled: enabled && settings.sources.midi,
     gamepadBindings: settings.bindings
-      .filter((binding): binding is PresentationGamepadBinding => binding.source === "gamepad" && binding.enabled)
+      .filter((binding): binding is PresentationGamepadBinding => (
+        binding.source === "gamepad"
+        && binding.enabled
+        && (binding.deviceId === null || isCanonicalPresentationGamepadDeviceId(binding.deviceId))
+      ))
       .slice(0, MAX_PRESENTATION_HARDWARE_BINDINGS)
       .map(({ deviceId, control }) => ({ deviceId, control })),
     midiBindings: settings.bindings
-      .filter((binding): binding is PresentationMidiBinding => binding.source === "midi" && binding.enabled)
+      .filter((binding): binding is PresentationMidiBinding => (
+        binding.source === "midi"
+        && binding.enabled
+        && (binding.deviceId === null || isCanonicalPresentationMidiDeviceId(binding.deviceId))
+      ))
       .slice(0, MAX_PRESENTATION_HARDWARE_BINDINGS)
       .map(({ deviceId, message, channel, number, activation, threshold, releaseThreshold }) => ({
         ruleKey: presentationHardwareBindingFingerprint({ source: "midi", deviceId, message, channel, number }),
@@ -139,8 +194,12 @@ export function connectPresentationNativeHardware(
     if (disconnected) return;
     activeOwner = owner;
     const handles = await Promise.all([
-      PresentationHardwareNative.addListener("hardwareInput", callbacks.onInput),
-      PresentationHardwareNative.addListener("hardwareLearned", callbacks.onLearned),
+      PresentationHardwareNative.addListener("hardwareInput", (event) => {
+        if (hasCanonicalEventDeviceId(event)) callbacks.onInput(event);
+      }),
+      PresentationHardwareNative.addListener("hardwareLearned", (event) => {
+        if (hasCanonicalEventDeviceId(event)) callbacks.onLearned(event);
+      }),
       PresentationHardwareNative.addListener("hardwareLearningEnded", callbacks.onLearningEnded),
       PresentationHardwareNative.addListener("hardwareStatus", (status) => callbacks.onStatus(statusWithSupport(status))),
     ]);
@@ -159,7 +218,7 @@ export function connectPresentationNativeHardware(
         gamepads: [],
         midiSources: [],
         learningSource: null,
-        message: "No se pudo iniciar el bridge nativo de entradas.",
+        message: PRESENTATION_NATIVE_HARDWARE_FAILURE_MESSAGE,
       });
     }
   });

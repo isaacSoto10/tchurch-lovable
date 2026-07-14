@@ -24,7 +24,10 @@ import {
   type PresentationHardwareSettings,
   type PresentationNativeHardwareLearnedInput,
 } from "@/lib/presentationPedal";
-import type { PresentationNativeHardwareStatus } from "@/lib/presentationNativeHardware";
+import {
+  presentationNativeHardwareStatusMessage,
+  type PresentationNativeHardwareStatus,
+} from "@/lib/presentationNativeHardware";
 import type { PresentationChatChannel, PresentationRunMode } from "@/lib/presentationProduction";
 import type { PresentationTargetRole } from "@/lib/presentationWorkspace";
 import type { PresentationAutomationRuntimeState } from "@/hooks/usePresentationAutomations";
@@ -211,11 +214,23 @@ function PresentationHardwarePanel({ settings, controllerOwned, mode, appActive,
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
   const keyboardEnabled = settings.enabled && settings.sources.keyboard;
-  const gamepadEnabled = settings.enabled && settings.sources.gamepad && nativeStatus.supported;
-  const midiEnabled = settings.enabled && settings.sources.midi && nativeStatus.supported;
+  const nativeMessage = presentationNativeHardwareStatusMessage(nativeStatus.message);
+  const nativeSourceRequested = settings.enabled && (settings.sources.gamepad || settings.sources.midi);
+  const nativeReady = !nativeSourceRequested || (nativeStatus.supported && nativeStatus.active && !nativeMessage);
+  const gamepadEnabled = settings.enabled && settings.sources.gamepad && nativeReady;
+  const midiEnabled = settings.enabled && settings.sources.midi && nativeReady;
   const networkDiverged = networkState === "diverged";
-  const anySourceEnabled = keyboardEnabled || gamepadEnabled || midiEnabled;
-  const ready = anySourceEnabled && controllerOwned && appActive && !commandPending && !networkDiverged;
+  const anySourceConfigured = keyboardEnabled || nativeSourceRequested;
+  const ready = anySourceConfigured && nativeReady && controllerOwned && appActive && !commandPending && !networkDiverged;
+
+  function nativeSourceSummary(source: "gamepad" | "midi") {
+    const configured = settings.sources[source];
+    if (!configured) return "Desactivado";
+    if (!nativeStatus.supported) return "Solo en iPhone o iPad";
+    if (!nativeStatus.active || nativeMessage) return "Configurado · entrada no disponible";
+    const devices = source === "gamepad" ? nativeStatus.gamepads : nativeStatus.midiSources;
+    return devices.map((device) => device.name).join(" · ") || (source === "gamepad" ? "Activo · sin controles conectados" : "Activo · sin fuentes conectadas");
+  }
 
   function cancelCapture(message?: string) {
     captureGenerationRef.current += 1;
@@ -298,10 +313,12 @@ function PresentationHardwarePanel({ settings, controllerOwned, mode, appActive,
     setCapturing(null);
   }
 
-  let readiness = "Listo para aprender entradas. Al cerrar este panel, el teclado controlará la sesión.";
+  let readiness = "Listo para aprender entradas físicas y controlar la sesión.";
   if (!settings.enabled) readiness = "Las entradas físicas están desactivadas en este dispositivo.";
-  else if (!anySourceEnabled) readiness = "Activa al menos una fuente de entrada.";
+  else if (!anySourceConfigured) readiness = "Activa al menos una fuente de entrada.";
   else if (!appActive) readiness = "En espera: Tchurch debe estar visible y en primer plano.";
+  else if (nativeSourceRequested && !nativeStatus.supported) readiness = "Gamepad y MIDI solo están disponibles en la app de iPhone o iPad.";
+  else if (nativeSourceRequested && !nativeReady) readiness = nativeMessage || "Iniciando las entradas nativas. Si no se activan, vuelve a conectar el dispositivo.";
   else if (!controllerOwned) readiness = `Solo lectura: toma el control de ${mode === "live" ? "la sesión en vivo" : "este ensayo"}.`;
   else if (commandPending) readiness = "En espera: Tchurch está confirmando el comando anterior.";
   else if (networkDiverged) readiness = "En espera: revisa la cola divergente antes de usar entradas físicas.";
@@ -313,8 +330,8 @@ function PresentationHardwarePanel({ settings, controllerOwned, mode, appActive,
       {notice ? <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.05] px-3 py-2 text-xs text-slate-200" role="status">{notice}</div> : null}
       <div className="mt-5 grid gap-3 md:grid-cols-3">
         <div className="rounded-2xl border border-violet-300/15 bg-violet-300/[0.06] p-4"><div className="flex min-h-11 items-center gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-300/10 text-violet-200"><Keyboard className="h-5 w-5" /></div><div className="min-w-0 flex-1"><p className="text-sm font-black text-white">Teclado HID</p><p className="text-[10px] text-slate-400">Disponible ahora</p></div><Switch aria-label="Habilitar teclado HID" checked={settings.sources.keyboard} disabled={!settings.enabled} onCheckedChange={(enabled) => onChange(setPresentationHardwareSourceEnabled(settings, "keyboard", enabled))} /></div></div>
-        <div className="rounded-2xl border border-violet-300/15 bg-violet-300/[0.045] p-4"><div className="flex min-h-11 items-center gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-300/10 text-violet-200"><Gamepad2 className="h-5 w-5" /></div><div className="min-w-0 flex-1"><p className="text-sm font-black text-white">Gamepad</p><p className="truncate text-[10px] text-slate-400">{nativeStatus.supported ? nativeStatus.gamepads.map((device) => device.name).join(" · ") || "Sin controles conectados" : "Solo en iPhone o iPad"}</p></div><Switch aria-label="Habilitar Gamepad" checked={settings.sources.gamepad} disabled={!settings.enabled || !nativeStatus.supported} onCheckedChange={(enabled) => onChange(setPresentationHardwareSourceEnabled(settings, "gamepad", enabled))} /></div></div>
-        <div className="rounded-2xl border border-violet-300/15 bg-violet-300/[0.045] p-4"><div className="flex min-h-11 items-center gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-300/10 text-violet-200"><Music2 className="h-5 w-5" /></div><div className="min-w-0 flex-1"><p className="text-sm font-black text-white">MIDI</p><p className="truncate text-[10px] text-slate-400">{nativeStatus.supported ? nativeStatus.midiSources.map((device) => device.name).join(" · ") || "Sin fuentes conectadas" : "Solo en iPhone o iPad"}</p></div><Switch aria-label="Habilitar MIDI" checked={settings.sources.midi} disabled={!settings.enabled || !nativeStatus.supported} onCheckedChange={(enabled) => onChange(setPresentationHardwareSourceEnabled(settings, "midi", enabled))} /></div></div>
+        <div className="rounded-2xl border border-violet-300/15 bg-violet-300/[0.045] p-4"><div className="flex min-h-11 items-center gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-300/10 text-violet-200"><Gamepad2 className="h-5 w-5" /></div><div className="min-w-0 flex-1"><p className="text-sm font-black text-white">Gamepad</p><p className="truncate text-[10px] text-slate-400">{nativeSourceSummary("gamepad")}</p></div><Switch aria-label="Habilitar Gamepad" checked={settings.sources.gamepad} disabled={!settings.enabled || !nativeStatus.supported} onCheckedChange={(enabled) => onChange(setPresentationHardwareSourceEnabled(settings, "gamepad", enabled))} /></div></div>
+        <div className="rounded-2xl border border-violet-300/15 bg-violet-300/[0.045] p-4"><div className="flex min-h-11 items-center gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-300/10 text-violet-200"><Music2 className="h-5 w-5" /></div><div className="min-w-0 flex-1"><p className="text-sm font-black text-white">MIDI</p><p className="truncate text-[10px] text-slate-400">{nativeSourceSummary("midi")}</p></div><Switch aria-label="Habilitar MIDI" checked={settings.sources.midi} disabled={!settings.enabled || !nativeStatus.supported} onCheckedChange={(enabled) => onChange(setPresentationHardwareSourceEnabled(settings, "midi", enabled))} /></div></div>
       </div>
       <div className="mt-5 grid gap-3 sm:grid-cols-2">{(Object.keys(HARDWARE_ACTION_LABELS) as PresentationHardwareAction[]).map((action) => {
         const keyboardBindings = presentationKeyboardBindingsForAction(settings, action);

@@ -98,7 +98,7 @@ public final class PresentationHardwarePlugin: CAPInstancePlugin, CAPBridgedPlug
             self.gamepadEnabled = options.gamepadEnabled
             self.midiEnabled = options.midiEnabled
             self.gamepadRules = Array(options.gamepadBindings.prefix(32)).filter {
-                supportedGamepadControls.contains($0.control) && self.validDeviceId($0.deviceId)
+                supportedGamepadControls.contains($0.control) && self.validGamepadID($0.deviceId)
             }
             var seenMIDIRuleKeys = Set<String>()
             self.midiRules = Array(options.midiBindings.prefix(32)).filter {
@@ -196,9 +196,24 @@ public final class PresentationHardwarePlugin: CAPInstancePlugin, CAPBridgedPlug
             emitStatus()
             return
         }
+        // Setup callbacks require a provisional active state, but it is never
+        // published until every enabled source reports a successful start.
         monitoringActive = true
-        if gamepadEnabled { setupGamepads() }
-        if midiEnabled { setupMIDI() }
+        let gamepadStarted = !gamepadEnabled || setupGamepads()
+        let midiStarted = !midiEnabled || setupMIDI()
+        let activation = PresentationHardwareActivationPolicy.evaluate(
+            monitoringRequested: monitoringRequested,
+            gamepadEnabled: gamepadEnabled,
+            gamepadStarted: gamepadStarted,
+            midiEnabled: midiEnabled,
+            midiStarted: midiStarted
+        )
+        if !activation.active {
+            monitoringActive = false
+            deactivate(reason: "stopped", endLearning: true)
+        }
+        monitoringActive = activation.active
+        statusMessage = activation.message
         emitStatus()
     }
 
@@ -211,10 +226,10 @@ public final class PresentationHardwarePlugin: CAPInstancePlugin, CAPBridgedPlug
         monitoringActive = false
     }
 
-    private func setupGamepads() {
+    private func setupGamepads() -> Bool {
         guard gamepadObservers.isEmpty else {
             refreshGamepads()
-            return
+            return true
         }
         gamepadObservers.append(NotificationCenter.default.addObserver(
             forName: .GCControllerDidConnect,
@@ -233,6 +248,7 @@ public final class PresentationHardwarePlugin: CAPInstancePlugin, CAPBridgedPlug
         })
         GCController.startWirelessControllerDiscovery(completionHandler: nil)
         refreshGamepads()
+        return true
     }
 
     private func teardownGamepads() {
@@ -320,7 +336,7 @@ public final class PresentationHardwarePlugin: CAPInstancePlugin, CAPBridgedPlug
     }
 
     private func processGamepadLevel(deviceId: String, deviceName: String, routingKey: String, control: String, value: Float, analog: Bool, priming: Bool) {
-        guard supportedGamepadControls.contains(control) else { return }
+        guard PresentationHardwareIdentity.isCanonicalGamepadID(deviceId), supportedGamepadControls.contains(control) else { return }
         let key = "\(routingKey):\(control)"
         let pressThreshold: Float = analog ? 0.68 : 0.55
         let releaseThreshold: Float = analog ? 0.42 : 0.35
@@ -364,18 +380,17 @@ public final class PresentationHardwarePlugin: CAPInstancePlugin, CAPBridgedPlug
         return vendor?.isEmpty == false ? vendor! : controller.productCategory
     }
 
-    private func setupMIDI() {
+    private func setupMIDI() -> Bool {
         guard midiClient == 0, midiPort == 0 else {
             rebuildMIDISources()
-            return
+            return true
         }
         var client = MIDIClientRef()
         let clientStatus = MIDIClientCreateWithBlock("Tchurch Presentation MIDI" as CFString, &client) { [weak self] _ in
             DispatchQueue.main.async { self?.rebuildMIDISources() }
         }
         guard clientStatus == noErr else {
-            statusMessage = "No se pudo abrir CoreMIDI (\(clientStatus))."
-            return
+            return false
         }
         midiClient = client
         var port = MIDIPortRef()
@@ -391,13 +406,13 @@ public final class PresentationHardwarePlugin: CAPInstancePlugin, CAPBridgedPlug
             }
         }
         guard portStatus == noErr else {
-            statusMessage = "No se pudo abrir la entrada MIDI (\(portStatus))."
             MIDIClientDispose(client)
             midiClient = 0
-            return
+            return false
         }
         midiPort = port
         rebuildMIDISources()
+        return true
     }
 
     private func teardownMIDI() {
@@ -451,7 +466,7 @@ public final class PresentationHardwarePlugin: CAPInstancePlugin, CAPBridgedPlug
     }
 
     private func processMIDIMessage(_ message: PresentationMIDIChannelMessage, deviceId: String, deviceName: String, routingKey: String) {
-        guard (0...15).contains(message.channel), (0...127).contains(message.number), (0...127).contains(message.value) else { return }
+        guard PresentationHardwareIdentity.isCanonicalMIDIID(deviceId), (0...15).contains(message.channel), (0...127).contains(message.number), (0...127).contains(message.value) else { return }
         let selectedRuleKey = midiRuleEngine.process(
             message: message,
             deviceId: deviceId,
@@ -544,13 +559,18 @@ public final class PresentationHardwarePlugin: CAPInstancePlugin, CAPBridgedPlug
         midiContextPointers.removeAll()
     }
 
-    private func validDeviceId(_ value: String?) -> Bool {
+    private func validGamepadID(_ value: String?) -> Bool {
         guard let value else { return true }
-        return !value.isEmpty && value.count <= 160 && value.range(of: "^[A-Za-z0-9._:-]+$", options: .regularExpression) != nil
+        return PresentationHardwareIdentity.isCanonicalGamepadID(value)
+    }
+
+    private func validMIDIID(_ value: String?) -> Bool {
+        guard let value else { return true }
+        return PresentationHardwareIdentity.isCanonicalMIDIID(value)
     }
 
     private func validMIDIRule(_ rule: PresentationMIDIRule) -> Bool {
-        guard rule.ruleKey == rule.canonicalRuleKey, rule.ruleKey.count <= 240, validDeviceId(rule.deviceId), ["note_on", "control_change"].contains(rule.message), (0...127).contains(rule.number), (0...127).contains(rule.threshold), (0...127).contains(rule.releaseThreshold) else { return false }
+        guard rule.ruleKey == rule.canonicalRuleKey, rule.ruleKey.count <= 240, validMIDIID(rule.deviceId), ["note_on", "control_change"].contains(rule.message), (0...127).contains(rule.number), (0...127).contains(rule.threshold), (0...127).contains(rule.releaseThreshold) else { return false }
         if let channel = rule.channel, !(0...15).contains(channel) { return false }
         if rule.activation == "positive" { return rule.releaseThreshold < rule.threshold }
         if rule.activation == "zero" { return rule.releaseThreshold > rule.threshold }
@@ -572,10 +592,13 @@ public final class PresentationHardwarePlugin: CAPInstancePlugin, CAPBridgedPlug
     }
 
     private func statusPayload() -> JSObject {
-        let gamepads: [JSObject] = gamepadEnabled ? GCController.controllers().map { controller in
-            ["id": gamepadId(for: controller), "name": gamepadName(controller)]
+        let gamepads: [JSObject] = gamepadEnabled ? GCController.controllers().compactMap { controller in
+            let id = gamepadId(for: controller)
+            guard PresentationHardwareIdentity.isCanonicalGamepadID(id) else { return nil }
+            return ["id": id, "name": gamepadName(controller)]
         } : []
         let midiSources: [JSObject] = midiEnabled ? midiContexts.values
+            .filter { PresentationHardwareIdentity.isCanonicalMIDIID($0.deviceId) }
             .sorted { $0.deviceName.localizedCaseInsensitiveCompare($1.deviceName) == .orderedAscending }
             .map { ["id": $0.deviceId, "name": $0.deviceName] } : []
         return [

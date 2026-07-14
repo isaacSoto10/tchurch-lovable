@@ -105,10 +105,66 @@ enum PresentationHardwareIdentity {
         return "midi-\(digest("descriptor|\(normalized(descriptor) ?? "unknown")"))"
     }
 
+    static func isCanonicalGamepadID(_ value: String) -> Bool {
+        value.range(of: "^gamepad-[0-9a-f]{64}$", options: .regularExpression) != nil
+    }
+
+    static func isCanonicalMIDIID(_ value: String) -> Bool {
+        if value.range(of: "^midi-[0-9a-f]{64}$", options: .regularExpression) != nil {
+            return true
+        }
+        guard value.range(of: "^midi-(0|[1-9][0-9]{0,9})$", options: .regularExpression) != nil else {
+            return false
+        }
+        let suffix = String(value.dropFirst("midi-".count))
+        guard let numericID = UInt32(suffix) else { return false }
+        return String(numericID) == suffix
+    }
+
     private static func normalized(_ value: String?) -> String? {
         guard let value else { return nil }
         let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return normalized.isEmpty ? nil : normalized
+    }
+}
+
+struct PresentationHardwareActivationStatus: Equatable {
+    let active: Bool
+    let message: String?
+}
+
+enum PresentationHardwareActivationPolicy {
+    static func evaluate(
+        monitoringRequested: Bool,
+        gamepadEnabled: Bool,
+        gamepadStarted: Bool,
+        midiEnabled: Bool,
+        midiStarted: Bool
+    ) -> PresentationHardwareActivationStatus {
+        guard monitoringRequested, gamepadEnabled || midiEnabled else {
+            return PresentationHardwareActivationStatus(active: false, message: nil)
+        }
+        let gamepadFailed = gamepadEnabled && !gamepadStarted
+        let midiFailed = midiEnabled && !midiStarted
+        if gamepadFailed && midiFailed {
+            return PresentationHardwareActivationStatus(
+                active: false,
+                message: "No se pudieron iniciar Gamepad y MIDI. Vuelve a conectar los dispositivos y reactiva las entradas."
+            )
+        }
+        if gamepadFailed {
+            return PresentationHardwareActivationStatus(
+                active: false,
+                message: "No se pudo iniciar Gamepad. Vuelve a conectar el control y reactiva las entradas."
+            )
+        }
+        if midiFailed {
+            return PresentationHardwareActivationStatus(
+                active: false,
+                message: "No se pudo iniciar MIDI. Vuelve a conectar la interfaz y reactiva las entradas."
+            )
+        }
+        return PresentationHardwareActivationStatus(active: true, message: nil)
     }
 }
 

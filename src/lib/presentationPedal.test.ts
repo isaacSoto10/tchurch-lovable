@@ -5,6 +5,8 @@ import {
   PRESENTATION_HARDWARE_SCHEMA_VERSION,
   calibratePresentationMidiInput,
   createPresentationInputDeduper,
+  isCanonicalPresentationGamepadDeviceId,
+  isCanonicalPresentationMidiDeviceId,
   isAllowedPresentationHardwareKeyCode,
   legacyPresentationPedalStorageKey,
   normalizePresentationHardwareSettings,
@@ -26,6 +28,10 @@ import {
   writePresentationHardwareSettings,
   type PresentationHardwareContext,
 } from "./presentationPedal";
+
+const GAMEPAD_A = `gamepad-${"a".repeat(64)}`;
+const GAMEPAD_B = `gamepad-${"b".repeat(64)}`;
+const MIDI_A = "midi-42";
 
 const readyContext: PresentationHardwareContext = {
   mode: "live",
@@ -226,16 +232,16 @@ describe("presentation hardware schema v5", () => {
 
   it("persists device-scoped gamepad and calibrated MIDI bindings inside schema v5", () => {
     const gamepad = updatePresentationGamepadBinding(DEFAULT_PRESENTATION_HARDWARE_SETTINGS, "next", {
-      deviceId: "gamepad-a",
+      deviceId: GAMEPAD_A,
       control: "dpad_right",
     });
     expect(presentationGamepadBindingsForAction(gamepad, "next")).toEqual([
-      expect.objectContaining({ source: "gamepad", deviceId: "gamepad-a", control: "dpad_right" }),
+      expect.objectContaining({ source: "gamepad", deviceId: GAMEPAD_A, control: "dpad_right" }),
     ]);
 
     const midiZero = updatePresentationMidiBinding(gamepad, "toggle_blackout", {
       source: "midi",
-      deviceId: "midi-a",
+      deviceId: MIDI_A,
       deviceName: "MIDI A",
       message: "control_change",
       channel: 0,
@@ -244,13 +250,59 @@ describe("presentation hardware schema v5", () => {
     });
     expect(midiZero.bindings).toContainEqual(expect.objectContaining({
       source: "midi",
-      deviceId: "midi-a",
+      deviceId: MIDI_A,
       activation: "zero",
       threshold: 0,
       releaseThreshold: 1,
     }));
     expect(calibratePresentationMidiInput({ message: "control_change", value: 1 })).toEqual({ activation: "positive", threshold: 1, releaseThreshold: 0 });
     expect(calibratePresentationMidiInput({ message: "note_on", value: 127 })).toEqual({ activation: "positive", threshold: 1, releaseThreshold: 0 });
+  });
+
+  it("accepts only source-canonical persisted device IDs with the same contract as Swift", () => {
+    const gamepadHash = `gamepad-${"0a".repeat(32)}`;
+    const midiHash = `midi-${"0f".repeat(32)}`;
+    for (const accepted of [gamepadHash, GAMEPAD_A]) {
+      expect(isCanonicalPresentationGamepadDeviceId(accepted)).toBe(true);
+    }
+    for (const rejected of [
+      "gamepad-a",
+      `gamepad-${"A".repeat(64)}`,
+      `gamepad-${"a".repeat(63)}`,
+      "gamepad-550e8400-e29b-41d4-a716-446655440000",
+      "runtime-1",
+      MIDI_A,
+    ]) {
+      expect(isCanonicalPresentationGamepadDeviceId(rejected)).toBe(false);
+    }
+    for (const accepted of ["midi-0", "midi-42", "midi-4294967295", midiHash]) {
+      expect(isCanonicalPresentationMidiDeviceId(accepted)).toBe(true);
+    }
+    for (const rejected of [
+      "midi-00",
+      "midi-042",
+      "midi-4294967296",
+      "midi--1",
+      `midi-${"F".repeat(64)}`,
+      "midi-550e8400-e29b-41d4-a716-446655440000",
+      "route-1",
+      GAMEPAD_A,
+    ]) {
+      expect(isCanonicalPresentationMidiDeviceId(rejected)).toBe(false);
+    }
+
+    const normalized = normalizePresentationHardwareSettings({
+      schemaVersion: 5,
+      enabled: true,
+      sources: { keyboard: false, gamepad: true, midi: true },
+      bindings: [
+        { id: "valid-gamepad", enabled: true, source: "gamepad", deviceId: GAMEPAD_A, control: "button_a", action: "next" },
+        { id: "runtime-gamepad", enabled: true, source: "gamepad", deviceId: "550e8400-e29b-41d4-a716-446655440000", control: "button_b", action: "previous" },
+        { id: "valid-midi", enabled: true, source: "midi", deviceId: MIDI_A, message: "note_on", channel: 0, number: 60, activation: "positive", threshold: 1, releaseThreshold: 0, action: "next" },
+        { id: "runtime-midi", enabled: true, source: "midi", deviceId: "route-1", message: "note_on", channel: 0, number: 61, activation: "positive", threshold: 1, releaseThreshold: 0, action: "previous" },
+      ],
+    });
+    expect(normalized.bindings.map((binding) => binding.id)).toEqual(["valid-gamepad", "valid-midi"]);
   });
 
   it("rejects navigation, destructive, system, and media keys from stored or learned bindings", () => {
@@ -366,16 +418,17 @@ describe("presentation hardware execution gates", () => {
 
   it("revalidates native device edges through every authority gate and 200 ms dedupe", () => {
     const settings = updatePresentationGamepadBinding(setPresentationHardwareSourceEnabled(DEFAULT_PRESENTATION_HARDWARE_SETTINGS, "gamepad", true), "next", {
-      deviceId: "gamepad-a",
+      deviceId: GAMEPAD_A,
       control: "button_a",
     });
-    const event = { source: "gamepad" as const, deviceId: "gamepad-a", deviceName: "Control", control: "button_a" as const };
+    const event = { source: "gamepad" as const, deviceId: GAMEPAD_A, deviceName: "Control", control: "button_a" as const };
     const deduper = createPresentationInputDeduper();
 
     expect(resolvePresentationNativeHardwareInput(event, settings, readyContext, deduper)).toBe("next");
     expect(resolvePresentationNativeHardwareInput(event, settings, readyContext, deduper)).toBeNull();
     deduper.reset();
-    expect(resolvePresentationNativeHardwareInput({ ...event, deviceId: "gamepad-b" }, settings, readyContext, deduper)).toBeNull();
+    expect(resolvePresentationNativeHardwareInput({ ...event, deviceId: GAMEPAD_B }, settings, readyContext, deduper)).toBeNull();
+    expect(resolvePresentationNativeHardwareInput({ ...event, deviceId: "runtime-route-1" }, settings, readyContext, deduper)).toBeNull();
     expect(resolvePresentationNativeHardwareInput(event, settings, { ...readyContext, commandPending: true }, deduper)).toBeNull();
     expect(resolvePresentationNativeHardwareInput(event, settings, { ...readyContext, captureActive: true }, deduper)).toBeNull();
     expect(resolvePresentationNativeHardwareInput(event, settings, { ...readyContext, modalOpen: true }, deduper)).toBeNull();
@@ -406,7 +459,7 @@ describe("presentation hardware execution gates", () => {
           id: "midi-specific",
           enabled: true,
           source: "midi",
-          deviceId: "midi-a",
+          deviceId: MIDI_A,
           message: "control_change",
           channel: 0,
           number: 7,
@@ -419,7 +472,7 @@ describe("presentation hardware execution gates", () => {
     });
     const baseEvent = {
       source: "midi" as const,
-      deviceId: "midi-a",
+      deviceId: MIDI_A,
       deviceName: "Pedal",
       message: "control_change" as const,
       channel: 0,
@@ -427,19 +480,20 @@ describe("presentation hardware execution gates", () => {
       value: 1,
     };
 
+    expect(resolvePresentationNativeHardwareInput({ ...baseEvent, deviceId: "route-1" }, settings, readyContext)).toBeNull();
     expect(resolvePresentationNativeHardwareInput({
       ...baseEvent,
       ruleKey: "midi:control_change:0:7",
     }, settings, readyContext)).toBe("next");
     expect(resolvePresentationNativeHardwareInput({
       ...baseEvent,
-      ruleKey: "midi:midi-a:control_change:0:7",
+      ruleKey: `midi:${MIDI_A}:control_change:0:7`,
     }, settings, readyContext)).toBeNull();
     expect(resolvePresentationNativeHardwareInput(baseEvent, settings, readyContext)).toBe("next");
     expect(resolvePresentationNativeHardwareInput({
       ...baseEvent,
       value: 100,
-      ruleKey: "midi:midi-a:control_change:0:7",
+      ruleKey: `midi:${MIDI_A}:control_change:0:7`,
     }, settings, readyContext)).toBe("toggle_blackout");
   });
 });

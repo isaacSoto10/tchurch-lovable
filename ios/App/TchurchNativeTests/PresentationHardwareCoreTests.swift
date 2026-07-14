@@ -3,6 +3,85 @@ import XCTest
 @testable import Tchurch
 
 final class PresentationHardwareCoreTests: XCTestCase {
+    func testCanonicalSourceIdentifiersMatchTheTypeScriptContract() {
+        let gamepadA = "gamepad-" + String(repeating: "a", count: 64)
+        let gamepadHexPairs = "gamepad-" + String(repeating: "0a", count: 32)
+        let midiHash = "midi-" + String(repeating: "0f", count: 32)
+
+        for accepted in [gamepadA, gamepadHexPairs] {
+            XCTAssertTrue(PresentationHardwareIdentity.isCanonicalGamepadID(accepted), accepted)
+        }
+        for rejected in [
+            "gamepad-a",
+            "gamepad-" + String(repeating: "A", count: 64),
+            "gamepad-" + String(repeating: "a", count: 63),
+            "gamepad-550e8400-e29b-41d4-a716-446655440000",
+            "runtime-1",
+            "midi-42",
+        ] {
+            XCTAssertFalse(PresentationHardwareIdentity.isCanonicalGamepadID(rejected), rejected)
+        }
+
+        for accepted in ["midi-0", "midi-42", "midi-4294967295", midiHash] {
+            XCTAssertTrue(PresentationHardwareIdentity.isCanonicalMIDIID(accepted), accepted)
+        }
+        for rejected in [
+            "midi-00",
+            "midi-042",
+            "midi-4294967296",
+            "midi--1",
+            "midi-" + String(repeating: "F", count: 64),
+            "midi-550e8400-e29b-41d4-a716-446655440000",
+            "route-1",
+            gamepadA,
+        ] {
+            XCTAssertFalse(PresentationHardwareIdentity.isCanonicalMIDIID(rejected), rejected)
+        }
+    }
+
+    func testActivationFailsClosedForEveryEnabledNativeSourceAndRecovers() {
+        let bridgeIdle = PresentationHardwareActivationPolicy.evaluate(
+            monitoringRequested: false,
+            gamepadEnabled: false,
+            gamepadStarted: false,
+            midiEnabled: false,
+            midiStarted: false
+        )
+        XCTAssertFalse(bridgeIdle.active)
+        XCTAssertNil(bridgeIdle.message)
+
+        let gamepadFailure = PresentationHardwareActivationPolicy.evaluate(
+            monitoringRequested: true,
+            gamepadEnabled: true,
+            gamepadStarted: false,
+            midiEnabled: false,
+            midiStarted: false
+        )
+        XCTAssertFalse(gamepadFailure.active)
+        XCTAssertEqual(gamepadFailure.message, "No se pudo iniciar Gamepad. Vuelve a conectar el control y reactiva las entradas.")
+
+        let midiFailure = PresentationHardwareActivationPolicy.evaluate(
+            monitoringRequested: true,
+            gamepadEnabled: true,
+            gamepadStarted: true,
+            midiEnabled: true,
+            midiStarted: false
+        )
+        XCTAssertFalse(midiFailure.active, "One failed enabled source must fail the whole native bridge closed")
+        XCTAssertEqual(midiFailure.message, "No se pudo iniciar MIDI. Vuelve a conectar la interfaz y reactiva las entradas.")
+        XCTAssertFalse(midiFailure.message?.contains("OSStatus") == true)
+        XCTAssertFalse(midiFailure.message?.contains("CoreMIDI") == true)
+
+        let recovered = PresentationHardwareActivationPolicy.evaluate(
+            monitoringRequested: true,
+            gamepadEnabled: true,
+            gamepadStarted: true,
+            midiEnabled: true,
+            midiStarted: true
+        )
+        XCTAssertEqual(recovered, PresentationHardwareActivationStatus(active: true, message: nil))
+    }
+
     func testGamepadAndMIDIIdentitiesIgnoreEnumerationOrderAndReconnect() {
         let descriptors = ["Acme|Extended|A,B", "Other|Micro|A,X"]
         let forward = descriptors.map {
@@ -62,8 +141,8 @@ final class PresentationHardwareCoreTests: XCTestCase {
             releaseThreshold: 0
         )
         let specific = PresentationMIDIRule(
-            ruleKey: "midi:midi-a:control_change:0:7",
-            deviceId: "midi-a",
+            ruleKey: "midi:midi-42:control_change:0:7",
+            deviceId: "midi-42",
             message: "control_change",
             channel: 0,
             number: 7,
@@ -76,36 +155,36 @@ final class PresentationHardwareCoreTests: XCTestCase {
         let highPress = PresentationMIDIChannelMessage(message: "control_change", channel: 0, number: 7, value: 100)
         var engine = PresentationMIDIRuleEngine()
 
-        XCTAssertNil(engine.process(message: neutral, deviceId: "midi-a", routingKey: "route-1", rules: [specific, wildcard]))
+        XCTAssertNil(engine.process(message: neutral, deviceId: "midi-42", routingKey: "route-1", rules: [specific, wildcard]))
         XCTAssertEqual(
-            engine.process(message: lowPress, deviceId: "midi-a", routingKey: "route-1", rules: [specific, wildcard]),
+            engine.process(message: lowPress, deviceId: "midi-42", routingKey: "route-1", rules: [specific, wildcard]),
             wildcard.ruleKey
         )
-        XCTAssertNil(engine.process(message: lowPress, deviceId: "midi-a", routingKey: "route-1", rules: [specific, wildcard]))
+        XCTAssertNil(engine.process(message: lowPress, deviceId: "midi-42", routingKey: "route-1", rules: [specific, wildcard]))
         XCTAssertNil(
-            engine.process(message: highPress, deviceId: "midi-a", routingKey: "route-1", rules: [specific, wildcard]),
+            engine.process(message: highPress, deviceId: "midi-42", routingKey: "route-1", rules: [specific, wildcard]),
             "One physical press cannot trigger a second overlapping rule"
         )
-        XCTAssertNil(engine.process(message: neutral, deviceId: "midi-a", routingKey: "route-1", rules: [specific, wildcard]))
+        XCTAssertNil(engine.process(message: neutral, deviceId: "midi-42", routingKey: "route-1", rules: [specific, wildcard]))
         XCTAssertEqual(
-            engine.process(message: highPress, deviceId: "midi-a", routingKey: "route-1", rules: [wildcard, specific]),
+            engine.process(message: highPress, deviceId: "midi-42", routingKey: "route-1", rules: [wildcard, specific]),
             specific.ruleKey,
             "Rule order must not change the specific crossed rule"
         )
 
         XCTAssertNil(
-            engine.process(message: highPress, deviceId: "midi-a", routingKey: "route-2", rules: [specific, wildcard]),
+            engine.process(message: highPress, deviceId: "midi-42", routingKey: "route-2", rules: [specific, wildcard]),
             "A hot-plugged route must prime an already-active control without firing"
         )
-        XCTAssertNil(engine.process(message: neutral, deviceId: "midi-a", routingKey: "route-2", rules: [specific, wildcard]))
+        XCTAssertNil(engine.process(message: neutral, deviceId: "midi-42", routingKey: "route-2", rules: [specific, wildcard]))
         XCTAssertEqual(
-            engine.process(message: lowPress, deviceId: "midi-a", routingKey: "route-2", rules: [specific, wildcard]),
+            engine.process(message: lowPress, deviceId: "midi-42", routingKey: "route-2", rules: [specific, wildcard]),
             wildcard.ruleKey
         )
 
         let releaseEdge = PresentationMIDIRule(
-            ruleKey: "midi:midi-a:control_change:0:7",
-            deviceId: "midi-a",
+            ruleKey: "midi:midi-42:control_change:0:7",
+            deviceId: "midi-42",
             message: "control_change",
             channel: 0,
             number: 7,
@@ -114,13 +193,13 @@ final class PresentationHardwareCoreTests: XCTestCase {
             releaseThreshold: 1
         )
         var mixedEngine = PresentationMIDIRuleEngine()
-        XCTAssertNil(mixedEngine.process(message: neutral, deviceId: "midi-a", routingKey: "route-mixed", rules: [wildcard, releaseEdge]))
+        XCTAssertNil(mixedEngine.process(message: neutral, deviceId: "midi-42", routingKey: "route-mixed", rules: [wildcard, releaseEdge]))
         XCTAssertEqual(
-            mixedEngine.process(message: lowPress, deviceId: "midi-a", routingKey: "route-mixed", rules: [wildcard, releaseEdge]),
+            mixedEngine.process(message: lowPress, deviceId: "midi-42", routingKey: "route-mixed", rules: [wildcard, releaseEdge]),
             wildcard.ruleKey
         )
         XCTAssertEqual(
-            mixedEngine.process(message: neutral, deviceId: "midi-a", routingKey: "route-mixed", rules: [wildcard, releaseEdge]),
+            mixedEngine.process(message: neutral, deviceId: "midi-42", routingKey: "route-mixed", rules: [wildcard, releaseEdge]),
             releaseEdge.ruleKey,
             "Opposite press/release gestures must not permanently latch each other"
         )

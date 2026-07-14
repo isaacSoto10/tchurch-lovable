@@ -180,9 +180,11 @@ const BLOCKED_KEYBOARD_CODE_PREFIXES = [
   "Speech",
 ];
 const MAX_BINDING_VALUE_LENGTH = 40;
-const MAX_DEVICE_ID_LENGTH = 160;
 const MAX_SCOPE_LENGTH = 200;
 const GAMEPAD_CONTROL_SET = new Set<string>(PRESENTATION_GAMEPAD_CONTROLS);
+const PRESENTATION_GAMEPAD_DEVICE_ID_PATTERN = /^gamepad-[0-9a-f]{64}$/;
+const PRESENTATION_MIDI_HASH_DEVICE_ID_PATTERN = /^midi-[0-9a-f]{64}$/;
+const PRESENTATION_MIDI_DECIMAL_DEVICE_ID_PATTERN = /^midi-(?:0|[1-9][0-9]{0,9})$/;
 
 function keyboardBinding(code: string, action: PresentationHardwareAction): PresentationKeyboardBinding {
   return {
@@ -237,10 +239,22 @@ function safeInputValue(value: unknown) {
   return candidate;
 }
 
-function safeDeviceId(value: unknown) {
+export function isCanonicalPresentationGamepadDeviceId(value: unknown): value is string {
+  return typeof value === "string" && PRESENTATION_GAMEPAD_DEVICE_ID_PATTERN.test(value);
+}
+
+export function isCanonicalPresentationMidiDeviceId(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  if (PRESENTATION_MIDI_HASH_DEVICE_ID_PATTERN.test(value)) return true;
+  if (!PRESENTATION_MIDI_DECIMAL_DEVICE_ID_PATTERN.test(value)) return false;
+  const numericId = Number(value.slice("midi-".length));
+  return Number.isInteger(numericId) && numericId >= 0 && numericId <= 0xffff_ffff;
+}
+
+function safeSourceDeviceId(source: "gamepad" | "midi", value: unknown) {
   if (value === null || value === undefined || value === "") return null;
-  const candidate = stringValue(value);
-  return candidate && candidate.length <= MAX_DEVICE_ID_LENGTH && /^[A-Za-z0-9._:-]+$/.test(candidate) ? candidate : null;
+  if (source === "gamepad") return isCanonicalPresentationGamepadDeviceId(value) ? value : null;
+  return isCanonicalPresentationMidiDeviceId(value) ? value : null;
 }
 
 export function isAllowedPresentationGamepadControl(value: unknown): value is PresentationGamepadControl {
@@ -302,14 +316,14 @@ function normalizeBinding(value: unknown): PresentationHardwareBinding | null {
 
   if (value.source === "gamepad") {
     const control = value.control;
-    const deviceId = safeDeviceId(value.deviceId);
+    const deviceId = safeSourceDeviceId("gamepad", value.deviceId);
     if (!isAllowedPresentationGamepadControl(control) || (value.deviceId != null && !deviceId)) return null;
     const fingerprint = presentationHardwareBindingFingerprintInput({ source: "gamepad", deviceId, control });
     return { id: safeBindingId(value.id, fingerprint), enabled, source: "gamepad", deviceId, control, action };
   }
 
   if (value.source === "midi") {
-    const deviceId = safeDeviceId(value.deviceId);
+    const deviceId = safeSourceDeviceId("midi", value.deviceId);
     const message = value.message === "note_on" || value.message === "control_change" ? value.message : null;
     const channel = value.channel === null ? null : integerInRange(value.channel, 0, 15);
     const number = integerInRange(value.number, 0, 127);
@@ -635,7 +649,7 @@ export function resolvePresentationNativeHardwareInput(
   deduper?: PresentationInputDeduper,
 ): PresentationHardwareAction | null {
   if (!presentationHardwareContextAllowsInput(settings, context) || context.commandPending || !settings.sources[event.source]) return null;
-  const deviceId = safeDeviceId(event.deviceId);
+  const deviceId = safeSourceDeviceId(event.source, event.deviceId);
   if (!deviceId) return null;
 
   let binding: PresentationGamepadBinding | PresentationMidiBinding | undefined;
@@ -730,7 +744,7 @@ export function updatePresentationGamepadBinding(
   input: Pick<Extract<PresentationNativeHardwareLearnedInput, { source: "gamepad" }>, "deviceId" | "control">,
 ) {
   const normalized = normalizePresentationHardwareSettings(settings);
-  const deviceId = safeDeviceId(input.deviceId);
+  const deviceId = safeSourceDeviceId("gamepad", input.deviceId);
   if (!deviceId || !isAllowedPresentationGamepadControl(input.control)) return normalized;
   const fingerprint = presentationHardwareBindingFingerprintInput({ source: "gamepad", deviceId, control: input.control });
   const binding: PresentationGamepadBinding = {
@@ -771,7 +785,7 @@ export function updatePresentationMidiBinding(
   input: Extract<PresentationNativeHardwareLearnedInput, { source: "midi" }>,
 ) {
   const normalized = normalizePresentationHardwareSettings(settings);
-  const deviceId = safeDeviceId(input.deviceId);
+  const deviceId = safeSourceDeviceId("midi", input.deviceId);
   const channel = integerInRange(input.channel, 0, 15);
   const number = integerInRange(input.number, 0, 127);
   const value = integerInRange(input.value, 0, 127);
