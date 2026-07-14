@@ -34,6 +34,7 @@ import {
   savePresentationPackage,
   savePresentationOfflineState,
   isPresentationAuthorizationError,
+  isPresentationUuid,
   presentationRehearsalSessionPath,
   verifyPresentationPackageIntegrity,
   type CachedPresentationPackage,
@@ -239,6 +240,29 @@ describe("Tchurch Live Stage 2 contract", () => {
     const fallback = formatPresentationUuidV4(new Uint8Array(16).fill(0xab));
     expect(fallback).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     expect(fallback).toBe("abababab-abab-4bab-abab-abababababab");
+  });
+
+  it.each([
+    "legacy-client-id",
+    "00000000-0000-0000-0000-000000000000",
+    "11111111-1111-4111-7111-111111111111",
+    "11111111-1111-6111-8111-111111111111",
+  ])("replaces an invalid or legacy installation client ID (%s)", (legacyId) => {
+    localStorage.setItem("tchurch_live_installation_client_id", legacyId);
+
+    const replacement = getPresentationClientId();
+
+    expect(replacement).not.toBe(legacyId);
+    expect(isPresentationUuid(replacement)).toBe(true);
+    expect(replacement).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(localStorage.getItem("tchurch_live_installation_client_id")).toBe(replacement);
+  });
+
+  it("normalizes a valid RFC 4122 installation ID without rotating it", () => {
+    localStorage.setItem("tchurch_live_installation_client_id", "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA");
+
+    expect(getPresentationClientId()).toBe("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    expect(getPresentationClientId()).toBe("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
   });
 
   it("keeps active follower polling close to one second", () => {

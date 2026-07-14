@@ -20,6 +20,7 @@ type UsePresentationRemoteIntentsOptions = {
   viewerVersion?: string | null;
   controllerAuthorityVersion?: string | null;
   controllerVersion?: string | null;
+  mode: "live" | "rehearsal";
   enabled: boolean;
   online: boolean;
   viewerCanControl: boolean;

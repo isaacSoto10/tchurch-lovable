@@ -392,6 +392,7 @@ describe("presentation remote intent authority scope", () => {
     viewerVersion: "viewer-v1",
     controllerAuthorityVersion: `sha256:${"a".repeat(64)}`,
     controllerVersion: "controller-v1",
+    mode: "live" as const,
     enabled: true,
     online: true,
     viewerCanControl: true,
@@ -409,6 +410,7 @@ describe("presentation remote intent authority scope", () => {
       { controllerClientId: "88888888-8888-4888-8888-888888888888" },
       { viewerVersion: "viewer-v2" },
       { controllerAuthorityVersion: `sha256:${"b".repeat(64)}` },
+      { mode: "rehearsal" as const },
       { enabled: false },
       { online: false },
       { viewerCanControl: false },
@@ -429,5 +431,6 @@ describe("presentation remote intent authority scope", () => {
     expect(canSendPresentationRemoteIntent({ ...base, viewerCanControl: false })).toBe(false);
     expect(canSendPresentationRemoteIntent({ ...base, accountId: null })).toBe(false);
     expect(canSendPresentationRemoteIntent({ ...base, churchId: null })).toBe(false);
+    expect(canSendPresentationRemoteIntent({ ...base, mode: "rehearsal" })).toBe(false);
   });
 });

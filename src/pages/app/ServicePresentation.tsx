@@ -899,8 +899,9 @@ export default function ServicePresentation() {
     viewerVersion: live.snapshot?.viewerVersion,
     controllerAuthorityVersion: live.snapshot?.controllerAuthorityVersion,
     controllerVersion: live.snapshot?.controllerVersion,
-    enabled: runMode === "live",
-    online: live.networkState === "online",
+    mode: runMode,
+    enabled: runMode === "live" && live.authoritativeReady,
+    online: live.authoritativeReady && live.networkState === "online",
     viewerCanControl: live.snapshot?.viewer.canControl === true,
     controllerOwned: liveControllerOwnedByClient,
   });
@@ -916,8 +917,8 @@ export default function ServicePresentation() {
     controllerVersion: live.snapshot?.controllerVersion,
     mode: runMode,
     enabled: Boolean(id && selectedChurch?.id && authenticatedUserId),
-    active: runMode === "live",
-    online: live.networkState === "online",
+    active: runMode === "live" && live.authoritativeReady,
+    online: live.authoritativeReady && live.networkState === "online",
     viewerCanControl: live.snapshot?.viewer.canControl === true,
     controllerOwned: liveControllerOwnedByClient,
     controllerLeaseActive: live.controllerLeaseActive,
@@ -1082,7 +1083,9 @@ export default function ServicePresentation() {
   const liveAutomationPrivacyScope = [authenticatedUserId || "signed-out", selectedChurch?.id || "no-church", selectedChurch?.role || "no-role", id || "no-service", "live", live.snapshot?.session?.id || "no-session", live.clientId].join("::");
   const rehearsalAutomationPrivacyScope = [authenticatedUserId || "signed-out", selectedChurch?.id || "no-church", selectedChurch?.role || "no-role", id || "no-service", "rehearsal", rehearsal.snapshot?.session?.id || "no-session", rehearsal.clientId].join("::");
   const activeAutomationPrivacyScope = runMode === "rehearsal" ? rehearsalAutomationPrivacyScope : liveAutomationPrivacyScope;
-  const activeExternalAuthorized = runtimeNetworkState === "online" && canOperatePresentationExternalSystems({ mode: runMode, controllerOwned: liveControllerOwned, canEdit: viewerCanEdit, roles: viewerRoles });
+  const activeExternalAuthorized = runtimeNetworkState === "online"
+    && (runMode === "rehearsal" || live.authoritativeReady)
+    && canOperatePresentationExternalSystems({ mode: runMode, controllerOwned: liveControllerOwned, canEdit: viewerCanEdit, roles: viewerRoles });
   const liveExternalConnectorScope = `${presentationExternalAuthorityScope({ baseScope: liveAutomationPrivacyScope, mode: "live", controllerOwned: liveAutomationControllerOwned, canEdit: viewerCanEdit, roles: viewerRoles })}::${live.networkState}::${selectedChurch?.id || "no-church"}::${id || "no-service"}`;
   const rehearsalExternalConnectorScope = `${presentationExternalAuthorityScope({ baseScope: rehearsalAutomationPrivacyScope, mode: "rehearsal", controllerOwned: rehearsalAutomationControllerOwned, canEdit: viewerCanEdit, roles: viewerRoles })}::${rehearsal.networkState}::${selectedChurch?.id || "no-church"}::${id || "no-service"}`;
   const activeExternalConnectorScope = runMode === "rehearsal" ? rehearsalExternalConnectorScope : liveExternalConnectorScope;
@@ -1100,7 +1103,7 @@ export default function ServicePresentation() {
     sendCommand: live.sendCommand,
     privacyScope: liveAutomationPrivacyScope,
     externalConnectorScope: liveExternalConnectorScope,
-    enabled: Boolean(id && selectedChurch?.id && authenticatedUserId && runMode === "live"),
+    enabled: Boolean(id && selectedChurch?.id && authenticatedUserId && runMode === "live" && live.authoritativeReady),
   });
   const rehearsalAutomations = usePresentationAutomations({
     serviceId: id,
@@ -1325,7 +1328,7 @@ export default function ServicePresentation() {
       mode: runMode,
       controllerOwned: liveControllerOwned,
       commandPending: runtimeCommandPending,
-      appActive: presentationAppActive,
+      appActive: presentationAppActive && (runMode === "rehearsal" || live.authoritativeReady),
       modalOpen: showRundown || showOutputManager || showProductionHub || Boolean(pendingRunMode),
       editorOpen: showEditor,
       captureActive: hardwareCaptureActive,

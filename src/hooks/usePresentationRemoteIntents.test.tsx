@@ -19,6 +19,7 @@ function options(overrides: Record<string, unknown> = {}) {
     viewerVersion: "viewer-v1",
     controllerAuthorityVersion: CONTROLLER_AUTHORITY_VERSION,
     controllerVersion: "controller-v1",
+    mode: "live" as const,
     enabled: true,
     online: true,
     viewerCanControl: true,
@@ -152,6 +153,25 @@ describe("usePresentationRemoteIntents authority lifecycle", () => {
     view.rerender(options({ viewerCanControl: false }));
     expect(view.result.current.available).toBe(false);
     view.rerender(options({ controllerOwned: true }));
+    expect(view.result.current.available).toBe(false);
+    view.rerender(options({ mode: "rehearsal" }));
+    expect(view.result.current.available).toBe(false);
+  });
+
+  it("aborts an in-flight intent when the run mode changes", async () => {
+    let requestSignal: AbortSignal | null = null;
+    const request = async (_path: string, requestOptions: { signal: AbortSignal }) => new Promise<unknown>(() => {
+      requestSignal = requestOptions.signal;
+    });
+    const view = renderHook((props) => usePresentationRemoteIntents(props), { initialProps: options({ request }) });
+    let action: Promise<unknown> = Promise.resolve();
+    act(() => { action = view.result.current.send("take", {}); });
+    await waitFor(() => expect(requestSignal).not.toBeNull());
+
+    view.rerender(options({ request, mode: "rehearsal" }));
+
+    expect(requestSignal!.aborted).toBe(true);
+    await action;
     expect(view.result.current.available).toBe(false);
   });
 });

@@ -16,6 +16,7 @@ export const MAX_OFFLINE_PRESENTATION_COMMANDS = 100;
 export const MAX_STAGE_MESSAGE_LENGTH = 160;
 
 const CLIENT_ID_KEY = "tchurch_live_installation_client_id";
+const PRESENTATION_UUID_RFC4122_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ACTIVE_CACHE_IDENTITY_KEY = "tchurch_live_active_cache_identity";
 const FALLBACK_PACKAGES_KEY = "tchurch_live_packages_v1";
 const FALLBACK_OFFLINE_KEY = "tchurch_live_offline_v1";
@@ -930,10 +931,21 @@ export function projectPresentationTiming(snapshot: PresentationLiveSnapshot | n
 
 export function getPresentationClientId(storage: Pick<Storage, "getItem" | "setItem"> = localStorage) {
   const saved = storage.getItem(CLIENT_ID_KEY)?.trim();
-  if (saved) return saved;
-  const id = createPresentationId();
+  if (saved && isPresentationUuid(saved)) {
+    const normalized = saved.toLowerCase();
+    if (normalized !== saved) storage.setItem(CLIENT_ID_KEY, normalized);
+    return normalized;
+  }
+  let id = createPresentationId().toLowerCase();
+  // randomUUID is required to return an RFC 4122 UUID. Keep the installation
+  // identity fail-closed if a polyfill violates that contract.
+  if (!isPresentationUuid(id)) id = formatPresentationUuidV4(cryptoRandomBytes());
   storage.setItem(CLIENT_ID_KEY, id);
   return id;
+}
+
+export function isPresentationUuid(value: unknown): value is string {
+  return typeof value === "string" && PRESENTATION_UUID_RFC4122_PATTERN.test(value);
 }
 
 export function formatPresentationUuidV4(randomBytes: ArrayLike<number>) {
@@ -944,18 +956,20 @@ export function formatPresentationUuidV4(randomBytes: ArrayLike<number>) {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+function cryptoRandomBytes() {
+  const bytes = new Uint8Array(16);
+  const cryptoApi = typeof globalThis !== "undefined" ? globalThis.crypto : undefined;
+  if (cryptoApi?.getRandomValues) cryptoApi.getRandomValues(bytes);
+  else for (let index = 0; index < bytes.length; index += 1) bytes[index] = Math.floor(Math.random() * 256);
+  return bytes;
+}
+
 export function createPresentationId() {
   const cryptoApi = typeof globalThis !== "undefined"
     ? globalThis.crypto as Crypto & { randomUUID?: () => string }
     : undefined;
   if (cryptoApi?.randomUUID) return cryptoApi.randomUUID();
-  const bytes = new Uint8Array(16);
-  if (cryptoApi?.getRandomValues) {
-    cryptoApi.getRandomValues(bytes);
-  } else {
-    for (let index = 0; index < bytes.length; index += 1) bytes[index] = Math.floor(Math.random() * 256);
-  }
-  return formatPresentationUuidV4(bytes);
+  return formatPresentationUuidV4(cryptoRandomBytes());
 }
 
 export function getPresentationClientName() {

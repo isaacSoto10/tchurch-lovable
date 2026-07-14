@@ -462,6 +462,7 @@ export function presentationRemoteIntentScopeKey(input: {
   controllerAuthorityVersion?: string | null;
   /** Informational only: controllerVersion rotates on heartbeat lease renewal. */
   controllerVersion?: string | null;
+  mode: "live" | "rehearsal";
   enabled: boolean;
   online: boolean;
   viewerCanControl: boolean;
@@ -475,6 +476,7 @@ export function presentationRemoteIntentScopeKey(input: {
     input.clientId || "no-client",
     input.controllerClientId || "no-controller",
     input.viewerVersion || "no-viewer-version",
+    input.mode,
     typeof input.controllerAuthorityVersion === "string"
       && PRESENTATION_REMOTE_INTENT_AUTHORITY_DIGEST_PATTERN.test(input.controllerAuthorityVersion)
       ? input.controllerAuthorityVersion
@@ -494,6 +496,7 @@ export function canSendPresentationRemoteIntent(input: {
   clientId?: string | null;
   controllerClientId?: string | null;
   controllerAuthorityVersion?: string | null;
+  mode: "live" | "rehearsal";
   enabled: boolean;
   online: boolean;
   viewerCanControl: boolean;
@@ -501,6 +504,7 @@ export function canSendPresentationRemoteIntent(input: {
 }) {
   return Boolean(
     input.enabled
+    && input.mode === "live"
     && input.online
     && input.viewerCanControl
     && !input.controllerOwned

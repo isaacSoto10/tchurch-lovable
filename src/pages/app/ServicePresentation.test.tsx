@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   rehearsalSnapshot: null as PresentationLiveSnapshot | null,
   rehearsalTiming: null as PresentationTiming | null,
   liveControllerLeaseActive: false,
+  liveAuthoritativeReady: true,
   liveCommandPending: false,
   rehearsalControllerLeaseActive: false,
   rehearsalError: null as string | null,
@@ -30,6 +31,8 @@ const mocks = vi.hoisted(() => ({
   remoteSurfaceProps: [] as Array<Record<string, unknown>>,
   liveHookOptions: [] as Array<Record<string, unknown>>,
   rehearsalHookOptions: [] as Array<Record<string, unknown>>,
+  remoteHookOptions: [] as Array<Record<string, unknown>>,
+  receiverHookOptions: [] as Array<Record<string, unknown>>,
   apiFetch: vi.fn(),
   fetchWorkspace: vi.fn(),
 }));
@@ -76,6 +79,7 @@ vi.mock("@/hooks/usePresentationLive", () => ({
     offlineQueueCount: 0,
     isLocalState: false,
     controllerLeaseActive: mocks.liveControllerLeaseActive,
+    authoritativeReady: mocks.liveAuthoritativeReady,
     timing: mocks.liveTiming,
     messages: [],
     loading: false,
@@ -116,10 +120,12 @@ vi.mock("@/hooks/usePresentationRehearsal", () => ({
 }));
 
 vi.mock("@/hooks/usePresentationRemoteIntents", () => ({
-  usePresentationRemoteIntents: (options: { controllerOwned: boolean }) => {
+  usePresentationRemoteIntents: (options: { controllerOwned: boolean; enabled: boolean }) => {
+    mocks.remoteHookOptions.push(options as unknown as Record<string, unknown>);
     const controller = mocks.liveSnapshot?.session?.controller;
     const available = Boolean(
       controller
+      && options.enabled
       && !options.controllerOwned
       && mocks.liveSnapshot?.viewer.canControl
       && mocks.liveNetworkState === "online",
@@ -131,6 +137,13 @@ vi.mock("@/hooks/usePresentationRemoteIntents", () => ({
       send: mocks.remoteSend,
       clearStatus: vi.fn(),
     };
+  },
+}));
+
+vi.mock("@/hooks/usePresentationRemoteIntentReceiver", () => ({
+  usePresentationRemoteIntentReceiver: (options: Record<string, unknown>) => {
+    mocks.receiverHookOptions.push(options);
+    return { available: Boolean(options.active), lastResult: { phase: options.active ? "idle" : "inactive" } };
   },
 }));
 
@@ -392,6 +405,7 @@ describe("ServicePresentation load authority", () => {
     mocks.rehearsalSnapshot = null;
     mocks.rehearsalTiming = null;
     mocks.liveControllerLeaseActive = false;
+    mocks.liveAuthoritativeReady = true;
     mocks.liveCommandPending = false;
     mocks.rehearsalControllerLeaseActive = false;
     mocks.rehearsalError = null;
@@ -414,6 +428,8 @@ describe("ServicePresentation load authority", () => {
     mocks.remoteSurfaceProps = [];
     mocks.liveHookOptions = [];
     mocks.rehearsalHookOptions = [];
+    mocks.remoteHookOptions = [];
+    mocks.receiverHookOptions = [];
     mocks.apiFetch.mockReset();
     mocks.fetchWorkspace.mockReset();
     mocks.fetchWorkspace.mockResolvedValue(workspace());
@@ -867,6 +883,30 @@ describe("ServicePresentation load authority", () => {
     view.rerender(<ServicePresentation />);
     fireEvent.keyDown(window, { code: "KeyB" });
     await waitFor(() => expect(mocks.liveSend).toHaveBeenCalledWith("set_blackout", { blackout: true }, undefined));
+  });
+
+  it("keeps hardware and the remote receiver closed until the live foreground refresh is authoritative", async () => {
+    mocks.liveSnapshot = ownedSnapshot("live");
+    mocks.liveTiming = mocks.liveSnapshot.session!.timing;
+    mocks.liveControllerLeaseActive = true;
+    mocks.liveAuthoritativeReady = false;
+    mocks.apiFetch.mockImplementation((path: string) => path === "/users/me"
+      ? Promise.resolve({ id: mocks.accountId })
+      : Promise.resolve(stageService()));
+
+    const view = render(<ServicePresentation />);
+    await screen.findByText("Stage fixture");
+    expect(mocks.remoteHookOptions.at(-1)).toMatchObject({ mode: "live", enabled: false, online: false });
+    expect(mocks.receiverHookOptions.at(-1)).toMatchObject({ mode: "live", active: false, online: false });
+    fireEvent.keyDown(window, { code: "PageDown" });
+    expect(mocks.liveSend).not.toHaveBeenCalled();
+
+    mocks.liveAuthoritativeReady = true;
+    view.rerender(<ServicePresentation />);
+    expect(mocks.remoteHookOptions.at(-1)).toMatchObject({ mode: "live", enabled: true, online: true });
+    expect(mocks.receiverHookOptions.at(-1)).toMatchObject({ mode: "live", active: true, online: true });
+    fireEvent.keyDown(window, { code: "PageDown" });
+    await waitFor(() => expect(mocks.liveSend).toHaveBeenCalledOnce());
   });
 
   it("derives HID toggle payloads from the authoritative display ACK instead of delayed local mirrors", async () => {

@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
 import type {
   CachedPresentationPackage,
@@ -15,6 +15,19 @@ const liveMocks = vi.hoisted(() => ({
   sendCommand: vi.fn(),
 }));
 
+const lifecycleMocks = vi.hoisted(() => ({
+  appStateListeners: [] as Array<(state: { isActive: boolean }) => void>,
+  addListener: vi.fn(),
+  getState: vi.fn(),
+}));
+
+vi.mock("@capacitor/app", () => ({
+  App: {
+    addListener: lifecycleMocks.addListener,
+    getState: lifecycleMocks.getState,
+  },
+}));
+
 vi.mock("@/lib/presentationLive", async () => {
   const actual = await vi.importActual<typeof import("@/lib/presentationLive")>("@/lib/presentationLive");
   return {
@@ -28,6 +41,8 @@ vi.mock("@/lib/presentationLive", async () => {
 
 import { usePresentationLive } from "./usePresentationLive";
 import { PRESENTATION_HEARTBEAT_MS, bindPresentationMediaCommand } from "@/lib/presentationLive";
+
+afterEach(() => vi.restoreAllMocks());
 
 function snapshot(
   serviceId: string,
@@ -120,10 +135,240 @@ function mockPackageSave() {
 describe("usePresentationLive authority generation", () => {
   beforeEach(() => {
     localStorage.clear();
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    lifecycleMocks.appStateListeners.length = 0;
+    lifecycleMocks.addListener.mockReset();
+    lifecycleMocks.getState.mockReset();
+    lifecycleMocks.addListener.mockImplementation(async (_eventName: string, listener: (state: { isActive: boolean }) => void) => {
+      lifecycleMocks.appStateListeners.push(listener);
+      return {
+        remove: async () => {
+          const index = lifecycleMocks.appStateListeners.indexOf(listener);
+          if (index >= 0) lifecycleMocks.appStateListeners.splice(index, 1);
+        },
+      };
+    });
+    lifecycleMocks.getState.mockResolvedValue({ isActive: true });
     liveMocks.fetchSnapshot.mockReset();
     liveMocks.fetchPackage.mockReset();
     liveMocks.savePackage.mockReset();
     liveMocks.sendCommand.mockReset();
+  });
+
+  it("forces a full foreground refresh after a 30-second suspension, blocks controls, and reclaims at most once", async () => {
+    let nowMs = Date.parse("2026-07-13T18:00:00.000Z");
+    vi.spyOn(Date, "now").mockImplementation(() => nowMs);
+    const localClientId = "11111111-1111-4111-8111-111111111111";
+    localStorage.setItem("tchurch_live_installation_client_id", localClientId);
+    const controlled = snapshot("service-1", "viewer-v1", 4, "controller-v1");
+    controlled.session!.controller = {
+      clientId: localClientId,
+      displayName: "Este iPad",
+      leaseExpiresAt: "2026-07-13T18:00:30.000Z",
+      ownedByViewer: true,
+    };
+    const expired = snapshot("service-1", "viewer-v1", 5, "controller-v2");
+    const reclaimed = snapshot("service-1", "viewer-v1", 6, "controller-v3");
+    reclaimed.session!.controller = {
+      clientId: localClientId,
+      displayName: "Este iPad",
+      leaseExpiresAt: "2026-07-13T18:01:01.000Z",
+      ownedByViewer: true,
+    };
+    let resolveForeground: (value: PresentationLiveSnapshot) => void = () => undefined;
+    const foreground = new Promise<PresentationLiveSnapshot>((resolve) => { resolveForeground = resolve; });
+    liveMocks.fetchSnapshot
+      .mockResolvedValueOnce(controlled)
+      .mockImplementationOnce(() => foreground)
+      .mockResolvedValue(reclaimed);
+    liveMocks.fetchPackage.mockResolvedValue(presentationPackage("service-1", "account-1", "church-1"));
+    liveMocks.sendCommand.mockResolvedValue(reclaimed);
+    mockPackageSave();
+    const view = renderHook(() => usePresentationLive({
+      serviceId: "service-1",
+      accountId: "account-1",
+      churchId: "church-1",
+      preferredView: "operator",
+      offlineContext: { steps: [], plannedTiming: { serviceSeconds: 0, itemSecondsById: {} } },
+    }));
+
+    await waitFor(() => expect(view.result.current.authoritativeReady).toBe(true));
+    await waitFor(() => expect(lifecycleMocks.appStateListeners).toHaveLength(1));
+    act(() => lifecycleMocks.appStateListeners[0]({ isActive: false }));
+    expect(view.result.current.authoritativeReady).toBe(false);
+    await act(async () => {
+      await expect(view.result.current.sendCommand("next", {})).rejects.toThrow(/estado oficial/);
+    });
+    expect(liveMocks.sendCommand).not.toHaveBeenCalled();
+
+    nowMs += 31_000;
+    act(() => lifecycleMocks.appStateListeners[0]({ isActive: true }));
+    expect(view.result.current.authoritativeReady).toBe(false);
+    await waitFor(() => expect(liveMocks.fetchSnapshot).toHaveBeenCalledTimes(2));
+    expect(liveMocks.fetchSnapshot).toHaveBeenNthCalledWith(
+      2,
+      "service-1",
+      "operator",
+      localClientId,
+      undefined,
+      undefined,
+      undefined,
+    );
+    await act(async () => { resolveForeground(expired); });
+    await waitFor(() => expect(view.result.current.authoritativeReady).toBe(true));
+    expect(liveMocks.sendCommand).toHaveBeenCalledOnce();
+    expect(liveMocks.sendCommand).toHaveBeenCalledWith(
+      "service-1",
+      expect.objectContaining({ clientId: localClientId, type: "claim_control", payload: {} }),
+      "operator",
+    );
+    expect((liveMocks.sendCommand.mock.calls[0][1] as { payload: Record<string, unknown> }).payload).not.toHaveProperty("force");
+
+    act(() => {
+      window.dispatchEvent(new Event("pageshow"));
+      window.dispatchEvent(new Event("online"));
+    });
+    await waitFor(() => expect(liveMocks.fetchSnapshot.mock.calls.length).toBeGreaterThanOrEqual(3));
+    expect(liveMocks.sendCommand).toHaveBeenCalledOnce();
+  });
+
+  it("never reclaims when another client wins during the authoritative foreground refresh", async () => {
+    const localClientId = "11111111-1111-4111-8111-111111111111";
+    const otherClientId = "22222222-2222-4222-8222-222222222222";
+    localStorage.setItem("tchurch_live_installation_client_id", localClientId);
+    const controlled = snapshot("service-1", "viewer-v1", 4, "controller-v1");
+    controlled.session!.controller = { clientId: localClientId, displayName: "Este iPad", leaseExpiresAt: "2099-07-13T18:00:30.000Z", ownedByViewer: true };
+    const otherWon = snapshot("service-1", "viewer-v1", 5, "controller-v2");
+    otherWon.session!.controller = { clientId: otherClientId, displayName: "Mac santuario", leaseExpiresAt: "2099-07-13T18:01:00.000Z", ownedByViewer: false };
+    const laterNoOwner = snapshot("service-1", "viewer-v1", 6, "controller-v3");
+    liveMocks.fetchSnapshot
+      .mockResolvedValueOnce(controlled)
+      .mockResolvedValueOnce(otherWon)
+      .mockResolvedValue(laterNoOwner);
+    liveMocks.fetchPackage.mockResolvedValue(presentationPackage("service-1", "account-1", "church-1"));
+    mockPackageSave();
+    const view = renderHook(() => usePresentationLive({
+      serviceId: "service-1",
+      accountId: "account-1",
+      churchId: "church-1",
+      preferredView: "operator",
+      offlineContext: { steps: [], plannedTiming: { serviceSeconds: 0, itemSecondsById: {} } },
+    }));
+
+    await waitFor(() => expect(view.result.current.authoritativeReady).toBe(true));
+    await waitFor(() => expect(lifecycleMocks.appStateListeners).toHaveLength(1));
+    act(() => lifecycleMocks.appStateListeners[0]({ isActive: false }));
+    act(() => lifecycleMocks.appStateListeners[0]({ isActive: true }));
+    await waitFor(() => expect(view.result.current.snapshot?.session?.controller?.clientId).toBe(otherClientId));
+    expect(view.result.current.authoritativeReady).toBe(true);
+    expect(liveMocks.sendCommand).not.toHaveBeenCalled();
+
+    act(() => window.dispatchEvent(new Event("pageshow")));
+    await waitFor(() => expect(view.result.current.snapshot?.session?.controller).toBeNull());
+    expect(liveMocks.sendCommand).not.toHaveBeenCalled();
+  });
+
+  it.each(["visibilitychange", "pageshow", "online"] as const)("forces a validator-free authoritative refresh for the %s resume signal", async (signal) => {
+    const localClientId = "11111111-1111-4111-8111-111111111111";
+    localStorage.setItem("tchurch_live_installation_client_id", localClientId);
+    const controlled = snapshot("service-1", "viewer-v1", 4, "controller-v1");
+    controlled.session!.controller = { clientId: localClientId, displayName: "Este iPad", leaseExpiresAt: "2099-07-13T18:00:30.000Z", ownedByViewer: true };
+    const refreshed = snapshot("service-1", "viewer-v1", 5, "controller-v2");
+    refreshed.session!.controller = { ...controlled.session!.controller! };
+    liveMocks.fetchSnapshot.mockResolvedValueOnce(controlled).mockResolvedValue(refreshed);
+    liveMocks.fetchPackage.mockResolvedValue(presentationPackage("service-1", "account-1", "church-1"));
+    mockPackageSave();
+    const view = renderHook(() => usePresentationLive({
+      serviceId: "service-1",
+      accountId: "account-1",
+      churchId: "church-1",
+      preferredView: "operator",
+      offlineContext: { steps: [], plannedTiming: { serviceSeconds: 0, itemSecondsById: {} } },
+    }));
+    await waitFor(() => expect(view.result.current.authoritativeReady).toBe(true));
+
+    act(() => {
+      if (signal === "visibilitychange") {
+        Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+        document.dispatchEvent(new Event("visibilitychange"));
+        Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+        document.dispatchEvent(new Event("visibilitychange"));
+      } else {
+        window.dispatchEvent(new Event(signal));
+      }
+    });
+
+    await waitFor(() => expect(view.result.current.snapshot?.session?.revision).toBe(5));
+    expect(view.result.current.authoritativeReady).toBe(true);
+    expect(liveMocks.fetchSnapshot).toHaveBeenNthCalledWith(
+      2,
+      "service-1",
+      "operator",
+      localClientId,
+      undefined,
+      undefined,
+      undefined,
+    );
+  });
+
+  it.each([
+    ["account", { accountId: "account-2", churchId: "church-1", serviceId: "service-1", active: true }],
+    ["church", { accountId: "account-1", churchId: "church-2", serviceId: "service-1", active: true }],
+    ["service", { accountId: "account-1", churchId: "church-1", serviceId: "service-2", active: true }],
+    ["mode", { accountId: "account-1", churchId: "church-1", serviceId: "service-1", active: false }],
+  ] as const)("purges the foreground reclaim candidate on a %s scope change", async (_label, changed) => {
+    const localClientId = "11111111-1111-4111-8111-111111111111";
+    localStorage.setItem("tchurch_live_installation_client_id", localClientId);
+    const controlled = snapshot("service-1", "viewer-v1", 4, "controller-v1");
+    controlled.session!.controller = { clientId: localClientId, displayName: "Este iPad", leaseExpiresAt: "2099-07-13T18:00:30.000Z", ownedByViewer: true };
+    const noOwner = snapshot(changed.serviceId, "viewer-v2", 5, "controller-v2");
+    liveMocks.fetchSnapshot.mockResolvedValueOnce(controlled).mockResolvedValue(noOwner);
+    liveMocks.fetchPackage.mockImplementation((serviceId: string) => Promise.resolve(presentationPackage(serviceId, changed.accountId, changed.churchId)));
+    mockPackageSave();
+    const offlineContext = { steps: [], plannedTiming: { serviceSeconds: 0, itemSecondsById: {} } };
+    const view = renderHook(
+      (props: { accountId: string; churchId: string; serviceId: string; active: boolean }) => usePresentationLive({
+        ...props,
+        preferredView: "operator",
+        offlineContext,
+      }),
+      { initialProps: { accountId: "account-1", churchId: "church-1", serviceId: "service-1", active: true } },
+    );
+    await waitFor(() => expect(view.result.current.authoritativeReady).toBe(true));
+    await act(async () => { view.rerender(changed); });
+    if (changed.active) await waitFor(() => expect(view.result.current.authoritativeReady).toBe(true));
+    act(() => window.dispatchEvent(new Event("pageshow")));
+    await act(async () => { await Promise.resolve(); });
+
+    expect(liveMocks.sendCommand).not.toHaveBeenCalled();
+  });
+
+  it("purges the reclaim candidate when the live session ID changes", async () => {
+    const localClientId = "11111111-1111-4111-8111-111111111111";
+    localStorage.setItem("tchurch_live_installation_client_id", localClientId);
+    const controlled = snapshot("service-1", "viewer-v1", 4, "controller-v1");
+    controlled.session!.id = "session-a";
+    controlled.session!.controller = { clientId: localClientId, displayName: "Este iPad", leaseExpiresAt: "2099-07-13T18:00:30.000Z", ownedByViewer: true };
+    const replacementSession = snapshot("service-1", "viewer-v2", 1, "controller-v2");
+    replacementSession.session!.id = "session-b";
+    liveMocks.fetchSnapshot.mockResolvedValueOnce(controlled).mockResolvedValue(replacementSession);
+    liveMocks.fetchPackage.mockResolvedValue(presentationPackage("service-1", "account-1", "church-1"));
+    mockPackageSave();
+    const view = renderHook(() => usePresentationLive({
+      serviceId: "service-1",
+      accountId: "account-1",
+      churchId: "church-1",
+      preferredView: "operator",
+      offlineContext: { steps: [], plannedTiming: { serviceSeconds: 0, itemSecondsById: {} } },
+    }));
+    await waitFor(() => expect(view.result.current.authoritativeReady).toBe(true));
+    await waitFor(() => expect(lifecycleMocks.appStateListeners).toHaveLength(1));
+    act(() => lifecycleMocks.appStateListeners[0]({ isActive: false }));
+    act(() => lifecycleMocks.appStateListeners[0]({ isActive: true }));
+    await waitFor(() => expect(view.result.current.snapshot?.session?.id).toBe("session-b"));
+
+    expect(view.result.current.authoritativeReady).toBe(true);
+    expect(liveMocks.sendCommand).not.toHaveBeenCalled();
   });
 
   it("ignores a deferred old-service poll after account/church/service scope changes", async () => {
