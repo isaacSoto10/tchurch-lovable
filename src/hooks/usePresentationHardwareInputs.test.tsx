@@ -93,4 +93,41 @@ describe("usePresentationHardwareInputs", () => {
     fireEvent.keyDown(window, { code: "ArrowDown" });
     expect(onAction).toHaveBeenCalledTimes(1);
   });
+
+  it("consumes only eligible bound presses while preserving native widget and unbound behavior", () => {
+    const onAction = vi.fn();
+    renderHook(() => usePresentationHardwareInputs({
+      settings: DEFAULT_PRESENTATION_HARDWARE_SETTINGS,
+      context: readyContext,
+      scope: "scope",
+      onAction,
+    }));
+
+    const button = document.createElement("button");
+    document.body.append(button);
+    const widgetEvent = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, code: "Space" });
+    button.dispatchEvent(widgetEvent);
+    expect(widgetEvent.defaultPrevented).toBe(false);
+    expect(onAction).not.toHaveBeenCalled();
+
+    const unboundRepeat = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, code: "KeyX", repeat: true });
+    window.dispatchEvent(unboundRepeat);
+    expect(unboundRepeat.defaultPrevented).toBe(false);
+
+    const boundRepeat = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, code: "PageDown", repeat: true });
+    window.dispatchEvent(boundRepeat);
+    expect(boundRepeat.defaultPrevented).toBe(true);
+    expect(onAction).not.toHaveBeenCalled();
+
+    const accepted = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, code: "PageDown" });
+    window.dispatchEvent(accepted);
+    expect(accepted.defaultPrevented).toBe(true);
+    expect(onAction).toHaveBeenCalledWith("next");
+
+    const bounce = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, code: "PageDown" });
+    window.dispatchEvent(bounce);
+    expect(bounce.defaultPrevented).toBe(true);
+    expect(onAction).toHaveBeenCalledTimes(1);
+    button.remove();
+  });
 });

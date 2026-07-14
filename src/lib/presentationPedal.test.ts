@@ -4,13 +4,18 @@ import {
   MAX_PRESENTATION_HARDWARE_BINDINGS,
   PRESENTATION_HARDWARE_SCHEMA_VERSION,
   createPresentationInputDeduper,
+  isAllowedPresentationHardwareKeyCode,
   legacyPresentationPedalStorageKey,
   normalizePresentationHardwareSettings,
   presentationHardwareBindingFingerprint,
+  presentationHardwareMigrationBackupKey,
+  presentationHardwareMigrationGuardKey,
+  presentationHardwareMigrationQuarantineKey,
   presentationHardwareStorageKey,
   presentationKeyboardBindingsForAction,
   readPresentationHardwareSettings,
   resolvePresentationHardwareAction,
+  resolvePresentationHardwareInput,
   setPresentationHardwareSourceEnabled,
   updatePresentationKeyboardBinding,
   writePresentationHardwareSettings,
@@ -34,7 +39,8 @@ function memoryStorage() {
   return {
     values,
     getItem: (key: string) => values.get(key) ?? null,
-    setItem: (key: string, value: string) => values.set(key, value),
+    setItem: (key: string, value: string) => { values.set(key, value); },
+    removeItem: (key: string) => { values.delete(key); },
   };
 }
 
@@ -72,9 +78,10 @@ describe("presentation hardware schema v5", () => {
     expect(storage.values.get(key)).not.toMatch(/password|token|secret/i);
   });
 
-  it("migrates the legacy church pedal document once into the account scope", () => {
+  it("atomically consumes the shared legacy document so only account A can migrate it", () => {
     const storage = memoryStorage();
-    storage.setItem(legacyPresentationPedalStorageKey("church-1"), JSON.stringify({
+    const legacyKey = legacyPresentationPedalStorageKey("church-1");
+    const legacyRaw = JSON.stringify({
       schemaVersion: 1,
       enabled: true,
       bindings: {
@@ -83,20 +90,98 @@ describe("presentation hardware schema v5", () => {
         toggle_blackout: ["KeyB"],
         toggle_chords: ["KeyC"],
       },
-    }));
+    });
+    storage.setItem(legacyKey, legacyRaw);
 
     const migrated = readPresentationHardwareSettings("account-1", "church-1", storage);
     expect(migrated.schemaVersion).toBe(5);
     expect(presentationKeyboardBindingsForAction(migrated, "next").map((binding) => binding.code)).toEqual(["PageDown", "KeyN"]);
     const v5Key = presentationHardwareStorageKey("account-1", "church-1");
     expect(storage.values.has(v5Key)).toBe(true);
+    expect(storage.values.has(legacyKey)).toBe(false);
+    expect(storage.values.get(presentationHardwareMigrationGuardKey("church-1"))).toBe(`committed:${v5Key}`);
+    expect(storage.values.get(presentationHardwareMigrationBackupKey("account-1", "church-1"))).toBe(legacyRaw);
+    expect(storage.values.has(presentationHardwareMigrationBackupKey("account-2", "church-1"))).toBe(false);
 
-    storage.setItem(legacyPresentationPedalStorageKey("church-1"), JSON.stringify({
+    storage.setItem(legacyKey, JSON.stringify({
       schemaVersion: 1,
       enabled: true,
       bindings: { next: ["KeyX"] },
     }));
     expect(readPresentationHardwareSettings("account-1", "church-1", storage)).toEqual(migrated);
+    expect(readPresentationHardwareSettings("account-2", "church-1", storage)).toEqual(DEFAULT_PRESENTATION_HARDWARE_SETTINGS);
+    expect(storage.values.has(presentationHardwareStorageKey("account-2", "church-1"))).toBe(false);
+  });
+
+  it("fails closed on corrupt legacy data and storage failures without exposing a partial migration", () => {
+    const corrupt = memoryStorage();
+    corrupt.setItem(legacyPresentationPedalStorageKey("church-corrupt"), "{not-json");
+    expect(readPresentationHardwareSettings("account-a", "church-corrupt", corrupt)).toEqual(DEFAULT_PRESENTATION_HARDWARE_SETTINGS);
+    expect(corrupt.values.has(presentationHardwareStorageKey("account-a", "church-corrupt"))).toBe(false);
+
+    const failing = memoryStorage();
+    const legacyKey = legacyPresentationPedalStorageKey("church-fail");
+    failing.setItem(legacyKey, JSON.stringify({ schemaVersion: 1, enabled: true, bindings: { next: ["KeyN"] } }));
+    const originalRemove = failing.removeItem;
+    failing.removeItem = (key: string) => {
+      if (key === legacyKey) throw new Error("remove unavailable");
+      return originalRemove(key);
+    };
+
+    expect(readPresentationHardwareSettings("account-a", "church-fail", failing)).toEqual(DEFAULT_PRESENTATION_HARDWARE_SETTINGS);
+    const accountAKey = presentationHardwareStorageKey("account-a", "church-fail");
+    expect(failing.values.has(accountAKey)).toBe(false);
+    expect(failing.values.get(presentationHardwareMigrationGuardKey("church-fail"))).toBe(`claimed:${accountAKey}`);
+    expect(readPresentationHardwareSettings("account-b", "church-fail", failing)).toEqual(DEFAULT_PRESENTATION_HARDWARE_SETTINGS);
+    expect(failing.values.has(presentationHardwareStorageKey("account-b", "church-fail"))).toBe(false);
+  });
+
+  it("quarantines a transient guard write failure so a later account cannot retry the legacy", () => {
+    const setFailure = memoryStorage();
+    const setFailureLegacyKey = legacyPresentationPedalStorageKey("church-set-fail");
+    const setFailureGuardKey = presentationHardwareMigrationGuardKey("church-set-fail");
+    setFailure.setItem(setFailureLegacyKey, JSON.stringify({ schemaVersion: 1, enabled: true, bindings: { next: ["KeyN"] } }));
+    const originalSet = setFailure.setItem;
+    let guardFailuresRemaining = 1;
+    setFailure.setItem = (key: string, value: string) => {
+      if (key === setFailureGuardKey && guardFailuresRemaining > 0) {
+        guardFailuresRemaining -= 1;
+        throw new Error("set temporarily unavailable");
+      }
+      return originalSet(key, value);
+    };
+    expect(readPresentationHardwareSettings("account-a", "church-set-fail", setFailure)).toEqual(DEFAULT_PRESENTATION_HARDWARE_SETTINGS);
+    expect(setFailure.values.has(setFailureLegacyKey)).toBe(false);
+    expect(setFailure.values.get(presentationHardwareMigrationQuarantineKey("church-set-fail"))).toBe("blocked");
+    setFailure.setItem(setFailureLegacyKey, JSON.stringify({ schemaVersion: 1, enabled: true, bindings: { next: ["KeyX"] } }));
+    expect(readPresentationHardwareSettings("account-b", "church-set-fail", setFailure)).toEqual(DEFAULT_PRESENTATION_HARDWARE_SETTINGS);
+    expect(setFailure.values.has(presentationHardwareStorageKey("account-b", "church-set-fail"))).toBe(false);
+  });
+
+  it("detects a silently dropped guard and quarantines the shared legacy even if removal fails", () => {
+    const storage = memoryStorage();
+    const churchId = "church-silent-drop";
+    const legacyKey = legacyPresentationPedalStorageKey(churchId);
+    const guardKey = presentationHardwareMigrationGuardKey(churchId);
+    const quarantineKey = presentationHardwareMigrationQuarantineKey(churchId);
+    storage.setItem(legacyKey, JSON.stringify({ schemaVersion: 1, enabled: true, bindings: { next: ["KeyN"] } }));
+    const originalSet = storage.setItem;
+    const originalRemove = storage.removeItem;
+    storage.setItem = (key: string, value: string) => {
+      if (key === guardKey) return;
+      originalSet(key, value);
+    };
+    storage.removeItem = (key: string) => {
+      if (key === legacyKey) throw new Error("legacy removal unavailable");
+      originalRemove(key);
+    };
+
+    expect(readPresentationHardwareSettings("account-a", churchId, storage)).toEqual(DEFAULT_PRESENTATION_HARDWARE_SETTINGS);
+    expect(storage.values.has(presentationHardwareStorageKey("account-a", churchId))).toBe(false);
+    expect(storage.values.has(legacyKey)).toBe(true);
+    expect(storage.values.get(quarantineKey)).toBe("blocked");
+    expect(readPresentationHardwareSettings("account-b", churchId, storage)).toEqual(DEFAULT_PRESENTATION_HARDWARE_SETTINGS);
+    expect(storage.values.has(presentationHardwareStorageKey("account-b", churchId))).toBe(false);
   });
 
   it("validates reserved bindings, removes duplicate physical inputs, and caps the document", () => {
@@ -132,6 +217,23 @@ describe("presentation hardware schema v5", () => {
     const changed = updatePresentationKeyboardBinding(DEFAULT_PRESENTATION_HARDWARE_SETTINGS, "next", "ArrowLeft");
     expect(presentationKeyboardBindingsForAction(changed, "next").map((binding) => binding.code)).toEqual(["ArrowLeft"]);
     expect(presentationKeyboardBindingsForAction(changed, "previous").map((binding) => binding.code)).toEqual(["ArrowUp", "PageUp"]);
+  });
+
+  it("rejects navigation, destructive, system, and media keys from stored or learned bindings", () => {
+    for (const code of ["Tab", "Enter", "NumpadEnter", "Backspace", "Delete", "Escape", "Home", "End", "F1", "MediaPlayPause", "AudioVolumeUp", "BrowserBack", "LaunchMail", "BrightnessUp"]) {
+      expect(isAllowedPresentationHardwareKeyCode(code)).toBe(false);
+      expect(updatePresentationKeyboardBinding(DEFAULT_PRESENTATION_HARDWARE_SETTINGS, "next", code)).toEqual(DEFAULT_PRESENTATION_HARDWARE_SETTINGS);
+    }
+    expect(isAllowedPresentationHardwareKeyCode("PageDown")).toBe(true);
+    expect(normalizePresentationHardwareSettings({
+      schemaVersion: 5,
+      enabled: true,
+      sources: { keyboard: true, gamepad: false, midi: false },
+      bindings: [
+        { id: "blocked", enabled: true, source: "keyboard", code: "Enter", action: "next" },
+        { id: "safe", enabled: true, source: "keyboard", code: "PageDown", action: "next" },
+      ],
+    }).bindings).toEqual([{ id: "safe", enabled: true, source: "keyboard", code: "PageDown", action: "next" }]);
   });
 });
 
@@ -180,6 +282,38 @@ describe("presentation hardware execution gates", () => {
 
     input.remove();
     dialog.remove();
+  });
+
+  it("never consumes accessibility widgets or unbound/system keys", () => {
+    const button = document.createElement("button");
+    const link = document.createElement("a");
+    link.href = "/services";
+    const widget = document.createElement("div");
+    widget.setAttribute("role", "switch");
+    document.body.append(button, link, widget);
+
+    for (const target of [button, link, widget]) {
+      expect(resolvePresentationHardwareInput({ code: "Space", target }, DEFAULT_PRESENTATION_HARDWARE_SETTINGS, readyContext)).toEqual({ action: null, consume: false });
+    }
+    expect(resolvePresentationHardwareInput({ code: "KeyX", repeat: true }, DEFAULT_PRESENTATION_HARDWARE_SETTINGS, readyContext)).toEqual({ action: null, consume: false });
+    expect(resolvePresentationHardwareInput({ code: "MediaPlayPause" }, {
+      ...DEFAULT_PRESENTATION_HARDWARE_SETTINGS,
+      bindings: [...DEFAULT_PRESENTATION_HARDWARE_SETTINGS.bindings, { id: "media", enabled: true, source: "keyboard", code: "MediaPlayPause", action: "next" }],
+    }, readyContext)).toEqual({ action: null, consume: false });
+
+    button.remove();
+    link.remove();
+    widget.remove();
+  });
+
+  it("consumes repeat, pending, and bounce only after a binding passes every eligibility gate", () => {
+    const deduper = createPresentationInputDeduper();
+    expect(resolvePresentationHardwareInput({ code: "PageDown", repeat: true }, DEFAULT_PRESENTATION_HARDWARE_SETTINGS, readyContext, deduper)).toEqual({ action: null, consume: true });
+    expect(resolvePresentationHardwareInput({ code: "PageDown" }, DEFAULT_PRESENTATION_HARDWARE_SETTINGS, { ...readyContext, commandPending: true }, deduper)).toEqual({ action: null, consume: true });
+    expect(resolvePresentationHardwareInput({ code: "PageDown" }, DEFAULT_PRESENTATION_HARDWARE_SETTINGS, { ...readyContext, controllerOwned: false }, deduper)).toEqual({ action: null, consume: false });
+    expect(resolvePresentationHardwareInput({ code: "PageDown" }, DEFAULT_PRESENTATION_HARDWARE_SETTINGS, readyContext, deduper)).toEqual({ action: "next", consume: true });
+    expect(resolvePresentationHardwareInput({ code: "PageDown" }, DEFAULT_PRESENTATION_HARDWARE_SETTINGS, readyContext, deduper)).toEqual({ action: null, consume: true });
+    expect(resolvePresentationHardwareInput({ code: "KeyX", repeat: true }, DEFAULT_PRESENTATION_HARDWARE_SETTINGS, readyContext, deduper)).toEqual({ action: null, consume: false });
   });
 
   it("deduplicates the same physical input inside 200 ms", () => {

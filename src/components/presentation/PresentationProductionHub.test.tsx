@@ -71,4 +71,17 @@ describe("PresentationProductionHub hardware panel", () => {
     renderHub({ controllerOwned: false, hardwareCommandPending: true });
     expect(screen.getByRole("status")).toHaveTextContent(/Solo lectura/i);
   });
+
+  it("does not learn navigation, destructive, or media keys", () => {
+    const { onHardwareSettingsChange } = renderHub();
+    fireEvent.click(screen.getByRole("button", { name: "Aprender entrada para Siguiente" }));
+
+    for (const code of ["Tab", "Enter", "NumpadEnter", "Backspace", "Delete", "Home", "End", "MediaPlayPause"]) {
+      fireEvent.keyDown(window, { key: code === "Tab" ? "Tab" : "", code });
+    }
+
+    expect(onHardwareSettingsChange).not.toHaveBeenCalled();
+    expect(screen.getByText(/reservada para navegación, accesibilidad o controles del sistema/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Aprender entrada para Siguiente" })).toHaveTextContent(/Presiona una tecla/i);
+  });
 });

@@ -851,6 +851,7 @@ describe("ServicePresentation load authority", () => {
       partIndex: 0,
     }, undefined);
     expect(localStorage.getItem("tchurch.presentation.hardware.v5:account-old:church-old")).not.toBeNull();
+    expect(localStorage.getItem("tchurch_live_pedal_v1:church-old")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Abrir centro de producción" }));
     fireEvent.keyDown(window, { code: "KeyB" });
@@ -866,6 +867,51 @@ describe("ServicePresentation load authority", () => {
     view.rerender(<ServicePresentation />);
     fireEvent.keyDown(window, { code: "KeyB" });
     await waitFor(() => expect(mocks.liveSend).toHaveBeenCalledWith("set_blackout", { blackout: true }, undefined));
+  });
+
+  it("derives HID toggle payloads from the authoritative display ACK instead of delayed local mirrors", async () => {
+    mocks.liveSnapshot = ownedSnapshot("live");
+    mocks.liveTiming = mocks.liveSnapshot.session!.timing;
+    mocks.liveControllerLeaseActive = true;
+    mocks.apiFetch.mockImplementation((path: string) => path === "/users/me"
+      ? Promise.resolve({ id: mocks.accountId })
+      : Promise.resolve(stageService()));
+
+    render(<ServicePresentation />);
+    await screen.findByText("Stage fixture");
+    mocks.liveSnapshot.session!.display.blackout = true;
+    mocks.liveSnapshot.session!.display.chordsVisible = false;
+
+    fireEvent.keyDown(window, { code: "KeyB" });
+    fireEvent.keyDown(window, { code: "KeyC" });
+
+    await waitFor(() => {
+      expect(mocks.liveSend).toHaveBeenCalledWith("set_blackout", { blackout: false }, undefined);
+      expect(mocks.liveSend).toHaveBeenCalledWith("set_chords", { chordsVisible: true }, undefined);
+    });
+  });
+
+  it("uses the current rehearsal display when a mode change is followed by a rapid ACK", async () => {
+    mocks.liveSnapshot = liveSnapshot({ next: true, notes: true });
+    mocks.liveTiming = mocks.liveSnapshot.session!.timing;
+    mocks.rehearsalSnapshot = ownedSnapshot("rehearsal");
+    mocks.rehearsalSnapshot.session!.display.chordsVisible = true;
+    mocks.rehearsalTiming = mocks.rehearsalSnapshot.session!.timing;
+    mocks.rehearsalControllerLeaseActive = true;
+    mocks.apiFetch.mockImplementation((path: string) => path === "/users/me"
+      ? Promise.resolve({ id: mocks.accountId })
+      : Promise.resolve(stageService()));
+
+    render(<ServicePresentation />);
+    await screen.findByText("Stage fixture");
+    fireEvent.click(screen.getByRole("button", { name: "Usar ensayo aislado" }));
+    await waitFor(() => expect(mocks.rehearsalHookOptions.at(-1)).toMatchObject({ active: true }));
+
+    mocks.rehearsalSnapshot.session!.display.chordsVisible = false;
+    fireEvent.keyDown(window, { code: "KeyC" });
+
+    await waitFor(() => expect(mocks.rehearsalSend).toHaveBeenCalledWith("set_chords", { chordsVisible: true }, undefined));
+    expect(mocks.liveSend).not.toHaveBeenCalledWith("set_chords", expect.anything(), expect.anything());
   });
 
   it("uses the remote-intent path for the same account on a different controller client without claiming control", async () => {

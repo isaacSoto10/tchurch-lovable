@@ -10,6 +10,7 @@ import { PresentationReportPanel } from "@/components/presentation/PresentationR
 import {
   DEFAULT_PRESENTATION_HARDWARE_SETTINGS,
   formatPresentationKeyCode,
+  isAllowedPresentationHardwareKeyCode,
   normalizePresentationHardwareSettings,
   presentationKeyboardBindingsForAction,
   presentationKeyCode,
@@ -179,7 +180,10 @@ function PresentationHardwarePanel({ settings, controllerOwned, mode, appActive,
       }
       if (event.repeat || event.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
       const code = presentationKeyCode(event);
-      if (!code || code === "Unidentified" || code === "Dead" || code === "Process") return;
+      if (!isAllowedPresentationHardwareKeyCode(code)) {
+        setNotice("Esa tecla está reservada para navegación, accesibilidad o controles del sistema. Elige otra entrada.");
+        return;
+      }
       event.preventDefault();
       event.stopImmediatePropagation();
       onChange(updatePresentationKeyboardBinding(settings, capturing, code));

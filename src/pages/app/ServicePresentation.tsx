@@ -1291,8 +1291,9 @@ export default function ServicePresentation() {
 
   function toggleBlackout() {
     if (runtimeSession) {
-      if (liveCanMutate) void runtimeSendCommand("set_blackout", { blackout: !blackout }).catch(() => undefined);
-      else if (remoteIntents.available && !remoteIntents.pending) void remoteIntents.send("set_blackout", { enabled: !blackout });
+      const nextBlackout = !runtimeSession.display.blackout;
+      if (liveCanMutate) void runtimeSendCommand("set_blackout", { blackout: nextBlackout }).catch(() => undefined);
+      else if (remoteIntents.available && !remoteIntents.pending) void remoteIntents.send("set_blackout", { enabled: nextBlackout });
       return;
     }
     setBlackout((current) => !current);
@@ -1300,8 +1301,9 @@ export default function ServicePresentation() {
 
   function toggleChords() {
     if (runtimeSession) {
-      if (liveCanMutate) void runtimeSendCommand("set_chords", { chordsVisible: !showChords }).catch(() => undefined);
-      else if (remoteIntents.available && !remoteIntents.pending) void remoteIntents.send("set_chords", { visible: !showChords });
+      const nextChordsVisible = !runtimeSession.display.chordsVisible;
+      if (liveCanMutate) void runtimeSendCommand("set_chords", { chordsVisible: nextChordsVisible }).catch(() => undefined);
+      else if (remoteIntents.available && !remoteIntents.pending) void remoteIntents.send("set_chords", { visible: nextChordsVisible });
       return;
     }
     setShowChords((current) => !current);

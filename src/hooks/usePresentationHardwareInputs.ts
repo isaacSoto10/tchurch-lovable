@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import {
   createPresentationInputDeduper,
-  resolvePresentationHardwareAction,
+  resolvePresentationHardwareInput,
   type PresentationHardwareAction,
   type PresentationHardwareContext,
   type PresentationHardwareSettings,
@@ -31,13 +31,12 @@ export function usePresentationHardwareInputs({
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       const current = currentRef.current;
-      const action = resolvePresentationHardwareAction(event, current.settings, {
+      const resolution = resolvePresentationHardwareInput(event, current.settings, {
         ...current.context,
         documentVisible: document.visibilityState !== "hidden",
       }, deduperRef.current);
-      if (!action) return;
-      event.preventDefault();
-      current.onAction(action);
+      if (resolution.consume) event.preventDefault();
+      if (resolution.action) current.onAction(resolution.action);
     }
 
     window.addEventListener("keydown", handleKeyDown);

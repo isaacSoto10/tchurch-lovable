@@ -1,6 +1,9 @@
 export const PRESENTATION_HARDWARE_SCHEMA_VERSION = 5 as const;
 export const PRESENTATION_HARDWARE_STORAGE_PREFIX = "tchurch.presentation.hardware.v5";
 export const LEGACY_PRESENTATION_PEDAL_STORAGE_PREFIX = "tchurch_live_pedal_v1";
+export const PRESENTATION_HARDWARE_MIGRATION_GUARD_PREFIX = "tchurch.presentation.hardware.v5.migration";
+export const PRESENTATION_HARDWARE_MIGRATION_BACKUP_PREFIX = "tchurch.presentation.hardware.v5.legacy-backup";
+export const PRESENTATION_HARDWARE_MIGRATION_QUARANTINE_PREFIX = "tchurch.presentation.hardware.v5.migration-quarantine";
 export const MAX_PRESENTATION_HARDWARE_BINDINGS = 32;
 export const PRESENTATION_HARDWARE_DEDUPE_MS = 200;
 
@@ -69,8 +72,14 @@ export type PresentationInputDeduper = {
   reset: () => void;
 };
 
+export type PresentationHardwareResolution = {
+  action: PresentationHardwareAction | null;
+  consume: boolean;
+};
+
 type StorageReader = Pick<Storage, "getItem">;
 type StorageWriter = Pick<Storage, "setItem">;
+type MigrationStorage = StorageReader & Partial<Pick<Storage, "setItem" | "removeItem">>;
 type LegacyPedalDocument = {
   schemaVersion: 1;
   enabled?: unknown;
@@ -79,6 +88,44 @@ type LegacyPedalDocument = {
 
 const ACTIONS: PresentationHardwareAction[] = ["next", "previous", "toggle_blackout", "toggle_chords"];
 const ACTION_SET = new Set<PresentationHardwareAction>(ACTIONS);
+const BLOCKED_KEYBOARD_CODES = new Set([
+  "Tab",
+  "Enter",
+  "NumpadEnter",
+  "Backspace",
+  "Delete",
+  "Escape",
+  "Home",
+  "End",
+  "Insert",
+  "ContextMenu",
+  "PrintScreen",
+  "ScrollLock",
+  "Pause",
+  "NumLock",
+  "CapsLock",
+  "MetaLeft",
+  "MetaRight",
+  "OSLeft",
+  "OSRight",
+  "Power",
+  "Sleep",
+  "WakeUp",
+  "Eject",
+  "Fn",
+  "FnLock",
+]);
+const BLOCKED_KEYBOARD_CODE_PREFIXES = [
+  "Media",
+  "AudioVolume",
+  "Browser",
+  "Launch",
+  "Brightness",
+  "KeyboardLayout",
+  "Microphone",
+  "Camera",
+  "Speech",
+];
 const MAX_BINDING_VALUE_LENGTH = 40;
 const MAX_SCOPE_LENGTH = 200;
 
@@ -135,6 +182,14 @@ function safeInputValue(value: unknown) {
   return candidate;
 }
 
+export function isAllowedPresentationHardwareKeyCode(code: string) {
+  const candidate = safeInputValue(code);
+  if (!candidate || candidate === "Dead" || candidate === "Process" || candidate === "Unidentified") return false;
+  if (BLOCKED_KEYBOARD_CODES.has(candidate)) return false;
+  if (/^F(?:[1-9]|1[0-9]|2[0-4])$/.test(candidate)) return false;
+  return !BLOCKED_KEYBOARD_CODE_PREFIXES.some((prefix) => candidate.startsWith(prefix));
+}
+
 function safeBindingId(value: unknown, fallback: string) {
   const candidate = stringValue(value);
   return candidate && candidate.length <= 96 && /^[A-Za-z0-9._:-]+$/.test(candidate) ? candidate : fallback;
@@ -172,7 +227,7 @@ function normalizeBinding(value: unknown): PresentationHardwareBinding | null {
 
   if (value.source === "keyboard") {
     const code = safeInputValue(value.code);
-    if (!code) return null;
+    if (!isAllowedPresentationHardwareKeyCode(code)) return null;
     const fingerprint = presentationHardwareBindingFingerprintInput({ source: "keyboard", code });
     return { id: safeBindingId(value.id, fingerprint), enabled, source: "keyboard", code, action };
   }
@@ -238,7 +293,19 @@ export function legacyPresentationPedalStorageKey(churchId?: string | null) {
   return `${LEGACY_PRESENTATION_PEDAL_STORAGE_PREFIX}:${storageScope(churchId, "none")}`;
 }
 
-function resolveReadStorage(storage?: StorageReader & Partial<StorageWriter>): (StorageReader & Partial<StorageWriter>) | null {
+export function presentationHardwareMigrationGuardKey(churchId?: string | null) {
+  return `${PRESENTATION_HARDWARE_MIGRATION_GUARD_PREFIX}:${storageScope(churchId, "none")}`;
+}
+
+export function presentationHardwareMigrationBackupKey(accountId?: string | null, churchId?: string | null) {
+  return `${PRESENTATION_HARDWARE_MIGRATION_BACKUP_PREFIX}:${storageScope(accountId, "no-account")}:${storageScope(churchId, "no-church")}`;
+}
+
+export function presentationHardwareMigrationQuarantineKey(churchId?: string | null) {
+  return `${PRESENTATION_HARDWARE_MIGRATION_QUARANTINE_PREFIX}:${storageScope(churchId, "none")}`;
+}
+
+function resolveReadStorage(storage?: MigrationStorage): MigrationStorage | null {
   if (storage) return storage;
   return typeof localStorage === "undefined" ? null : localStorage;
 }
@@ -277,21 +344,63 @@ function migrateLegacyPedalDocument(value: unknown): PresentationHardwareSetting
 export function readPresentationHardwareSettings(
   accountId?: string | null,
   churchId?: string | null,
-  storage?: StorageReader & Partial<StorageWriter>,
+  storage?: MigrationStorage,
 ): PresentationHardwareSettings {
   const target = resolveReadStorage(storage);
   if (!target) return cloneDefaultSettings();
   const key = presentationHardwareStorageKey(accountId, churchId);
+  const legacyKey = legacyPresentationPedalStorageKey(churchId);
+  const guardKey = presentationHardwareMigrationGuardKey(churchId);
+  const backupKey = presentationHardwareMigrationBackupKey(accountId, churchId);
+  const quarantineKey = presentationHardwareMigrationQuarantineKey(churchId);
+  let migrationAttempted = false;
+  let guardClaimed = false;
   try {
     const raw = target.getItem(key);
-    if (raw !== null) return normalizePresentationHardwareSettings(JSON.parse(raw));
+    const guard = target.getItem(guardKey);
+    const quarantined = target.getItem(quarantineKey);
+    if (raw !== null) {
+      if (guard === `claimed:${key}`) return cloneDefaultSettings();
+      return normalizePresentationHardwareSettings(JSON.parse(raw));
+    }
 
-    const legacyRaw = target.getItem(legacyPresentationPedalStorageKey(churchId));
+    if (guard !== null || quarantined !== null) return cloneDefaultSettings();
+    const legacyRaw = target.getItem(legacyKey);
     const migrated = legacyRaw ? migrateLegacyPedalDocument(JSON.parse(legacyRaw)) : null;
     if (!migrated) return cloneDefaultSettings();
-    target.setItem?.(key, JSON.stringify(migrated));
+
+    if (!target.setItem || !target.removeItem) return cloneDefaultSettings();
+    if (target.getItem(guardKey) !== null) return cloneDefaultSettings();
+    migrationAttempted = true;
+    const serialized = JSON.stringify(migrated);
+    const claim = `claimed:${key}`;
+    target.setItem(guardKey, claim);
+    if (target.getItem(guardKey) !== claim) throw new Error("Legacy migration claim was not persisted");
+    guardClaimed = true;
+    if (target.getItem(legacyKey) !== legacyRaw) throw new Error("Legacy migration claim was superseded");
+    target.setItem(backupKey, legacyRaw);
+    if (target.getItem(backupKey) !== legacyRaw) throw new Error("Legacy migration backup was not persisted");
+    target.setItem(key, serialized);
+    if (target.getItem(key) !== serialized) throw new Error("Migrated hardware settings were not persisted");
+    if (target.getItem(guardKey) !== claim || target.getItem(legacyKey) !== legacyRaw) throw new Error("Legacy migration claim changed before commit");
+    target.removeItem(legacyKey);
+    if (target.getItem(legacyKey) !== null) {
+      try { target.setItem(quarantineKey, "blocked"); } catch { /* The owner guard still blocks every other account. */ }
+      throw new Error("Shared legacy settings were not removed");
+    }
+    const committed = `committed:${key}`;
+    target.setItem(guardKey, committed);
+    if (target.getItem(guardKey) !== committed) throw new Error("Legacy migration commit was not persisted");
     return migrated;
   } catch {
+    if (migrationAttempted) {
+      try { target.removeItem?.(key); } catch { /* The owner guard keeps a partial target unreadable. */ }
+      try { target.removeItem?.(backupKey); } catch { /* Backup is account-scoped and never used by normal reads. */ }
+      if (!guardClaimed) {
+        try { target.setItem?.(quarantineKey, "blocked"); } catch { /* Removing the shared legacy is the fallback. */ }
+        try { target.removeItem?.(legacyKey); } catch { /* The quarantine is the fallback. */ }
+      }
+    }
     return cloneDefaultSettings();
   }
 }
@@ -342,7 +451,37 @@ export function isPresentationEditableTarget(target: EventTarget | null | undefi
 
 export function isPresentationHardwareBlockedTarget(target: EventTarget | null | undefined) {
   if (!(target instanceof Element)) return false;
-  return isPresentationEditableTarget(target) || Boolean(target.closest("[role=dialog], [data-presentation-hardware-block=true]"));
+  return isPresentationEditableTarget(target) || Boolean(target.closest([
+    "a[href]",
+    "area[href]",
+    "button",
+    "summary",
+    "audio[controls]",
+    "video[controls]",
+    "iframe",
+    "object",
+    "embed",
+    "[role=dialog]",
+    "[role=button]",
+    "[role=link]",
+    "[role=checkbox]",
+    "[role=radio]",
+    "[role=switch]",
+    "[role=slider]",
+    "[role=spinbutton]",
+    "[role=combobox]",
+    "[role=listbox]",
+    "[role=option]",
+    "[role=menuitem]",
+    "[role=menuitemcheckbox]",
+    "[role=menuitemradio]",
+    "[role=tab]",
+    "[role=treeitem]",
+    "[role=gridcell]",
+    "[aria-haspopup]",
+    "[tabindex]:not([tabindex='-1'])",
+    "[data-presentation-hardware-block=true]",
+  ].join(", ")));
 }
 
 export function createPresentationInputDeduper(windowMs = PRESENTATION_HARDWARE_DEDUPE_MS): PresentationInputDeduper {
@@ -365,17 +504,16 @@ export function createPresentationInputDeduper(windowMs = PRESENTATION_HARDWARE_
   };
 }
 
-export function resolvePresentationHardwareAction(
+export function resolvePresentationHardwareInput(
   event: PresentationKeyLike,
   settings: PresentationHardwareSettings,
   context: PresentationHardwareContext,
   deduper?: PresentationInputDeduper,
-): PresentationHardwareAction | null {
+): PresentationHardwareResolution {
   if (
     !settings.enabled
     || !settings.sources.keyboard
     || !context.controllerOwned
-    || context.commandPending
     || !context.appActive
     || !context.documentVisible
     || context.modalOpen
@@ -383,23 +521,33 @@ export function resolvePresentationHardwareAction(
     || context.captureActive
     || context.networkDiverged
     || event.defaultPrevented
-    || event.repeat
     || event.isComposing
     || event.altKey
     || event.ctrlKey
     || event.metaKey
     || event.shiftKey
     || isPresentationHardwareBlockedTarget(event.target)
-  ) return null;
+  ) return { action: null, consume: false };
 
   const code = presentationKeyCode(event);
-  if (!code || code === "Dead" || code === "Process" || code === "Unidentified") return null;
+  if (!isAllowedPresentationHardwareKeyCode(code)) return { action: null, consume: false };
   const binding = settings.bindings.find((candidate): candidate is PresentationKeyboardBinding => (
     candidate.source === "keyboard" && candidate.enabled && candidate.code === code
   ));
-  if (!binding) return null;
+  if (!binding) return { action: null, consume: false };
+  if (context.commandPending || event.repeat) return { action: null, consume: true };
   const fingerprint = presentationHardwareBindingFingerprint(binding);
-  return !deduper || deduper.accept(fingerprint) ? binding.action : null;
+  if (deduper && !deduper.accept(fingerprint)) return { action: null, consume: true };
+  return { action: binding.action, consume: true };
+}
+
+export function resolvePresentationHardwareAction(
+  event: PresentationKeyLike,
+  settings: PresentationHardwareSettings,
+  context: PresentationHardwareContext,
+  deduper?: PresentationInputDeduper,
+): PresentationHardwareAction | null {
+  return resolvePresentationHardwareInput(event, settings, context, deduper).action;
 }
 
 export function presentationKeyboardBindingsForAction(settings: PresentationHardwareSettings, action: PresentationHardwareAction) {
@@ -413,7 +561,7 @@ export function updatePresentationKeyboardBinding(
 ) {
   const normalized = normalizePresentationHardwareSettings(settings);
   const nextCode = safeInputValue(code);
-  if (!nextCode) return normalized;
+  if (!isAllowedPresentationHardwareKeyCode(nextCode)) return normalized;
   const fingerprint = presentationHardwareBindingFingerprintInput({ source: "keyboard", code: nextCode });
   const bindings = normalized.bindings.filter((binding) => {
     if (presentationHardwareBindingFingerprint(binding) === fingerprint) return false;
