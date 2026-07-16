@@ -35,7 +35,8 @@ final class StudioLANClientCoreTests: XCTestCase {
             channel: .stage,
             secret: secret,
             requestID: UUID(uuidString: "cccccccc-cccc-4ccc-8ccc-cccccccccccc")!,
-            clientNonce: Data(repeating: 0x21, count: 24)
+            clientNonce: Data(repeating: 0x21, count: 24),
+            schemaVersion: 1
         )
         let independentlyEncodedProof = TestRequestProof(
             challenge: challenge,
@@ -50,6 +51,9 @@ final class StudioLANClientCoreTests: XCTestCase {
             for: independentlyEncodedProof,
             secret: secret
         ))
+        XCTAssertNil(request.supportedPayloadVersions)
+        XCTAssertFalse(String(decoding: try TchurchStudioLANCoding.encoder().encode(request), as: UTF8.self)
+            .contains("supportedPayloadVersions"))
 
         let grant = try makeGrant(
             challenge: challenge,
@@ -64,6 +68,9 @@ final class StudioLANClientCoreTests: XCTestCase {
             secret: secret,
             nowMilliseconds: 1_000_100
         ))
+        XCTAssertNil(grant.selectedPayloadVersion)
+        XCTAssertFalse(String(decoding: try TchurchStudioLANCoding.encoder().encode(grant), as: UTF8.self)
+            .contains("selectedPayloadVersion"))
         XCTAssertThrowsError(try TchurchStudioLANSubscriptionAuthenticator.verifyGrant(
             grant,
             request: request,
@@ -72,6 +79,62 @@ final class StudioLANClientCoreTests: XCTestCase {
             nowMilliseconds: 1_000_100
         )) {
             XCTAssertEqual($0 as? TchurchStudioLANError, .invalidAuthenticationProof)
+        }
+    }
+
+    func testV2NegotiationBindsSupportedAndSelectedPayloadVersions() throws {
+        let secret = try fixedSecret(0x41)
+        let identity = try Curve25519.Signing.PrivateKey(rawRepresentation: Data(repeating: 0x33, count: 32))
+        let challenge = makeChallenge(identity: identity)
+        let request = try TchurchStudioLANSubscriptionAuthenticator.makeRequest(
+            challenge: challenge,
+            clientID: UUID(uuidString: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")!,
+            clientName: "Tchurch iOS",
+            channel: .stage,
+            secret: secret,
+            requestID: UUID(uuidString: "cccccccc-cccc-4ccc-8ccc-cccccccccccc")!,
+            clientNonce: Data(repeating: 0x21, count: 24)
+        )
+        XCTAssertEqual(request.schemaVersion, 2)
+        XCTAssertEqual(request.supportedPayloadVersions, [2, 1])
+        XCTAssertTrue(TchurchStudioLANCrypto.validatesAuthenticationCode(
+            request.authenticationProof,
+            for: TestRequestProofV2(
+                challenge: challenge,
+                requestID: request.requestID,
+                clientID: request.clientID,
+                clientName: request.clientName,
+                channel: request.channel,
+                clientNonce: request.clientNonce,
+                supportedPayloadVersions: [2, 1]
+            ),
+            secret: secret
+        ))
+        let grant = try makeGrant(challenge: challenge, request: request, identity: identity, secret: secret)
+        let subscription = try TchurchStudioLANSubscriptionAuthenticator.verifyGrant(
+            grant, request: request, challenge: challenge, secret: secret, nowMilliseconds: 1_000_100
+        )
+        XCTAssertEqual(grant.schemaVersion, 2)
+        XCTAssertEqual(grant.selectedPayloadVersion, 2)
+        XCTAssertEqual(subscription.payloadVersion, 2)
+
+        let downgraded = TchurchStudioLANSubscriptionGrant(
+            schemaVersion: grant.schemaVersion,
+            sessionID: grant.sessionID,
+            requestID: grant.requestID,
+            channel: grant.channel,
+            authority: grant.authority,
+            signingKeyID: grant.signingKeyID,
+            signingPublicKey: grant.signingPublicKey,
+            minimumSequence: grant.minimumSequence,
+            expiresAtMilliseconds: grant.expiresAtMilliseconds,
+            selectedPayloadVersion: 1,
+            serverProof: grant.serverProof
+        )
+        XCTAssertThrowsError(try TchurchStudioLANSubscriptionAuthenticator.verifyGrant(
+            downgraded, request: request, challenge: challenge, secret: secret, nowMilliseconds: 1_000_100
+        )) {
+            XCTAssertEqual($0 as? TchurchStudioLANError, .unsupportedPayloadVersion)
         }
     }
 
@@ -123,6 +186,53 @@ final class StudioLANClientCoreTests: XCTestCase {
         let control = Data(#"{"channel":"control","control":{"privateNotes":"must not decode"}}"#.utf8)
         XCTAssertThrowsError(try TchurchStudioLANCoding.decoder().decode(TchurchStudioLANChannelPayload.self, from: control)) {
             XCTAssertEqual($0 as? TchurchStudioLANError, .unsupportedChannel)
+        }
+    }
+
+    func testV2EnvelopePreservesUnicodeChordOffsetsAndRejectsMismatch() throws {
+        let fixture = try makeSubscriptionFixture(channel: .stage, requestSchemaVersion: 2)
+        let verifier = try TchurchStudioLANEnvelopeVerifier(subscription: fixture.subscription)
+        let payload = stagePayloadV2(revision: 8)
+        let envelope = try signEnvelope(
+            payload: payload,
+            authority: fixture.challenge.authority,
+            identity: fixture.identity,
+            sequence: 12,
+            revision: 8,
+            schemaVersion: 2
+        )
+        let verified = try verifier.verify(TchurchStudioLANCoding.encoder().encode(envelope))
+        XCTAssertEqual(verified.payload.stage?.currentChordSlide?.key, "C")
+        XCTAssertEqual(verified.payload.stage?.currentChordSlide?.lines[0].chords.map(\.offsetUtf16), [0, 0, 8])
+
+        for invalidPayload in [
+            stagePayloadV2(revision: 8, cueID: "cue-other"),
+            stagePayloadV2(revision: 8, chordOffset: 6),
+            stagePayloadV2(revision: 8, includeChordSlide: false),
+        ] {
+            let invalidEnvelope = try signEnvelope(
+                payload: invalidPayload,
+                authority: fixture.challenge.authority,
+                identity: fixture.identity,
+                sequence: 13,
+                revision: 8,
+                schemaVersion: 2
+            )
+            XCTAssertThrowsError(try verifier.verify(TchurchStudioLANCoding.encoder().encode(invalidEnvelope))) {
+                XCTAssertEqual($0 as? TchurchStudioLANError, .invalidPayload)
+            }
+        }
+
+        let legacyEnvelope = try signEnvelope(
+            payload: stagePayload(revision: 8),
+            authority: fixture.challenge.authority,
+            identity: fixture.identity,
+            sequence: 13,
+            revision: 8,
+            schemaVersion: 1
+        )
+        XCTAssertThrowsError(try verifier.verify(TchurchStudioLANCoding.encoder().encode(legacyEnvelope))) {
+            XCTAssertEqual($0 as? TchurchStudioLANError, .invalidEnvelope)
         }
     }
 
@@ -339,6 +449,16 @@ private struct TestRequestProof: Codable {
     let clientNonce: String
 }
 
+private struct TestRequestProofV2: Codable {
+    let challenge: TchurchStudioLANServerChallenge
+    let requestID: UUID
+    let clientID: UUID
+    let clientName: String
+    let channel: TchurchStudioLANChannel
+    let clientNonce: String
+    let supportedPayloadVersions: [Int]
+}
+
 private struct TestGrantProof: Codable {
     let challengeID: UUID
     let sessionID: UUID
@@ -350,6 +470,20 @@ private struct TestGrantProof: Codable {
     let minimumSequence: UInt64
     let expiresAtMilliseconds: Int64
     let clientNonce: String
+}
+
+private struct TestGrantProofV2: Codable {
+    let challengeID: UUID
+    let sessionID: UUID
+    let requestID: UUID
+    let channel: TchurchStudioLANChannel
+    let authority: TchurchStudioLANAuthority
+    let signingKeyID: String
+    let signingPublicKey: String
+    let minimumSequence: UInt64
+    let expiresAtMilliseconds: Int64
+    let clientNonce: String
+    let selectedPayloadVersion: Int
 }
 
 private struct TestEnvelopeMaterial: Codable {
@@ -408,20 +542,38 @@ private func makeGrant(
 ) throws -> TchurchStudioLANSubscriptionGrant {
     let sessionID = UUID(uuidString: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")!
     let publicKey = identity.publicKey.rawRepresentation.base64EncodedString()
-    let proof = TestGrantProof(
-        challengeID: challenge.challengeID,
-        sessionID: sessionID,
-        requestID: request.requestID,
-        channel: request.channel,
-        authority: challenge.authority,
-        signingKeyID: challenge.signingKeyID,
-        signingPublicKey: publicKey,
-        minimumSequence: minimumSequence,
-        expiresAtMilliseconds: 1_500_000,
-        clientNonce: request.clientNonce
-    )
+    let selectedPayloadVersion: Int? = request.schemaVersion == 2 ? 2 : nil
+    let proof: String
+    if let selectedPayloadVersion {
+        proof = try TchurchStudioLANCrypto.authenticationCode(for: TestGrantProofV2(
+            challengeID: challenge.challengeID,
+            sessionID: sessionID,
+            requestID: request.requestID,
+            channel: request.channel,
+            authority: challenge.authority,
+            signingKeyID: challenge.signingKeyID,
+            signingPublicKey: publicKey,
+            minimumSequence: minimumSequence,
+            expiresAtMilliseconds: 1_500_000,
+            clientNonce: request.clientNonce,
+            selectedPayloadVersion: selectedPayloadVersion
+        ), secret: secret)
+    } else {
+        proof = try TchurchStudioLANCrypto.authenticationCode(for: TestGrantProof(
+            challengeID: challenge.challengeID,
+            sessionID: sessionID,
+            requestID: request.requestID,
+            channel: request.channel,
+            authority: challenge.authority,
+            signingKeyID: challenge.signingKeyID,
+            signingPublicKey: publicKey,
+            minimumSequence: minimumSequence,
+            expiresAtMilliseconds: 1_500_000,
+            clientNonce: request.clientNonce
+        ), secret: secret)
+    }
     return TchurchStudioLANSubscriptionGrant(
-        schemaVersion: 1,
+        schemaVersion: request.schemaVersion,
         sessionID: sessionID,
         requestID: request.requestID,
         channel: request.channel,
@@ -430,7 +582,8 @@ private func makeGrant(
         signingPublicKey: publicKey,
         minimumSequence: minimumSequence,
         expiresAtMilliseconds: 1_500_000,
-        serverProof: try TchurchStudioLANCrypto.authenticationCode(for: proof, secret: secret)
+        selectedPayloadVersion: selectedPayloadVersion,
+        serverProof: proof
     )
 }
 
@@ -438,7 +591,8 @@ private func makeSubscriptionFixture(
     channel: TchurchStudioLANChannel,
     epoch: UInt64 = 7,
     identity suppliedIdentity: Curve25519.Signing.PrivateKey? = nil,
-    minimumSequence: UInt64 = 12
+    minimumSequence: UInt64 = 12,
+    requestSchemaVersion: Int = 1
 ) throws -> SubscriptionFixture {
     let secret = try fixedSecret(0x41)
     let identity = try suppliedIdentity ?? Curve25519.Signing.PrivateKey(rawRepresentation: Data(repeating: 0x33, count: 32))
@@ -450,7 +604,8 @@ private func makeSubscriptionFixture(
         channel: channel,
         secret: secret,
         requestID: UUID(uuidString: "cccccccc-cccc-4ccc-8ccc-cccccccccccc")!,
-        clientNonce: Data(repeating: 0x21, count: 24)
+        clientNonce: Data(repeating: 0x21, count: 24),
+        schemaVersion: requestSchemaVersion
     )
     let grant = try makeGrant(
         challenge: challenge,
@@ -497,17 +652,61 @@ private func stagePayload(revision: UInt64) -> TchurchStudioLANChannelPayload {
     ))
 }
 
+private func stagePayloadV2(
+    revision: UInt64,
+    cueID: String = "cue-1",
+    text: String = "Dios 🙌 es fiel",
+    chordOffset: Int = 8,
+    includeChordSlide: Bool = true
+) -> TchurchStudioLANChannelPayload {
+    let audience = TchurchStudioLANAudiencePayload(
+        snapshot: .init(
+            schemaVersion: 1,
+            runID: makeAuthority().runID,
+            authorityEpoch: makeAuthority().authorityEpoch,
+            packageID: makeAuthority().packageID,
+            serviceVersion: makeAuthority().serviceVersion,
+            revision: revision,
+            currentCueID: "cue-1",
+            currentCueIndex: 0,
+            cueCount: 2,
+            isBlackout: false,
+            countdown: nil
+        ),
+        cue: .init(cueID: "cue-1", title: "Verse", lines: [text], mediaAssetID: nil)
+    )
+    return .stage(.init(
+        audience: audience,
+        stage: .init(
+            nextCue: nil,
+            chordLines: ["C  G"],
+            currentChordSlide: includeChordSlide ? .init(
+                cueID: cueID,
+                key: "C",
+                lines: [.init(text: text, chords: [
+                    .init(value: "C", offsetUtf16: 0),
+                    .init(value: "C/E", offsetUtf16: 0),
+                    .init(value: "G", offsetUtf16: chordOffset),
+                ])]
+            ) : nil,
+            timers: [],
+            message: nil
+        )
+    ))
+}
+
 private func signEnvelope(
     payload: TchurchStudioLANChannelPayload,
     authority: TchurchStudioLANAuthority,
     identity: Curve25519.Signing.PrivateKey,
     sequence: UInt64,
-    revision: UInt64
+    revision: UInt64,
+    schemaVersion: Int = 1
 ) throws -> TchurchStudioLANSignedEnvelope {
     let checksum = TchurchStudioLANCrypto.sha256Hex(try TchurchStudioLANCoding.encoder().encode(payload))
     let keyID = String(TchurchStudioLANCrypto.sha256Hex(identity.publicKey.rawRepresentation).prefix(24))
     let material = TestEnvelopeMaterial(
-        schemaVersion: 1,
+        schemaVersion: schemaVersion,
         authority: authority,
         channel: payload.channel,
         sequence: sequence,
@@ -518,7 +717,7 @@ private func signEnvelope(
         signingKeyID: keyID
     )
     return TchurchStudioLANSignedEnvelope(
-        schemaVersion: 1,
+        schemaVersion: schemaVersion,
         authority: authority,
         channel: payload.channel,
         sequence: sequence,

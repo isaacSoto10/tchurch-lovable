@@ -8,11 +8,12 @@ vi.mock("@capacitor/core", () => ({
   registerPlugin: () => ({}),
 }));
 
-import { normalizeStudioLANStatus, normalizeStudioLANUpdate } from "./studioLANClient";
+import { normalizeStudioLANPairingQR, normalizeStudioLANStatus, normalizeStudioLANUpdate } from "./studioLANClient";
 
 function validUpdate() {
   return {
     channel: "stage",
+    payloadVersion: 1,
     sequence: "12",
     revision: "8",
     receivedAtMs: 1_700_000_000_000,
@@ -38,6 +39,7 @@ function validUpdate() {
     stage: {
       nextCue: { cueId: "cue-2", title: "Chorus", lines: ["Next"], mediaAssetId: null },
       chordLines: ["C  G  Am  F"],
+      currentChordSlide: null,
       timers: [{ id: "service", label: "Servicio", mode: "countDown", anchorAtMs: 1_700_000_000_000, anchorValueMs: 5_000, durationMs: 60_000, isRunning: true }],
       message: "Puente dos veces",
     },
@@ -73,6 +75,8 @@ describe("Studio LAN native bridge boundary", () => {
     });
     expect(unsafe.message).toBe("La conexión LAN no está disponible. Desconecta y vuelve a emparejar.");
     expect(unsafe.message).not.toContain("token=");
+    expect(normalizeStudioLANStatus({ phase: "failed", services: [], message: "El emparejamiento cambió. Escanea el QR actual de Tchurch Studio." }).message)
+      .toBe("El emparejamiento cambió. Escanea el QR actual de Tchurch Studio.");
   });
 
   it("accepts the sanitized stage shape and rejects control, malformed sequence, and invalid asset IDs", () => {
@@ -92,5 +96,32 @@ describe("Studio LAN native bridge boundary", () => {
         cue: { ...validUpdate().audience.cue, mediaAssetId: "https://private.example/token" },
       },
     })).toBeNull();
+  });
+
+  it("accepts v2 chord offsets across Unicode and rejects split surrogates or cue mismatch", () => {
+    const text = "Dios 🙌 es fiel";
+    const v2 = {
+      ...validUpdate(), payloadVersion: 2,
+      audience: { ...validUpdate().audience, cue: { ...validUpdate().audience.cue, lines: [text] } },
+      stage: {
+        ...validUpdate().stage,
+        chordLines: ["C  G"],
+        currentChordSlide: { cueId: "cue-1", key: "C", lines: [{ text, chords: [
+          { value: "C", offsetUtf16: 0 }, { value: "C/E", offsetUtf16: 0 }, { value: "G", offsetUtf16: 8 },
+        ] }] },
+      },
+    };
+    expect(normalizeStudioLANUpdate(v2)).toMatchObject({ payloadVersion: 2, stage: { currentChordSlide: { key: "C" } } });
+    expect(normalizeStudioLANUpdate({ ...v2, stage: { ...v2.stage, currentChordSlide: { ...v2.stage.currentChordSlide, lines: [{ text, chords: [{ value: "G", offsetUtf16: 6 }] }] } } })).toBeNull();
+    expect(normalizeStudioLANUpdate({ ...v2, stage: { ...v2.stage, currentChordSlide: { ...v2.stage.currentChordSlide, cueId: "cue-other" } } })).toBeNull();
+  });
+
+  it("accepts only bounded Studio pairing QR payloads", () => {
+    const valid = `tchurch-studio:${"A".repeat(43)}`;
+    expect(normalizeStudioLANPairingQR(`  ${valid}\n`)).toBe(valid);
+    expect(normalizeStudioLANPairingQR(`TCHURCH-STUDIO:${"A".repeat(43)}`)).toBe(valid);
+    expect(normalizeStudioLANPairingQR("https://example.com/not-studio")).toBeNull();
+    expect(normalizeStudioLANPairingQR(`tchurch-studio:${"A".repeat(42)}`)).toBeNull();
+    expect(normalizeStudioLANPairingQR(`tchurch-studio:${"A".repeat(43)}=`)).toBeNull();
   });
 });

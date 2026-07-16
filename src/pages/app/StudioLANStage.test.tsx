@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { StudioLANStatus, StudioLANUpdate } from "@/lib/studioLANClient";
@@ -10,6 +10,14 @@ const mocks = vi.hoisted(() => ({
   disconnect: vi.fn(),
   forget: vi.fn(),
   refresh: vi.fn(),
+  scanBarcode: vi.fn(),
+}));
+
+vi.mock("@capacitor/barcode-scanner", () => ({
+  CapacitorBarcodeScanner: { scanBarcode: mocks.scanBarcode },
+  CapacitorBarcodeScannerCameraDirection: { BACK: "BACK" },
+  CapacitorBarcodeScannerScanOrientation: { ADAPTIVE: "ADAPTIVE" },
+  CapacitorBarcodeScannerTypeHint: { QR_CODE: "QR_CODE" },
 }));
 
 vi.mock("@/hooks/useStudioLANClient", () => ({
@@ -38,6 +46,7 @@ const baseStatus: StudioLANStatus = {
 
 const update: StudioLANUpdate = {
   channel: "stage",
+  payloadVersion: 1,
   sequence: "12",
   revision: "8",
   receivedAtMs: Date.now(),
@@ -53,6 +62,7 @@ const update: StudioLANUpdate = {
   stage: {
     nextCue: { cueId: "cue-2", title: "Coro", lines: ["Siguiente línea"], mediaAssetId: null },
     chordLines: ["C  G  Am  F"],
+    currentChordSlide: null,
     timers: [],
     message: "Puente dos veces",
   },
@@ -66,6 +76,7 @@ describe("Studio LAN stage route", () => {
     mocks.disconnect.mockReset().mockResolvedValue(undefined);
     mocks.forget.mockReset().mockResolvedValue(undefined);
     mocks.refresh.mockReset().mockResolvedValue(undefined);
+    mocks.scanBarcode.mockReset().mockResolvedValue({ ScanResult: "" });
   });
 
   it("leaves discovery loading and offers a retry when Studio is absent", () => {
@@ -111,5 +122,41 @@ describe("Studio LAN stage route", () => {
     expect(screen.getByLabelText("Salida en negro")).toBeInTheDocument();
     expect(screen.queryByText("Gracia sobre gracia")).not.toBeInTheDocument();
     expect(screen.queryByText("Puente dos veces")).not.toBeInTheDocument();
+  });
+
+  it("scans a Studio QR without rendering the pairing secret", async () => {
+    const pairingQR = `tchurch-studio:${"A".repeat(43)}`;
+    mocks.scanBarcode.mockResolvedValue({ ScanResult: pairingQR });
+    render(<MemoryRouter><StudioLANStage /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /escanear QR de Studio/i }));
+    await waitFor(() => expect(mocks.connect).toHaveBeenCalledWith(serviceId, "stage", pairingQR));
+    expect(screen.queryByText(pairingQR)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/código de emparejamiento/i)).toHaveValue("");
+  });
+
+  it("rejects a foreign QR before it reaches the native connection", async () => {
+    mocks.scanBarcode.mockResolvedValue({ ScanResult: "https://example.com/not-studio" });
+    render(<MemoryRouter><StudioLANStage /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /escanear QR de Studio/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/no pertenece a Tchurch Studio/i);
+    expect(mocks.connect).not.toHaveBeenCalled();
+  });
+
+  it("renders v2 chords at their UTF-16 lyric offsets, including grouped tokens", () => {
+    const text = "Dios 🙌 es fiel";
+    mocks.status = { ...baseStatus, phase: "connected", selectedServiceId: serviceId, channel: "stage", paired: true };
+    mocks.update = {
+      ...update, payloadVersion: 2,
+      audience: { ...update.audience, cue: { ...update.audience.cue!, lines: [text] } },
+      stage: { ...update.stage!, currentChordSlide: { cueId: "cue-1", key: "C", lines: [{ text, chords: [
+        { value: "C", offsetUtf16: 0 }, { value: "C/E", offsetUtf16: 0 }, { value: "G", offsetUtf16: 8 },
+      ] }] } },
+    };
+    const { container } = render(<MemoryRouter><StudioLANStage /></MemoryRouter>);
+    expect(screen.getByText(/Tono · C/i)).toBeInTheDocument();
+    expect(screen.getByLabelText("Acordes y letra actuales")).toHaveTextContent(text);
+    expect(container.querySelector('[data-chord-offset-utf16="0"]')).toHaveTextContent("C / C/E");
+    expect(container.querySelector('[data-chord-offset-utf16="8"]')).toHaveTextContent("G");
+    expect(screen.queryByLabelText("Acordes actuales")).not.toBeInTheDocument();
   });
 });
