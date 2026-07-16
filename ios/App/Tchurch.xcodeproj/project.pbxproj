@@ -15,6 +15,11 @@
 		A4C200010000000000000003 /* TchurchBridgeViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4C200010000000000000004 /* TchurchBridgeViewController.swift */; };
 		B4D300010000000000000001 /* PresentationHardwareCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4D300010000000000000002 /* PresentationHardwareCore.swift */; };
 		B4D300010000000000000003 /* PresentationHardwareCoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4D300010000000000000004 /* PresentationHardwareCoreTests.swift */; };
+		C5E400010000000000000001 /* StudioLANClientCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5E400010000000000000002 /* StudioLANClientCore.swift */; };
+		C5E400010000000000000003 /* StudioLANClientNetwork.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5E400010000000000000004 /* StudioLANClientNetwork.swift */; };
+		C5E400010000000000000005 /* StudioLANClientPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5E400010000000000000006 /* StudioLANClientPlugin.swift */; };
+		C5E400010000000000000009 /* StudioLANAssetCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5E40001000000000000000A /* StudioLANAssetCache.swift */; };
+		C5E400010000000000000007 /* StudioLANClientCoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5E400010000000000000008 /* StudioLANClientCoreTests.swift */; };
 		504EC30D1FED79650016851F /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30B1FED79650016851F /* Main.storyboard */; };
 		504EC30F1FED79650016851F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30E1FED79650016851F /* Assets.xcassets */; };
 		504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC3101FED79650016851F /* LaunchScreen.storyboard */; };
@@ -41,6 +46,11 @@
 		B4D300010000000000000002 /* PresentationHardwareCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresentationHardwareCore.swift; sourceTree = "<group>"; };
 		B4D300010000000000000004 /* PresentationHardwareCoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresentationHardwareCoreTests.swift; sourceTree = "<group>"; };
 		B4D300010000000000000005 /* TchurchNativeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TchurchNativeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		C5E400010000000000000002 /* StudioLANClientCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioLANClientCore.swift; sourceTree = "<group>"; };
+		C5E400010000000000000004 /* StudioLANClientNetwork.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioLANClientNetwork.swift; sourceTree = "<group>"; };
+		C5E400010000000000000006 /* StudioLANClientPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioLANClientPlugin.swift; sourceTree = "<group>"; };
+		C5E40001000000000000000A /* StudioLANAssetCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioLANAssetCache.swift; sourceTree = "<group>"; };
+		C5E400010000000000000008 /* StudioLANClientCoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioLANClientCoreTests.swift; sourceTree = "<group>"; };
 		504EC30C1FED79650016851F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
 		504EC30E1FED79650016851F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		504EC3111FED79650016851F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
@@ -94,6 +104,10 @@
 				504EC3071FED79650016851F /* AppDelegate.swift */,
 				B4D300010000000000000002 /* PresentationHardwareCore.swift */,
 				A4C200010000000000000002 /* PresentationHardwarePlugin.swift */,
+				C5E400010000000000000002 /* StudioLANClientCore.swift */,
+				C5E400010000000000000004 /* StudioLANClientNetwork.swift */,
+				C5E400010000000000000006 /* StudioLANClientPlugin.swift */,
+				C5E40001000000000000000A /* StudioLANAssetCache.swift */,
 				A4C200010000000000000004 /* TchurchBridgeViewController.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
@@ -109,6 +123,7 @@
 			isa = PBXGroup;
 			children = (
 				B4D300010000000000000004 /* PresentationHardwareCoreTests.swift */,
+				C5E400010000000000000008 /* StudioLANClientCoreTests.swift */,
 			);
 			path = TchurchNativeTests;
 			sourceTree = "<group>";
@@ -227,6 +242,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				B4D300010000000000000003 /* PresentationHardwareCoreTests.swift in Sources */,
+				C5E400010000000000000007 /* StudioLANClientCoreTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -237,6 +253,10 @@
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
 				B4D300010000000000000001 /* PresentationHardwareCore.swift in Sources */,
 				A4C200010000000000000001 /* PresentationHardwarePlugin.swift in Sources */,
+				C5E400010000000000000001 /* StudioLANClientCore.swift in Sources */,
+				C5E400010000000000000003 /* StudioLANClientNetwork.swift in Sources */,
+				C5E400010000000000000005 /* StudioLANClientPlugin.swift in Sources */,
+				C5E400010000000000000009 /* StudioLANAssetCache.swift in Sources */,
 				A4C200010000000000000003 /* TchurchBridgeViewController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
