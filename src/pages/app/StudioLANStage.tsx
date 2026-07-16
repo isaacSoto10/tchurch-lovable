@@ -1,10 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Eye, LoaderCircle, MonitorUp, Music2, Radio, RefreshCw, ShieldCheck, Unplug, Wifi } from "lucide-react";
+import {
+  CapacitorBarcodeScanner,
+  CapacitorBarcodeScannerCameraDirection,
+  CapacitorBarcodeScannerScanOrientation,
+  CapacitorBarcodeScannerTypeHint,
+} from "@capacitor/barcode-scanner";
+import { ArrowLeft, Eye, LoaderCircle, MonitorUp, Music2, Radio, RefreshCw, ScanLine, ShieldCheck, Unplug, Wifi } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useStudioLANClient } from "@/hooks/useStudioLANClient";
-import type { StudioLANChannel, StudioLANTimer } from "@/lib/studioLANClient";
+import { scannerErrorNotice } from "@/lib/barcodeScannerErrors";
+import { normalizeStudioLANPairingQR, type StudioLANChannel, type StudioLANChordLine, type StudioLANTimer } from "@/lib/studioLANClient";
 
 function formatClock(milliseconds: number) {
   const seconds = Math.max(0, Math.floor(milliseconds / 1_000));
@@ -27,6 +34,36 @@ function goBack(navigate: ReturnType<typeof useNavigate>) {
   else navigate("/app/services", { replace: true });
 }
 
+function chordSegments(line: StudioLANChordLine) {
+  const grouped = new Map<number, string[]>();
+  for (const chord of line.chords) grouped.set(chord.offsetUtf16, [...(grouped.get(chord.offsetUtf16) ?? []), chord.value]);
+  const offsets = [...grouped.keys()].sort((left, right) => left - right);
+  if (offsets.length === 0) return [{ offset: 0, text: line.text, chords: [] as string[] }];
+  const segments: Array<{ offset: number; text: string; chords: string[] }> = [];
+  let cursor = 0;
+  offsets.forEach((offset, index) => {
+    if (offset > cursor) segments.push({ offset: cursor, text: line.text.slice(cursor, offset), chords: [] });
+    const nextOffset = offsets[index + 1] ?? line.text.length;
+    segments.push({ offset, text: line.text.slice(offset, nextOffset), chords: grouped.get(offset) ?? [] });
+    cursor = nextOffset;
+  });
+  if (cursor < line.text.length) segments.push({ offset: cursor, text: line.text.slice(cursor), chords: [] });
+  return segments;
+}
+
+function ChordLyricLine({ line }: { line: StudioLANChordLine }) {
+  const segments = chordSegments(line);
+  const accessibleChords = line.chords.map((chord) => `${chord.value} en ${chord.offsetUtf16}`).join(", ");
+  return (
+    <div className="max-w-full overflow-x-auto pb-1" aria-label={`${line.text}. ${accessibleChords}`}>
+      <div className="inline-grid min-w-full items-end justify-start text-left font-mono" style={{ gridTemplateColumns: `repeat(${segments.length}, max-content)`, gridTemplateRows: "auto auto" }}>
+        {segments.map((segment, index) => <span key={`chord-${segment.offset}-${index}`} className="min-h-6 whitespace-nowrap pr-2 text-sm font-black text-emerald-300 sm:text-lg" style={{ gridColumn: index + 1, gridRow: 1 }} data-chord-offset-utf16={segment.offset}>{segment.chords.join(" / ")}</span>)}
+        {segments.map((segment, index) => <span key={`lyric-${segment.offset}-${index}`} className="whitespace-pre text-[clamp(1.7rem,7vw,4.75rem)] font-black leading-[1.08] tracking-tight" style={{ gridColumn: index + 1, gridRow: 2 }}>{segment.text || "\u00a0"}</span>)}
+      </div>
+    </div>
+  );
+}
+
 export default function StudioLANStage() {
   const navigate = useNavigate();
   const { status, update, connect, disconnect, forget, refresh } = useStudioLANClient();
@@ -34,6 +71,8 @@ export default function StudioLANStage() {
   const [channel, setChannel] = useState<StudioLANChannel>("stage");
   const [pairingCode, setPairingCode] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [scanNotice, setScanNotice] = useState<string | null>(null);
   const [showSetup, setShowSetup] = useState(true);
   const [now, setNow] = useState(Date.now());
 
@@ -60,17 +99,47 @@ export default function StudioLANStage() {
   const connected = status.phase === "connected";
   const reconnecting = status.phase === "reconnecting" || status.phase === "suspended";
   const currentCue = update?.audience.cue ?? null;
+  const currentChordSlide = channel === "stage" && update?.payloadVersion === 2 ? update.stage?.currentChordSlide ?? null : null;
   const countdown = update?.audience.countdown;
   const countdownRemaining = countdown ? Math.max(0, countdown.targetAtMs - now) : null;
 
   async function submitConnection() {
     if (!selectedServiceId || submitting) return;
+    setScanNotice(null);
     setSubmitting(true);
     try {
       await connect(selectedServiceId, channel, pairingCode);
       setPairingCode("");
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function scanPairingQR() {
+    if (!selectedServiceId || scanning || submitting) return;
+    setScanNotice(null);
+    setScanning(true);
+    try {
+      const result = await CapacitorBarcodeScanner.scanBarcode({
+        hint: CapacitorBarcodeScannerTypeHint.QR_CODE,
+        scanInstructions: "Escanea el QR mostrado en Tchurch Studio.",
+        scanButton: true,
+        scanText: "Escanear",
+        cameraDirection: CapacitorBarcodeScannerCameraDirection.BACK,
+        scanOrientation: CapacitorBarcodeScannerScanOrientation.ADAPTIVE,
+      });
+      const scannedCode = normalizeStudioLANPairingQR(result.ScanResult);
+      if (!scannedCode) {
+        setScanNotice("Ese QR no pertenece a Tchurch Studio.");
+        return;
+      }
+      await connect(selectedServiceId, channel, scannedCode);
+      setPairingCode("");
+    } catch (error) {
+      const notice = scannerErrorNotice(error);
+      if (notice) setScanNotice(`${notice.title}. ${notice.description}`);
+    } finally {
+      setScanning(false);
     }
   }
 
@@ -165,9 +234,12 @@ export default function StudioLANStage() {
 
                 <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
                   <label htmlFor="studio-pairing-code" className="text-xs font-black uppercase tracking-[0.18em] text-violet-200">3 · Código de emparejamiento</label>
-                  <p className="mt-2 text-xs leading-5 text-slate-400">Pégalo desde Studio. Después del primer acceso se guarda cifrado en Keychain; nunca en el navegador.</p>
-                  <Input id="studio-pairing-code" type="password" autoComplete="off" spellCheck={false} value={pairingCode} onChange={(event) => setPairingCode(event.target.value)} placeholder="Solo se necesita la primera vez" className="mt-4 h-12 rounded-2xl border-white/15 bg-black/30 text-white placeholder:text-slate-600" />
-                  <Button type="button" className="mt-4 h-12 w-full rounded-2xl font-black" disabled={!selectedService || submitting} onClick={() => void submitConnection()}>
+                  <p className="mt-2 text-xs leading-5 text-slate-400">Escanea el QR visible en Studio. El secreto se guarda cifrado en Keychain y puede cambiar cuando inicia una autoridad nueva.</p>
+                  {scanNotice && <p className="mt-3 rounded-2xl border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs font-semibold text-amber-100" role="alert">{scanNotice}</p>}
+                  <Button type="button" className="mt-4 h-12 w-full rounded-2xl font-black" disabled={!selectedService || scanning || submitting} onClick={() => void scanPairingQR()}>{scanning ? <><LoaderCircle className="h-4 w-4 animate-spin" />Abriendo cámara…</> : <><ScanLine className="h-4 w-4" />Escanear QR de Studio</>}</Button>
+                  <div className="my-4 flex items-center gap-3 text-[10px] font-black uppercase tracking-[0.16em] text-slate-600"><span className="h-px flex-1 bg-white/10" />o pegar manualmente<span className="h-px flex-1 bg-white/10" /></div>
+                  <Input id="studio-pairing-code" type="password" autoComplete="off" spellCheck={false} value={pairingCode} onChange={(event) => setPairingCode(event.target.value)} placeholder="tchurch-studio:…" className="h-12 rounded-2xl border-white/15 bg-black/30 text-white placeholder:text-slate-600" />
+                  <Button type="button" variant="outline" className="mt-3 h-12 w-full rounded-2xl border-white/15 bg-transparent font-black text-white hover:bg-white/10 hover:text-white" disabled={!selectedService || submitting || scanning} onClick={() => void submitConnection()}>
                     {submitting || status.phase === "connecting" || status.phase === "authenticating" ? <><LoaderCircle className="h-4 w-4 animate-spin" />Verificando…</> : <><ShieldCheck className="h-4 w-4" />Conectar de forma segura</>}
                   </Button>
                   {selectedServiceId && status.paired && (
@@ -211,12 +283,17 @@ export default function StudioLANStage() {
 
                 <div className="flex min-h-[55vh] flex-1 flex-col justify-center rounded-[2rem] border border-white/10 bg-white/[0.04] p-6 text-center shadow-2xl shadow-black/40 sm:p-10">
                   {currentCue?.title && <p className="mb-5 text-xs font-black uppercase tracking-[0.2em] text-violet-200">{currentCue.title}</p>}
-                  {channel === "stage" && update.stage?.chordLines.length ? (
+                  {currentChordSlide ? (
+                    <div className="mb-4 space-y-3" aria-label="Acordes y letra actuales">
+                      {currentChordSlide.key && <p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-300">Tono · {currentChordSlide.key}</p>}
+                      {currentChordSlide.lines.map((line, index) => <ChordLyricLine key={`${index}-${line.text}`} line={line} />)}
+                    </div>
+                  ) : channel === "stage" && update.payloadVersion === 1 && update.stage?.chordLines.length ? (
                     <div className="mb-4 space-y-1 font-mono text-base font-black leading-relaxed text-emerald-300 sm:text-xl" aria-label="Acordes actuales">
                       {update.stage.chordLines.map((line, index) => <p key={`${index}-${line}`}>{line}</p>)}
                     </div>
                   ) : null}
-                  {currentCue?.lines.length ? (
+                  {!currentChordSlide && currentCue?.lines.length ? (
                     <div className="space-y-3 text-[clamp(2rem,9vw,5.75rem)] font-black leading-[1.08] tracking-tight" aria-label="Diapositiva actual">
                       {currentCue.lines.map((line, index) => <p key={`${index}-${line}`}>{line}</p>)}
                     </div>
