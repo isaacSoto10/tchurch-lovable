@@ -4,5 +4,6 @@ import Capacitor
 final class TchurchBridgeViewController: CAPBridgeViewController {
     override func capacitorDidLoad() {
         bridge?.registerPluginInstance(PresentationHardwarePlugin())
+        bridge?.registerPluginInstance(StudioLANClientPlugin())
     }
 }
