@@ -719,15 +719,34 @@ final class StudioLANClientCoreTests: XCTestCase {
         )
         try guardState.accept(first)
 
+        let repeatedState = try signEnvelope(
+            payload: stagePayload(revision: 8),
+            authority: fixture.challenge.authority,
+            identity: fixture.identity,
+            sequence: 13,
+            revision: 8
+        )
+        XCTAssertNoThrow(try guardState.accept(repeatedState))
+        let equivocated = try signEnvelope(
+            payload: stagePayload(revision: 8, message: "Contenido distinto"),
+            authority: fixture.challenge.authority,
+            identity: fixture.identity,
+            sequence: 14,
+            revision: 8
+        )
+        XCTAssertThrowsError(try guardState.accept(equivocated)) {
+            XCTAssertEqual($0 as? TchurchStudioLANError, .equivocatedRevision)
+        }
+
         try guardState.begin(fixture.subscription)
-        XCTAssertThrowsError(try guardState.accept(first)) {
+        XCTAssertThrowsError(try guardState.accept(repeatedState)) {
             XCTAssertEqual($0 as? TchurchStudioLANError, .replayedEnvelope)
         }
         let next = try signEnvelope(
             payload: stagePayload(revision: 9),
             authority: fixture.challenge.authority,
             identity: fixture.identity,
-            sequence: 13,
+            sequence: 14,
             revision: 9
         )
         XCTAssertNoThrow(try guardState.accept(next))
@@ -735,6 +754,7 @@ final class StudioLANClientCoreTests: XCTestCase {
         let rotated = try makeSubscriptionFixture(channel: .stage, epoch: 8, identity: fixture.identity)
         XCTAssertNoThrow(try guardState.begin(rotated.subscription))
         XCTAssertNil(guardState.lastSequence)
+        XCTAssertNil(guardState.lastPayloadChecksum)
         let old = try makeSubscriptionFixture(channel: .stage, epoch: 7, identity: fixture.identity)
         XCTAssertThrowsError(try guardState.begin(old.subscription)) {
             XCTAssertEqual($0 as? TchurchStudioLANError, .staleAuthorityEpoch)
@@ -809,6 +829,7 @@ final class StudioLANClientCoreTests: XCTestCase {
         XCTAssertNoThrow(try guardState.begin(restarted.subscription))
         XCTAssertNil(guardState.lastSequence)
         XCTAssertNil(guardState.lastRevision)
+        XCTAssertNil(guardState.lastPayloadChecksum)
 
         let afterRestart = try signEnvelope(
             payload: stagePayload(revision: 1),
@@ -1274,6 +1295,53 @@ final class StudioLANClientTLSIntegrationTests: XCTestCase {
     }
 }
 
+final class StudioLANBonjourIntegrationTests: XCTestCase {
+    func testBonjourDiscoveryFindsTheAdvertisedStudioService() throws {
+        let serviceName = "Tchurch Test \(UUID().uuidString.prefix(8))"
+        let listenerReady = expectation(description: "Bonjour listener ready")
+        let discovered = expectation(description: "Studio Bonjour service discovered")
+        discovered.assertForOverFulfill = false
+        let listener = try NWListener(using: .tcp, on: .any)
+        listener.service = .init(
+            name: serviceName,
+            type: TchurchStudioLANClient.bonjourServiceType,
+            domain: "local.",
+            txtRecord: nil
+        )
+        listener.stateUpdateHandler = { state in
+            if case .ready = state { listenerReady.fulfill() }
+        }
+        listener.newConnectionHandler = { $0.cancel() }
+        listener.start(queue: DispatchQueue(label: "app.tchurch.tests.studio-lan-bonjour-listener"))
+        defer { listener.cancel() }
+        wait(for: [listenerReady], timeout: 3)
+
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tchurch-studio-bonjour-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let suiteName = "app.tchurch.tests.studio-lan-bonjour.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let client = try TchurchStudioLANClient(
+            secretStore: RecordingStudioLANSecretStore(),
+            defaults: defaults,
+            assetCache: TchurchStudioLANAssetCache(rootURL: rootURL)
+        )
+        client.statusHandler = { status in
+            if status.services.contains(where: { $0.name.hasPrefix(serviceName) }) {
+                discovered.fulfill()
+            }
+        }
+        client.startDiscovery()
+        defer {
+            client.disconnect()
+            client.stopDiscovery()
+        }
+
+        wait(for: [discovered], timeout: 8)
+    }
+}
+
 final class StudioLANAssetRequestWatchdogTests: XCTestCase {
     func testSilentRequestExpiresAndCancelledStaleRequestCannotFireForNewCue() {
         let queue = DispatchQueue(label: "app.tchurch.tests.asset-watchdog")
@@ -1289,6 +1357,65 @@ final class StudioLANAssetRequestWatchdogTests: XCTestCase {
         }
 
         wait(for: [expired, stale], timeout: 0.3)
+    }
+}
+
+final class StudioLANPrivateStateTests: XCTestCase {
+    func testKeychainPairingCanBeReadAndFullyDeleted() throws {
+        let store = TchurchStudioLANKeychainSecretStore()
+        let serviceID = "test-\(UUID().uuidString.lowercased())"
+        let secret = Data(repeating: 0x52, count: 32)
+        defer { try? store.deleteAll() }
+
+        try store.write(secret, serviceID: serviceID)
+        XCTAssertEqual(try store.read(serviceID: serviceID), secret)
+        try store.deleteAll()
+        XCTAssertNil(try store.read(serviceID: serviceID))
+    }
+
+    func testLogoutPurgeDeletesSecretsCacheClientIdentityAndDisconnects() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tchurch-studio-private-state-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        try Data("private-cache-marker".utf8).write(
+            to: rootURL.appendingPathComponent("marker", isDirectory: false)
+        )
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let secretStore = RecordingStudioLANSecretStore()
+        secretStore.entries["service"] = Data(repeating: 0x41, count: 32)
+        let suiteName = "app.tchurch.tests.studio-lan-private-state.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(UUID().uuidString.lowercased(), forKey: "tchurch.studio-lan.client-id")
+
+        let client = try TchurchStudioLANClient(
+            secretStore: secretStore,
+            defaults: defaults,
+            assetCache: TchurchStudioLANAssetCache(rootURL: rootURL)
+        )
+        let purged = expectation(description: "private Studio LAN state purged")
+        var purgeError: Error?
+        client.purgePrivateState { result in
+            if case .failure(let error) = result { purgeError = error }
+            purged.fulfill()
+        }
+        wait(for: [purged], timeout: 2)
+
+        XCTAssertNil(purgeError)
+        XCTAssertTrue(secretStore.didDeleteAll)
+        XCTAssertTrue(secretStore.entries.isEmpty)
+        XCTAssertNil(defaults.string(forKey: "tchurch.studio-lan.client-id"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: rootURL.path))
+
+        let statusRead = expectation(description: "disconnected status read")
+        client.currentStatus { status in
+            XCTAssertEqual(status.phase, .idle)
+            XCTAssertNil(status.selectedServiceID)
+            XCTAssertFalse(status.paired)
+            statusRead.fulfill()
+        }
+        wait(for: [statusRead], timeout: 1)
     }
 }
 
@@ -1513,7 +1640,10 @@ private func makeSubscriptionFixture(
     return SubscriptionFixture(challenge: challenge, identity: identity, subscription: subscription)
 }
 
-private func stagePayload(revision: UInt64) -> TchurchStudioLANChannelPayload {
+private func stagePayload(
+    revision: UInt64,
+    message: String = "Puente dos veces"
+) -> TchurchStudioLANChannelPayload {
     let audience = TchurchStudioLANAudiencePayload(
         snapshot: .init(
             schemaVersion: 1,
@@ -1536,7 +1666,7 @@ private func stagePayload(revision: UInt64) -> TchurchStudioLANChannelPayload {
             nextCue: .init(cueID: "cue-2", title: "Chorus", lines: ["Next line"], mediaAssetID: nil),
             chordLines: ["C  G  Am  F"],
             timers: [.init(id: "service", label: "Servicio", mode: .countDown, anchorDate: Date(timeIntervalSince1970: 1_000), anchorValueMilliseconds: 5_000, durationMilliseconds: 60_000, isRunning: true)],
-            message: "Puente dos veces"
+            message: message
         )
     ))
 }
@@ -1654,5 +1784,27 @@ private final class LANConnectionRetainer: @unchecked Sendable {
         connections.removeAll()
         lock.unlock()
         retained.forEach { $0.cancel() }
+    }
+}
+
+private final class RecordingStudioLANSecretStore: TchurchStudioLANSecretStoring, @unchecked Sendable {
+    var entries: [String: Data] = [:]
+    private(set) var didDeleteAll = false
+
+    func read(serviceID: String) throws -> Data? {
+        entries[serviceID]
+    }
+
+    func write(_ secret: Data, serviceID: String) throws {
+        entries[serviceID] = secret
+    }
+
+    func delete(serviceID: String) throws {
+        entries.removeValue(forKey: serviceID)
+    }
+
+    func deleteAll() throws {
+        didDeleteAll = true
+        entries.removeAll(keepingCapacity: false)
     }
 }

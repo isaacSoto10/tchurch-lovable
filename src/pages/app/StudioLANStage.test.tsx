@@ -189,6 +189,19 @@ describe("Studio LAN stage route", () => {
     expect(mocks.connect).not.toHaveBeenCalled();
   });
 
+  it("keeps manual pairing secret and delegates invalid-code rejection to the native verifier", async () => {
+    const input = "not-a-valid-studio-code";
+    render(<MemoryRouter><StudioLANStage /></MemoryRouter>);
+    const pairingInput = screen.getByLabelText(/código de emparejamiento/i);
+    expect(pairingInput).toHaveAttribute("type", "password");
+    fireEvent.change(pairingInput, { target: { value: input } });
+    fireEvent.click(screen.getByRole("button", { name: /conectar de forma segura/i }));
+
+    await waitFor(() => expect(mocks.connect).toHaveBeenCalledWith(serviceId, "stage", input));
+    expect(pairingInput).toHaveValue("");
+    expect(screen.queryByText(input)).not.toBeInTheDocument();
+  });
+
   it("renders v2 chords at their UTF-16 lyric offsets, including grouped tokens", () => {
     const text = "Dios 🙌 es fiel";
     mocks.status = { ...baseStatus, phase: "connected", selectedServiceId: serviceId, channel: "stage", paired: true };

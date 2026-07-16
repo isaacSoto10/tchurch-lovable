@@ -182,6 +182,7 @@ enum TchurchStudioLANNetworkParameters {
 final class TchurchStudioLANClient: @unchecked Sendable {
     static let bonjourServiceType = "_tchurch-show._tcp"
     static let assetRequestTimeoutSeconds: TimeInterval = 15
+    private static let clientIDDefaultsKey = "tchurch.studio-lan.client-id"
 
     var statusHandler: ((TchurchStudioLANClientStatus) -> Void)?
     var envelopeHandler: ((TchurchStudioLANSignedEnvelope) -> Void)?
@@ -369,6 +370,8 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             guard let self else { return completion(.failure(TchurchStudioLANError.invalidConfiguration)) }
             self.disconnectOnQueue(clearDesired: true)
             self.resetAssetTransfer()
+            self.replayGuards.removeAll(keepingCapacity: false)
+            self.defaults.removeObject(forKey: Self.clientIDDefaultsKey)
             var deletedSecrets = true
             do {
                 try self.secretStore.deleteAll()
@@ -1155,7 +1158,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
     }
 
     private func clientID() -> UUID {
-        let key = "tchurch.studio-lan.client-id"
+        let key = Self.clientIDDefaultsKey
         if let value = defaults.string(forKey: key), let id = UUID(uuidString: value) { return id }
         let id = UUID()
         defaults.set(id.uuidString.lowercased(), forKey: key)

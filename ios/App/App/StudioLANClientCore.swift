@@ -15,6 +15,7 @@ enum TchurchStudioLANError: Error, Equatable {
     case authorityMismatch
     case staleAuthorityEpoch
     case staleRevision
+    case equivocatedRevision
     case replayedEnvelope
     case invalidEnvelope
     case invalidChecksum
@@ -805,6 +806,7 @@ struct TchurchStudioLANReplayGuard: Equatable {
     private(set) var signingKeyID: String?
     private(set) var lastSequence: UInt64?
     private(set) var lastRevision: UInt64?
+    private(set) var lastPayloadChecksum: String?
 
     mutating func begin(_ subscription: TchurchStudioLANVerifiedSubscription) throws {
         if let current = authority, current.runID == subscription.authority.runID {
@@ -823,15 +825,18 @@ struct TchurchStudioLANReplayGuard: Equatable {
                     // server restart, not an unauthenticated rollback.
                     lastSequence = nil
                     lastRevision = nil
+                    lastPayloadChecksum = nil
                 }
             } else {
                 lastSequence = nil
                 lastRevision = nil
+                lastPayloadChecksum = nil
             }
         } else if authority != nil {
             // A PSK-authenticated new run is a deliberate authority reset.
             lastSequence = nil
             lastRevision = nil
+            lastPayloadChecksum = nil
         }
         authority = subscription.authority
         signingKeyID = subscription.signingKeyID
@@ -847,8 +852,13 @@ struct TchurchStudioLANReplayGuard: Equatable {
         guard lastRevision.map({ envelope.revision >= $0 }) ?? true else {
             throw TchurchStudioLANError.staleRevision
         }
+        if envelope.revision == lastRevision,
+           envelope.payloadChecksum != lastPayloadChecksum {
+            throw TchurchStudioLANError.equivocatedRevision
+        }
         lastSequence = envelope.sequence
         lastRevision = envelope.revision
+        lastPayloadChecksum = envelope.payloadChecksum
     }
 }
 
