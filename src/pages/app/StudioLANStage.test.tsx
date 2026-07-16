@@ -1,11 +1,12 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { StudioLANStatus, StudioLANUpdate } from "@/lib/studioLANClient";
+import type { StudioLANImageAssetStatus, StudioLANStatus, StudioLANUpdate } from "@/lib/studioLANClient";
 
 const mocks = vi.hoisted(() => ({
   status: null as StudioLANStatus | null,
   update: null as StudioLANUpdate | null,
+  imageAsset: null as StudioLANImageAssetStatus | null,
   connect: vi.fn(),
   disconnect: vi.fn(),
   forget: vi.fn(),
@@ -24,6 +25,7 @@ vi.mock("@/hooks/useStudioLANClient", () => ({
   useStudioLANClient: () => ({
     status: mocks.status,
     update: mocks.update,
+    imageAsset: mocks.imageAsset,
     connect: mocks.connect,
     disconnect: mocks.disconnect,
     forget: mocks.forget,
@@ -57,10 +59,10 @@ const update: StudioLANUpdate = {
     cueCount: 2,
     isBlackout: false,
     countdown: null,
-    cue: { cueId: "cue-1", title: "Verso", lines: ["Gracia sobre gracia"], mediaAssetId: null },
+    cue: { cueId: "cue-1", title: "Verso", lines: ["Gracia sobre gracia"], mediaAssetId: null, imageAsset: null },
   },
   stage: {
-    nextCue: { cueId: "cue-2", title: "Coro", lines: ["Siguiente línea"], mediaAssetId: null },
+    nextCue: { cueId: "cue-2", title: "Coro", lines: ["Siguiente línea"], mediaAssetId: null, imageAsset: null },
     chordLines: ["C  G  Am  F"],
     currentChordSlide: null,
     timers: [],
@@ -68,10 +70,55 @@ const update: StudioLANUpdate = {
   },
 };
 
+const imageObjectA = `sha256:${"a".repeat(64)}`;
+const imageObjectB = `sha256:${"b".repeat(64)}`;
+
+function imageUpdate(objectId = imageObjectA): StudioLANUpdate {
+  return {
+    ...update,
+    payloadVersion: 3,
+    audience: {
+      ...update.audience,
+      cue: {
+        ...update.audience.cue!,
+        mediaAssetId: objectId,
+        imageAsset: {
+          schemaVersion: 1,
+          referenceId: `sha256:${"c".repeat(64)}`,
+          objectId,
+          kind: "image",
+          mimeType: "image/png",
+          byteSize: "1024",
+          required: true,
+          imageFit: "cover",
+        },
+      },
+    },
+    stage: { ...update.stage!, chordLines: [], currentChordSlide: null },
+  };
+}
+
+function imageStatus(
+  objectId = imageObjectA,
+  phase: StudioLANImageAssetStatus["phase"] = "ready",
+): StudioLANImageAssetStatus {
+  return {
+    cueId: "cue-1",
+    objectId,
+    phase,
+    receivedBytes: phase === "ready" ? "1024" : "512",
+    totalBytes: "1024",
+    imageFit: "cover",
+    localUrl: phase === "ready" ? "capacitor://localhost/_capacitor_file_/private/cache/image.png" : null,
+    message: phase === "loading" ? "Descargando imagen offline…" : null,
+  };
+}
+
 describe("Studio LAN stage route", () => {
   beforeEach(() => {
     mocks.status = baseStatus;
     mocks.update = null;
+    mocks.imageAsset = null;
     mocks.connect.mockReset().mockResolvedValue(undefined);
     mocks.disconnect.mockReset().mockResolvedValue(undefined);
     mocks.forget.mockReset().mockResolvedValue(undefined);
@@ -158,5 +205,46 @@ describe("Studio LAN stage route", () => {
     expect(container.querySelector('[data-chord-offset-utf16="0"]')).toHaveTextContent("C / C/E");
     expect(container.querySelector('[data-chord-offset-utf16="8"]')).toHaveTextContent("G");
     expect(screen.queryByLabelText("Acordes actuales")).not.toBeInTheDocument();
+  });
+
+  it("shows a placeholder until the current cue image is verified and ready", () => {
+    mocks.status = { ...baseStatus, phase: "connected", selectedServiceId: serviceId, channel: "stage", paired: true };
+    mocks.update = imageUpdate();
+    mocks.imageAsset = imageStatus(imageObjectA, "loading");
+    render(<MemoryRouter><StudioLANStage /></MemoryRouter>);
+    expect(screen.getByTestId("studio-lan-image-placeholder")).toHaveTextContent("Descargando imagen offline…");
+    expect(screen.queryByTestId("studio-lan-image")).not.toBeInTheDocument();
+    expect(screen.getByText("Gracia sobre gracia")).toBeInTheDocument();
+  });
+
+  it("renders only the exact current cue object with its signed fit", () => {
+    mocks.status = { ...baseStatus, phase: "connected", selectedServiceId: serviceId, channel: "stage", paired: true };
+    mocks.update = imageUpdate();
+    mocks.imageAsset = imageStatus();
+    render(<MemoryRouter><StudioLANStage /></MemoryRouter>);
+    const image = screen.getByTestId("studio-lan-image");
+    expect(image).toHaveAttribute("src", "capacitor://localhost/_capacitor_file_/private/cache/image.png");
+    expect(image).toHaveStyle({ objectFit: "cover" });
+    expect(screen.queryByTestId("studio-lan-image-placeholder")).not.toBeInTheDocument();
+  });
+
+  it("never renders a stale A image after the current cue changes to B", () => {
+    mocks.status = { ...baseStatus, phase: "connected", selectedServiceId: serviceId, channel: "stage", paired: true };
+    mocks.update = imageUpdate(imageObjectB);
+    mocks.imageAsset = imageStatus(imageObjectA);
+    render(<MemoryRouter><StudioLANStage /></MemoryRouter>);
+    expect(screen.queryByTestId("studio-lan-image")).not.toBeInTheDocument();
+    expect(screen.getByTestId("studio-lan-image-placeholder")).toHaveTextContent("Preparando imagen offline…");
+  });
+
+  it("keeps blackout authoritative even when a verified image is ready", () => {
+    mocks.status = { ...baseStatus, phase: "connected", selectedServiceId: serviceId, channel: "stage", paired: true };
+    const withImage = imageUpdate();
+    mocks.update = { ...withImage, audience: { ...withImage.audience, isBlackout: true } };
+    mocks.imageAsset = imageStatus();
+    render(<MemoryRouter><StudioLANStage /></MemoryRouter>);
+    expect(screen.getByLabelText("Salida en negro")).toBeInTheDocument();
+    expect(screen.queryByTestId("studio-lan-image")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("studio-lan-image-placeholder")).not.toBeInTheDocument();
   });
 });

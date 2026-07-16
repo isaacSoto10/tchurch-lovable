@@ -66,7 +66,7 @@ function ChordLyricLine({ line }: { line: StudioLANChordLine }) {
 
 export default function StudioLANStage() {
   const navigate = useNavigate();
-  const { status, update, connect, disconnect, forget, refresh } = useStudioLANClient();
+  const { status, update, imageAsset, connect, disconnect, forget, refresh } = useStudioLANClient();
   const [selectedServiceId, setSelectedServiceId] = useState("");
   const [channel, setChannel] = useState<StudioLANChannel>("stage");
   const [pairingCode, setPairingCode] = useState("");
@@ -75,6 +75,7 @@ export default function StudioLANStage() {
   const [scanNotice, setScanNotice] = useState<string | null>(null);
   const [showSetup, setShowSetup] = useState(true);
   const [now, setNow] = useState(Date.now());
+  const [failedImageObjectId, setFailedImageObjectId] = useState<string | null>(null);
 
   useEffect(() => {
     if (status.selectedServiceId) setSelectedServiceId(status.selectedServiceId);
@@ -99,9 +100,21 @@ export default function StudioLANStage() {
   const connected = status.phase === "connected";
   const reconnecting = status.phase === "reconnecting" || status.phase === "suspended";
   const currentCue = update?.audience.cue ?? null;
-  const currentChordSlide = channel === "stage" && update?.payloadVersion === 2 ? update.stage?.currentChordSlide ?? null : null;
+  const currentChordSlide = channel === "stage" && (update?.payloadVersion ?? 0) >= 2 ? update?.stage?.currentChordSlide ?? null : null;
+  const currentImageDescriptor = currentCue?.imageAsset ?? null;
+  const currentImageStatus = currentImageDescriptor
+    && imageAsset?.cueId === currentCue?.cueId
+    && imageAsset.objectId === currentImageDescriptor.objectId ? imageAsset : null;
+  const currentImageURL = currentImageStatus?.phase === "ready"
+    && currentImageStatus.localUrl
+    && failedImageObjectId !== currentImageDescriptor?.objectId ? currentImageStatus.localUrl : null;
+  const currentImageHasCopy = Boolean(currentCue?.title || currentCue?.lines.length || currentChordSlide);
   const countdown = update?.audience.countdown;
   const countdownRemaining = countdown ? Math.max(0, countdown.targetAtMs - now) : null;
+
+  useEffect(() => {
+    setFailedImageObjectId(null);
+  }, [currentImageDescriptor?.objectId]);
 
   async function submitConnection() {
     if (!selectedServiceId || submitting) return;
@@ -281,7 +294,34 @@ export default function StudioLANStage() {
                   </div>
                 ) : null}
 
-                <div className="flex min-h-[55vh] flex-1 flex-col justify-center rounded-[2rem] border border-white/10 bg-white/[0.04] p-6 text-center shadow-2xl shadow-black/40 sm:p-10">
+                <div className="relative flex min-h-[55vh] flex-1 flex-col justify-center overflow-hidden rounded-[2rem] border border-white/10 bg-white/[0.04] p-6 text-center shadow-2xl shadow-black/40 sm:p-10">
+                  {currentImageDescriptor && currentImageURL && (
+                    <img
+                      key={currentImageDescriptor.objectId}
+                      src={currentImageURL}
+                      alt={currentCue?.title || "Imagen de la diapositiva actual"}
+                      className="absolute inset-0 h-full w-full"
+                      style={{ objectFit: currentImageDescriptor.imageFit }}
+                      data-testid="studio-lan-image"
+                      onError={() => setFailedImageObjectId(currentImageDescriptor.objectId)}
+                    />
+                  )}
+                  {currentImageDescriptor && currentImageURL && currentImageHasCopy && (
+                    <div className="absolute inset-0 bg-black/55" aria-hidden="true" />
+                  )}
+                  {currentImageDescriptor && !currentImageURL && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-slate-950/95 p-6" data-testid="studio-lan-image-placeholder" role="status">
+                      <div className="max-w-sm text-center">
+                        {currentImageStatus?.phase !== "unavailable" && <LoaderCircle className="mx-auto h-7 w-7 animate-spin text-violet-300" />}
+                        <p className="mt-3 text-sm font-black text-slate-200">
+                          {failedImageObjectId === currentImageDescriptor.objectId
+                            ? "La imagen verificada no pudo abrirse en esta pantalla."
+                            : currentImageStatus?.message || "Preparando imagen offline…"}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                  <div className="relative z-[1]">
                   {currentCue?.title && <p className="mb-5 text-xs font-black uppercase tracking-[0.2em] text-violet-200">{currentCue.title}</p>}
                   {currentChordSlide ? (
                     <div className="mb-4 space-y-3" aria-label="Acordes y letra actuales">
@@ -297,9 +337,10 @@ export default function StudioLANStage() {
                     <div className="space-y-3 text-[clamp(2rem,9vw,5.75rem)] font-black leading-[1.08] tracking-tight" aria-label="Diapositiva actual">
                       {currentCue.lines.map((line, index) => <p key={`${index}-${line}`}>{line}</p>)}
                     </div>
-                  ) : (
+                  ) : !currentImageDescriptor ? (
                     <p className="text-xl font-black text-slate-500">Esperando la primera diapositiva…</p>
-                  )}
+                  ) : null}
+                  </div>
                 </div>
 
                 {channel === "stage" && update.stage?.nextCue && (

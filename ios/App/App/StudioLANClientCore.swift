@@ -21,6 +21,13 @@ enum TchurchStudioLANError: Error, Equatable {
     case invalidSignature
     case wrongChannel
     case invalidPayload
+    case invalidAssetRequest
+    case invalidAssetChunk
+    case assetUnavailable
+    case assetCacheUnavailable
+    case assetCacheCorrupted
+    case assetCacheLimitExceeded
+    case insufficientDiskSpace
     case invalidFrameLength(Int)
     case inputBufferLimitExceeded
     case protocolViolation
@@ -83,6 +90,84 @@ struct TchurchStudioLANPublicCue: Codable, Equatable {
     let title: String?
     let lines: [String]
     let mediaAssetID: String?
+    /// Present only in a negotiated v3 envelope. No remote URL or local path
+    /// crosses this contract; bytes are pulled by the immutable object digest.
+    let imageAsset: TchurchStudioLANImageAssetDescriptor?
+
+    init(
+        cueID: String,
+        title: String?,
+        lines: [String],
+        mediaAssetID: String?,
+        imageAsset: TchurchStudioLANImageAssetDescriptor? = nil
+    ) {
+        self.cueID = cueID
+        self.title = title
+        self.lines = lines
+        self.mediaAssetID = mediaAssetID
+        self.imageAsset = imageAsset
+    }
+}
+
+enum TchurchStudioLANImageAssetKind: String, Codable, Equatable {
+    case image
+}
+
+enum TchurchStudioLANImageFit: String, Codable, Equatable {
+    case contain
+    case cover
+}
+
+struct TchurchStudioLANImageAssetDescriptor: Codable, Equatable {
+    static let schemaVersion = 1
+
+    let schemaVersion: Int
+    let referenceID: String
+    let objectID: String
+    let kind: TchurchStudioLANImageAssetKind
+    let mimeType: String
+    let byteSize: Int64
+    let required: Bool
+    let imageFit: TchurchStudioLANImageFit
+}
+
+struct TchurchStudioLANAssetRequest: Codable, Equatable {
+    static let schemaVersion = 1
+
+    let schemaVersion: Int
+    let requestID: UUID
+    let objectID: String
+    let offset: Int64
+    let maximumBytes: Int
+}
+
+struct TchurchStudioLANAssetChunk: Codable, Equatable {
+    static let schemaVersion = 1
+    static let byteCount = 64 * 1_024
+
+    let schemaVersion: Int
+    let requestID: UUID
+    let objectID: String
+    let offset: Int64
+    let totalByteSize: Int64
+    let data: Data
+    let dataSha256: String
+    let isFinal: Bool
+}
+
+enum TchurchStudioLANAssetUnavailableCode: String, Codable, Equatable {
+    case unavailable
+    case invalidRange
+    case overloaded
+}
+
+struct TchurchStudioLANAssetUnavailable: Codable, Equatable {
+    static let schemaVersion = 1
+
+    let schemaVersion: Int
+    let requestID: UUID
+    let objectID: String
+    let code: TchurchStudioLANAssetUnavailableCode
 }
 
 struct TchurchStudioLANChordToken: Codable, Equatable {
@@ -201,7 +286,7 @@ struct TchurchStudioLANServerChallenge: Codable, Equatable {
 struct TchurchStudioLANSubscriptionRequest: Codable, Equatable {
     static let legacySchemaVersion = 1
     static let currentSchemaVersion = 2
-    static let supportedPayloadVersions = [2, 1]
+    static let supportedPayloadVersions = [3, 2, 1]
 
     let schemaVersion: Int
     let requestID: UUID
@@ -280,7 +365,7 @@ struct TchurchStudioLANSubscriptionGrant: Codable, Equatable {
 }
 
 struct TchurchStudioLANSignedEnvelope: Codable, Equatable {
-    static let supportedSchemaVersions = Set([1, 2])
+    static let supportedSchemaVersions = Set([1, 2, 3])
 
     let schemaVersion: Int
     let authority: TchurchStudioLANAuthority
@@ -553,9 +638,8 @@ struct TchurchStudioLANPayloadNegotiation: Equatable {
 
     mutating func recordAuthenticatedGrant(_ subscription: TchurchStudioLANVerifiedSubscription) throws {
         let selected = subscription.payloadVersion
-        guard selected == 1 || selected == 2,
-              negotiatedPayloadVersion.map({ $0 == selected }) ?? true,
-              selected != 1 || didAttemptLegacyFallback || requestSchemaVersion == 1 else {
+        guard TchurchStudioLANSubscriptionRequest.supportedPayloadVersions.contains(selected),
+              negotiatedPayloadVersion.map({ $0 == selected }) ?? true else {
             throw TchurchStudioLANError.unsupportedPayloadVersion
         }
         negotiatedPayloadVersion = selected
@@ -684,7 +768,9 @@ enum TchurchStudioLANSubscriptionAuthenticator {
             )
         case TchurchStudioLANSubscriptionRequest.currentSchemaVersion:
             guard request.supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.supportedPayloadVersions,
-                  grant.selectedPayloadVersion == 2 else {
+                  let selectedPayloadVersion = grant.selectedPayloadVersion,
+                  TchurchStudioLANSubscriptionRequest.supportedPayloadVersions
+                    .contains(selectedPayloadVersion) else {
                 throw TchurchStudioLANError.unsupportedPayloadVersion
             }
             proofIsValid = TchurchStudioLANCrypto.validatesAuthenticationCode(
@@ -700,7 +786,7 @@ enum TchurchStudioLANSubscriptionAuthenticator {
                     minimumSequence: grant.minimumSequence,
                     expiresAtMilliseconds: grant.expiresAtMilliseconds,
                     clientNonce: request.clientNonce,
-                    selectedPayloadVersion: 2
+                    selectedPayloadVersion: selectedPayloadVersion
                 ),
                 secret: secret
             )
@@ -837,20 +923,29 @@ struct TchurchStudioLANEnvelopeVerifier {
               snapshot.authorityEpoch == envelope.authority.authorityEpoch,
               snapshot.packageID == envelope.authority.packageID,
               snapshot.serviceVersion == envelope.authority.serviceVersion,
-              snapshot.revision == envelope.revision,
+              (snapshot.revision == envelope.revision ||
+                (envelope.schemaVersion == 1 && snapshot.revision <= envelope.revision)),
               snapshot.cueCount >= 0,
               snapshot.currentCueIndex.map({ $0 >= 0 && $0 < snapshot.cueCount }) ?? true,
               validOptionalText(snapshot.currentCueID, maximumBytes: limits.maximumIdentifierBytes),
               validOptionalText(snapshot.countdown?.id, maximumBytes: limits.maximumIdentifierBytes),
               validOptionalText(snapshot.countdown?.label, maximumBytes: limits.maximumTextBytes),
               snapshot.countdown.map({ validDateMilliseconds($0.targetDate) }) ?? true,
-              validCue(audience.cue, allowsEmptyLines: envelope.schemaVersion == 2) else {
+              validCue(
+                audience.cue,
+                allowsEmptyLines: envelope.schemaVersion >= 2,
+                payloadVersion: envelope.schemaVersion
+              ) else {
             throw TchurchStudioLANError.invalidPayload
         }
         if let stage = envelope.payload.stage {
             guard stage.chordLines.count <= limits.maximumChordLines,
                   stage.timers.count <= limits.maximumTimers,
-                  validCue(stage.nextCue, allowsEmptyLines: envelope.schemaVersion == 2),
+                  validCue(
+                    stage.nextCue,
+                    allowsEmptyLines: envelope.schemaVersion >= 2,
+                    payloadVersion: envelope.schemaVersion
+                  ),
                   stage.chordLines.allSatisfy({ validText($0, maximumBytes: limits.maximumTextBytes) }),
                   validOptionalText(stage.message, maximumBytes: limits.maximumTextBytes),
                   stage.timers.allSatisfy({ timer in
@@ -866,7 +961,7 @@ struct TchurchStudioLANEnvelopeVerifier {
                 audience: audience,
                 payloadVersion: envelope.schemaVersion
             )
-        } else if envelope.schemaVersion == 2, envelope.channel == .stage {
+        } else if envelope.schemaVersion >= 2, envelope.channel == .stage {
             throw TchurchStudioLANError.invalidPayload
         }
     }
@@ -881,7 +976,9 @@ struct TchurchStudioLANEnvelopeVerifier {
             guard slide == nil else { throw TchurchStudioLANError.invalidPayload }
             return
         }
-        guard payloadVersion == 2 else { throw TchurchStudioLANError.unsupportedPayloadVersion }
+        guard payloadVersion == 2 || payloadVersion == 3 else {
+            throw TchurchStudioLANError.unsupportedPayloadVersion
+        }
         guard let slide else {
             guard chordLines.isEmpty else { throw TchurchStudioLANError.invalidPayload }
             return
@@ -952,7 +1049,11 @@ struct TchurchStudioLANEnvelopeVerifier {
         return String.Index(index, within: value) != nil
     }
 
-    private func validCue(_ cue: TchurchStudioLANPublicCue?, allowsEmptyLines: Bool) -> Bool {
+    private func validCue(
+        _ cue: TchurchStudioLANPublicCue?,
+        allowsEmptyLines: Bool,
+        payloadVersion: Int
+    ) -> Bool {
         guard let cue = cue else { return true }
         return validText(cue.cueID, maximumBytes: limits.maximumIdentifierBytes) &&
             validOptionalText(cue.title, maximumBytes: limits.maximumTextBytes) &&
@@ -960,7 +1061,30 @@ struct TchurchStudioLANEnvelopeVerifier {
             cue.lines.allSatisfy({
                 validCueLine($0, allowsEmpty: allowsEmptyLines)
             }) &&
-            validAssetID(cue.mediaAssetID)
+            validAssetID(cue.mediaAssetID) &&
+            validImageAsset(
+                cue.imageAsset,
+                mediaAssetID: cue.mediaAssetID,
+                payloadVersion: payloadVersion
+            )
+    }
+
+    private func validImageAsset(
+        _ descriptor: TchurchStudioLANImageAssetDescriptor?,
+        mediaAssetID: String?,
+        payloadVersion: Int
+    ) -> Bool {
+        guard let descriptor else { return true }
+        guard payloadVersion == 3 else { return false }
+        return descriptor.schemaVersion == TchurchStudioLANImageAssetDescriptor.schemaVersion &&
+            descriptor.objectID == mediaAssetID &&
+            validAssetID(descriptor.referenceID) &&
+            validAssetID(descriptor.objectID) &&
+            descriptor.kind == .image &&
+            ["image/png", "image/jpeg", "image/webp", "image/avif", "image/gif"]
+                .contains(descriptor.mimeType) &&
+            descriptor.byteSize > 0 &&
+            descriptor.byteSize <= 64 * 1_024 * 1_024
     }
 
     private func validCueLine(_ value: String, allowsEmpty: Bool) -> Bool {
@@ -1061,10 +1185,19 @@ enum TchurchStudioLANWireMessage: Codable, Equatable {
     case envelope(Data)
     case ping(String)
     case pong(String)
+    case assetRequest(TchurchStudioLANAssetRequest)
+    case assetChunk(TchurchStudioLANAssetChunk)
+    case assetUnavailable(TchurchStudioLANAssetUnavailable)
     case error(TchurchStudioLANWireErrorCode)
 
-    private enum Kind: String, Codable { case challenge, subscribe, grant, envelope, ping, pong, error }
-    private enum CodingKeys: String, CodingKey { case kind, challenge, request, grant, envelope, nonce, error }
+    private enum Kind: String, Codable {
+        case challenge, subscribe, grant, envelope, ping, pong
+        case assetRequest, assetChunk, assetUnavailable, error
+    }
+    private enum CodingKeys: String, CodingKey {
+        case kind, challenge, request, grant, envelope, nonce
+        case assetRequest, assetChunk, assetUnavailable, error
+    }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -1075,6 +1208,14 @@ enum TchurchStudioLANWireMessage: Codable, Equatable {
         case .envelope: self = .envelope(try container.decode(Data.self, forKey: .envelope))
         case .ping: self = .ping(try container.decode(String.self, forKey: .nonce))
         case .pong: self = .pong(try container.decode(String.self, forKey: .nonce))
+        case .assetRequest:
+            self = .assetRequest(try container.decode(TchurchStudioLANAssetRequest.self, forKey: .assetRequest))
+        case .assetChunk:
+            self = .assetChunk(try container.decode(TchurchStudioLANAssetChunk.self, forKey: .assetChunk))
+        case .assetUnavailable:
+            self = .assetUnavailable(
+                try container.decode(TchurchStudioLANAssetUnavailable.self, forKey: .assetUnavailable)
+            )
         case .error: self = .error(try container.decode(TchurchStudioLANWireErrorCode.self, forKey: .error))
         }
     }
@@ -1100,6 +1241,15 @@ enum TchurchStudioLANWireMessage: Codable, Equatable {
         case .pong(let nonce):
             try container.encode(Kind.pong, forKey: .kind)
             try container.encode(nonce, forKey: .nonce)
+        case .assetRequest(let value):
+            try container.encode(Kind.assetRequest, forKey: .kind)
+            try container.encode(value, forKey: .assetRequest)
+        case .assetChunk(let value):
+            try container.encode(Kind.assetChunk, forKey: .kind)
+            try container.encode(value, forKey: .assetChunk)
+        case .assetUnavailable(let value):
+            try container.encode(Kind.assetUnavailable, forKey: .kind)
+            try container.encode(value, forKey: .assetUnavailable)
         case .error(let value):
             try container.encode(Kind.error, forKey: .kind)
             try container.encode(value, forKey: .error)

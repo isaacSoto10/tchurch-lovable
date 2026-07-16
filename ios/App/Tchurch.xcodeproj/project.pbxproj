@@ -18,6 +18,7 @@
 		C5E400010000000000000001 /* StudioLANClientCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5E400010000000000000002 /* StudioLANClientCore.swift */; };
 		C5E400010000000000000003 /* StudioLANClientNetwork.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5E400010000000000000004 /* StudioLANClientNetwork.swift */; };
 		C5E400010000000000000005 /* StudioLANClientPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5E400010000000000000006 /* StudioLANClientPlugin.swift */; };
+		C5E400010000000000000009 /* StudioLANAssetCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5E40001000000000000000A /* StudioLANAssetCache.swift */; };
 		C5E400010000000000000007 /* StudioLANClientCoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5E400010000000000000008 /* StudioLANClientCoreTests.swift */; };
 		504EC30D1FED79650016851F /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30B1FED79650016851F /* Main.storyboard */; };
 		504EC30F1FED79650016851F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30E1FED79650016851F /* Assets.xcassets */; };
@@ -48,6 +49,7 @@
 		C5E400010000000000000002 /* StudioLANClientCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioLANClientCore.swift; sourceTree = "<group>"; };
 		C5E400010000000000000004 /* StudioLANClientNetwork.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioLANClientNetwork.swift; sourceTree = "<group>"; };
 		C5E400010000000000000006 /* StudioLANClientPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioLANClientPlugin.swift; sourceTree = "<group>"; };
+		C5E40001000000000000000A /* StudioLANAssetCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioLANAssetCache.swift; sourceTree = "<group>"; };
 		C5E400010000000000000008 /* StudioLANClientCoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioLANClientCoreTests.swift; sourceTree = "<group>"; };
 		504EC30C1FED79650016851F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
 		504EC30E1FED79650016851F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -105,6 +107,7 @@
 				C5E400010000000000000002 /* StudioLANClientCore.swift */,
 				C5E400010000000000000004 /* StudioLANClientNetwork.swift */,
 				C5E400010000000000000006 /* StudioLANClientPlugin.swift */,
+				C5E40001000000000000000A /* StudioLANAssetCache.swift */,
 				A4C200010000000000000004 /* TchurchBridgeViewController.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
@@ -253,6 +256,7 @@
 				C5E400010000000000000001 /* StudioLANClientCore.swift in Sources */,
 				C5E400010000000000000003 /* StudioLANClientNetwork.swift in Sources */,
 				C5E400010000000000000005 /* StudioLANClientPlugin.swift in Sources */,
+				C5E400010000000000000009 /* StudioLANAssetCache.swift in Sources */,
 				A4C200010000000000000003 /* TchurchBridgeViewController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

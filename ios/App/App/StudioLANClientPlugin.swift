@@ -12,6 +12,7 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "connect", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "disconnect", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "forgetPairing", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "purgePrivateState", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getStatus", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setDisplayAwake", returnType: CAPPluginReturnPromise),
     ]
@@ -39,6 +40,9 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
         }
         client?.envelopeHandler = { [weak self] envelope in
             DispatchQueue.main.async { self?.publish(envelope) }
+        }
+        client?.imageAssetHandler = { [weak self] status in
+            DispatchQueue.main.async { self?.publish(status) }
         }
         installLifecycleObservers()
     }
@@ -111,6 +115,23 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
         }
     }
 
+    @objc public func purgePrivateState(_ call: CAPPluginCall) {
+        guard let client else {
+            call.reject("La conexión LAN no está disponible.", "UNAVAILABLE")
+            return
+        }
+        client.purgePrivateState { result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success:
+                    call.resolve(["accepted": true])
+                case .failure:
+                    call.reject("No se pudo borrar el estado privado de Studio.", "PURGE_FAILED")
+                }
+            }
+        }
+    }
+
     @objc public func setDisplayAwake(_ call: CAPPluginCall) {
         let active = call.getBool("active") ?? false
         DispatchQueue.main.async { [weak self] in
@@ -145,6 +166,22 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
 
     private func publish(_ envelope: TchurchStudioLANSignedEnvelope) {
         notifyListeners("studioLANUpdate", data: envelopePayload(envelope))
+    }
+
+    private func publish(_ status: TchurchStudioLANImageAssetStatus) {
+        let portableURL = status.fileURL
+            .flatMap { bridge?.portablePath(fromLocalURL: $0) }
+            .map(\.absoluteString)
+        notifyListeners("studioLANImageAsset", data: [
+            "cueId": status.cueID,
+            "objectId": status.objectID,
+            "phase": status.phase.rawValue,
+            "receivedBytes": String(status.receivedBytes),
+            "totalBytes": String(status.totalBytes),
+            "imageFit": status.imageFit.rawValue,
+            "localUrl": portableURL ?? NSNull(),
+            "message": status.message ?? NSNull(),
+        ])
     }
 
     private func statusPayload(_ status: TchurchStudioLANClientStatus) -> [String: Any] {
@@ -204,6 +241,21 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
             "title": cue.title ?? NSNull(),
             "lines": cue.lines,
             "mediaAssetId": cue.mediaAssetID ?? NSNull(),
+            "imageAsset": imageAssetPayload(cue.imageAsset),
+        ] as [String: Any]
+    }
+
+    private func imageAssetPayload(_ descriptor: TchurchStudioLANImageAssetDescriptor?) -> Any {
+        guard let descriptor else { return NSNull() }
+        return [
+            "schemaVersion": descriptor.schemaVersion,
+            "referenceId": descriptor.referenceID,
+            "objectId": descriptor.objectID,
+            "kind": descriptor.kind.rawValue,
+            "mimeType": descriptor.mimeType,
+            "byteSize": String(descriptor.byteSize),
+            "required": descriptor.required,
+            "imageFit": descriptor.imageFit.rawValue,
         ] as [String: Any]
     }
 

@@ -7,6 +7,7 @@ import {
   isStudioLANSupported,
   refreshStudioLANDiscovery,
   type StudioLANChannel,
+  type StudioLANImageAssetStatus,
   type StudioLANStatus,
   type StudioLANUpdate,
 } from "@/lib/studioLANClient";
@@ -24,6 +25,7 @@ const INITIAL_STATUS: StudioLANStatus = {
 export function useStudioLANClient() {
   const [status, setStatus] = useState(INITIAL_STATUS);
   const [update, setUpdate] = useState<StudioLANUpdate | null>(null);
+  const [imageAsset, setImageAsset] = useState<StudioLANImageAssetStatus | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -34,6 +36,9 @@ export function useStudioLANClient() {
       },
       onUpdate(next) {
         if (active) setUpdate(next);
+      },
+      onImageAsset(next) {
+        if (active) setImageAsset(next);
       },
     }).then((session) => {
       if (!active) void session.disconnect();
@@ -53,22 +58,25 @@ export function useStudioLANClient() {
 
   const connect = useCallback(async (serviceId: string, channel: StudioLANChannel, pairingCode: string) => {
     setUpdate(null);
+    setImageAsset(null);
     await connectToStudioLAN(serviceId, channel, pairingCode);
   }, []);
 
   const disconnect = useCallback(async () => {
     await disconnectFromStudioLAN();
     setUpdate(null);
+    setImageAsset(null);
   }, []);
 
   const forget = useCallback(async (serviceId: string) => {
     await forgetStudioLANPairing(serviceId);
     setUpdate(null);
+    setImageAsset(null);
   }, []);
 
   const refresh = useCallback(async () => {
     await refreshStudioLANDiscovery();
   }, []);
 
-  return { status, update, connect, disconnect, forget, refresh };
+  return { status, update, imageAsset, connect, disconnect, forget, refresh };
 }

@@ -8,7 +8,12 @@ vi.mock("@capacitor/core", () => ({
   registerPlugin: () => ({}),
 }));
 
-import { normalizeStudioLANPairingQR, normalizeStudioLANStatus, normalizeStudioLANUpdate } from "./studioLANClient";
+import {
+  normalizeStudioLANImageAssetStatus,
+  normalizeStudioLANPairingQR,
+  normalizeStudioLANStatus,
+  normalizeStudioLANUpdate,
+} from "./studioLANClient";
 
 function validUpdate() {
   return {
@@ -200,5 +205,80 @@ describe("Studio LAN native bridge boundary", () => {
     expect(normalizeStudioLANPairingQR("https://example.com/not-studio")).toBeNull();
     expect(normalizeStudioLANPairingQR(`tchurch-studio:${"A".repeat(42)}`)).toBeNull();
     expect(normalizeStudioLANPairingQR(`tchurch-studio:${"A".repeat(43)}=`)).toBeNull();
+  });
+
+  it("accepts the exact v3 image descriptor and rejects it from legacy or mismatched cues", () => {
+    const objectId = `sha256:${"b".repeat(64)}`;
+    const descriptor = {
+      schemaVersion: 1,
+      referenceId: `sha256:${"a".repeat(64)}`,
+      objectId,
+      kind: "image",
+      mimeType: "image/png",
+      byteSize: "65537",
+      required: true,
+      imageFit: "cover",
+    };
+    const v3 = {
+      ...validUpdate(),
+      payloadVersion: 3,
+      audience: {
+        ...validUpdate().audience,
+        cue: { ...validUpdate().audience.cue, mediaAssetId: objectId, imageAsset: descriptor },
+      },
+      stage: { ...validUpdate().stage, chordLines: [], currentChordSlide: null },
+    };
+    expect(normalizeStudioLANUpdate(v3)).toMatchObject({
+      payloadVersion: 3,
+      audience: { cue: { mediaAssetId: objectId, imageAsset: descriptor } },
+    });
+    expect(normalizeStudioLANUpdate({ ...v3, payloadVersion: 2 })).toBeNull();
+    expect(normalizeStudioLANUpdate({
+      ...v3,
+      audience: {
+        ...v3.audience,
+        cue: { ...v3.audience.cue, mediaAssetId: `sha256:${"c".repeat(64)}` },
+      },
+    })).toBeNull();
+    expect(normalizeStudioLANUpdate({
+      ...v3,
+      audience: {
+        ...v3.audience,
+        cue: { ...v3.audience.cue, imageAsset: { ...descriptor, byteSize: String(64 * 1_024 * 1_024 + 1) } },
+      },
+    })).toBeNull();
+  });
+
+  it("allows only verified portable local image URLs and bounded progress", () => {
+    const objectId = `sha256:${"b".repeat(64)}`;
+    const ready = {
+      cueId: "cue-1",
+      objectId,
+      phase: "ready",
+      receivedBytes: "65537",
+      totalBytes: "65537",
+      imageFit: "contain",
+      localUrl: "capacitor://localhost/_capacitor_file_/private/cache/image.png",
+      message: null,
+    };
+    expect(normalizeStudioLANImageAssetStatus(ready)).toEqual(ready);
+    expect(normalizeStudioLANImageAssetStatus({ ...ready, localUrl: "file:///private/cache/image.png" })).toBeNull();
+    expect(normalizeStudioLANImageAssetStatus({ ...ready, localUrl: "https://evil.example/image.png" })).toBeNull();
+    expect(normalizeStudioLANImageAssetStatus({ ...ready, localUrl: `${ready.localUrl}?token=private` })).toBeNull();
+    expect(normalizeStudioLANImageAssetStatus({ ...ready, receivedBytes: "65536" })).toBeNull();
+    expect(normalizeStudioLANImageAssetStatus({
+      ...ready,
+      phase: "loading",
+      receivedBytes: "32768",
+      localUrl: null,
+      message: "Descargando imagen offline…",
+    })).toMatchObject({ phase: "loading", receivedBytes: "32768", localUrl: null });
+    expect(normalizeStudioLANImageAssetStatus({
+      ...ready,
+      phase: "unavailable",
+      receivedBytes: "0",
+      localUrl: null,
+      message: "token=must-not-cross",
+    })).toBeNull();
   });
 });

@@ -19,6 +19,29 @@ export type StudioLANCue = {
   title: string | null;
   lines: string[];
   mediaAssetId: string | null;
+  imageAsset: StudioLANImageAssetDescriptor | null;
+};
+
+export type StudioLANImageAssetDescriptor = {
+  schemaVersion: 1;
+  referenceId: string;
+  objectId: string;
+  kind: "image";
+  mimeType: "image/png" | "image/jpeg" | "image/webp" | "image/avif" | "image/gif";
+  byteSize: string;
+  required: boolean;
+  imageFit: "contain" | "cover";
+};
+
+export type StudioLANImageAssetStatus = {
+  cueId: string;
+  objectId: string;
+  phase: "loading" | "ready" | "unavailable";
+  receivedBytes: string;
+  totalBytes: string;
+  imageFit: "contain" | "cover";
+  localUrl: string | null;
+  message: string | null;
 };
 
 export type StudioLANChordToken = { value: string; offsetUtf16: number };
@@ -37,7 +60,7 @@ export type StudioLANTimer = {
 
 export type StudioLANUpdate = {
   channel: StudioLANChannel;
-  payloadVersion: 1 | 2;
+  payloadVersion: 1 | 2 | 3;
   sequence: string;
   revision: string;
   receivedAtMs: number;
@@ -70,10 +93,12 @@ interface StudioLANNativePlugin {
   connect(options: { serviceId: string; channel: StudioLANChannel; pairingCode?: string }): Promise<{ accepted: boolean }>;
   disconnect(): Promise<{ accepted: boolean }>;
   forgetPairing(options: { serviceId: string }): Promise<{ accepted: boolean }>;
+  purgePrivateState(): Promise<{ accepted: boolean }>;
   setDisplayAwake(options: { active: boolean }): Promise<{ accepted: boolean }>;
   getStatus(): Promise<unknown>;
   addListener(eventName: "studioLANStatus", listener: (status: unknown) => void): Promise<PluginListenerHandle>;
   addListener(eventName: "studioLANUpdate", listener: (update: unknown) => void): Promise<PluginListenerHandle>;
+  addListener(eventName: "studioLANImageAsset", listener: (status: unknown) => void): Promise<PluginListenerHandle>;
 }
 
 const StudioLANNative = registerPlugin<StudioLANNativePlugin>("StudioLANClient");
@@ -84,6 +109,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const ASSET_ID = /^sha256:[0-9a-f]{64}$/;
 const CHORD_KEY = /^(?:[A-G](?:#|b)?|Do|Re|Mi|Fa|Sol|La|Si)$/i;
 const CHORD_TOKEN = /^(?:(?:[A-G](?:#|b)?)(?:(?:maj|min|m|dim|aug|sus|add)?[0-9]*)?(?:\/[A-G](?:#|b)?)?|N\.?C\.?|[1-7](?:#|b)?(?:m)?(?:\/[1-7](?:#|b)?)?)$/i;
+const IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/avif", "image/gif"]);
+const MAXIMUM_IMAGE_BYTES = 64 * 1_024 * 1_024;
 const CONTROL_CHARACTER = /\p{Cc}/u;
 const SAFE_MESSAGES = new Set([
   "Selecciona un Tchurch Studio disponible.",
@@ -101,6 +128,14 @@ const SAFE_MESSAGES = new Set([
   "Studio envió datos que no pudieron verificarse. La pantalla quedó cerrada por seguridad.",
   "Se perdió la conexión LAN. Reintentando…",
   "No se pudo borrar el emparejamiento guardado.",
+]);
+const SAFE_ASSET_MESSAGES = new Set([
+  "Preparando imagen offline…",
+  "Descargando imagen offline…",
+  "No hay espacio suficiente para guardar esta imagen offline.",
+  "La imagen excede el límite seguro para este dispositivo.",
+  "La imagen no pudo verificarse y no se mostrará.",
+  "Studio no pudo entregar esta imagen offline.",
 ]);
 
 const DEFAULT_STATUS: StudioLANStatus = {
@@ -139,7 +174,32 @@ function safeMessage(value: unknown) {
     : "La conexión LAN no está disponible. Desconecta y vuelve a emparejar.";
 }
 
-function cue(value: unknown, allowsEmptyLines = false): StudioLANCue | null | undefined {
+function imageAsset(value: unknown): StudioLANImageAssetDescriptor | null | undefined {
+  if (value === null || value === undefined) return null;
+  const source = record(value);
+  const referenceId = boundedString(source?.referenceId, 71);
+  const objectId = boundedString(source?.objectId, 71);
+  const byteSize = boundedString(source?.byteSize, 20);
+  const mimeType = source?.mimeType;
+  const imageFit = source?.imageFit;
+  if (!source || source.schemaVersion !== 1 || !referenceId || !ASSET_ID.test(referenceId)
+    || !objectId || !ASSET_ID.test(objectId) || source.kind !== "image"
+    || typeof mimeType !== "string" || !IMAGE_MIME_TYPES.has(mimeType)
+    || !byteSize || !UINT64.test(byteSize) || BigInt(byteSize) <= 0n || BigInt(byteSize) > BigInt(MAXIMUM_IMAGE_BYTES)
+    || typeof source.required !== "boolean" || (imageFit !== "contain" && imageFit !== "cover")) return undefined;
+  return {
+    schemaVersion: 1,
+    referenceId,
+    objectId,
+    kind: "image",
+    mimeType: mimeType as StudioLANImageAssetDescriptor["mimeType"],
+    byteSize,
+    required: source.required,
+    imageFit,
+  };
+}
+
+function cue(value: unknown, payloadVersion: 1 | 2 | 3): StudioLANCue | null | undefined {
   if (value === null || value === undefined) return null;
   const source = record(value);
   if (!source) return undefined;
@@ -147,13 +207,16 @@ function cue(value: unknown, allowsEmptyLines = false): StudioLANCue | null | un
   const title = nullableString(source.title);
   if (!cueId || (source.title != null && title == null) || !Array.isArray(source.lines) || source.lines.length > 128) return undefined;
   const lines = source.lines.map((line) => {
-    const bounded = boundedLine(line, allowsEmptyLines);
-    return bounded != null && (allowsEmptyLines || bounded === bounded.trim()) ? bounded : null;
+    const bounded = boundedLine(line, payloadVersion >= 2);
+    return bounded != null && (payloadVersion >= 2 || bounded === bounded.trim()) ? bounded : null;
   });
   if (lines.some((line) => line == null)) return undefined;
   const mediaAssetId = source.mediaAssetId == null ? null : boundedString(source.mediaAssetId, 71);
   if (mediaAssetId && !ASSET_ID.test(mediaAssetId)) return undefined;
-  return { cueId, title, lines: lines as string[], mediaAssetId };
+  const normalizedImageAsset = imageAsset(source.imageAsset);
+  if (normalizedImageAsset === undefined || (payloadVersion < 3 && normalizedImageAsset != null)
+    || (normalizedImageAsset && normalizedImageAsset.objectId !== mediaAssetId)) return undefined;
+  return { cueId, title, lines: lines as string[], mediaAssetId, imageAsset: normalizedImageAsset };
 }
 
 function timer(value: unknown): StudioLANTimer | null {
@@ -266,8 +329,9 @@ export function normalizeStudioLANUpdate(value: unknown): StudioLANUpdate | null
   const currentCueId = audience.currentCueId == null ? null : boundedString(audience.currentCueId, 160);
   const currentCueIndex = audience.currentCueIndex == null ? null : Number(audience.currentCueIndex);
   const cueCount = Number(audience.cueCount);
-  const audienceCue = cue(audience.cue, payloadVersion === 2);
-  if ((channel !== "audience" && channel !== "stage") || (payloadVersion !== 1 && payloadVersion !== 2)
+  if (payloadVersion !== 1 && payloadVersion !== 2 && payloadVersion !== 3) return null;
+  const audienceCue = cue(audience.cue, payloadVersion);
+  if ((channel !== "audience" && channel !== "stage")
     || !sequence || !UINT64.test(sequence) || !revision || !UINT64.test(revision)
     || !runId || !UUID.test(runId) || !authorityEpoch || !UINT64.test(authorityEpoch) || !packageId || !serviceVersion
     || (audience.currentCueId != null && !currentCueId) || (currentCueIndex != null && !Number.isSafeInteger(currentCueIndex))
@@ -289,7 +353,7 @@ export function normalizeStudioLANUpdate(value: unknown): StudioLANUpdate | null
   let stage: StudioLANUpdate["stage"] = null;
   if (source.stage != null) {
     const sourceStage = record(source.stage);
-    const nextCue = cue(sourceStage?.nextCue, payloadVersion === 2);
+    const nextCue = cue(sourceStage?.nextCue, payloadVersion);
     const currentChordSlide = chordSlide(sourceStage?.currentChordSlide);
     const message = sourceStage?.message == null ? null : boundedString(sourceStage.message);
     if (!sourceStage || nextCue === undefined || currentChordSlide === undefined || (sourceStage.message != null && !message)
@@ -299,7 +363,7 @@ export function normalizeStudioLANUpdate(value: unknown): StudioLANUpdate | null
     const timers = sourceStage.timers.map(timer);
     if (chordLines.some((line) => line == null) || timers.some((item) => item == null)) return null;
     if (payloadVersion === 1 && currentChordSlide != null) return null;
-    if (payloadVersion === 2) {
+    if (payloadVersion >= 2) {
       const derivedChordLines = legacyChordLines(currentChordSlide);
       if (chordLines.length !== derivedChordLines.length
         || (chordLines as string[]).some((line, index) => line !== derivedChordLines[index])) return null;
@@ -317,7 +381,7 @@ export function normalizeStudioLANUpdate(value: unknown): StudioLANUpdate | null
   if (!Number.isSafeInteger(receivedAtMs)) return null;
   return {
     channel,
-    payloadVersion: payloadVersion as 1 | 2,
+    payloadVersion: payloadVersion as 1 | 2 | 3,
     sequence,
     revision,
     receivedAtMs,
@@ -338,9 +402,45 @@ export function isStudioLANSupported() {
   return Capacitor.isNativePlatform() && Capacitor.getPlatform() === "ios";
 }
 
+function portableImageURL(value: unknown) {
+  if (typeof value !== "string" || value.length > 4_096) return null;
+  try {
+    const url = new URL(value);
+    return ["capacitor:", "http:", "https:"].includes(url.protocol)
+      && url.hostname === "localhost"
+      && url.pathname.startsWith("/_capacitor_file_/")
+      && !url.username && !url.password && !url.search && !url.hash ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+export function normalizeStudioLANImageAssetStatus(value: unknown): StudioLANImageAssetStatus | null {
+  const source = record(value);
+  const cueId = boundedString(source?.cueId, 160);
+  const objectId = boundedString(source?.objectId, 71);
+  const phase = source?.phase;
+  const receivedBytes = boundedString(source?.receivedBytes, 20);
+  const totalBytes = boundedString(source?.totalBytes, 20);
+  const imageFit = source?.imageFit;
+  const localUrl = source?.localUrl == null ? null : portableImageURL(source.localUrl);
+  const message = source?.message == null ? null
+    : typeof source.message === "string" && SAFE_ASSET_MESSAGES.has(source.message) ? source.message : null;
+  if (!source || !cueId || !objectId || !ASSET_ID.test(objectId)
+    || (phase !== "loading" && phase !== "ready" && phase !== "unavailable")
+    || !receivedBytes || !UINT64.test(receivedBytes) || !totalBytes || !UINT64.test(totalBytes)
+    || BigInt(totalBytes) <= 0n || BigInt(totalBytes) > BigInt(MAXIMUM_IMAGE_BYTES)
+    || BigInt(receivedBytes) > BigInt(totalBytes)
+    || (imageFit !== "contain" && imageFit !== "cover")
+    || (phase === "ready" ? !localUrl || BigInt(receivedBytes) !== BigInt(totalBytes) : localUrl != null)
+    || (source.message != null && message == null)) return null;
+  return { cueId, objectId, phase, receivedBytes, totalBytes, imageFit, localUrl, message };
+}
+
 export async function connectStudioLANBridge(callbacks: {
   onStatus: (status: StudioLANStatus) => void;
   onUpdate: (update: StudioLANUpdate) => void;
+  onImageAsset: (status: StudioLANImageAssetStatus) => void;
 }) {
   if (!isStudioLANSupported()) {
     callbacks.onStatus(DEFAULT_STATUS);
@@ -351,6 +451,10 @@ export async function connectStudioLANBridge(callbacks: {
     StudioLANNative.addListener("studioLANUpdate", (value) => {
       const update = normalizeStudioLANUpdate(value);
       if (update) callbacks.onUpdate(update);
+    }),
+    StudioLANNative.addListener("studioLANImageAsset", (value) => {
+      const status = normalizeStudioLANImageAssetStatus(value);
+      if (status) callbacks.onImageAsset(status);
     }),
   ]);
   try {
@@ -387,4 +491,8 @@ export async function disconnectFromStudioLAN() {
 
 export async function forgetStudioLANPairing(serviceId: string) {
   if (isStudioLANSupported() && SERVICE_ID.test(serviceId)) await StudioLANNative.forgetPairing({ serviceId });
+}
+
+export async function purgeStudioLANPrivateState() {
+  if (isStudioLANSupported()) await StudioLANNative.purgePrivateState();
 }

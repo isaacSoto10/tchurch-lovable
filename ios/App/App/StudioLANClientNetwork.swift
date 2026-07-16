@@ -18,6 +18,31 @@ enum TchurchStudioLANConnectionPhase: String, Equatable {
     case suspended
 }
 
+final class TchurchStudioLANAssetRequestWatchdog: @unchecked Sendable {
+    private let queue: DispatchQueue
+    private var workItem: DispatchWorkItem?
+
+    init(queue: DispatchQueue) {
+        self.queue = queue
+    }
+
+    func arm(after timeout: TimeInterval, handler: @escaping @Sendable () -> Void) {
+        cancel()
+        guard timeout > 0 else {
+            queue.async(execute: handler)
+            return
+        }
+        let workItem = DispatchWorkItem(block: handler)
+        self.workItem = workItem
+        queue.asyncAfter(deadline: .now() + timeout, execute: workItem)
+    }
+
+    func cancel() {
+        workItem?.cancel()
+        workItem = nil
+    }
+}
+
 struct TchurchStudioLANClientStatus: Equatable {
     let phase: TchurchStudioLANConnectionPhase
     let services: [TchurchStudioLANService]
@@ -31,6 +56,7 @@ protocol TchurchStudioLANSecretStoring {
     func read(serviceID: String) throws -> Data?
     func write(_ secret: Data, serviceID: String) throws
     func delete(serviceID: String) throws
+    func deleteAll() throws
 }
 
 final class TchurchStudioLANKeychainSecretStore: TchurchStudioLANSecretStoring {
@@ -73,6 +99,18 @@ final class TchurchStudioLANKeychainSecretStore: TchurchStudioLANSecretStoring {
 
     func delete(serviceID: String) throws {
         let status = SecItemDelete(baseQuery(serviceID: serviceID) as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw TchurchStudioLANError.invalidConfiguration
+        }
+    }
+
+    func deleteAll() throws {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
+        ]
+        let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw TchurchStudioLANError.invalidConfiguration
         }
@@ -143,9 +181,11 @@ enum TchurchStudioLANNetworkParameters {
 
 final class TchurchStudioLANClient: @unchecked Sendable {
     static let bonjourServiceType = "_tchurch-show._tcp"
+    static let assetRequestTimeoutSeconds: TimeInterval = 15
 
     var statusHandler: ((TchurchStudioLANClientStatus) -> Void)?
     var envelopeHandler: ((TchurchStudioLANSignedEnvelope) -> Void)?
+    var imageAssetHandler: ((TchurchStudioLANImageAssetStatus) -> Void)?
 
     private struct DesiredConnection {
         let serviceID: String
@@ -157,10 +197,26 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         case saved
     }
 
+    private struct ImageAssetIntent: Equatable {
+        let authority: TchurchStudioLANAuthority
+        let cueID: String
+        let descriptor: TchurchStudioLANImageAssetDescriptor
+        let isCurrent: Bool
+        let generation: UInt64
+    }
+
+    private struct InFlightAssetRequest: Equatable {
+        let request: TchurchStudioLANAssetRequest
+        let intent: ImageAssetIntent
+    }
+
     private let queue = DispatchQueue(label: "app.tchurch.studio-lan.client")
+    private let assetIOQueue = DispatchQueue(label: "app.tchurch.studio-lan.assets", qos: .utility)
+    private lazy var assetRequestWatchdog = TchurchStudioLANAssetRequestWatchdog(queue: queue)
     private let limits: TchurchStudioLANLimits
     private let secretStore: TchurchStudioLANSecretStoring
     private let defaults: UserDefaults
+    private let assetCache: TchurchStudioLANAssetCache
 
     private var browser: NWBrowser?
     private var discoveredEndpoints: [String: NWEndpoint] = [:]
@@ -185,16 +241,22 @@ final class TchurchStudioLANClient: @unchecked Sendable {
     private var didAuthenticate = false
     private var currentPhase: TchurchStudioLANConnectionPhase = .idle
     private var currentMessage: String?
+    private var assetGeneration: UInt64 = 0
+    private var imageAssetIntents: [ImageAssetIntent] = []
+    private var inFlightAssetRequest: InFlightAssetRequest?
+    private var assetRetryCount = 0
 
     init(
         limits: TchurchStudioLANLimits = .production,
         secretStore: TchurchStudioLANSecretStoring = TchurchStudioLANKeychainSecretStore(),
-        defaults: UserDefaults = .standard
+        defaults: UserDefaults = .standard,
+        assetCache: TchurchStudioLANAssetCache = TchurchStudioLANAssetCache()
     ) throws {
         guard limits.isValid else { throw TchurchStudioLANError.invalidConfiguration }
         self.limits = limits
         self.secretStore = secretStore
         self.defaults = defaults
+        self.assetCache = assetCache
         decoder = try TchurchStudioLANLengthPrefixedFrameDecoder(
             maximumFrameBytes: limits.maximumFrameBytes,
             maximumBufferedBytes: limits.maximumBufferedInputBytes
@@ -269,6 +331,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             self.connection?.stateUpdateHandler = nil
             self.connection?.cancel()
             self.connection = nil
+            self.resetAssetTransfer()
             self.setPhase(.suspended, message: "En espera: abre Tchurch para volver a conectar.")
         }
     }
@@ -289,9 +352,40 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             do {
                 try self.secretStore.delete(serviceID: serviceID)
                 if self.desired?.serviceID == serviceID { self.disconnectOnQueue(clearDesired: true) }
+                self.resetAssetTransfer()
+                self.assetIOQueue.async { [weak self] in try? self?.assetCache.purgeAll() }
                 self.emitStatus()
             } catch {
+                if self.desired?.serviceID == serviceID { self.disconnectOnQueue(clearDesired: true) }
+                self.resetAssetTransfer()
+                self.assetIOQueue.async { [weak self] in try? self?.assetCache.purgeAll() }
                 self.setPhase(.failed, message: "No se pudo borrar el emparejamiento guardado.")
+            }
+        }
+    }
+
+    func purgePrivateState(_ completion: @escaping (Result<Void, Error>) -> Void) {
+        queue.async { [weak self] in
+            guard let self else { return completion(.failure(TchurchStudioLANError.invalidConfiguration)) }
+            self.disconnectOnQueue(clearDesired: true)
+            self.resetAssetTransfer()
+            var deletedSecrets = true
+            do {
+                try self.secretStore.deleteAll()
+            } catch {
+                deletedSecrets = false
+            }
+            self.assetIOQueue.async { [weak self] in
+                guard let self else { return completion(.failure(TchurchStudioLANError.invalidConfiguration)) }
+                var purgedCache = true
+                do {
+                    try self.assetCache.purgeAll()
+                } catch {
+                    purgedCache = false
+                }
+                completion(deletedSecrets && purgedCache
+                    ? .success(())
+                    : .failure(TchurchStudioLANError.assetCacheUnavailable))
             }
         }
     }
@@ -430,6 +524,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         connectionTimeoutWork = nil
         connection?.stateUpdateHandler = nil
         connection?.cancel()
+        resetAssetTransfer()
         challenge = nil
         request = nil
         verifier = nil
@@ -582,6 +677,11 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             try replayGuard.accept(envelope)
             replayGuards[key] = replayGuard
             envelopeHandler?(envelope)
+            registerImageAssets(from: envelope, connection: connection)
+        case .assetChunk(let chunk):
+            try handleAssetChunk(chunk, connection: connection)
+        case .assetUnavailable(let unavailable):
+            try handleAssetUnavailable(unavailable, connection: connection)
         case .ping(let nonce) where !nonce.isEmpty && nonce.utf8.count <= 128:
             try send(.pong(nonce), connection: connection)
         case .error:
@@ -589,6 +689,329 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         default:
             throw TchurchStudioLANError.protocolViolation
         }
+    }
+
+    private func registerImageAssets(
+        from envelope: TchurchStudioLANSignedEnvelope,
+        connection: NWConnection
+    ) {
+        guard self.connection === connection else { return }
+        assetGeneration &+= 1
+        let generation = assetGeneration
+        var candidates: [(cue: TchurchStudioLANPublicCue, isCurrent: Bool)] = []
+        if let cue = envelope.payload.audience.cue, cue.imageAsset != nil {
+            candidates.append((cue, true))
+        }
+        if let cue = envelope.payload.stage?.nextCue, cue.imageAsset != nil {
+            candidates.append((cue, false))
+        }
+        var seen = Set<String>()
+        imageAssetIntents = candidates.compactMap { candidate in
+            guard envelope.schemaVersion == 3,
+                  let descriptor = candidate.cue.imageAsset,
+                  seen.insert(descriptor.objectID).inserted else { return nil }
+            return ImageAssetIntent(
+                authority: envelope.authority,
+                cueID: candidate.cue.cueID,
+                descriptor: descriptor,
+                isCurrent: candidate.isCurrent,
+                generation: generation
+            )
+        }
+        assetRetryCount = 0
+        for intent in imageAssetIntents where intent.isCurrent {
+            publishImageAsset(
+                intent,
+                phase: .loading,
+                receivedBytes: 0,
+                fileURL: nil,
+                message: "Preparando imagen offline…"
+            )
+        }
+        beginNextImageAssetIfNeeded(connection: connection)
+    }
+
+    private func beginNextImageAssetIfNeeded(connection: NWConnection) {
+        guard self.connection === connection,
+              verifier != nil,
+              inFlightAssetRequest == nil,
+              let intent = imageAssetIntents.first else { return }
+        let protectedObjectIDs = Set(imageAssetIntents.map { $0.descriptor.objectID })
+        assetIOQueue.async { [weak self, weak connection] in
+            guard let self, let connection else { return }
+            do {
+                let preparation = try self.assetCache.prepare(
+                    descriptor: intent.descriptor,
+                    authority: intent.authority,
+                    cueID: intent.cueID,
+                    protectedObjectIDs: protectedObjectIDs
+                )
+                self.queue.async { [weak self, weak connection] in
+                    guard let self, let connection,
+                          self.connection === connection,
+                          self.isAuthorized(intent) else { return }
+                    switch preparation {
+                    case .ready(let url):
+                        self.removeIntent(intent)
+                        self.publishImageAsset(
+                            intent,
+                            phase: .ready,
+                            receivedBytes: intent.descriptor.byteSize,
+                            fileURL: url,
+                            message: nil
+                        )
+                        self.beginNextImageAssetIfNeeded(connection: connection)
+                    case .resume(let offset):
+                        self.sendAssetRequest(intent: intent, offset: offset, connection: connection)
+                    }
+                }
+            } catch {
+                self.queue.async { [weak self, weak connection] in
+                    guard let self, let connection,
+                          self.connection === connection,
+                          self.isAuthorized(intent) else { return }
+                    self.removeIntent(intent)
+                    self.publishImageAsset(
+                        intent,
+                        phase: .unavailable,
+                        receivedBytes: 0,
+                        fileURL: nil,
+                        message: self.assetFailureMessage(error)
+                    )
+                    self.beginNextImageAssetIfNeeded(connection: connection)
+                }
+            }
+        }
+    }
+
+    private func sendAssetRequest(
+        intent: ImageAssetIntent,
+        offset: Int64,
+        connection: NWConnection
+    ) {
+        guard self.connection === connection,
+              inFlightAssetRequest == nil,
+              isAuthorized(intent),
+              offset >= 0,
+              offset < intent.descriptor.byteSize else { return }
+        let request = TchurchStudioLANAssetRequest(
+            schemaVersion: TchurchStudioLANAssetRequest.schemaVersion,
+            requestID: UUID(),
+            objectID: intent.descriptor.objectID,
+            offset: offset,
+            maximumBytes: TchurchStudioLANAssetChunk.byteCount
+        )
+        inFlightAssetRequest = .init(request: request, intent: intent)
+        do {
+            try send(.assetRequest(request), connection: connection)
+            let requestID = request.requestID
+            assetRequestWatchdog.arm(after: Self.assetRequestTimeoutSeconds) { [weak self, weak connection] in
+                guard let self, let connection,
+                      self.connection === connection,
+                      self.inFlightAssetRequest?.request.requestID == requestID else { return }
+                self.assetRequestWatchdog.cancel()
+                connection.stateUpdateHandler = nil
+                connection.cancel()
+                self.handleConnectionEnded(connection)
+            }
+        } catch {
+            assetRequestWatchdog.cancel()
+            inFlightAssetRequest = nil
+            handleConnectionEnded(connection)
+        }
+    }
+
+    private func handleAssetChunk(
+        _ chunk: TchurchStudioLANAssetChunk,
+        connection: NWConnection
+    ) throws {
+        guard let inFlight = inFlightAssetRequest,
+              chunk.schemaVersion == TchurchStudioLANAssetChunk.schemaVersion,
+              chunk.requestID == inFlight.request.requestID,
+              chunk.objectID == inFlight.request.objectID,
+              chunk.offset == inFlight.request.offset,
+              chunk.totalByteSize == inFlight.intent.descriptor.byteSize,
+              !chunk.data.isEmpty,
+              chunk.data.count <= inFlight.request.maximumBytes,
+              chunk.dataSha256 == "sha256:\(TchurchStudioLANCrypto.sha256Hex(chunk.data))",
+              chunk.offset + Int64(chunk.data.count) <= chunk.totalByteSize,
+              chunk.isFinal == (chunk.offset + Int64(chunk.data.count) == chunk.totalByteSize) else {
+            throw TchurchStudioLANError.invalidAssetChunk
+        }
+        assetRequestWatchdog.cancel()
+        assetIOQueue.async { [weak self, weak connection] in
+            guard let self, let connection else { return }
+            do {
+                let result = try self.assetCache.append(chunk, descriptor: inFlight.intent.descriptor)
+                self.queue.async { [weak self, weak connection] in
+                    guard let self, let connection,
+                          self.connection === connection,
+                          self.inFlightAssetRequest == inFlight else { return }
+                    self.inFlightAssetRequest = nil
+                    self.assetRetryCount = 0
+                    switch result {
+                    case .partial(let nextOffset):
+                        if self.isAuthorized(inFlight.intent) {
+                            self.publishImageAsset(
+                                inFlight.intent,
+                                phase: .loading,
+                                receivedBytes: nextOffset,
+                                fileURL: nil,
+                                message: "Descargando imagen offline…"
+                            )
+                            self.sendAssetRequest(
+                                intent: inFlight.intent,
+                                offset: nextOffset,
+                                connection: connection
+                            )
+                        } else {
+                            self.beginNextImageAssetIfNeeded(connection: connection)
+                        }
+                    case .ready(let url):
+                        self.removeIntent(inFlight.intent)
+                        if self.isCurrentOrStillAuthorized(inFlight.intent) {
+                            self.publishImageAsset(
+                                inFlight.intent,
+                                phase: .ready,
+                                receivedBytes: inFlight.intent.descriptor.byteSize,
+                                fileURL: url,
+                                message: nil
+                            )
+                        }
+                        self.beginNextImageAssetIfNeeded(connection: connection)
+                    }
+                }
+            } catch {
+                try? self.assetCache.discardPartial(objectID: inFlight.intent.descriptor.objectID)
+                self.queue.async { [weak self, weak connection] in
+                    guard let self, let connection,
+                          self.connection === connection,
+                          self.inFlightAssetRequest == inFlight else { return }
+                    self.inFlightAssetRequest = nil
+                    self.removeIntent(inFlight.intent)
+                    if self.isCurrentOrStillAuthorized(inFlight.intent) {
+                        self.publishImageAsset(
+                            inFlight.intent,
+                            phase: .unavailable,
+                            receivedBytes: 0,
+                            fileURL: nil,
+                            message: self.assetFailureMessage(error)
+                        )
+                    }
+                    self.beginNextImageAssetIfNeeded(connection: connection)
+                }
+            }
+        }
+    }
+
+    private func handleAssetUnavailable(
+        _ unavailable: TchurchStudioLANAssetUnavailable,
+        connection: NWConnection
+    ) throws {
+        guard unavailable.schemaVersion == TchurchStudioLANAssetUnavailable.schemaVersion,
+              let inFlight = inFlightAssetRequest,
+              unavailable.requestID == inFlight.request.requestID,
+              unavailable.objectID == inFlight.request.objectID else {
+            throw TchurchStudioLANError.invalidAssetChunk
+        }
+        assetRequestWatchdog.cancel()
+        inFlightAssetRequest = nil
+        switch unavailable.code {
+        case .overloaded where assetRetryCount < 3:
+            assetRetryCount += 1
+            let delay = min(4, 1 << (assetRetryCount - 1))
+            queue.asyncAfter(deadline: .now() + .seconds(delay)) { [weak self, weak connection] in
+                guard let self, let connection,
+                      self.connection === connection,
+                      self.isAuthorized(inFlight.intent) else { return }
+                self.sendAssetRequest(
+                    intent: inFlight.intent,
+                    offset: inFlight.request.offset,
+                    connection: connection
+                )
+            }
+        case .invalidRange where assetRetryCount == 0:
+            assetRetryCount = 1
+            assetIOQueue.async { [weak self, weak connection] in
+                guard let self, let connection else { return }
+                try? self.assetCache.discardPartial(objectID: inFlight.intent.descriptor.objectID)
+                self.queue.async { [weak self, weak connection] in
+                    guard let self, let connection,
+                          self.connection === connection,
+                          self.isAuthorized(inFlight.intent) else { return }
+                    self.sendAssetRequest(intent: inFlight.intent, offset: 0, connection: connection)
+                }
+            }
+        default:
+            removeIntent(inFlight.intent)
+            if isCurrentOrStillAuthorized(inFlight.intent) {
+                publishImageAsset(
+                    inFlight.intent,
+                    phase: .unavailable,
+                    receivedBytes: inFlight.request.offset,
+                    fileURL: nil,
+                    message: "Studio no pudo entregar esta imagen offline."
+                )
+            }
+            beginNextImageAssetIfNeeded(connection: connection)
+        }
+    }
+
+    private func isAuthorized(_ intent: ImageAssetIntent) -> Bool {
+        intent.generation == assetGeneration && imageAssetIntents.contains(intent)
+    }
+
+    private func isCurrentOrStillAuthorized(_ intent: ImageAssetIntent) -> Bool {
+        intent.generation == assetGeneration &&
+            (intent.isCurrent || imageAssetIntents.contains(where: {
+                $0.cueID == intent.cueID && $0.descriptor.objectID == intent.descriptor.objectID
+            }))
+    }
+
+    private func removeIntent(_ intent: ImageAssetIntent) {
+        imageAssetIntents.removeAll {
+            $0.generation == intent.generation &&
+                $0.cueID == intent.cueID &&
+                $0.descriptor.objectID == intent.descriptor.objectID
+        }
+    }
+
+    private func publishImageAsset(
+        _ intent: ImageAssetIntent,
+        phase: TchurchStudioLANImageAssetStatus.Phase,
+        receivedBytes: Int64,
+        fileURL: URL?,
+        message: String?
+    ) {
+        imageAssetHandler?(.init(
+            cueID: intent.cueID,
+            objectID: intent.descriptor.objectID,
+            phase: phase,
+            receivedBytes: receivedBytes,
+            totalBytes: intent.descriptor.byteSize,
+            imageFit: intent.descriptor.imageFit,
+            fileURL: fileURL,
+            message: message
+        ))
+    }
+
+    private func assetFailureMessage(_ error: Error) -> String {
+        switch error as? TchurchStudioLANError {
+        case .insufficientDiskSpace:
+            return "No hay espacio suficiente para guardar esta imagen offline."
+        case .assetCacheLimitExceeded:
+            return "La imagen excede el límite seguro para este dispositivo."
+        default:
+            return "La imagen no pudo verificarse y no se mostrará."
+        }
+    }
+
+    private func resetAssetTransfer() {
+        assetRequestWatchdog.cancel()
+        assetGeneration &+= 1
+        imageAssetIntents = []
+        inFlightAssetRequest = nil
+        assetRetryCount = 0
     }
 
     private func send(_ message: TchurchStudioLANWireMessage, connection: NWConnection) throws {
@@ -601,6 +1024,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
 
     private func failProtocol(_ connection: NWConnection) {
         guard self.connection === connection else { return }
+        let compromisedServiceID = desired?.serviceID
         intentionalDisconnect = true
         connectionTimeoutWork?.cancel()
         connectionTimeoutWork = nil
@@ -611,6 +1035,9 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         activeSecret = nil
         activeSecretSource = nil
         desired = nil
+        resetAssetTransfer()
+        if let compromisedServiceID { try? secretStore.delete(serviceID: compromisedServiceID) }
+        assetIOQueue.async { [weak self] in try? self?.assetCache.purgeAll() }
         payloadNegotiation = TchurchStudioLANPayloadNegotiation()
         setPhase(.failed, message: "Studio envió datos que no pudieron verificarse. La pantalla quedó cerrada por seguridad.")
     }
@@ -624,9 +1051,12 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         verifier = nil
         challenge = nil
         request = nil
+        resetAssetTransfer()
         if intentionalDisconnect || suspended { return }
 
         if !didAuthenticate {
+            if let serviceID = desired?.serviceID { try? secretStore.delete(serviceID: serviceID) }
+            assetIOQueue.async { [weak self] in try? self?.assetCache.purgeAll() }
             switch activeSecretSource {
             case .entered:
                 pendingSecret = nil
@@ -705,6 +1135,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         activeSecret = nil
         activeSecretSource = nil
         didAuthenticate = false
+        resetAssetTransfer()
         if clearDesired {
             desired = nil
             payloadNegotiation = TchurchStudioLANPayloadNegotiation()
