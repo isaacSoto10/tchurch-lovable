@@ -152,6 +152,11 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         let channel: TchurchStudioLANChannel
     }
 
+    private enum SecretSource {
+        case entered
+        case saved
+    }
+
     private let queue = DispatchQueue(label: "app.tchurch.studio-lan.client")
     private let limits: TchurchStudioLANLimits
     private let secretStore: TchurchStudioLANSecretStoring
@@ -165,6 +170,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
     private var desired: DesiredConnection?
     private var pendingSecret: TchurchStudioLANPairingSecret?
     private var activeSecret: TchurchStudioLANPairingSecret?
+    private var activeSecretSource: SecretSource?
     private var challenge: TchurchStudioLANServerChallenge?
     private var request: TchurchStudioLANSubscriptionRequest?
     private var verifier: TchurchStudioLANEnvelopeVerifier?
@@ -221,9 +227,11 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                 if let pairingCode = pairingCode, !pairingCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     secret = try TchurchStudioLANPairingSecret(pairingCode: pairingCode)
                     self.pendingSecret = secret
+                    self.activeSecretSource = .entered
                 } else if let saved = try self.secretStore.read(serviceID: serviceID) {
                     secret = try TchurchStudioLANPairingSecret(rawRepresentation: saved)
                     self.pendingSecret = nil
+                    self.activeSecretSource = .saved
                 } else {
                     self.setPhase(.failed, message: "Ingresa el código de emparejamiento de Tchurch Studio.")
                     return
@@ -237,6 +245,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             } catch {
                 self.pendingSecret = nil
                 self.activeSecret = nil
+                self.activeSecretSource = nil
                 self.setPhase(.failed, message: "El código de emparejamiento no es válido.")
             }
         }
@@ -403,6 +412,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             } else if let saved = try secretStore.read(serviceID: desired.serviceID) {
                 secret = try TchurchStudioLANPairingSecret(rawRepresentation: saved)
                 activeSecret = secret
+                activeSecretSource = .saved
             } else {
                 setPhase(.failed, message: "Vuelve a ingresar el código de emparejamiento.")
                 return
@@ -545,6 +555,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                 try secretStore.write(secret.transportKeyMaterial, serviceID: desired.serviceID)
                 pendingSecret = nil
             }
+            activeSecretSource = .saved
             setPhase(.connected, message: nil)
             return
         }
@@ -587,6 +598,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         self.connection = nil
         pendingSecret = nil
         activeSecret = nil
+        activeSecretSource = nil
         desired = nil
         setPhase(.failed, message: "Studio envió datos que no pudieron verificarse. La pantalla quedó cerrada por seguridad.")
     }
@@ -602,12 +614,24 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         request = nil
         if intentionalDisconnect || suspended { return }
 
-        if !didAuthenticate, pendingSecret != nil {
-            pendingSecret = nil
-            activeSecret = nil
-            desired = nil
-            setPhase(.failed, message: "No se pudo autenticar. Revisa el código de emparejamiento.")
-            return
+        if !didAuthenticate {
+            switch activeSecretSource {
+            case .entered:
+                pendingSecret = nil
+                activeSecret = nil
+                activeSecretSource = nil
+                desired = nil
+                setPhase(.failed, message: "No se pudo autenticar. Revisa el código de emparejamiento.")
+                return
+            case .saved:
+                pendingSecret = nil
+                activeSecret = nil
+                activeSecretSource = nil
+                setPhase(.failed, message: "El emparejamiento cambió. Escanea el QR actual de Tchurch Studio.")
+                return
+            case .none:
+                break
+            }
         }
         scheduleReconnect(message: "Se perdió la conexión LAN. Reintentando…")
     }
@@ -637,6 +661,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         request = nil
         pendingSecret = nil
         activeSecret = nil
+        activeSecretSource = nil
         didAuthenticate = false
         if clearDesired { desired = nil }
         if browser == nil {

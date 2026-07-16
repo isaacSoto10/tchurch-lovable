@@ -13,6 +13,7 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "disconnect", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "forgetPairing", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getStatus", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setDisplayAwake", returnType: CAPPluginReturnPromise),
     ]
 
     private let client: TchurchStudioLANClient?
@@ -25,6 +26,7 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
         message: nil
     )
     private var lifecycleObservers: [NSObjectProtocol] = []
+    private var displayAwake = false
 
     override public init() {
         client = try? TchurchStudioLANClient()
@@ -45,6 +47,11 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
         lifecycleObservers.forEach(NotificationCenter.default.removeObserver)
         client?.disconnect()
         client?.stopDiscovery()
+        if displayAwake {
+            DispatchQueue.main.async {
+                UIApplication.shared.isIdleTimerDisabled = false
+            }
+        }
     }
 
     @objc public func startDiscovery(_ call: CAPPluginCall) {
@@ -104,6 +111,19 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
         }
     }
 
+    @objc public func setDisplayAwake(_ call: CAPPluginCall) {
+        let active = call.getBool("active") ?? false
+        DispatchQueue.main.async { [weak self] in
+            guard let self else {
+                call.reject("Bridge no disponible.", "UNAVAILABLE")
+                return
+            }
+            self.displayAwake = active
+            UIApplication.shared.isIdleTimerDisabled = active
+            call.resolve(["accepted": true])
+        }
+    }
+
     private func installLifecycleObservers() {
         guard lifecycleObservers.isEmpty else { return }
         lifecycleObservers.append(NotificationCenter.default.addObserver(
@@ -144,6 +164,7 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
         let snapshot = audience.snapshot
         var result: [String: Any] = [
             "channel": envelope.channel.rawValue,
+            "payloadVersion": envelope.schemaVersion,
             "sequence": String(envelope.sequence),
             "revision": String(envelope.revision),
             "receivedAtMs": TchurchStudioLANTime.nowMilliseconds(),
@@ -166,6 +187,7 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
             result["stage"] = [
                 "nextCue": cuePayload(stage.nextCue),
                 "chordLines": stage.chordLines,
+                "currentChordSlide": chordSlidePayload(stage.currentChordSlide),
                 "timers": stage.timers.map(timerPayload),
                 "message": stage.message ?? NSNull(),
             ]
@@ -191,6 +213,25 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
             "id": countdown.id,
             "label": countdown.label,
             "targetAtMs": milliseconds(countdown.targetDate),
+        ] as [String: Any]
+    }
+
+    private func chordSlidePayload(_ slide: TchurchStudioLANChordSlide?) -> Any {
+        guard let slide else { return NSNull() }
+        return [
+            "cueId": slide.cueID,
+            "key": slide.key ?? NSNull(),
+            "lines": slide.lines.map { line in
+                [
+                    "text": line.text,
+                    "chords": line.chords.map { token in
+                        [
+                            "value": token.value,
+                            "offsetUtf16": token.offsetUtf16,
+                        ] as [String: Any]
+                    },
+                ] as [String: Any]
+            },
         ] as [String: Any]
     }
 

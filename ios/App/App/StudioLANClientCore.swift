@@ -10,6 +10,7 @@ enum TchurchStudioLANError: Error, Equatable {
     case expiredChallenge
     case invalidAuthenticationProof
     case invalidSubscription
+    case unsupportedPayloadVersion
     case unsupportedChannel
     case authorityMismatch
     case staleAuthorityEpoch
@@ -84,6 +85,22 @@ struct TchurchStudioLANPublicCue: Codable, Equatable {
     let mediaAssetID: String?
 }
 
+struct TchurchStudioLANChordToken: Codable, Equatable {
+    let value: String
+    let offsetUtf16: Int
+}
+
+struct TchurchStudioLANChordLine: Codable, Equatable {
+    let text: String
+    let chords: [TchurchStudioLANChordToken]
+}
+
+struct TchurchStudioLANChordSlide: Codable, Equatable {
+    let cueID: String
+    let key: String?
+    let lines: [TchurchStudioLANChordLine]
+}
+
 struct TchurchStudioLANAudiencePayload: Codable, Equatable {
     let snapshot: TchurchStudioLANAudienceSnapshot
     let cue: TchurchStudioLANPublicCue?
@@ -92,8 +109,23 @@ struct TchurchStudioLANAudiencePayload: Codable, Equatable {
 struct TchurchStudioLANStageSupplement: Codable, Equatable {
     let nextCue: TchurchStudioLANPublicCue?
     let chordLines: [String]
+    let currentChordSlide: TchurchStudioLANChordSlide?
     let timers: [TchurchStudioLANTimer]
     let message: String?
+
+    init(
+        nextCue: TchurchStudioLANPublicCue?,
+        chordLines: [String],
+        currentChordSlide: TchurchStudioLANChordSlide? = nil,
+        timers: [TchurchStudioLANTimer],
+        message: String?
+    ) {
+        self.nextCue = nextCue
+        self.chordLines = chordLines
+        self.currentChordSlide = currentChordSlide
+        self.timers = timers
+        self.message = message
+    }
 }
 
 struct TchurchStudioLANStagePayload: Codable, Equatable {
@@ -167,7 +199,9 @@ struct TchurchStudioLANServerChallenge: Codable, Equatable {
 }
 
 struct TchurchStudioLANSubscriptionRequest: Codable, Equatable {
-    static let schemaVersion = 1
+    static let legacySchemaVersion = 1
+    static let currentSchemaVersion = 2
+    static let supportedPayloadVersions = [2, 1]
 
     let schemaVersion: Int
     let requestID: UUID
@@ -176,11 +210,35 @@ struct TchurchStudioLANSubscriptionRequest: Codable, Equatable {
     let clientName: String
     let channel: TchurchStudioLANChannel
     let clientNonce: String
+    let supportedPayloadVersions: [Int]?
     let authenticationProof: String
+
+    init(
+        schemaVersion: Int,
+        requestID: UUID,
+        challengeID: UUID,
+        clientID: UUID,
+        clientName: String,
+        channel: TchurchStudioLANChannel,
+        clientNonce: String,
+        supportedPayloadVersions: [Int]? = nil,
+        authenticationProof: String
+    ) {
+        self.schemaVersion = schemaVersion
+        self.requestID = requestID
+        self.challengeID = challengeID
+        self.clientID = clientID
+        self.clientName = clientName
+        self.channel = channel
+        self.clientNonce = clientNonce
+        self.supportedPayloadVersions = supportedPayloadVersions
+        self.authenticationProof = authenticationProof
+    }
 }
 
 struct TchurchStudioLANSubscriptionGrant: Codable, Equatable {
-    static let schemaVersion = 1
+    static let legacySchemaVersion = 1
+    static let currentSchemaVersion = 2
 
     let schemaVersion: Int
     let sessionID: UUID
@@ -191,11 +249,38 @@ struct TchurchStudioLANSubscriptionGrant: Codable, Equatable {
     let signingPublicKey: String
     let minimumSequence: UInt64
     let expiresAtMilliseconds: Int64
+    let selectedPayloadVersion: Int?
     let serverProof: String
+
+    init(
+        schemaVersion: Int,
+        sessionID: UUID,
+        requestID: UUID,
+        channel: TchurchStudioLANChannel,
+        authority: TchurchStudioLANAuthority,
+        signingKeyID: String,
+        signingPublicKey: String,
+        minimumSequence: UInt64,
+        expiresAtMilliseconds: Int64,
+        selectedPayloadVersion: Int? = nil,
+        serverProof: String
+    ) {
+        self.schemaVersion = schemaVersion
+        self.sessionID = sessionID
+        self.requestID = requestID
+        self.channel = channel
+        self.authority = authority
+        self.signingKeyID = signingKeyID
+        self.signingPublicKey = signingPublicKey
+        self.minimumSequence = minimumSequence
+        self.expiresAtMilliseconds = expiresAtMilliseconds
+        self.selectedPayloadVersion = selectedPayloadVersion
+        self.serverProof = serverProof
+    }
 }
 
 struct TchurchStudioLANSignedEnvelope: Codable, Equatable {
-    static let schemaVersion = 1
+    static let supportedSchemaVersions = Set([1, 2])
 
     let schemaVersion: Int
     let authority: TchurchStudioLANAuthority
@@ -219,6 +304,7 @@ struct TchurchStudioLANLimits: Equatable {
     let maximumTextBytes: Int
     let maximumCueLines: Int
     let maximumChordLines: Int
+    let maximumChordTokensPerLine: Int
     let maximumTimers: Int
 
     init(
@@ -229,6 +315,7 @@ struct TchurchStudioLANLimits: Equatable {
         maximumTextBytes: Int = 16 * 1_024,
         maximumCueLines: Int = 128,
         maximumChordLines: Int = 128,
+        maximumChordTokensPerLine: Int = 128,
         maximumTimers: Int = 64
     ) {
         self.maximumFrameBytes = maximumFrameBytes
@@ -238,6 +325,7 @@ struct TchurchStudioLANLimits: Equatable {
         self.maximumTextBytes = maximumTextBytes
         self.maximumCueLines = maximumCueLines
         self.maximumChordLines = maximumChordLines
+        self.maximumChordTokensPerLine = maximumChordTokensPerLine
         self.maximumTimers = maximumTimers
     }
 
@@ -249,6 +337,7 @@ struct TchurchStudioLANLimits: Equatable {
             maximumTextBytes > 0 &&
             maximumCueLines > 0 &&
             maximumChordLines > 0 &&
+            maximumChordTokensPerLine > 0 &&
             maximumTimers > 0
     }
 }
@@ -361,6 +450,16 @@ private struct TchurchStudioLANSubscriptionRequestProof: Codable {
     let clientNonce: String
 }
 
+private struct TchurchStudioLANSubscriptionRequestProofV2: Codable {
+    let challenge: TchurchStudioLANServerChallenge
+    let requestID: UUID
+    let clientID: UUID
+    let clientName: String
+    let channel: TchurchStudioLANChannel
+    let clientNonce: String
+    let supportedPayloadVersions: [Int]
+}
+
 private struct TchurchStudioLANSubscriptionGrantProof: Codable {
     let challengeID: UUID
     let sessionID: UUID
@@ -372,6 +471,20 @@ private struct TchurchStudioLANSubscriptionGrantProof: Codable {
     let minimumSequence: UInt64
     let expiresAtMilliseconds: Int64
     let clientNonce: String
+}
+
+private struct TchurchStudioLANSubscriptionGrantProofV2: Codable {
+    let challengeID: UUID
+    let sessionID: UUID
+    let requestID: UUID
+    let channel: TchurchStudioLANChannel
+    let authority: TchurchStudioLANAuthority
+    let signingKeyID: String
+    let signingPublicKey: String
+    let minimumSequence: UInt64
+    let expiresAtMilliseconds: Int64
+    let clientNonce: String
+    let selectedPayloadVersion: Int
 }
 
 private struct TchurchStudioLANEnvelopeSigningMaterial: Codable {
@@ -394,6 +507,7 @@ struct TchurchStudioLANVerifiedSubscription {
     var channel: TchurchStudioLANChannel { grant.channel }
     var signingKeyID: String { grant.signingKeyID }
     var minimumSequence: UInt64 { grant.minimumSequence }
+    var payloadVersion: Int { grant.selectedPayloadVersion ?? 1 }
 }
 
 enum TchurchStudioLANSubscriptionAuthenticator {
@@ -404,7 +518,8 @@ enum TchurchStudioLANSubscriptionAuthenticator {
         channel: TchurchStudioLANChannel,
         secret: TchurchStudioLANPairingSecret,
         requestID: UUID = UUID(),
-        clientNonce: Data? = nil
+        clientNonce: Data? = nil,
+        schemaVersion: Int = TchurchStudioLANSubscriptionRequest.currentSchemaVersion
     ) throws -> TchurchStudioLANSubscriptionRequest {
         guard challenge.schemaVersion == TchurchStudioLANServerChallenge.schemaVersion,
               challenge.authority.authorityEpoch > 0,
@@ -413,7 +528,9 @@ enum TchurchStudioLANSubscriptionAuthenticator {
               !challenge.signingKeyID.isEmpty,
               channel.isReadOnlyOutput,
               !clientName.isEmpty,
-              clientName.utf8.count <= TchurchStudioLANLimits.production.maximumClientNameBytes else {
+              clientName.utf8.count <= TchurchStudioLANLimits.production.maximumClientNameBytes,
+              schemaVersion == TchurchStudioLANSubscriptionRequest.legacySchemaVersion ||
+                schemaVersion == TchurchStudioLANSubscriptionRequest.currentSchemaVersion else {
             throw TchurchStudioLANError.invalidChallenge
         }
         let nonce = try clientNonce ?? TchurchStudioLANCrypto.randomBytes(count: 24)
@@ -421,23 +538,46 @@ enum TchurchStudioLANSubscriptionAuthenticator {
             throw TchurchStudioLANError.invalidAuthenticationProof
         }
         let encodedNonce = nonce.base64EncodedString()
-        let proof = TchurchStudioLANSubscriptionRequestProof(
-            challenge: challenge,
-            requestID: requestID,
-            clientID: clientID,
-            clientName: clientName,
-            channel: channel,
-            clientNonce: encodedNonce
-        )
+        let supportedPayloadVersions = schemaVersion == TchurchStudioLANSubscriptionRequest.currentSchemaVersion
+            ? TchurchStudioLANSubscriptionRequest.supportedPayloadVersions
+            : nil
+        let authenticationProof: String
+        if let supportedPayloadVersions {
+            authenticationProof = try TchurchStudioLANCrypto.authenticationCode(
+                for: TchurchStudioLANSubscriptionRequestProofV2(
+                    challenge: challenge,
+                    requestID: requestID,
+                    clientID: clientID,
+                    clientName: clientName,
+                    channel: channel,
+                    clientNonce: encodedNonce,
+                    supportedPayloadVersions: supportedPayloadVersions
+                ),
+                secret: secret
+            )
+        } else {
+            authenticationProof = try TchurchStudioLANCrypto.authenticationCode(
+                for: TchurchStudioLANSubscriptionRequestProof(
+                    challenge: challenge,
+                    requestID: requestID,
+                    clientID: clientID,
+                    clientName: clientName,
+                    channel: channel,
+                    clientNonce: encodedNonce
+                ),
+                secret: secret
+            )
+        }
         return TchurchStudioLANSubscriptionRequest(
-            schemaVersion: TchurchStudioLANSubscriptionRequest.schemaVersion,
+            schemaVersion: schemaVersion,
             requestID: requestID,
             challengeID: challenge.challengeID,
             clientID: clientID,
             clientName: clientName,
             channel: channel,
             clientNonce: encodedNonce,
-            authenticationProof: try TchurchStudioLANCrypto.authenticationCode(for: proof, secret: secret)
+            supportedPayloadVersions: supportedPayloadVersions,
+            authenticationProof: authenticationProof
         )
     }
 
@@ -450,10 +590,11 @@ enum TchurchStudioLANSubscriptionAuthenticator {
     ) throws -> TchurchStudioLANVerifiedSubscription {
         guard challenge.schemaVersion == TchurchStudioLANServerChallenge.schemaVersion,
               challenge.expiresAtMilliseconds >= nowMilliseconds,
-              request.schemaVersion == TchurchStudioLANSubscriptionRequest.schemaVersion,
+              request.schemaVersion == TchurchStudioLANSubscriptionRequest.legacySchemaVersion ||
+                request.schemaVersion == TchurchStudioLANSubscriptionRequest.currentSchemaVersion,
               request.challengeID == challenge.challengeID,
               request.channel.isReadOnlyOutput,
-              grant.schemaVersion == TchurchStudioLANSubscriptionGrant.schemaVersion,
+              grant.schemaVersion == request.schemaVersion,
               grant.requestID == request.requestID,
               grant.channel == request.channel,
               grant.authority == challenge.authority,
@@ -466,23 +607,55 @@ enum TchurchStudioLANSubscriptionAuthenticator {
               let publicKey = try? Curve25519.Signing.PublicKey(rawRepresentation: publicKeyData) else {
             throw TchurchStudioLANError.invalidSubscription
         }
-        let proof = TchurchStudioLANSubscriptionGrantProof(
-            challengeID: challenge.challengeID,
-            sessionID: grant.sessionID,
-            requestID: grant.requestID,
-            channel: grant.channel,
-            authority: grant.authority,
-            signingKeyID: grant.signingKeyID,
-            signingPublicKey: grant.signingPublicKey,
-            minimumSequence: grant.minimumSequence,
-            expiresAtMilliseconds: grant.expiresAtMilliseconds,
-            clientNonce: request.clientNonce
-        )
-        guard TchurchStudioLANCrypto.validatesAuthenticationCode(
-            grant.serverProof,
-            for: proof,
-            secret: secret
-        ) else {
+        let proofIsValid: Bool
+        switch request.schemaVersion {
+        case TchurchStudioLANSubscriptionRequest.legacySchemaVersion:
+            guard request.supportedPayloadVersions == nil,
+                  grant.selectedPayloadVersion == nil else {
+                throw TchurchStudioLANError.unsupportedPayloadVersion
+            }
+            proofIsValid = TchurchStudioLANCrypto.validatesAuthenticationCode(
+                grant.serverProof,
+                for: TchurchStudioLANSubscriptionGrantProof(
+                    challengeID: challenge.challengeID,
+                    sessionID: grant.sessionID,
+                    requestID: grant.requestID,
+                    channel: grant.channel,
+                    authority: grant.authority,
+                    signingKeyID: grant.signingKeyID,
+                    signingPublicKey: grant.signingPublicKey,
+                    minimumSequence: grant.minimumSequence,
+                    expiresAtMilliseconds: grant.expiresAtMilliseconds,
+                    clientNonce: request.clientNonce
+                ),
+                secret: secret
+            )
+        case TchurchStudioLANSubscriptionRequest.currentSchemaVersion:
+            guard request.supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.supportedPayloadVersions,
+                  grant.selectedPayloadVersion == 2 else {
+                throw TchurchStudioLANError.unsupportedPayloadVersion
+            }
+            proofIsValid = TchurchStudioLANCrypto.validatesAuthenticationCode(
+                grant.serverProof,
+                for: TchurchStudioLANSubscriptionGrantProofV2(
+                    challengeID: challenge.challengeID,
+                    sessionID: grant.sessionID,
+                    requestID: grant.requestID,
+                    channel: grant.channel,
+                    authority: grant.authority,
+                    signingKeyID: grant.signingKeyID,
+                    signingPublicKey: grant.signingPublicKey,
+                    minimumSequence: grant.minimumSequence,
+                    expiresAtMilliseconds: grant.expiresAtMilliseconds,
+                    clientNonce: request.clientNonce,
+                    selectedPayloadVersion: 2
+                ),
+                secret: secret
+            )
+        default:
+            throw TchurchStudioLANError.unsupportedPayloadVersion
+        }
+        guard proofIsValid else {
             throw TchurchStudioLANError.invalidAuthenticationProof
         }
         return TchurchStudioLANVerifiedSubscription(grant: grant, publicKey: publicKey)
@@ -561,7 +734,8 @@ struct TchurchStudioLANEnvelopeVerifier {
                 TchurchStudioLANSignedEnvelope.self,
                 from: encodedEnvelope
               ),
-              envelope.schemaVersion == TchurchStudioLANSignedEnvelope.schemaVersion else {
+              TchurchStudioLANSignedEnvelope.supportedSchemaVersions.contains(envelope.schemaVersion),
+              envelope.schemaVersion == subscription.payloadVersion else {
             throw TchurchStudioLANError.invalidEnvelope
         }
         guard envelope.authority == subscription.authority else {
@@ -634,7 +808,74 @@ struct TchurchStudioLANEnvelopeVerifier {
                   }) else {
                 throw TchurchStudioLANError.invalidPayload
             }
+            try validateChordSlide(
+                stage.currentChordSlide,
+                chordLines: stage.chordLines,
+                audience: audience,
+                payloadVersion: envelope.schemaVersion
+            )
+        } else if envelope.schemaVersion == 2, envelope.channel == .stage {
+            throw TchurchStudioLANError.invalidPayload
         }
+    }
+
+    private func validateChordSlide(
+        _ slide: TchurchStudioLANChordSlide?,
+        chordLines: [String],
+        audience: TchurchStudioLANAudiencePayload,
+        payloadVersion: Int
+    ) throws {
+        if payloadVersion == 1 {
+            guard slide == nil else { throw TchurchStudioLANError.invalidPayload }
+            return
+        }
+        guard payloadVersion == 2 else { throw TchurchStudioLANError.unsupportedPayloadVersion }
+        guard let slide else {
+            guard chordLines.isEmpty else { throw TchurchStudioLANError.invalidPayload }
+            return
+        }
+        guard let currentCueID = audience.snapshot.currentCueID,
+              let currentCue = audience.cue,
+              slide.cueID == currentCueID,
+              slide.cueID == currentCue.cueID,
+              validText(slide.cueID, maximumBytes: limits.maximumIdentifierBytes),
+              validOptionalText(slide.key, maximumBytes: limits.maximumIdentifierBytes),
+              !slide.lines.isEmpty,
+              slide.lines.count <= limits.maximumChordLines,
+              slide.lines.map(\.text) == currentCue.lines else {
+            throw TchurchStudioLANError.invalidPayload
+        }
+        for line in slide.lines {
+            guard validText(line.text, maximumBytes: limits.maximumTextBytes),
+                  line.chords.count <= limits.maximumChordTokensPerLine else {
+                throw TchurchStudioLANError.invalidPayload
+            }
+            let utf16 = Array(line.text.utf16)
+            var previousOffset = -1
+            for token in line.chords {
+                guard validText(token.value, maximumBytes: limits.maximumIdentifierBytes),
+                      token.offsetUtf16 >= 0,
+                      token.offsetUtf16 <= utf16.count,
+                      token.offsetUtf16 >= previousOffset,
+                      isUnicodeScalarBoundary(utf16, offset: token.offsetUtf16) else {
+                    throw TchurchStudioLANError.invalidPayload
+                }
+                previousOffset = token.offsetUtf16
+            }
+        }
+        if !chordLines.isEmpty,
+           !slide.lines.contains(where: { !$0.chords.isEmpty }) {
+            throw TchurchStudioLANError.invalidPayload
+        }
+    }
+
+    private func isUnicodeScalarBoundary(_ utf16: [UInt16], offset: Int) -> Bool {
+        guard offset > 0, offset < utf16.count else { return true }
+        let previous = utf16[offset - 1]
+        let current = utf16[offset]
+        let previousIsHighSurrogate = (0xD800 ... 0xDBFF).contains(previous)
+        let currentIsLowSurrogate = (0xDC00 ... 0xDFFF).contains(current)
+        return !(previousIsHighSurrogate && currentIsLowSurrogate)
     }
 
     private func validCue(_ cue: TchurchStudioLANPublicCue?) -> Bool {
