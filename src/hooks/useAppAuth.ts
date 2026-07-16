@@ -7,7 +7,7 @@ import {
   onMobileAuthChange,
   type MobileAuthSession,
 } from "@/lib/mobileAuth";
-import { purgeStudioLANPrivateState } from "@/lib/studioLANClient";
+import { studioLANPrivacyCoordinator } from "@/lib/studioLANPrivacyCoordinator";
 
 function mobileUser(session: MobileAuthSession | null) {
   if (!session) return null;
@@ -46,7 +46,7 @@ export function useAppAuth() {
         user: clerkUser,
         getToken: clerkAuth.getToken,
         signOut: async (redirectUrl = "/") => {
-          await purgeStudioLANPrivateState();
+          await studioLANPrivacyCoordinator.signedOut();
           await clerk.signOut({ redirectUrl });
         },
       };
@@ -59,7 +59,7 @@ export function useAppAuth() {
       user: mobileUser(mobileSession),
       getToken: async () => mobileSession?.token ?? null,
       signOut: async (redirectUrl = "/") => {
-        await purgeStudioLANPrivateState();
+        await studioLANPrivacyCoordinator.signedOut();
         clearMobileAuthSession();
         window.location.hash = redirectUrl === "/" ? "#/" : `#${redirectUrl}`;
       },

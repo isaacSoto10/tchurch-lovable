@@ -115,3 +115,77 @@ the same LAN as the current Tchurch Studio build and record:
 Simulator tests prove the local protocol and security mechanisms, but cannot
 substitute for the physical camera, multicast behavior through the actual
 access point, Wi-Fi client-isolation behavior, or real network interruption.
+
+## P1 reconnect and privacy follow-up
+
+Validated on 2026-07-16 from the isolated worktree
+`/Users/isaacsoto/Tchurch/.codex-local/ios-p1`. This follow-up branch is
+`codex/lan-v3-p1-fixes-ios`, based on exact commit
+`7639c792310c4de699f70b521b834cefd57ebc6e`. The canonical iOS checkout was
+not modified and no branch was pushed.
+
+The reconnect path now carries the concrete Network.framework error through
+waiting, timeout, send, receive, EOF, and cancellation. Ordinary Wi-Fi loss,
+unreachable service, timeout, EOF, cancellation, and generic TLS handshake
+failure preserve the PSK, stable client identity, replay state, verified asset
+cache, and Range checkpoint. Retry delay is capped at 16 seconds. A successful
+authenticated session remains known across later pre-grant attempts and the
+transport never uses those attempts as a legacy downgrade signal.
+
+A local Network.framework PSK probe showed that a wrong secret can currently
+surface as the broad `errSSLHandshakeFail` (`-9858`). That value is therefore
+not deterministic enough to erase credentials. Only the explicit
+`errSSLUnknownPSKIdentity` alert triggers automatic PSK rejection cleanup.
+Generic handshake failure keeps the pairing and gives the operator explicit
+Forget guidance if the Studio QR was actually rotated. Authenticated invalid
+grant, invalid signed data, or protocol compromise still fails closed and
+purges private LAN state. Local Keychain persistence failure is retained and
+retried; it is never translated into peer compromise or credential deletion.
+
+Account and church isolation is coordinated through one serialized privacy
+boundary. The native client persists only SHA-256 principal/scope fingerprints
+in a dedicated Keychain record. A principal or church change, authoritative
+membership revocation, explicit Forget, or logout writes an atomic checked
+tombstone before deleting any pairing, cache, checkpoint, or client identity.
+Completion atomically replaces that tombstone. A failed begin write deletes
+nothing and blocks access; a failed delete or completion write leaves the
+tombstone durable so cold start remains blocked and retries. Temporary token,
+Internet, or membership-fetch failure does not purge the last authorized LAN
+scope. The same cached principal may therefore resume offline, while a
+different account purges before its membership request. Pending manual church
+switches and stale account responses cannot publish after a newer principal
+transition.
+
+Final automated validation after these changes:
+
+- `npm test`: 74 files, 567 tests, 0 failures.
+- `npx tsc --noEmit -p tsconfig.app.json`: passed.
+- `npm run build`: passed.
+- Two consecutive `npm run build` plus `npx cap sync ios` runs produced the
+  identical embedded public-tree SHA-256
+  `90d6e6d71c958030bac6fffcfd36a6b65958e6c277e22380350920271bc7f4cc`.
+- Signed iPhone 17 Pro native suite on iOS 26.5: 44 tests, 0 failures, 0
+  skipped. Result bundle:
+  `/tmp/tchurch-ios-p1-final4-native-signed-20260716-1440.xcresult`.
+- Debug iPhone 17 Pro and iPad Pro 13-inch (M5) builds on iOS 26.5: passed.
+- The v3 and retained v1 fixture hashes remain
+  `a6b746d3ae32daca97e2e6653f7e2db52f0edd3618a89338dc0fd7a73a4f75e8`
+  and `802f14639b751073beb86a5547ceb48ab2c18ed201eab77ad561d6241bcea011`.
+
+The final builds were installed on both simulator form factors, terminated,
+and opened cold through
+`tchurchapp://tchurchapp.com/#/app/studio-stage`. The direct route rendered the
+read-only Stage/Audience surface, discovery-empty/retry state, pairing entry,
+safe areas, and the fail-closed `Verificando el acceso local...` state without
+overlap or clipping. Evidence screenshots are
+`/tmp/tchurch-ios-p1-final2-iphone-cold-deeplink.png` and
+`/tmp/tchurch-ios-p1-final2-ipad-cold-deeplink.png`.
+
+The Mac remained locked, and Computer Use explicitly reported that automatic
+unlock was unavailable. Pointer-driven back navigation, bottom tabs, manual
+scrolling, selector taps, and orientation changes could not be repeated on the
+final binary. Those routes/states retain automated component coverage, but the
+gesture evidence must be completed after unlocking the Mac. Physical release
+still requires an actual Studio peer, camera QR flow, real access-point
+multicast/client-isolation behavior, actual Wi-Fi interruption during transfer,
+background/foreground, and wrong-key alert classification on shipping devices.

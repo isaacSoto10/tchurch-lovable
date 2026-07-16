@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   clearMobileAuthSession: vi.fn(),
-  purgeStudioLANPrivateState: vi.fn(),
+  signedOut: vi.fn(),
 }));
 
 vi.mock("@clerk/clerk-react", () => ({
@@ -23,8 +23,8 @@ vi.mock("@/lib/mobileAuth", () => ({
   onMobileAuthChange: () => () => undefined,
 }));
 
-vi.mock("@/lib/studioLANClient", () => ({
-  purgeStudioLANPrivateState: mocks.purgeStudioLANPrivateState,
+vi.mock("@/lib/studioLANPrivacyCoordinator", () => ({
+  studioLANPrivacyCoordinator: { signedOut: mocks.signedOut },
 }));
 
 import { useAppAuth } from "./useAppAuth";
@@ -32,7 +32,7 @@ import { useAppAuth } from "./useAppAuth";
 describe("useAppAuth Studio LAN privacy boundary", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.purgeStudioLANPrivateState.mockResolvedValue(undefined);
+    mocks.signedOut.mockResolvedValue(undefined);
     window.location.hash = "#/app/settings";
   });
 
@@ -43,10 +43,19 @@ describe("useAppAuth Studio LAN privacy boundary", () => {
       await result.current.signOut("/login");
     });
 
-    expect(mocks.purgeStudioLANPrivateState).toHaveBeenCalledOnce();
+    expect(mocks.signedOut).toHaveBeenCalledOnce();
     expect(mocks.clearMobileAuthSession).toHaveBeenCalledOnce();
-    expect(mocks.purgeStudioLANPrivateState.mock.invocationCallOrder[0])
+    expect(mocks.signedOut.mock.invocationCallOrder[0])
       .toBeLessThan(mocks.clearMobileAuthSession.mock.invocationCallOrder[0]);
     expect(window.location.hash).toBe("#/login");
+  });
+
+  it("does not clear the account when the durable privacy boundary cannot begin", async () => {
+    mocks.signedOut.mockRejectedValueOnce(new Error("tombstone-write-failed"));
+    const { result } = renderHook(() => useAppAuth());
+
+    await expect(result.current.signOut("/login")).rejects.toThrow("tombstone-write-failed");
+    expect(mocks.clearMobileAuthSession).not.toHaveBeenCalled();
+    expect(window.location.hash).toBe("#/app/settings");
   });
 });

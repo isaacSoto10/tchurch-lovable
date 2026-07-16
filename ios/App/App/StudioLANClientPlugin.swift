@@ -13,6 +13,7 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "disconnect", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "forgetPairing", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "purgePrivateState", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "synchronizePrivacyContext", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getStatus", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setDisplayAwake", returnType: CAPPluginReturnPromise),
     ]
@@ -45,6 +46,7 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
             DispatchQueue.main.async { self?.publish(status) }
         }
         installLifecycleObservers()
+        client?.resumePendingPrivacyPurge()
     }
 
     deinit {
@@ -127,6 +129,32 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
                     call.resolve(["accepted": true])
                 case .failure:
                     call.reject("No se pudo borrar el estado privado de Studio.", "PURGE_FAILED")
+                }
+            }
+        }
+    }
+
+    @objc public func synchronizePrivacyContext(_ call: CAPPluginCall) {
+        guard let client else {
+            call.reject("La conexión LAN no está disponible.", "UNAVAILABLE")
+            return
+        }
+        guard let accessValue = call.getString("access"),
+              let access = TchurchStudioLANPrivacyAccess(rawValue: accessValue) else {
+            call.reject("El contexto privado no es válido.", "INVALID_CONFIGURATION")
+            return
+        }
+        client.synchronizePrivacyContext(
+            access: access,
+            principalID: call.getString("principalId"),
+            churchID: call.getString("churchId")
+        ) { result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success:
+                    call.resolve(["accepted": true])
+                case .failure:
+                    call.reject("No se pudo proteger el estado privado de Studio.", "PRIVACY_SYNC_FAILED")
                 }
             }
         }

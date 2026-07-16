@@ -1,11 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const nativeMocks = vi.hoisted(() => ({
+  synchronizePrivacyContext: vi.fn().mockResolvedValue({ accepted: true }),
+}));
+
 vi.mock("@capacitor/core", () => ({
   Capacitor: {
     isNativePlatform: () => true,
     getPlatform: () => "ios",
   },
-  registerPlugin: () => ({}),
+  registerPlugin: () => nativeMocks,
 }));
 
 import {
@@ -13,6 +17,7 @@ import {
   normalizeStudioLANPairingQR,
   normalizeStudioLANStatus,
   normalizeStudioLANUpdate,
+  synchronizeStudioLANPrivacyContext,
 } from "./studioLANClient";
 
 function validUpdate() {
@@ -82,6 +87,16 @@ describe("Studio LAN native bridge boundary", () => {
     expect(unsafe.message).not.toContain("token=");
     expect(normalizeStudioLANStatus({ phase: "failed", services: [], message: "El emparejamiento cambió. Escanea el QR actual de Tchurch Studio." }).message)
       .toBe("El emparejamiento cambió. Escanea el QR actual de Tchurch Studio.");
+    expect(normalizeStudioLANStatus({
+      phase: "reconnecting",
+      services: [],
+      message: "No se pudo usar el almacenamiento seguro. Conservamos los datos existentes y reintentaremos.",
+    }).message).toBe("No se pudo usar el almacenamiento seguro. Conservamos los datos existentes y reintentaremos.");
+    expect(normalizeStudioLANStatus({
+      phase: "connected",
+      services: [],
+      message: "Conectado de forma segura, pero el emparejamiento no pudo guardarse. Si cierras la app, vuelve a escanear el QR.",
+    }).message).toBe("Conectado de forma segura, pero el emparejamiento no pudo guardarse. Si cierras la app, vuelve a escanear el QR.");
   });
 
   it("accepts the sanitized stage shape and rejects control, malformed sequence, and invalid asset IDs", () => {
@@ -280,5 +295,32 @@ describe("Studio LAN native bridge boundary", () => {
       localUrl: null,
       message: "token=must-not-cross",
     })).toBeNull();
+  });
+
+  it("forwards only bounded privacy contexts and keeps unknown auth non-destructive", async () => {
+    await synchronizeStudioLANPrivacyContext({ access: "principal", principalId: "user-1" });
+    await synchronizeStudioLANPrivacyContext({ access: "unknown" });
+    await synchronizeStudioLANPrivacyContext({
+      access: "authorized",
+      principalId: "user-1",
+      churchId: "church-1",
+    });
+
+    expect(nativeMocks.synchronizePrivacyContext).toHaveBeenNthCalledWith(1, {
+      access: "principal",
+      principalId: "user-1",
+    });
+    expect(nativeMocks.synchronizePrivacyContext).toHaveBeenNthCalledWith(2, { access: "unknown" });
+    expect(nativeMocks.synchronizePrivacyContext).toHaveBeenNthCalledWith(3, {
+      access: "authorized",
+      principalId: "user-1",
+      churchId: "church-1",
+    });
+    await expect(synchronizeStudioLANPrivacyContext({
+      access: "authorized",
+      principalId: "user\nunsafe",
+      churchId: "church-1",
+    })).rejects.toThrow("studio_lan_invalid_privacy_context");
+    expect(nativeMocks.synchronizePrivacyContext).toHaveBeenCalledTimes(3);
   });
 });

@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Network
 import XCTest
 @testable import Tchurch
@@ -1295,6 +1296,72 @@ final class StudioLANClientTLSIntegrationTests: XCTestCase {
     }
 }
 
+final class StudioLANReconnectPolicyTests: XCTestCase {
+    func testAuthenticatedWiFiLossAndRepeatedPreGrantFailuresPreserveRecoveryState() {
+        var policy = TchurchStudioLANReconnectPolicy()
+        policy.recordAuthenticatedSession()
+
+        let causes: [TchurchStudioLANConnectionEndCause] = [
+            .network(.init(domain: .posix, code: Int32(ENETDOWN))),
+            .timeout(lastNetworkFailure: .init(domain: .posix, code: Int32(ETIMEDOUT))),
+            .eof,
+            .cancelled,
+            .network(.init(domain: .tls, code: Int32(errSSLHandshakeFail))),
+        ]
+        let dispositions = causes.map { policy.record($0) }
+
+        XCTAssertEqual(dispositions, [
+            .reconnect(afterSeconds: 1),
+            .reconnect(afterSeconds: 2),
+            .reconnect(afterSeconds: 4),
+            .reconnect(afterSeconds: 8),
+            .reconnect(afterSeconds: 16),
+        ])
+        XCTAssertTrue(policy.authenticatedSessionEstablished)
+        XCTAssertEqual(policy.consecutiveFailures, 5)
+
+        policy.recordAuthenticatedSession()
+        XCTAssertTrue(policy.authenticatedSessionEstablished)
+        XCTAssertEqual(policy.consecutiveFailures, 0)
+    }
+
+    func testOnlyExplicitUnknownPSKAlertPurgesAndTransportNeverDowngrades() throws {
+        var policy = TchurchStudioLANReconnectPolicy()
+        policy.recordAuthenticatedSession()
+
+        XCTAssertEqual(
+            policy.record(.network(.init(domain: .tls, code: Int32(errSSLUnknownPSKIdentity)))),
+            .purgePairing
+        )
+
+        var genericPolicy = TchurchStudioLANReconnectPolicy()
+        XCTAssertEqual(
+            genericPolicy.record(.network(.init(domain: .tls, code: Int32(errSSLHandshakeFail)))),
+            .reconnect(afterSeconds: 1)
+        )
+
+        let identity = try Curve25519.Signing.PrivateKey(rawRepresentation: Data(repeating: 0x33, count: 32))
+        let secret = try fixedSecret(0x41)
+        let challenge = makeChallenge(identity: identity)
+        let request = try TchurchStudioLANSubscriptionAuthenticator.makeRequest(
+            challenge: challenge,
+            clientID: UUID(),
+            clientName: "Tchurch iOS",
+            channel: .stage,
+            secret: secret
+        )
+        var negotiation = TchurchStudioLANPayloadNegotiation()
+        XCTAssertFalse(negotiation.attemptLegacyFallback(
+            afterSentRequest: request,
+            signal: .transportEnded
+        ))
+        XCTAssertEqual(
+            negotiation.requestSchemaVersion,
+            TchurchStudioLANSubscriptionRequest.currentSchemaVersion
+        )
+    }
+}
+
 final class StudioLANBonjourIntegrationTests: XCTestCase {
     func testBonjourDiscoveryFindsTheAdvertisedStudioService() throws {
         let serviceName = "Tchurch Test \(UUID().uuidString.prefix(8))"
@@ -1325,13 +1392,24 @@ final class StudioLANBonjourIntegrationTests: XCTestCase {
         let client = try TchurchStudioLANClient(
             secretStore: RecordingStudioLANSecretStore(),
             defaults: defaults,
-            assetCache: TchurchStudioLANAssetCache(rootURL: rootURL)
+            assetCache: TchurchStudioLANAssetCache(rootURL: rootURL),
+            privacyStateStore: RecordingStudioLANPrivacyStateStore()
         )
         client.statusHandler = { status in
             if status.services.contains(where: { $0.name.hasPrefix(serviceName) }) {
                 discovered.fulfill()
             }
         }
+        let privacyReady = expectation(description: "LAN privacy scope ready")
+        client.synchronizePrivacyContext(
+            access: .authorized,
+            principalID: "test-principal",
+            churchID: "test-church"
+        ) { result in
+            if case .failure(let error) = result { XCTFail("privacy scope failed: \(error)") }
+            privacyReady.fulfill()
+        }
+        wait(for: [privacyReady], timeout: 2)
         client.startDiscovery()
         defer {
             client.disconnect()
@@ -1373,6 +1451,35 @@ final class StudioLANPrivateStateTests: XCTestCase {
         XCTAssertNil(try store.read(serviceID: serviceID))
     }
 
+    func testPrivacyKeychainAtomicallyReplacesTombstoneWithCompletedScope() throws {
+        let store = TchurchStudioLANKeychainPrivacyStateStore(
+            service: "app.tchurch.tests.studio-lan-privacy.\(UUID().uuidString.lowercased())"
+        )
+        defer { try? store.delete() }
+        let principal = "sha256:\(String(repeating: "c", count: 64))"
+        let target = "sha256:\(String(repeating: "b", count: 64))"
+        var tombstone = TchurchStudioLANPrivacyState.empty
+        tombstone.purgeRequired = true
+        tombstone.purgeTargetPrincipalFingerprint = principal
+        tombstone.purgeTargetScopeFingerprint = target
+        tombstone.clientIdentityInitialized = true
+        tombstone.clientID = UUID().uuidString.lowercased()
+
+        try store.write(tombstone)
+        XCTAssertEqual(try store.read(), tombstone)
+
+        var completed = tombstone
+        completed.scopeInitialized = true
+        completed.principalFingerprint = principal
+        completed.scopeFingerprint = target
+        completed.purgeRequired = false
+        completed.purgeTargetPrincipalFingerprint = nil
+        completed.purgeTargetScopeFingerprint = nil
+        completed.clientID = nil
+        try store.write(completed)
+        XCTAssertEqual(try store.read(), completed)
+    }
+
     func testLogoutPurgeDeletesSecretsCacheClientIdentityAndDisconnects() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("tchurch-studio-private-state-\(UUID().uuidString)", isDirectory: true)
@@ -1392,7 +1499,8 @@ final class StudioLANPrivateStateTests: XCTestCase {
         let client = try TchurchStudioLANClient(
             secretStore: secretStore,
             defaults: defaults,
-            assetCache: TchurchStudioLANAssetCache(rootURL: rootURL)
+            assetCache: TchurchStudioLANAssetCache(rootURL: rootURL),
+            privacyStateStore: RecordingStudioLANPrivacyStateStore()
         )
         let purged = expectation(description: "private Studio LAN state purged")
         var purgeError: Error?
@@ -1410,12 +1518,318 @@ final class StudioLANPrivateStateTests: XCTestCase {
 
         let statusRead = expectation(description: "disconnected status read")
         client.currentStatus { status in
-            XCTAssertEqual(status.phase, .idle)
+            XCTAssertEqual(status.phase, .failed, "signed-out clients must not expose a cold LAN scope")
             XCTAssertNil(status.selectedServiceID)
             XCTAssertFalse(status.paired)
             statusRead.fulfill()
         }
         wait(for: [statusRead], timeout: 1)
+    }
+
+    func testCachedPrincipalCanResumeOfflineButDifferentAccountPurgesBeforeMembershipFetch() throws {
+        let rootURL = temporaryRoot("privacy-principal")
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let privacy = RecordingStudioLANPrivacyStateStore()
+        let secrets = RecordingStudioLANSecretStore()
+        let initial = try TchurchStudioLANClient(
+            secretStore: secrets,
+            assetCache: TchurchStudioLANAssetCache(rootURL: rootURL),
+            privacyStateStore: privacy
+        )
+        try synchronize(initial, access: .authorized, principalID: "user-1", churchID: "church-1")
+        XCTAssertEqual(secrets.deleteAllCount, 1)
+
+        let offlineRestart = try TchurchStudioLANClient(
+            secretStore: secrets,
+            assetCache: TchurchStudioLANAssetCache(rootURL: rootURL),
+            privacyStateStore: privacy
+        )
+        try synchronize(offlineRestart, access: .principal, principalID: "user-1", churchID: nil)
+        XCTAssertEqual(secrets.deleteAllCount, 1, "same cached principal keeps the verified offline scope")
+        let ready = expectation(description: "same-principal offline scope ready")
+        offlineRestart.currentStatus { status in
+            XCTAssertEqual(status.phase, .idle)
+            ready.fulfill()
+        }
+        wait(for: [ready], timeout: 1)
+
+        try seedPrivateState(rootURL: rootURL, secrets: secrets)
+        try synchronize(offlineRestart, access: .principal, principalID: "user-2", churchID: nil)
+        XCTAssertEqual(secrets.deleteAllCount, 2)
+        XCTAssertNil(privacy.state.scopeFingerprint)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: rootURL.path))
+        let blocked = expectation(description: "different principal blocked pending church scope")
+        offlineRestart.currentStatus { status in
+            XCTAssertEqual(status.phase, .failed)
+            XCTAssertFalse(status.paired)
+            blocked.fulfill()
+        }
+        wait(for: [blocked], timeout: 1)
+    }
+
+    func testCentralPrivacyContextPurgesOnlyForPrincipalChurchLogoutOrRevocation() throws {
+        let rootURL = temporaryRoot("privacy-context")
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let secrets = RecordingStudioLANSecretStore()
+        let privacy = RecordingStudioLANPrivacyStateStore()
+        let client = try TchurchStudioLANClient(
+            secretStore: secrets,
+            assetCache: TchurchStudioLANAssetCache(rootURL: rootURL),
+            privacyStateStore: privacy
+        )
+
+        try synchronize(client, access: .authorized, principalID: "user-1", churchID: "church-1")
+        XCTAssertEqual(secrets.deleteAllCount, 1, "first scoped migration must delete legacy private state")
+        let firstScope = try XCTUnwrap(privacy.state.scopeFingerprint)
+
+        try synchronize(client, access: .authorized, principalID: "user-1", churchID: "church-1")
+        XCTAssertEqual(secrets.deleteAllCount, 1, "same scope must not churn pairing or cache")
+
+        try seedPrivateState(rootURL: rootURL, secrets: secrets)
+        try synchronize(client, access: .unknown, principalID: nil, churchID: nil)
+        XCTAssertEqual(secrets.deleteAllCount, 1, "temporary token/Internet uncertainty is not revocation")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: rootURL.path))
+
+        try synchronize(client, access: .authorized, principalID: "user-2", churchID: "church-1")
+        XCTAssertEqual(secrets.deleteAllCount, 2)
+        XCTAssertNotEqual(privacy.state.scopeFingerprint, firstScope)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: rootURL.path))
+
+        try seedPrivateState(rootURL: rootURL, secrets: secrets)
+        try synchronize(client, access: .authorized, principalID: "user-2", churchID: "church-2")
+        XCTAssertEqual(secrets.deleteAllCount, 3)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: rootURL.path))
+
+        try seedPrivateState(rootURL: rootURL, secrets: secrets)
+        try synchronize(client, access: .revoked, principalID: nil, churchID: nil)
+        XCTAssertEqual(secrets.deleteAllCount, 4)
+        XCTAssertNil(privacy.state.scopeFingerprint)
+
+        try synchronize(client, access: .authorized, principalID: "user-2", churchID: "church-2")
+        try seedPrivateState(rootURL: rootURL, secrets: secrets)
+        try synchronize(client, access: .signedOut, principalID: nil, churchID: nil)
+        XCTAssertEqual(secrets.deleteAllCount, 6)
+        XCTAssertNil(privacy.state.scopeFingerprint)
+        XCTAssertNil(privacy.state.clientID)
+        XCTAssertFalse(privacy.state.purgeRequired)
+    }
+
+    func testTombstoneBeginWriteFailureDeletesNothingAndNextColdStartCanRetry() throws {
+        let rootURL = temporaryRoot("privacy-begin-failure")
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let clientID = UUID().uuidString.lowercased()
+        let privacy = RecordingStudioLANPrivacyStateStore(state: scopedPrivacyState(clientID: clientID))
+        privacy.failingWriteAttempts = [1]
+        let secrets = RecordingStudioLANSecretStore()
+        try seedPrivateState(rootURL: rootURL, secrets: secrets)
+        let firstClient = try TchurchStudioLANClient(
+            secretStore: secrets,
+            assetCache: TchurchStudioLANAssetCache(rootURL: rootURL),
+            privacyStateStore: privacy
+        )
+
+        XCTAssertThrowsError(try purge(firstClient))
+        XCTAssertEqual(privacy.writeAttempts, 1)
+        XCTAssertEqual(secrets.deleteAllCount, 0, "no deletion may begin without a durable tombstone")
+        XCTAssertFalse(privacy.state.purgeRequired)
+        XCTAssertEqual(privacy.state.clientID, clientID)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: rootURL.path))
+
+        let restarted = try TchurchStudioLANClient(
+            secretStore: secrets,
+            assetCache: TchurchStudioLANAssetCache(rootURL: rootURL),
+            privacyStateStore: privacy
+        )
+        try synchronize(restarted, access: .signedOut, principalID: nil, churchID: nil)
+        XCTAssertEqual(secrets.deleteAllCount, 1)
+        XCTAssertFalse(privacy.state.purgeRequired)
+        XCTAssertNil(privacy.state.scopeFingerprint)
+        XCTAssertNil(privacy.state.clientID)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: rootURL.path))
+    }
+
+    func testCompletionWriteFailureLeavesColdStartBlockedUntilTombstoneRetrySucceeds() throws {
+        let rootURL = temporaryRoot("privacy-completion-failure")
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let clientID = UUID().uuidString.lowercased()
+        let privacy = RecordingStudioLANPrivacyStateStore(state: scopedPrivacyState(clientID: clientID))
+        privacy.failingWriteAttempts = [2]
+        let secrets = RecordingStudioLANSecretStore()
+        try seedPrivateState(rootURL: rootURL, secrets: secrets)
+        let firstClient = try TchurchStudioLANClient(
+            secretStore: secrets,
+            assetCache: TchurchStudioLANAssetCache(rootURL: rootURL),
+            privacyStateStore: privacy
+        )
+
+        XCTAssertThrowsError(try purge(firstClient))
+        XCTAssertTrue(privacy.state.purgeRequired)
+        XCTAssertEqual(privacy.state.clientID, clientID, "identity is cleared only by the checked completion record")
+        XCTAssertEqual(secrets.deleteAllCount, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: rootURL.path))
+
+        try seedPrivateState(rootURL: rootURL, secrets: secrets)
+        let restarted = try TchurchStudioLANClient(
+            secretStore: secrets,
+            assetCache: TchurchStudioLANAssetCache(rootURL: rootURL),
+            privacyStateStore: privacy
+        )
+        let statusRead = expectation(description: "cold cache blocked")
+        restarted.currentStatus { status in
+            XCTAssertEqual(status.phase, .failed)
+            XCTAssertFalse(status.paired)
+            XCTAssertNil(status.selectedServiceID)
+            statusRead.fulfill()
+        }
+        wait(for: [statusRead], timeout: 1)
+
+        try synchronize(restarted, access: .signedOut, principalID: nil, churchID: nil)
+        XCTAssertEqual(secrets.deleteAllCount, 2)
+        XCTAssertFalse(privacy.state.purgeRequired)
+        XCTAssertNil(privacy.state.clientID)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: rootURL.path))
+    }
+
+    func testInjectedCachePurgeFailureSurvivesRestartAsDurableTombstone() throws {
+        let rootURL = temporaryRoot("privacy-cache-failure")
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let privacy = RecordingStudioLANPrivacyStateStore(state: scopedPrivacyState())
+        let secrets = RecordingStudioLANSecretStore()
+        try seedPrivateState(rootURL: rootURL, secrets: secrets)
+        let failingClient = try TchurchStudioLANClient(
+            secretStore: secrets,
+            assetCache: TchurchStudioLANAssetCache(rootURL: rootURL),
+            assetCachePurge: { throw TchurchStudioLANError.assetCacheUnavailable },
+            privacyStateStore: privacy
+        )
+
+        XCTAssertThrowsError(try purge(failingClient))
+        XCTAssertTrue(privacy.state.purgeRequired)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: rootURL.path))
+
+        let restarted = try TchurchStudioLANClient(
+            secretStore: secrets,
+            assetCache: TchurchStudioLANAssetCache(rootURL: rootURL),
+            privacyStateStore: privacy
+        )
+        try synchronize(restarted, access: .signedOut, principalID: nil, churchID: nil)
+        XCTAssertFalse(privacy.state.purgeRequired)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: rootURL.path))
+    }
+
+    func testAuthenticatedWiFiLossMultipleFailuresAndSuccessfulRangedResumePreservePrivateState() throws {
+        let rootURL = temporaryRoot("range-reconnect")
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let cache = TchurchStudioLANAssetCache(rootURL: rootURL, diskCapacity: { _ in 10 * 1_024 * 1_024 * 1_024 })
+        var bytes = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+        bytes.append(Data(repeating: 0x61, count: TchurchStudioLANAssetChunk.byteCount + 512))
+        let descriptor = TchurchStudioLANImageAssetDescriptor(
+            schemaVersion: 1,
+            referenceID: "sha256:\(String(repeating: "b", count: 64))",
+            objectID: "sha256:\(TchurchStudioLANCrypto.sha256Hex(bytes))",
+            kind: .image,
+            mimeType: "image/png",
+            byteSize: Int64(bytes.count),
+            required: true,
+            imageFit: .cover
+        )
+        let authority = makeAuthority()
+        XCTAssertEqual(
+            try cache.prepare(descriptor: descriptor, authority: authority, cueID: "cue-1", protectedObjectIDs: []),
+            .resume(offset: 0)
+        )
+        let firstBytes = Data(bytes.prefix(TchurchStudioLANAssetChunk.byteCount))
+        let firstChunk = TchurchStudioLANAssetChunk(
+            schemaVersion: 1,
+            requestID: UUID(),
+            objectID: descriptor.objectID,
+            offset: 0,
+            totalByteSize: descriptor.byteSize,
+            data: firstBytes,
+            dataSha256: "sha256:\(TchurchStudioLANCrypto.sha256Hex(firstBytes))",
+            isFinal: false
+        )
+        XCTAssertEqual(try cache.append(firstChunk, descriptor: descriptor), .partial(nextOffset: Int64(firstBytes.count)))
+
+        let clientID = UUID().uuidString.lowercased()
+        let privacy = RecordingStudioLANPrivacyStateStore(state: scopedPrivacyState(clientID: clientID))
+        let secrets = RecordingStudioLANSecretStore()
+        secrets.entries["service"] = Data(repeating: 0x41, count: 32)
+        var policy = TchurchStudioLANReconnectPolicy()
+        policy.recordAuthenticatedSession()
+        XCTAssertEqual(policy.record(.network(.init(domain: .posix, code: Int32(ENETDOWN)))), .reconnect(afterSeconds: 1))
+        XCTAssertEqual(policy.record(.timeout(lastNetworkFailure: .init(domain: .posix, code: Int32(ETIMEDOUT)))), .reconnect(afterSeconds: 2))
+        XCTAssertEqual(policy.record(.eof), .reconnect(afterSeconds: 4))
+
+        XCTAssertEqual(secrets.entries["service"], Data(repeating: 0x41, count: 32))
+        XCTAssertEqual(privacy.state.clientID, clientID)
+        XCTAssertEqual(
+            try TchurchStudioLANAssetCache(rootURL: rootURL, diskCapacity: { _ in 10 * 1_024 * 1_024 * 1_024 })
+                .prepare(descriptor: descriptor, authority: authority, cueID: "cue-1", protectedObjectIDs: []),
+            .resume(offset: Int64(firstBytes.count))
+        )
+        policy.recordAuthenticatedSession()
+        XCTAssertEqual(policy.consecutiveFailures, 0)
+        XCTAssertTrue(policy.authenticatedSessionEstablished)
+    }
+
+    private func synchronize(
+        _ client: TchurchStudioLANClient,
+        access: TchurchStudioLANPrivacyAccess,
+        principalID: String?,
+        churchID: String?
+    ) throws {
+        let completed = expectation(description: "privacy context \(access.rawValue)")
+        var result: Result<Void, Error>?
+        client.synchronizePrivacyContext(
+            access: access,
+            principalID: principalID,
+            churchID: churchID
+        ) {
+            result = $0
+            completed.fulfill()
+        }
+        wait(for: [completed], timeout: 2)
+        try XCTUnwrap(result).get()
+    }
+
+    private func purge(_ client: TchurchStudioLANClient) throws {
+        let completed = expectation(description: "explicit private purge")
+        var result: Result<Void, Error>?
+        client.purgePrivateState {
+            result = $0
+            completed.fulfill()
+        }
+        wait(for: [completed], timeout: 2)
+        try XCTUnwrap(result).get()
+    }
+
+    private func temporaryRoot(_ suffix: String) -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("tchurch-studio-\(suffix)-\(UUID().uuidString)", isDirectory: true)
+    }
+
+    private func seedPrivateState(
+        rootURL: URL,
+        secrets: RecordingStudioLANSecretStore
+    ) throws {
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        try Data("private-cache-marker".utf8).write(to: rootURL.appendingPathComponent("marker"))
+        secrets.entries["service"] = Data(repeating: 0x41, count: 32)
+    }
+
+    private func scopedPrivacyState(clientID: String? = UUID().uuidString.lowercased()) -> TchurchStudioLANPrivacyState {
+        TchurchStudioLANPrivacyState(
+            schemaVersion: TchurchStudioLANPrivacyState.schemaVersion,
+            scopeInitialized: true,
+            principalFingerprint: "sha256:\(String(repeating: "c", count: 64))",
+            scopeFingerprint: "sha256:\(String(repeating: "a", count: 64))",
+            purgeRequired: false,
+            purgeTargetPrincipalFingerprint: nil,
+            purgeTargetScopeFingerprint: nil,
+            clientIdentityInitialized: true,
+            clientID: clientID
+        )
     }
 }
 
@@ -1790,6 +2204,8 @@ private final class LANConnectionRetainer: @unchecked Sendable {
 private final class RecordingStudioLANSecretStore: TchurchStudioLANSecretStoring, @unchecked Sendable {
     var entries: [String: Data] = [:]
     private(set) var didDeleteAll = false
+    private(set) var deleteAllCount = 0
+    var deleteAllError: Error?
 
     func read(serviceID: String) throws -> Data? {
         entries[serviceID]
@@ -1804,7 +2220,36 @@ private final class RecordingStudioLANSecretStore: TchurchStudioLANSecretStoring
     }
 
     func deleteAll() throws {
+        deleteAllCount += 1
+        if let deleteAllError { throw deleteAllError }
         didDeleteAll = true
         entries.removeAll(keepingCapacity: false)
+    }
+}
+
+private final class RecordingStudioLANPrivacyStateStore: TchurchStudioLANPrivacyStateStoring, @unchecked Sendable {
+    var state: TchurchStudioLANPrivacyState
+    var failingWriteAttempts: Set<Int> = []
+    var readError: Error?
+    private(set) var writeAttempts = 0
+    private(set) var writes: [TchurchStudioLANPrivacyState] = []
+
+    init(state: TchurchStudioLANPrivacyState = .empty) {
+        self.state = state
+    }
+
+    func read() throws -> TchurchStudioLANPrivacyState {
+        if let readError { throw readError }
+        return state
+    }
+
+    func write(_ state: TchurchStudioLANPrivacyState) throws {
+        writeAttempts += 1
+        if failingWriteAttempts.contains(writeAttempts) {
+            throw TchurchStudioLANError.invalidConfiguration
+        }
+        guard state.isValid else { throw TchurchStudioLANError.invalidConfiguration }
+        self.state = state
+        writes.append(state)
     }
 }

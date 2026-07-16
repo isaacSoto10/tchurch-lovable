@@ -94,6 +94,11 @@ interface StudioLANNativePlugin {
   disconnect(): Promise<{ accepted: boolean }>;
   forgetPairing(options: { serviceId: string }): Promise<{ accepted: boolean }>;
   purgePrivateState(): Promise<{ accepted: boolean }>;
+  synchronizePrivacyContext(options: {
+    access: "unknown" | "principal" | "authorized" | "signedOut" | "revoked";
+    principalId?: string;
+    churchId?: string;
+  }): Promise<{ accepted: boolean }>;
   setDisplayAwake(options: { active: boolean }): Promise<{ accepted: boolean }>;
   getStatus(): Promise<unknown>;
   addListener(eventName: "studioLANStatus", listener: (status: unknown) => void): Promise<PluginListenerHandle>;
@@ -128,6 +133,12 @@ const SAFE_MESSAGES = new Set([
   "Studio envió datos que no pudieron verificarse. La pantalla quedó cerrada por seguridad.",
   "Se perdió la conexión LAN. Reintentando…",
   "No se pudo borrar el emparejamiento guardado.",
+  "Borrando datos privados de Studio antes de continuar…",
+  "Verificando el acceso local de Studio antes de continuar…",
+  "No se pudo completar el borrado privado de Studio. Intenta de nuevo.",
+  "Studio no aceptó la conexión. Conservamos el emparejamiento; usa Olvidar solo si cambió el QR.",
+  "No se pudo usar el almacenamiento seguro. Conservamos los datos existentes y reintentaremos.",
+  "Conectado de forma segura, pero el emparejamiento no pudo guardarse. Si cierras la app, vuelve a escanear el QR.",
 ]);
 const SAFE_ASSET_MESSAGES = new Set([
   "Preparando imagen offline…",
@@ -495,4 +506,35 @@ export async function forgetStudioLANPairing(serviceId: string) {
 
 export async function purgeStudioLANPrivateState() {
   if (isStudioLANSupported()) await StudioLANNative.purgePrivateState();
+}
+
+export type StudioLANPrivacyContext =
+  | { access: "unknown" }
+  | { access: "signedOut" | "revoked" }
+  | { access: "principal"; principalId: string }
+  | { access: "authorized"; principalId: string; churchId: string };
+
+function validPrivacyIdentifier(value: unknown) {
+  return typeof value === "string" && value.length > 0
+    && new TextEncoder().encode(value).length <= 256
+    && !CONTROL_CHARACTER.test(value);
+}
+
+export async function synchronizeStudioLANPrivacyContext(context: StudioLANPrivacyContext) {
+  if (!isStudioLANSupported()) return;
+  if (context.access === "principal") {
+    if (!validPrivacyIdentifier(context.principalId)) {
+      throw new Error("studio_lan_invalid_privacy_context");
+    }
+    await StudioLANNative.synchronizePrivacyContext(context);
+    return;
+  }
+  if (context.access === "authorized") {
+    if (!validPrivacyIdentifier(context.principalId) || !validPrivacyIdentifier(context.churchId)) {
+      throw new Error("studio_lan_invalid_privacy_context");
+    }
+    await StudioLANNative.synchronizePrivacyContext(context);
+    return;
+  }
+  await StudioLANNative.synchronizePrivacyContext({ access: context.access });
 }
