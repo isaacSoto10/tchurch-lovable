@@ -82,6 +82,9 @@ const UINT64 = /^(0|[1-9][0-9]{0,19})$/;
 const SERVICE_ID = /^[0-9a-f]{32}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ASSET_ID = /^sha256:[0-9a-f]{64}$/;
+const CHORD_KEY = /^(?:[A-G](?:#|b)?|Do|Re|Mi|Fa|Sol|La|Si)$/i;
+const CHORD_TOKEN = /^(?:(?:[A-G](?:#|b)?)(?:(?:maj|min|m|dim|aug|sus|add)?[0-9]*)?(?:\/[A-G](?:#|b)?)?|N\.?C\.?|[1-7](?:#|b)?(?:m)?(?:\/[1-7](?:#|b)?)?)$/i;
+const CONTROL_CHARACTER = /\p{Cc}/u;
 const SAFE_MESSAGES = new Set([
   "Selecciona un Tchurch Studio disponible.",
   "Ingresa el código de emparejamiento de Tchurch Studio.",
@@ -91,6 +94,7 @@ const SAFE_MESSAGES = new Set([
   "Esperando que Tchurch Studio vuelva a aparecer.",
   "Vuelve a ingresar el código de emparejamiento.",
   "Reconectando con Tchurch Studio…",
+  "Studio usa el protocolo LAN anterior. Verificando compatibilidad segura…",
   "En espera: abre Tchurch para volver a conectar.",
   "No se pudo autenticar. Revisa el código de emparejamiento.",
   "El emparejamiento cambió. Escanea el QR actual de Tchurch Studio.",
@@ -114,7 +118,13 @@ function record(value: unknown): Record<string, unknown> | null {
 }
 
 function boundedString(value: unknown, maximum = 16_384) {
-  return typeof value === "string" && value.length > 0 && new TextEncoder().encode(value).length <= maximum ? value : null;
+  return typeof value === "string" && value.length > 0 && new TextEncoder().encode(value).length <= maximum
+    && !CONTROL_CHARACTER.test(value) ? value : null;
+}
+
+function boundedLine(value: unknown, allowsEmpty: boolean, maximum = 16_384) {
+  return typeof value === "string" && (allowsEmpty || value.length > 0)
+    && new TextEncoder().encode(value).length <= maximum && !CONTROL_CHARACTER.test(value) ? value : null;
 }
 
 function nullableString(value: unknown, maximum = 16_384) {
@@ -129,14 +139,17 @@ function safeMessage(value: unknown) {
     : "La conexión LAN no está disponible. Desconecta y vuelve a emparejar.";
 }
 
-function cue(value: unknown): StudioLANCue | null | undefined {
+function cue(value: unknown, allowsEmptyLines = false): StudioLANCue | null | undefined {
   if (value === null || value === undefined) return null;
   const source = record(value);
   if (!source) return undefined;
   const cueId = boundedString(source.cueId, 160);
   const title = nullableString(source.title);
   if (!cueId || (source.title != null && title == null) || !Array.isArray(source.lines) || source.lines.length > 128) return undefined;
-  const lines = source.lines.map((line) => boundedString(line));
+  const lines = source.lines.map((line) => {
+    const bounded = boundedLine(line, allowsEmptyLines);
+    return bounded != null && (allowsEmptyLines || bounded === bounded.trim()) ? bounded : null;
+  });
   if (lines.some((line) => line == null)) return undefined;
   const mediaAssetId = source.mediaAssetId == null ? null : boundedString(source.mediaAssetId, 71);
   if (mediaAssetId && !ASSET_ID.test(mediaAssetId)) return undefined;
@@ -167,28 +180,40 @@ function chordSlide(value: unknown): StudioLANChordSlide | null | undefined {
   if (value === null || value === undefined) return null;
   const source = record(value);
   const cueId = boundedString(source?.cueId, 160);
-  const key = nullableString(source?.key, 160);
-  if (!source || !cueId || (source.key != null && key == null) || !Array.isArray(source.lines)
+  const key = nullableString(source?.key, 20);
+  if (!source || !cueId || (source.key != null && (key == null || !CHORD_KEY.test(key))) || !Array.isArray(source.lines)
     || source.lines.length === 0 || source.lines.length > 128) return undefined;
   const lines: StudioLANChordLine[] = [];
+  let totalChordTokens = 0;
   for (const rawLine of source.lines) {
     const line = record(rawLine);
-    const text = boundedString(line?.text);
-    if (!line || !text || !Array.isArray(line.chords) || line.chords.length > 128) return undefined;
+    const text = boundedLine(line?.text, true);
+    if (!line || text == null || !Array.isArray(line.chords) || line.chords.length > 12) return undefined;
+    totalChordTokens += line.chords.length;
+    if (totalChordTokens > 48) return undefined;
     const chords: StudioLANChordToken[] = [];
     let previousOffset = -1;
     for (const rawToken of line.chords) {
       const token = record(rawToken);
-      const tokenValue = boundedString(token?.value, 160);
+      const tokenValue = boundedString(token?.value, 24);
       const offsetUtf16 = Number(token?.offsetUtf16);
-      if (!token || !tokenValue || !Number.isSafeInteger(offsetUtf16) || offsetUtf16 < previousOffset
+      if (!token || !tokenValue || !CHORD_TOKEN.test(tokenValue) || !Number.isSafeInteger(offsetUtf16) || offsetUtf16 < previousOffset
         || offsetUtf16 < 0 || offsetUtf16 > text.length || !isUtf16Boundary(text, offsetUtf16)) return undefined;
       chords.push({ value: tokenValue, offsetUtf16 });
       previousOffset = offsetUtf16;
     }
     lines.push({ text, chords });
   }
+  if (totalChordTokens === 0) return undefined;
   return { cueId, key, lines };
+}
+
+function legacyChordLines(slide: StudioLANChordSlide | null) {
+  if (!slide) return [];
+  return slide.lines.flatMap((line) => {
+    const values = line.chords.map((token) => token.value);
+    return values.length > 0 ? [values.join("   ")] : [];
+  });
 }
 
 export function normalizeStudioLANPairingQR(value: unknown) {
@@ -241,7 +266,7 @@ export function normalizeStudioLANUpdate(value: unknown): StudioLANUpdate | null
   const currentCueId = audience.currentCueId == null ? null : boundedString(audience.currentCueId, 160);
   const currentCueIndex = audience.currentCueIndex == null ? null : Number(audience.currentCueIndex);
   const cueCount = Number(audience.cueCount);
-  const audienceCue = cue(audience.cue);
+  const audienceCue = cue(audience.cue, payloadVersion === 2);
   if ((channel !== "audience" && channel !== "stage") || (payloadVersion !== 1 && payloadVersion !== 2)
     || !sequence || !UINT64.test(sequence) || !revision || !UINT64.test(revision)
     || !runId || !UUID.test(runId) || !authorityEpoch || !UINT64.test(authorityEpoch) || !packageId || !serviceVersion
@@ -264,7 +289,7 @@ export function normalizeStudioLANUpdate(value: unknown): StudioLANUpdate | null
   let stage: StudioLANUpdate["stage"] = null;
   if (source.stage != null) {
     const sourceStage = record(source.stage);
-    const nextCue = cue(sourceStage?.nextCue);
+    const nextCue = cue(sourceStage?.nextCue, payloadVersion === 2);
     const currentChordSlide = chordSlide(sourceStage?.currentChordSlide);
     const message = sourceStage?.message == null ? null : boundedString(sourceStage.message);
     if (!sourceStage || nextCue === undefined || currentChordSlide === undefined || (sourceStage.message != null && !message)
@@ -274,7 +299,11 @@ export function normalizeStudioLANUpdate(value: unknown): StudioLANUpdate | null
     const timers = sourceStage.timers.map(timer);
     if (chordLines.some((line) => line == null) || timers.some((item) => item == null)) return null;
     if (payloadVersion === 1 && currentChordSlide != null) return null;
-    if (payloadVersion === 2 && chordLines.length > 0 && currentChordSlide == null) return null;
+    if (payloadVersion === 2) {
+      const derivedChordLines = legacyChordLines(currentChordSlide);
+      if (chordLines.length !== derivedChordLines.length
+        || (chordLines as string[]).some((line, index) => line !== derivedChordLines[index])) return null;
+    }
     if (currentChordSlide && (!audienceCue || currentChordSlide.cueId !== currentCueId
       || currentChordSlide.cueId !== audienceCue.cueId
       || currentChordSlide.lines.length !== audienceCue.lines.length

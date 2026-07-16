@@ -138,6 +138,107 @@ final class StudioLANClientCoreTests: XCTestCase {
         }
     }
 
+    func testPreGrantTransportEndNeverDowngrades() throws {
+        let secret = try fixedSecret(0x41)
+        let identity = try Curve25519.Signing.PrivateKey(rawRepresentation: Data(repeating: 0x33, count: 32))
+        let request = try TchurchStudioLANSubscriptionAuthenticator.makeRequest(
+            challenge: makeChallenge(identity: identity),
+            clientID: UUID(uuidString: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")!,
+            clientName: "Tchurch iOS",
+            channel: .stage,
+            secret: secret,
+            requestID: UUID(uuidString: "cccccccc-cccc-4ccc-8ccc-cccccccccccc")!,
+            clientNonce: Data(repeating: 0x21, count: 24)
+        )
+        var negotiation = TchurchStudioLANPayloadNegotiation()
+        XCTAssertFalse(negotiation.attemptLegacyFallback(
+            afterSentRequest: request,
+            signal: .transportEnded
+        ))
+        XCTAssertEqual(negotiation.requestSchemaVersion, 2)
+        XCTAssertFalse(negotiation.didAttemptLegacyFallback)
+    }
+
+    func testExplicitAuthenticatedLegacyErrorAllowsOneV1RetryAndExposesV1() throws {
+        let secret = try fixedSecret(0x41)
+        let identity = try Curve25519.Signing.PrivateKey(rawRepresentation: Data(repeating: 0x33, count: 32))
+        let challenge = makeChallenge(identity: identity)
+        let v2Request = try TchurchStudioLANSubscriptionAuthenticator.makeRequest(
+            challenge: challenge,
+            clientID: UUID(uuidString: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")!,
+            clientName: "Tchurch iOS",
+            channel: .stage,
+            secret: secret,
+            requestID: UUID(uuidString: "cccccccc-cccc-4ccc-8ccc-cccccccccccc")!,
+            clientNonce: Data(repeating: 0x21, count: 24)
+        )
+        var negotiation = TchurchStudioLANPayloadNegotiation()
+        XCTAssertEqual(negotiation.requestSchemaVersion, 2)
+        XCTAssertFalse(negotiation.attemptLegacyFallback(
+            afterSentRequest: nil,
+            signal: .authenticatedLegacyError
+        ))
+        XCTAssertTrue(negotiation.attemptLegacyFallback(
+            afterSentRequest: v2Request,
+            signal: .authenticatedLegacyError
+        ))
+        XCTAssertEqual(negotiation.requestSchemaVersion, 1)
+        XCTAssertFalse(negotiation.attemptLegacyFallback(
+            afterSentRequest: v2Request,
+            signal: .authenticatedLegacyError
+        ))
+
+        let v1Request = try TchurchStudioLANSubscriptionAuthenticator.makeRequest(
+            challenge: challenge,
+            clientID: v2Request.clientID,
+            clientName: v2Request.clientName,
+            channel: v2Request.channel,
+            secret: secret,
+            requestID: UUID(uuidString: "ffffffff-ffff-4fff-8fff-ffffffffffff")!,
+            clientNonce: Data(repeating: 0x22, count: 24),
+            schemaVersion: negotiation.requestSchemaVersion
+        )
+        let v1Grant = try makeGrant(challenge: challenge, request: v1Request, identity: identity, secret: secret)
+        let v1Subscription = try TchurchStudioLANSubscriptionAuthenticator.verifyGrant(
+            v1Grant,
+            request: v1Request,
+            challenge: challenge,
+            secret: secret,
+            nowMilliseconds: 1_000_100
+        )
+        try negotiation.recordAuthenticatedGrant(v1Subscription)
+        XCTAssertEqual(v1Subscription.payloadVersion, 1)
+        XCTAssertEqual(negotiation.negotiatedPayloadVersion, 1)
+        XCTAssertEqual(negotiation.requestSchemaVersion, 1)
+        XCTAssertFalse(negotiation.attemptLegacyFallback(
+            afterSentRequest: v2Request,
+            signal: .authenticatedLegacyError
+        ))
+    }
+
+    func testNegotiationNeverDowngradesAfterAuthenticatedV2Grant() throws {
+        let fixture = try makeSubscriptionFixture(channel: .stage, requestSchemaVersion: 2)
+        var negotiation = TchurchStudioLANPayloadNegotiation()
+        try negotiation.recordAuthenticatedGrant(fixture.subscription)
+        XCTAssertEqual(negotiation.negotiatedPayloadVersion, 2)
+        XCTAssertEqual(negotiation.requestSchemaVersion, 2)
+
+        let request = try TchurchStudioLANSubscriptionAuthenticator.makeRequest(
+            challenge: fixture.challenge,
+            clientID: UUID(uuidString: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")!,
+            clientName: "Tchurch iOS",
+            channel: .stage,
+            secret: try fixedSecret(0x41),
+            requestID: UUID(uuidString: "cccccccc-cccc-4ccc-8ccc-cccccccccccc")!,
+            clientNonce: Data(repeating: 0x21, count: 24)
+        )
+        XCTAssertFalse(negotiation.attemptLegacyFallback(
+            afterSentRequest: request,
+            signal: .authenticatedLegacyError
+        ))
+        XCTAssertEqual(negotiation.requestSchemaVersion, 2)
+    }
+
     func testEnvelopeVerificationRejectsTamperWrongChannelAndControlPayload() throws {
         let fixture = try makeSubscriptionFixture(channel: .stage)
         let verifier = try TchurchStudioLANEnvelopeVerifier(subscription: fixture.subscription)
@@ -234,6 +335,187 @@ final class StudioLANClientCoreTests: XCTestCase {
         XCTAssertThrowsError(try verifier.verify(TchurchStudioLANCoding.encoder().encode(legacyEnvelope))) {
             XCTAssertEqual($0 as? TchurchStudioLANError, .invalidEnvelope)
         }
+    }
+
+    func testV2PreservesPaddedAndEmptyCueSeparatorsWithoutLooseningV1() throws {
+        let lines = ["  verso  ", "", "final"]
+        let baseline = stagePayloadV2(revision: 8)
+        guard case .stage(let baselineStage) = baseline else {
+            return XCTFail("Expected stage payload")
+        }
+        let audience = TchurchStudioLANAudiencePayload(
+            snapshot: baselineStage.audience.snapshot,
+            cue: .init(cueID: "cue-1", title: "Verse", lines: lines, mediaAssetID: nil)
+        )
+        let payload = TchurchStudioLANChannelPayload.stage(.init(
+            audience: audience,
+            stage: .init(
+                nextCue: nil,
+                chordLines: ["C", "G"],
+                currentChordSlide: .init(
+                    cueID: "cue-1",
+                    key: "Sol",
+                    lines: [
+                        .init(text: lines[0], chords: [.init(value: "C", offsetUtf16: 2)]),
+                        .init(text: lines[1], chords: []),
+                        .init(text: lines[2], chords: [.init(value: "G", offsetUtf16: 0)]),
+                    ]
+                ),
+                timers: [],
+                message: nil
+            )
+        ))
+
+        let v2Fixture = try makeSubscriptionFixture(channel: .stage, requestSchemaVersion: 2)
+        let v2Envelope = try signEnvelope(
+            payload: payload,
+            authority: v2Fixture.challenge.authority,
+            identity: v2Fixture.identity,
+            sequence: 30,
+            revision: 8,
+            schemaVersion: 2
+        )
+        let verified = try TchurchStudioLANEnvelopeVerifier(subscription: v2Fixture.subscription)
+            .verify(TchurchStudioLANCoding.encoder().encode(v2Envelope))
+        XCTAssertEqual(verified.payload.audience.cue?.lines, lines)
+        XCTAssertEqual(verified.payload.stage?.currentChordSlide?.lines.map(\.text), lines)
+        XCTAssertEqual(verified.payload.stage?.currentChordSlide?.lines[0].chords[0].offsetUtf16, 2)
+
+        let v1Fixture = try makeSubscriptionFixture(channel: .stage, requestSchemaVersion: 1)
+        let legacyPayload = TchurchStudioLANChannelPayload.stage(.init(
+            audience: audience,
+            stage: .init(nextCue: nil, chordLines: ["C", "G"], timers: [], message: nil)
+        ))
+        let v1Envelope = try signEnvelope(
+            payload: legacyPayload,
+            authority: v1Fixture.challenge.authority,
+            identity: v1Fixture.identity,
+            sequence: 30,
+            revision: 8,
+            schemaVersion: 1
+        )
+        XCTAssertThrowsError(try TchurchStudioLANEnvelopeVerifier(subscription: v1Fixture.subscription)
+            .verify(TchurchStudioLANCoding.encoder().encode(v1Envelope))) {
+            XCTAssertEqual($0 as? TchurchStudioLANError, .invalidPayload)
+        }
+
+        let paddedLegacyAudience = TchurchStudioLANAudiencePayload(
+            snapshot: audience.snapshot,
+            cue: .init(cueID: "cue-1", title: "Verse", lines: ["  verso  ", "final"], mediaAssetID: nil)
+        )
+        let paddedLegacyPayload = TchurchStudioLANChannelPayload.stage(.init(
+            audience: paddedLegacyAudience,
+            stage: .init(nextCue: nil, chordLines: ["C", "G"], timers: [], message: nil)
+        ))
+        let paddedLegacyEnvelope = try signEnvelope(
+            payload: paddedLegacyPayload,
+            authority: v1Fixture.challenge.authority,
+            identity: v1Fixture.identity,
+            sequence: 31,
+            revision: 8,
+            schemaVersion: 1
+        )
+        XCTAssertThrowsError(try TchurchStudioLANEnvelopeVerifier(subscription: v1Fixture.subscription)
+            .verify(TchurchStudioLANCoding.encoder().encode(paddedLegacyEnvelope))) {
+            XCTAssertEqual($0 as? TchurchStudioLANError, .invalidPayload)
+        }
+    }
+
+    func testV2EnvelopeRequiresStudioChordGrammarDensityAndExactLegacyProjection() throws {
+        let fixture = try makeSubscriptionFixture(channel: .stage, requestSchemaVersion: 2)
+        let verifier = try TchurchStudioLANEnvelopeVerifier(subscription: fixture.subscription)
+        guard case .stage(let baseline) = stagePayloadV2(revision: 8),
+              let baselineSlide = baseline.stage.currentChordSlide,
+              let baselineCue = baseline.audience.cue else {
+            return XCTFail("Expected structured stage payload")
+        }
+
+        func payload(
+            slide: TchurchStudioLANChordSlide?,
+            chordLines: [String],
+            audience: TchurchStudioLANAudiencePayload? = nil
+        ) -> TchurchStudioLANChannelPayload {
+            .stage(.init(
+                audience: audience ?? baseline.audience,
+                stage: .init(
+                    nextCue: baseline.stage.nextCue,
+                    chordLines: chordLines,
+                    currentChordSlide: slide,
+                    timers: baseline.stage.timers,
+                    message: baseline.stage.message
+                )
+            ))
+        }
+
+        func assertRejected(_ payload: TchurchStudioLANChannelPayload, sequence: UInt64) throws {
+            let envelope = try signEnvelope(
+                payload: payload,
+                authority: fixture.challenge.authority,
+                identity: fixture.identity,
+                sequence: sequence,
+                revision: 8,
+                schemaVersion: 2
+            )
+            XCTAssertThrowsError(try verifier.verify(TchurchStudioLANCoding.encoder().encode(envelope))) {
+                XCTAssertEqual($0 as? TchurchStudioLANError, .invalidPayload)
+            }
+        }
+
+        try assertRejected(payload(slide: baselineSlide, chordLines: ["DIVERGES"]), sequence: 20)
+        try assertRejected(payload(
+            slide: .init(cueID: baselineSlide.cueID, key: "H", lines: baselineSlide.lines),
+            chordLines: baseline.stage.chordLines
+        ), sequence: 21)
+        try assertRejected(payload(
+            slide: .init(cueID: baselineSlide.cueID, key: "C", lines: [
+                .init(text: baselineSlide.lines[0].text, chords: [.init(value: "<script>", offsetUtf16: 0)]),
+            ]),
+            chordLines: ["<script>"]
+        ), sequence: 22)
+
+        let thirteen = Array(repeating: TchurchStudioLANChordToken(value: "C", offsetUtf16: 0), count: 13)
+        try assertRejected(payload(
+            slide: .init(cueID: baselineSlide.cueID, key: "C", lines: [
+                .init(text: baselineSlide.lines[0].text, chords: thirteen),
+            ]),
+            chordLines: [Array(repeating: "C", count: 13).joined(separator: "   ")]
+        ), sequence: 23)
+
+        let texts = (0 ..< 5).map { "Line \($0)" }
+        let denseLines = texts.enumerated().map { index, text in
+            TchurchStudioLANChordLine(
+                text: text,
+                chords: Array(
+                    repeating: TchurchStudioLANChordToken(value: "C", offsetUtf16: 0),
+                    count: index == 4 ? 9 : 10
+                )
+            )
+        }
+        let denseAudience = TchurchStudioLANAudiencePayload(
+            snapshot: baseline.audience.snapshot,
+            cue: .init(
+                cueID: baselineCue.cueID,
+                title: baselineCue.title,
+                lines: texts,
+                mediaAssetID: baselineCue.mediaAssetID
+            )
+        )
+        try assertRejected(payload(
+            slide: .init(cueID: baselineSlide.cueID, key: "Sol", lines: denseLines),
+            chordLines: denseLines.map { $0.chords.map(\.value).joined(separator: "   ") },
+            audience: denseAudience
+        ), sequence: 24)
+
+        let hidden = payload(slide: nil, chordLines: [])
+        let hiddenEnvelope = try signEnvelope(
+            payload: hidden,
+            authority: fixture.challenge.authority,
+            identity: fixture.identity,
+            sequence: 25,
+            revision: 8,
+            schemaVersion: 2
+        )
+        XCTAssertNoThrow(try verifier.verify(TchurchStudioLANCoding.encoder().encode(hiddenEnvelope)))
     }
 
     func testReplayGuardPreservesMonotonicStateAcrossReconnectAndEpochRotation() throws {
@@ -679,7 +961,7 @@ private func stagePayloadV2(
         audience: audience,
         stage: .init(
             nextCue: nil,
-            chordLines: ["C  G"],
+            chordLines: ["C   C/E   G"],
             currentChordSlide: includeChordSlide ? .init(
                 cueID: cueID,
                 key: "C",

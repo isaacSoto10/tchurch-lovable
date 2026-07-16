@@ -174,6 +174,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
     private var challenge: TchurchStudioLANServerChallenge?
     private var request: TchurchStudioLANSubscriptionRequest?
     private var verifier: TchurchStudioLANEnvelopeVerifier?
+    private var payloadNegotiation = TchurchStudioLANPayloadNegotiation()
     private var replayGuards: [String: TchurchStudioLANReplayGuard] = [:]
     private var reconnectAttempt = 0
     private var reconnectWork: DispatchWorkItem?
@@ -238,6 +239,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                 }
                 self.desired = DesiredConnection(serviceID: serviceID, channel: channel)
                 self.activeSecret = secret
+                self.payloadNegotiation = TchurchStudioLANPayloadNegotiation()
                 self.intentionalDisconnect = false
                 self.suspended = false
                 self.reconnectAttempt = 0
@@ -489,6 +491,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                 for frame in frames {
                     do {
                         try self.process(frame, connection: connection)
+                        guard self.connection === connection else { return }
                     } catch TchurchStudioLANError.replayedEnvelope {
                         // A reconnect may receive the exact latest state again.
                         // Skip only that authenticated frame so a newer frame
@@ -520,11 +523,18 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                     clientID: clientID(),
                     clientName: "Tchurch iOS",
                     channel: desired.channel,
-                    secret: secret
+                    secret: secret,
+                    schemaVersion: payloadNegotiation.requestSchemaVersion
                 )
                 self.challenge = challenge
                 self.request = request
                 try send(.subscribe(request), connection: connection)
+                return
+            }
+
+            if case .error(let code) = message,
+               code == .authenticationFailed || code == .protocolViolation,
+               beginLegacyFallbackIfEligible(connection) {
                 return
             }
 
@@ -542,6 +552,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                 secret: secret,
                 nowMilliseconds: TchurchStudioLANTime.nowMilliseconds()
             )
+            try payloadNegotiation.recordAuthenticatedGrant(subscription)
             var replayGuard = replayGuards[replayKey(serviceID: desired.serviceID, channel: desired.channel)]
                 ?? TchurchStudioLANReplayGuard()
             try replayGuard.begin(subscription)
@@ -600,6 +611,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         activeSecret = nil
         activeSecretSource = nil
         desired = nil
+        payloadNegotiation = TchurchStudioLANPayloadNegotiation()
         setPhase(.failed, message: "Studio envió datos que no pudieron verificarse. La pantalla quedó cerrada por seguridad.")
     }
 
@@ -636,6 +648,36 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         scheduleReconnect(message: "Se perdió la conexión LAN. Reintentando…")
     }
 
+    @discardableResult
+    private func beginLegacyFallbackIfEligible(_ connection: NWConnection) -> Bool {
+        guard self.connection === connection,
+              verifier == nil,
+              challenge != nil,
+              payloadNegotiation.attemptLegacyFallback(
+                afterSentRequest: request,
+                signal: .authenticatedLegacyError
+              ) else {
+            return false
+        }
+
+        connectionTimeoutWork?.cancel()
+        connectionTimeoutWork = nil
+        connection.stateUpdateHandler = nil
+        connection.cancel()
+        self.connection = nil
+        challenge = nil
+        request = nil
+        verifier = nil
+        didAuthenticate = false
+        decoder = try! TchurchStudioLANLengthPrefixedFrameDecoder(
+            maximumFrameBytes: limits.maximumFrameBytes,
+            maximumBufferedBytes: limits.maximumBufferedInputBytes
+        )
+        setPhase(.reconnecting, message: "Studio usa el protocolo LAN anterior. Verificando compatibilidad segura…")
+        queue.async { [weak self] in self?.beginConnection(reconnecting: true) }
+        return true
+    }
+
     private func scheduleReconnect(message: String) {
         guard desired != nil, !suspended else { return }
         reconnectWork?.cancel()
@@ -663,7 +705,10 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         activeSecret = nil
         activeSecretSource = nil
         didAuthenticate = false
-        if clearDesired { desired = nil }
+        if clearDesired {
+            desired = nil
+            payloadNegotiation = TchurchStudioLANPayloadNegotiation()
+        }
         if browser == nil {
             setPhase(.idle, message: nil)
         } else if discoveredServices.isEmpty {

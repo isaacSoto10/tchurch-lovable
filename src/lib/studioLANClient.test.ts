@@ -105,7 +105,7 @@ describe("Studio LAN native bridge boundary", () => {
       audience: { ...validUpdate().audience, cue: { ...validUpdate().audience.cue, lines: [text] } },
       stage: {
         ...validUpdate().stage,
-        chordLines: ["C  G"],
+        chordLines: ["C   C/E   G"],
         currentChordSlide: { cueId: "cue-1", key: "C", lines: [{ text, chords: [
           { value: "C", offsetUtf16: 0 }, { value: "C/E", offsetUtf16: 0 }, { value: "G", offsetUtf16: 8 },
         ] }] },
@@ -114,6 +114,83 @@ describe("Studio LAN native bridge boundary", () => {
     expect(normalizeStudioLANUpdate(v2)).toMatchObject({ payloadVersion: 2, stage: { currentChordSlide: { key: "C" } } });
     expect(normalizeStudioLANUpdate({ ...v2, stage: { ...v2.stage, currentChordSlide: { ...v2.stage.currentChordSlide, lines: [{ text, chords: [{ value: "G", offsetUtf16: 6 }] }] } } })).toBeNull();
     expect(normalizeStudioLANUpdate({ ...v2, stage: { ...v2.stage, currentChordSlide: { ...v2.stage.currentChordSlide, cueId: "cue-other" } } })).toBeNull();
+    expect(normalizeStudioLANUpdate({ ...v2, stage: { ...v2.stage, chordLines: ["DIVERGES"] } })).toBeNull();
+    expect(normalizeStudioLANUpdate({ ...v2, stage: { ...v2.stage, currentChordSlide: { ...v2.stage.currentChordSlide, key: "H" } } })).toBeNull();
+    expect(normalizeStudioLANUpdate({ ...v2, stage: {
+      ...v2.stage,
+      chordLines: ["<script>"],
+      currentChordSlide: { ...v2.stage.currentChordSlide, lines: [{ text, chords: [{ value: "<script>", offsetUtf16: 0 }] }] },
+    } })).toBeNull();
+
+    const thirteen = Array.from({ length: 13 }, () => ({ value: "C", offsetUtf16: 0 }));
+    expect(normalizeStudioLANUpdate({ ...v2, stage: {
+      ...v2.stage,
+      chordLines: [thirteen.map((token) => token.value).join("   ")],
+      currentChordSlide: { ...v2.stage.currentChordSlide, lines: [{ text, chords: thirteen }] },
+    } })).toBeNull();
+
+    const texts = Array.from({ length: 5 }, (_, index) => `Line ${index}`);
+    const denseLines = texts.map((lineText, index) => ({
+      text: lineText,
+      chords: Array.from({ length: index === 4 ? 9 : 10 }, () => ({ value: "C", offsetUtf16: 0 })),
+    }));
+    expect(normalizeStudioLANUpdate({
+      ...v2,
+      audience: { ...v2.audience, cue: { ...v2.audience.cue, lines: texts } },
+      stage: {
+        ...v2.stage,
+        chordLines: denseLines.map((line) => line.chords.map((token) => token.value).join("   ")),
+        currentChordSlide: { cueId: "cue-1", key: "Sol", lines: denseLines },
+      },
+    })).toBeNull();
+
+    expect(normalizeStudioLANUpdate({ ...v2, stage: {
+      ...v2.stage,
+      chordLines: [],
+      currentChordSlide: null,
+    } })).not.toBeNull();
+
+    const exactLines = ["  verso  ", "", "final"];
+    const exactV2 = {
+      ...v2,
+      audience: { ...v2.audience, cue: { ...v2.audience.cue, lines: exactLines } },
+      stage: {
+        ...v2.stage,
+        chordLines: ["C", "G"],
+        currentChordSlide: { cueId: "cue-1", key: "Sol", lines: [
+          { text: exactLines[0], chords: [{ value: "C", offsetUtf16: 2 }] },
+          { text: exactLines[1], chords: [] },
+          { text: exactLines[2], chords: [{ value: "G", offsetUtf16: 0 }] },
+        ] },
+      },
+    };
+    expect(normalizeStudioLANUpdate(exactV2)).toMatchObject({
+      audience: { cue: { lines: exactLines } },
+      stage: { currentChordSlide: { lines: [
+        { text: "  verso  ", chords: [{ value: "C", offsetUtf16: 2 }] },
+        { text: "", chords: [] },
+        { text: "final", chords: [{ value: "G", offsetUtf16: 0 }] },
+      ] } },
+    });
+    expect(normalizeStudioLANUpdate({
+      ...exactV2,
+      payloadVersion: 1,
+      stage: { ...exactV2.stage, currentChordSlide: null },
+    })).toBeNull();
+    expect(normalizeStudioLANUpdate({
+      ...exactV2,
+      payloadVersion: 1,
+      audience: { ...exactV2.audience, cue: { ...exactV2.audience.cue, lines: ["  verso  ", "final"] } },
+      stage: { ...exactV2.stage, chordLines: ["C", "G"], currentChordSlide: null },
+    })).toBeNull();
+    expect(normalizeStudioLANUpdate({
+      ...exactV2,
+      audience: { ...exactV2.audience, cue: { ...exactV2.audience.cue, lines: ["bad\u0000line"] } },
+      stage: { ...exactV2.stage, currentChordSlide: {
+        ...exactV2.stage.currentChordSlide,
+        lines: [{ text: "bad\u0000line", chords: [{ value: "C", offsetUtf16: 0 }] }],
+      }, chordLines: ["C"] },
+    })).toBeNull();
   });
 
   it("accepts only bounded Studio pairing QR payloads", () => {

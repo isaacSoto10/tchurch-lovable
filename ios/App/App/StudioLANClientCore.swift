@@ -305,6 +305,7 @@ struct TchurchStudioLANLimits: Equatable {
     let maximumCueLines: Int
     let maximumChordLines: Int
     let maximumChordTokensPerLine: Int
+    let maximumChordTokensTotal: Int
     let maximumTimers: Int
 
     init(
@@ -315,7 +316,8 @@ struct TchurchStudioLANLimits: Equatable {
         maximumTextBytes: Int = 16 * 1_024,
         maximumCueLines: Int = 128,
         maximumChordLines: Int = 128,
-        maximumChordTokensPerLine: Int = 128,
+        maximumChordTokensPerLine: Int = 12,
+        maximumChordTokensTotal: Int = 48,
         maximumTimers: Int = 64
     ) {
         self.maximumFrameBytes = maximumFrameBytes
@@ -326,6 +328,7 @@ struct TchurchStudioLANLimits: Equatable {
         self.maximumCueLines = maximumCueLines
         self.maximumChordLines = maximumChordLines
         self.maximumChordTokensPerLine = maximumChordTokensPerLine
+        self.maximumChordTokensTotal = maximumChordTokensTotal
         self.maximumTimers = maximumTimers
     }
 
@@ -338,6 +341,7 @@ struct TchurchStudioLANLimits: Equatable {
             maximumCueLines > 0 &&
             maximumChordLines > 0 &&
             maximumChordTokensPerLine > 0 &&
+            maximumChordTokensTotal >= maximumChordTokensPerLine &&
             maximumTimers > 0
     }
 }
@@ -508,6 +512,54 @@ struct TchurchStudioLANVerifiedSubscription {
     var signingKeyID: String { grant.signingKeyID }
     var minimumSequence: UInt64 { grant.minimumSequence }
     var payloadVersion: Int { grant.selectedPayloadVersion ?? 1 }
+}
+
+enum TchurchStudioLANFallbackSignal: Equatable {
+    /// A legacy-compatible error decoded inside the authenticated TLS-PSK
+    /// channel after Studio received the v2 subscription request.
+    case authenticatedLegacyError
+    /// An unauthenticated network interruption. This must never downgrade.
+    case transportEnded
+}
+
+/// Tracks the one compatibility downgrade permitted by an explicit server
+/// signal inside the TLS-PSK channel. A generic EOF/timeout cannot select v1,
+/// and no fallback is possible after an authenticated grant selected a
+/// payload version.
+struct TchurchStudioLANPayloadNegotiation: Equatable {
+    private(set) var didAttemptLegacyFallback = false
+    private(set) var negotiatedPayloadVersion: Int?
+
+    var requestSchemaVersion: Int {
+        negotiatedPayloadVersion ?? (didAttemptLegacyFallback
+            ? TchurchStudioLANSubscriptionRequest.legacySchemaVersion
+            : TchurchStudioLANSubscriptionRequest.currentSchemaVersion)
+    }
+
+    mutating func attemptLegacyFallback(
+        afterSentRequest request: TchurchStudioLANSubscriptionRequest?,
+        signal: TchurchStudioLANFallbackSignal
+    ) -> Bool {
+        guard signal == .authenticatedLegacyError,
+              negotiatedPayloadVersion == nil,
+              !didAttemptLegacyFallback,
+              request?.schemaVersion == TchurchStudioLANSubscriptionRequest.currentSchemaVersion,
+              request?.supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.supportedPayloadVersions else {
+            return false
+        }
+        didAttemptLegacyFallback = true
+        return true
+    }
+
+    mutating func recordAuthenticatedGrant(_ subscription: TchurchStudioLANVerifiedSubscription) throws {
+        let selected = subscription.payloadVersion
+        guard selected == 1 || selected == 2,
+              negotiatedPayloadVersion.map({ $0 == selected }) ?? true,
+              selected != 1 || didAttemptLegacyFallback || requestSchemaVersion == 1 else {
+            throw TchurchStudioLANError.unsupportedPayloadVersion
+        }
+        negotiatedPayloadVersion = selected
+    }
 }
 
 enum TchurchStudioLANSubscriptionAuthenticator {
@@ -792,13 +844,13 @@ struct TchurchStudioLANEnvelopeVerifier {
               validOptionalText(snapshot.countdown?.id, maximumBytes: limits.maximumIdentifierBytes),
               validOptionalText(snapshot.countdown?.label, maximumBytes: limits.maximumTextBytes),
               snapshot.countdown.map({ validDateMilliseconds($0.targetDate) }) ?? true,
-              validCue(audience.cue) else {
+              validCue(audience.cue, allowsEmptyLines: envelope.schemaVersion == 2) else {
             throw TchurchStudioLANError.invalidPayload
         }
         if let stage = envelope.payload.stage {
             guard stage.chordLines.count <= limits.maximumChordLines,
                   stage.timers.count <= limits.maximumTimers,
-                  validCue(stage.nextCue),
+                  validCue(stage.nextCue, allowsEmptyLines: envelope.schemaVersion == 2),
                   stage.chordLines.allSatisfy({ validText($0, maximumBytes: limits.maximumTextBytes) }),
                   validOptionalText(stage.message, maximumBytes: limits.maximumTextBytes),
                   stage.timers.allSatisfy({ timer in
@@ -839,52 +891,83 @@ struct TchurchStudioLANEnvelopeVerifier {
               slide.cueID == currentCueID,
               slide.cueID == currentCue.cueID,
               validText(slide.cueID, maximumBytes: limits.maximumIdentifierBytes),
-              validOptionalText(slide.key, maximumBytes: limits.maximumIdentifierBytes),
+              validChordKey(slide.key),
               !slide.lines.isEmpty,
               slide.lines.count <= limits.maximumChordLines,
               slide.lines.map(\.text) == currentCue.lines else {
             throw TchurchStudioLANError.invalidPayload
         }
+        var totalChordTokens = 0
         for line in slide.lines {
-            guard validText(line.text, maximumBytes: limits.maximumTextBytes),
+            guard validBoundedText(line.text, maximumBytes: limits.maximumTextBytes, allowsEmpty: true),
                   line.chords.count <= limits.maximumChordTokensPerLine else {
                 throw TchurchStudioLANError.invalidPayload
             }
-            let utf16 = Array(line.text.utf16)
+            totalChordTokens += line.chords.count
             var previousOffset = -1
             for token in line.chords {
-                guard validText(token.value, maximumBytes: limits.maximumIdentifierBytes),
+                guard validChordToken(token.value),
                       token.offsetUtf16 >= 0,
-                      token.offsetUtf16 <= utf16.count,
+                      token.offsetUtf16 <= line.text.utf16.count,
                       token.offsetUtf16 >= previousOffset,
-                      isUnicodeScalarBoundary(utf16, offset: token.offsetUtf16) else {
+                      isUTF16Boundary(token.offsetUtf16, in: line.text) else {
                     throw TchurchStudioLANError.invalidPayload
                 }
                 previousOffset = token.offsetUtf16
             }
         }
-        if !chordLines.isEmpty,
-           !slide.lines.contains(where: { !$0.chords.isEmpty }) {
+        guard (1 ... limits.maximumChordTokensTotal).contains(totalChordTokens),
+              chordLines == legacyChordLines(from: slide) else {
             throw TchurchStudioLANError.invalidPayload
         }
     }
 
-    private func isUnicodeScalarBoundary(_ utf16: [UInt16], offset: Int) -> Bool {
-        guard offset > 0, offset < utf16.count else { return true }
-        let previous = utf16[offset - 1]
-        let current = utf16[offset]
-        let previousIsHighSurrogate = (0xD800 ... 0xDBFF).contains(previous)
-        let currentIsLowSurrogate = (0xDC00 ... 0xDFFF).contains(current)
-        return !(previousIsHighSurrogate && currentIsLowSurrogate)
+    private func legacyChordLines(from slide: TchurchStudioLANChordSlide) -> [String] {
+        slide.lines.compactMap { line in
+            let values = line.chords.map(\.value)
+            return values.isEmpty ? nil : values.joined(separator: "   ")
+        }
     }
 
-    private func validCue(_ cue: TchurchStudioLANPublicCue?) -> Bool {
+    private func validChordKey(_ value: String?) -> Bool {
+        guard let value else { return true }
+        guard validText(value, maximumBytes: 20) else { return false }
+        return value.range(
+            of: "^(?:[A-G](?:#|b)?|Do|Re|Mi|Fa|Sol|La|Si)$",
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil
+    }
+
+    private func validChordToken(_ value: String) -> Bool {
+        guard validText(value, maximumBytes: 24) else { return false }
+        return value.range(
+            of: "^(?:(?:[A-G](?:#|b)?)(?:(?:maj|min|m|dim|aug|sus|add)?[0-9]*)?(?:/[A-G](?:#|b)?)?|N\\.?C\\.?|[1-7](?:#|b)?(?:m)?(?:/[1-7](?:#|b)?)?)$",
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil
+    }
+
+    private func isUTF16Boundary(_ offset: Int, in value: String) -> Bool {
+        guard offset >= 0, offset <= value.utf16.count else { return false }
+        let index = value.utf16.index(value.utf16.startIndex, offsetBy: offset)
+        return String.Index(index, within: value) != nil
+    }
+
+    private func validCue(_ cue: TchurchStudioLANPublicCue?, allowsEmptyLines: Bool) -> Bool {
         guard let cue = cue else { return true }
         return validText(cue.cueID, maximumBytes: limits.maximumIdentifierBytes) &&
             validOptionalText(cue.title, maximumBytes: limits.maximumTextBytes) &&
             cue.lines.count <= limits.maximumCueLines &&
-            cue.lines.allSatisfy({ validText($0, maximumBytes: limits.maximumTextBytes) }) &&
+            cue.lines.allSatisfy({
+                validCueLine($0, allowsEmpty: allowsEmptyLines)
+            }) &&
             validAssetID(cue.mediaAssetID)
+    }
+
+    private func validCueLine(_ value: String, allowsEmpty: Bool) -> Bool {
+        guard validBoundedText(value, maximumBytes: limits.maximumTextBytes, allowsEmpty: allowsEmpty) else {
+            return false
+        }
+        return allowsEmpty || value == value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func validAssetID(_ value: String?) -> Bool {
@@ -901,7 +984,11 @@ struct TchurchStudioLANEnvelopeVerifier {
     }
 
     private func validText(_ value: String, maximumBytes: Int) -> Bool {
-        !value.isEmpty && value.utf8.count <= maximumBytes &&
+        validBoundedText(value, maximumBytes: maximumBytes, allowsEmpty: false)
+    }
+
+    private func validBoundedText(_ value: String, maximumBytes: Int, allowsEmpty: Bool) -> Bool {
+        (allowsEmpty || !value.isEmpty) && value.utf8.count <= maximumBytes &&
             !value.unicodeScalars.contains(where: { $0.properties.generalCategory == .control })
     }
 
