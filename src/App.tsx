@@ -24,6 +24,7 @@ const SongDetail = lazy(appRouteLoaders.SongDetail);
 const Services = lazy(appRouteLoaders.Services);
 const ServiceDetail = lazy(appRouteLoaders.ServiceDetail);
 const ServicePresentation = lazy(appRouteLoaders.ServicePresentation);
+const StudioLANStage = lazy(appRouteLoaders.StudioLANStage);
 const Announcements = lazy(appRouteLoaders.Announcements);
 const Devotionals = lazy(appRouteLoaders.Devotionals);
 const Media = lazy(appRouteLoaders.Media);
@@ -133,6 +134,7 @@ const App = () => {
                   <Route path="/login/*" element={<Login />} />
                   <Route path="/signup/*" element={<Signup />} />
                   <Route path="/app/services/:id/presentation" element={<RequireAuth><ServicePresentation /></RequireAuth>} />
+                  <Route path="/app/studio-stage" element={<StudioLANStage />} />
                   <Route path="/app" element={<RequireAuth><AppLayout /></RequireAuth>}>
                     <Route index element={<Dashboard />} />
                     <Route path="songs" element={<Songs />} />

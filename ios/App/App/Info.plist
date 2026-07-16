@@ -49,6 +49,10 @@
 	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>Tchurch usa la cámara para escanear códigos QR de check-in en eventos.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_tchurch-show._tcp</string>
+	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Tchurch usa tu red local únicamente cuando conectas ProPresenter, OBS o Tchurch Studio para una presentación.</string>
 	<key>UILaunchStoryboardName</key>

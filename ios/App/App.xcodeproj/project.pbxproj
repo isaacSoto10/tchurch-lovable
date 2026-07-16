@@ -10,6 +10,9 @@
 		A4C200010000000000000001 /* PresentationHardwarePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4C200010000000000000002 /* PresentationHardwarePlugin.swift */; };
 		A4C200010000000000000003 /* TchurchBridgeViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4C200010000000000000004 /* TchurchBridgeViewController.swift */; };
 		B4D300010000000000000001 /* PresentationHardwareCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4D300010000000000000002 /* PresentationHardwareCore.swift */; };
+		C5E400010000000000000001 /* StudioLANClientCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5E400010000000000000002 /* StudioLANClientCore.swift */; };
+		C5E400010000000000000003 /* StudioLANClientNetwork.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5E400010000000000000004 /* StudioLANClientNetwork.swift */; };
+		C5E400010000000000000005 /* StudioLANClientPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5E400010000000000000006 /* StudioLANClientPlugin.swift */; };
 		2FAD9763203C412B000D30F8 /* config.xml in Resources */ = {isa = PBXBuildFile; fileRef = 2FAD9762203C412B000D30F8 /* config.xml */; };
 		4D22ABE92AF431CB00220026 /* CapApp-SPM in Frameworks */ = {isa = PBXBuildFile; productRef = 4D22ABE82AF431CB00220026 /* CapApp-SPM */; };
 		50379B232058CBB4000EE86E /* capacitor.config.json in Resources */ = {isa = PBXBuildFile; fileRef = 50379B222058CBB4000EE86E /* capacitor.config.json */; };
@@ -24,6 +27,9 @@
 		A4C200010000000000000002 /* PresentationHardwarePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresentationHardwarePlugin.swift; sourceTree = "<group>"; };
 		A4C200010000000000000004 /* TchurchBridgeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TchurchBridgeViewController.swift; sourceTree = "<group>"; };
 		B4D300010000000000000002 /* PresentationHardwareCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresentationHardwareCore.swift; sourceTree = "<group>"; };
+		C5E400010000000000000002 /* StudioLANClientCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioLANClientCore.swift; sourceTree = "<group>"; };
+		C5E400010000000000000004 /* StudioLANClientNetwork.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioLANClientNetwork.swift; sourceTree = "<group>"; };
+		C5E400010000000000000006 /* StudioLANClientPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioLANClientPlugin.swift; sourceTree = "<group>"; };
 		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
 		50379B222058CBB4000EE86E /* capacitor.config.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = capacitor.config.json; sourceTree = "<group>"; };
 		504EC3041FED79650016851F /* App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = App.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -70,6 +76,9 @@
 			children = (
 				B4D300010000000000000002 /* PresentationHardwareCore.swift */,
 				A4C200010000000000000002 /* PresentationHardwarePlugin.swift */,
+				C5E400010000000000000002 /* StudioLANClientCore.swift */,
+				C5E400010000000000000004 /* StudioLANClientNetwork.swift */,
+				C5E400010000000000000006 /* StudioLANClientPlugin.swift */,
 				A4C200010000000000000004 /* TchurchBridgeViewController.swift */,
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
 				504EC3071FED79650016851F /* AppDelegate.swift */,
@@ -166,6 +175,9 @@
 			files = (
 				B4D300010000000000000001 /* PresentationHardwareCore.swift in Sources */,
 				A4C200010000000000000001 /* PresentationHardwarePlugin.swift in Sources */,
+				C5E400010000000000000001 /* StudioLANClientCore.swift in Sources */,
+				C5E400010000000000000003 /* StudioLANClientNetwork.swift in Sources */,
+				C5E400010000000000000005 /* StudioLANClientPlugin.swift in Sources */,
 				A4C200010000000000000003 /* TchurchBridgeViewController.swift in Sources */,
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
 			);
