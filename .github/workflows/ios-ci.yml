@@ -84,10 +84,17 @@ jobs:
 
       - name: Run native tests
         run: |
+          # A clean hosted simulator cannot interactively approve the Local
+          # Network privacy prompt. Keep the real Bonjour test in the local and
+          # physical-device release gate; run every deterministic native test here.
           xcodebuild test \
             -project ios/App/Tchurch.xcodeproj \
             -scheme Tchurch \
             -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' \
             -parallel-testing-enabled NO \
+            -skip-testing:TchurchNativeTests/StudioLANBonjourIntegrationTests \
+            -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 120 \
+            -maximum-test-execution-time-allowance 180 \
             -derivedDataPath "$RUNNER_TEMP/tchurch-ios-derived" \
             -resultBundlePath "$RUNNER_TEMP/tchurch-ios-tests.xcresult"
