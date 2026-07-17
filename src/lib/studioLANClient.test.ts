@@ -97,6 +97,13 @@ describe("Studio LAN native bridge boundary", () => {
       services: [],
       message: "Conectado de forma segura, pero el emparejamiento no pudo guardarse. Si cierras la app, vuelve a escanear el QR.",
     }).message).toBe("Conectado de forma segura, pero el emparejamiento no pudo guardarse. Si cierras la app, vuelve a escanear el QR.");
+    [
+      "Studio respondió a una verificación LAN inválida. Cerramos ese transporte y reconectaremos.",
+      "No se pudo verificar la conexión LAN. Reconectando…",
+      "Studio dejó de responder en la red local. Reconectando…",
+    ].forEach((message) => {
+      expect(normalizeStudioLANStatus({ phase: "reconnecting", services: [], message }).message).toBe(message);
+    });
   });
 
   it("accepts the sanitized stage shape and rejects control, malformed sequence, and invalid asset IDs", () => {

@@ -1301,6 +1301,177 @@ final class StudioLANClientTLSIntegrationTests: XCTestCase {
     }
 }
 
+final class StudioLANHeartbeatIntegrationTests: XCTestCase {
+    func testSilentAuthenticatedTransportReconnectsWithoutPurgingPrivateState() throws {
+        try assertHeartbeatFailure(mode: .silent, expectsClientPing: true)
+    }
+
+    func testWrongHeartbeatPongReconnectsWithoutPurgingPrivateState() throws {
+        try assertHeartbeatFailure(mode: .wrongPong, expectsClientPing: true)
+    }
+
+    func testUnsolicitedHeartbeatPongReconnectsWithoutPurgingPrivateState() throws {
+        try assertHeartbeatFailure(mode: .unsolicitedPong, expectsClientPing: false)
+    }
+
+    func testReconnectCancelsOldHeartbeatTimersAndEchoedPongsKeepNewTransportAlive() throws {
+        let firstPing = expectation(description: "first silent transport received heartbeat")
+        let secondPing = expectation(description: "replacement transport echoed heartbeat")
+        firstPing.assertForOverFulfill = false
+        secondPing.assertForOverFulfill = false
+        let context = try makeHeartbeatContext(
+            mode: .silentThenEcho,
+            onPing: { connectionIndex, _ in
+                if connectionIndex == 1 { firstPing.fulfill() }
+                if connectionIndex == 2 { secondPing.fulfill() }
+            }
+        )
+        defer { context.stop() }
+
+        let discovered = expectation(description: "heartbeat Studio discovered")
+        let firstConnected = expectation(description: "first heartbeat transport connected")
+        let firstReconnect = expectation(description: "silent heartbeat transport reconnecting")
+        let secondConnected = expectation(description: "replacement heartbeat transport connected")
+        let unexpectedReconnect = expectation(description: "old heartbeat timer closed replacement transport")
+        unexpectedReconnect.isInverted = true
+        [discovered, firstConnected, firstReconnect, secondConnected].forEach {
+            $0.assertForOverFulfill = false
+        }
+
+        context.client.statusHandler = { status in
+            let event = context.observations.record(status, serviceNamePrefix: context.serviceName)
+            if event.discoveredServiceID != nil { discovered.fulfill() }
+            if event.connectedCount == 1, event.didEnterConnected { firstConnected.fulfill() }
+            if event.connectedCount == 1, event.didEnterReconnecting { firstReconnect.fulfill() }
+            if event.connectedCount == 2, event.didEnterConnected { secondConnected.fulfill() }
+            if event.connectedCount >= 2, event.didEnterReconnecting { unexpectedReconnect.fulfill() }
+        }
+
+        context.client.startDiscovery()
+        wait(for: [discovered], timeout: 10)
+        let serviceID = try XCTUnwrap(context.observations.serviceID)
+        context.client.connect(
+            serviceID: serviceID,
+            channel: .stage,
+            pairingCode: context.secret.transportKeyMaterial.base64EncodedString()
+        )
+        wait(for: [firstConnected, firstPing, firstReconnect, secondConnected, secondPing], timeout: 8)
+        wait(for: [unexpectedReconnect], timeout: 1)
+
+        XCTAssertEqual(context.secretStore.deleteAllCount, context.baselineDeleteAllCount)
+        XCTAssertEqual(context.purgeCounter.value, context.baselineCachePurgeCount)
+        XCTAssertEqual(context.secretStore.entries[serviceID], context.secret.transportKeyMaterial)
+        XCTAssertFalse(context.privacyStore.state.purgeRequired)
+        XCTAssertGreaterThanOrEqual(context.server.connectionCount, 2)
+    }
+
+    private func assertHeartbeatFailure(
+        mode: HeartbeatStudioServerMode,
+        expectsClientPing: Bool
+    ) throws {
+        let heartbeatReceived = expectation(description: "client heartbeat reached Studio")
+        heartbeatReceived.isInverted = !expectsClientPing
+        heartbeatReceived.assertForOverFulfill = false
+        let context = try makeHeartbeatContext(mode: mode) { _, _ in
+            heartbeatReceived.fulfill()
+        }
+        defer { context.stop() }
+
+        let discovered = expectation(description: "heartbeat Studio discovered")
+        let connected = expectation(description: "heartbeat transport authenticated")
+        let reconnecting = expectation(description: "heartbeat failure reconnecting")
+        [discovered, connected, reconnecting].forEach { $0.assertForOverFulfill = false }
+        context.client.statusHandler = { status in
+            let event = context.observations.record(status, serviceNamePrefix: context.serviceName)
+            if event.discoveredServiceID != nil { discovered.fulfill() }
+            if event.didEnterConnected { connected.fulfill() }
+            if event.didEnterReconnecting { reconnecting.fulfill() }
+        }
+
+        context.client.startDiscovery()
+        wait(for: [discovered], timeout: 10)
+        let serviceID = try XCTUnwrap(context.observations.serviceID)
+        context.client.connect(
+            serviceID: serviceID,
+            channel: .stage,
+            pairingCode: context.secret.transportKeyMaterial.base64EncodedString()
+        )
+        wait(for: [connected, reconnecting, heartbeatReceived], timeout: 5)
+
+        XCTAssertEqual(context.secretStore.deleteAllCount, context.baselineDeleteAllCount)
+        XCTAssertEqual(context.purgeCounter.value, context.baselineCachePurgeCount)
+        XCTAssertEqual(context.secretStore.entries[serviceID], context.secret.transportKeyMaterial)
+        XCTAssertFalse(context.privacyStore.state.purgeRequired)
+    }
+
+    private func makeHeartbeatContext(
+        mode: HeartbeatStudioServerMode,
+        onPing: @escaping @Sendable (Int, String) -> Void
+    ) throws -> HeartbeatTestContext {
+        let serviceName = "Tchurch Heartbeat \(UUID().uuidString.prefix(8))"
+        let secret = try fixedSecret(0x6D)
+        let identity = try Curve25519.Signing.PrivateKey(
+            rawRepresentation: Data(repeating: 0x4D, count: 32)
+        )
+        let listenerReady = expectation(description: "heartbeat Studio listener ready")
+        let server = try HeartbeatStudioServer(
+            serviceName: serviceName,
+            secret: secret,
+            identity: identity,
+            authority: makeAuthority(),
+            mode: mode,
+            onReady: { listenerReady.fulfill() },
+            onPing: onPing
+        )
+        server.start()
+        wait(for: [listenerReady], timeout: 5)
+
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tchurch-heartbeat-\(UUID().uuidString)", isDirectory: true)
+        let suiteName = "app.tchurch.tests.heartbeat.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let secretStore = RecordingStudioLANSecretStore()
+        let privacyStore = RecordingStudioLANPrivacyStateStore()
+        let purgeCounter = HeartbeatPurgeCounter()
+        let client = try TchurchStudioLANClient(
+            heartbeatTimings: .init(idleInterval: 0.2, pongTimeout: 0.3),
+            secretStore: secretStore,
+            defaults: defaults,
+            assetCache: TchurchStudioLANAssetCache(
+                rootURL: rootURL,
+                diskCapacity: { _ in 10 * 1_024 * 1_024 * 1_024 }
+            ),
+            assetCachePurge: { purgeCounter.increment() },
+            privacyStateStore: privacyStore
+        )
+        let privacyReady = expectation(description: "heartbeat privacy scope ready")
+        client.synchronizePrivacyContext(
+            access: .authorized,
+            principalID: "heartbeat-principal",
+            churchID: "heartbeat-church"
+        ) { result in
+            if case .failure(let error) = result { XCTFail("privacy scope failed: \(error)") }
+            privacyReady.fulfill()
+        }
+        wait(for: [privacyReady], timeout: 3)
+
+        return HeartbeatTestContext(
+            serviceName: serviceName,
+            secret: secret,
+            server: server,
+            client: client,
+            defaults: defaults,
+            defaultsSuiteName: suiteName,
+            rootURL: rootURL,
+            secretStore: secretStore,
+            privacyStore: privacyStore,
+            purgeCounter: purgeCounter,
+            baselineDeleteAllCount: secretStore.deleteAllCount,
+            baselineCachePurgeCount: purgeCounter.value
+        )
+    }
+}
+
 final class StudioLANExactReplayRangeIntegrationTests: XCTestCase {
     func testTwoAutomaticReconnectsResumeExactRangesWithOneMonotonicUISequence() throws {
         let serviceName = "Tchurch Range \(UUID().uuidString.prefix(8))"
@@ -2769,6 +2940,308 @@ private func authorizationSnapshot(rootURL: URL) throws -> [String: Data] {
     })
 }
 
+private enum HeartbeatStudioServerMode {
+    case silent
+    case wrongPong
+    case unsolicitedPong
+    case silentThenEcho
+}
+
+private struct HeartbeatStatusEvent {
+    let discoveredServiceID: String?
+    let connectedCount: Int
+    let didEnterConnected: Bool
+    let didEnterReconnecting: Bool
+}
+
+private final class HeartbeatClientObservations: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedServiceID: String?
+    private var storedConnectedCount = 0
+    private var lastPhase: TchurchStudioLANConnectionPhase?
+
+    var serviceID: String? {
+        lock.withLock { storedServiceID }
+    }
+
+    func record(
+        _ status: TchurchStudioLANClientStatus,
+        serviceNamePrefix: String
+    ) -> HeartbeatStatusEvent {
+        lock.withLock {
+            var discoveredServiceID: String?
+            if storedServiceID == nil,
+               let service = status.services.first(where: { $0.name.hasPrefix(serviceNamePrefix) }) {
+                storedServiceID = service.id
+                discoveredServiceID = service.id
+            }
+            let didEnterConnected = status.phase == .connected && lastPhase != .connected
+            if didEnterConnected { storedConnectedCount += 1 }
+            let didEnterReconnecting = status.phase == .reconnecting && lastPhase != .reconnecting
+            lastPhase = status.phase
+            return HeartbeatStatusEvent(
+                discoveredServiceID: discoveredServiceID,
+                connectedCount: storedConnectedCount,
+                didEnterConnected: didEnterConnected,
+                didEnterReconnecting: didEnterReconnecting
+            )
+        }
+    }
+}
+
+private final class HeartbeatPurgeCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValue = 0
+
+    var value: Int { lock.withLock { storedValue } }
+
+    func increment() {
+        lock.withLock { storedValue += 1 }
+    }
+}
+
+private struct HeartbeatTestContext {
+    let serviceName: String
+    let secret: TchurchStudioLANPairingSecret
+    let server: HeartbeatStudioServer
+    let client: TchurchStudioLANClient
+    let defaults: UserDefaults
+    let defaultsSuiteName: String
+    let rootURL: URL
+    let secretStore: RecordingStudioLANSecretStore
+    let privacyStore: RecordingStudioLANPrivacyStateStore
+    let purgeCounter: HeartbeatPurgeCounter
+    let baselineDeleteAllCount: Int
+    let baselineCachePurgeCount: Int
+    let observations = HeartbeatClientObservations()
+
+    func stop() {
+        client.statusHandler = nil
+        client.envelopeHandler = nil
+        client.imageAssetHandler = nil
+        client.disconnect()
+        client.stopDiscovery()
+        server.stop()
+        defaults.removePersistentDomain(forName: defaultsSuiteName)
+        try? FileManager.default.removeItem(at: rootURL)
+    }
+}
+
+private final class HeartbeatStudioServer: @unchecked Sendable {
+    private final class Session: @unchecked Sendable {
+        let index: Int
+        let connection: NWConnection
+        var decoder: TchurchStudioLANLengthPrefixedFrameDecoder
+        var challenge: TchurchStudioLANServerChallenge?
+
+        init(index: Int, connection: NWConnection) throws {
+            self.index = index
+            self.connection = connection
+            decoder = try TchurchStudioLANLengthPrefixedFrameDecoder(
+                maximumFrameBytes: TchurchStudioLANLimits.production.maximumFrameBytes,
+                maximumBufferedBytes: TchurchStudioLANLimits.production.maximumBufferedInputBytes
+            )
+        }
+    }
+
+    private let queue = DispatchQueue(label: "app.tchurch.tests.heartbeat-server")
+    private let listener: NWListener
+    private let secret: TchurchStudioLANPairingSecret
+    private let identity: Curve25519.Signing.PrivateKey
+    private let authority: TchurchStudioLANAuthority
+    private let mode: HeartbeatStudioServerMode
+    private let onReady: @Sendable () -> Void
+    private let onPing: @Sendable (Int, String) -> Void
+    private var sessions: [ObjectIdentifier: Session] = [:]
+    private var nextConnectionIndex = 0
+    private var signaledReady = false
+
+    init(
+        serviceName: String,
+        secret: TchurchStudioLANPairingSecret,
+        identity: Curve25519.Signing.PrivateKey,
+        authority: TchurchStudioLANAuthority,
+        mode: HeartbeatStudioServerMode,
+        onReady: @escaping @Sendable () -> Void,
+        onPing: @escaping @Sendable (Int, String) -> Void
+    ) throws {
+        listener = try NWListener(
+            using: TchurchStudioLANNetworkParameters.makeListener(pairingSecret: secret),
+            on: .any
+        )
+        listener.service = .init(
+            name: serviceName,
+            type: TchurchStudioLANClient.bonjourServiceType,
+            domain: "local.",
+            txtRecord: nil
+        )
+        self.secret = secret
+        self.identity = identity
+        self.authority = authority
+        self.mode = mode
+        self.onReady = onReady
+        self.onPing = onPing
+    }
+
+    var connectionCount: Int { queue.sync { nextConnectionIndex } }
+
+    func start() {
+        listener.stateUpdateHandler = { [weak self] state in
+            guard let self else { return }
+            if case .ready = state, !self.signaledReady {
+                self.signaledReady = true
+                self.onReady()
+            }
+        }
+        listener.newConnectionHandler = { [weak self] connection in
+            self?.accept(connection)
+        }
+        listener.start(queue: queue)
+    }
+
+    func stop() {
+        queue.sync {
+            listener.stateUpdateHandler = nil
+            listener.newConnectionHandler = nil
+            listener.cancel()
+            let retained = sessions.values
+            sessions.removeAll(keepingCapacity: false)
+            retained.forEach {
+                $0.connection.stateUpdateHandler = nil
+                $0.connection.cancel()
+            }
+        }
+    }
+
+    private func accept(_ connection: NWConnection) {
+        do {
+            nextConnectionIndex += 1
+            let session = try Session(index: nextConnectionIndex, connection: connection)
+            sessions[ObjectIdentifier(connection)] = session
+            connection.stateUpdateHandler = { [weak self, weak session] state in
+                guard let self, let session else { return }
+                switch state {
+                case .ready:
+                    self.begin(session)
+                case .failed, .cancelled:
+                    self.sessions.removeValue(forKey: ObjectIdentifier(connection))
+                default:
+                    break
+                }
+            }
+            connection.start(queue: queue)
+        } catch {
+            connection.cancel()
+        }
+    }
+
+    private func begin(_ session: Session) {
+        let now = TchurchStudioLANTime.nowMilliseconds()
+        let challenge = TchurchStudioLANServerChallenge(
+            schemaVersion: TchurchStudioLANServerChallenge.schemaVersion,
+            challengeID: UUID(),
+            serverNonce: Data(repeating: UInt8(truncatingIfNeeded: session.index), count: 32)
+                .base64EncodedString(),
+            authority: authority,
+            signingKeyID: String(
+                TchurchStudioLANCrypto.sha256Hex(identity.publicKey.rawRepresentation).prefix(24)
+            ),
+            issuedAtMilliseconds: now,
+            expiresAtMilliseconds: now + 60_000
+        )
+        session.challenge = challenge
+        do {
+            try send([.challenge(challenge)], to: session)
+            receiveNext(session)
+        } catch {
+            close(session)
+        }
+    }
+
+    private func receiveNext(_ session: Session) {
+        guard sessions[ObjectIdentifier(session.connection)] === session else { return }
+        session.connection.receive(
+            minimumIncompleteLength: 1,
+            maximumLength: 64 * 1_024
+        ) { [weak self, weak session] content, _, isComplete, error in
+            guard let self, let session,
+                  self.sessions[ObjectIdentifier(session.connection)] === session else { return }
+            if error != nil || isComplete {
+                self.close(session)
+                return
+            }
+            do {
+                if let content, !content.isEmpty {
+                    for frame in try session.decoder.append(content) {
+                        try self.process(frame, session: session)
+                        guard self.sessions[ObjectIdentifier(session.connection)] === session else { return }
+                    }
+                }
+                self.receiveNext(session)
+            } catch {
+                self.close(session)
+            }
+        }
+    }
+
+    private func process(_ frame: Data, session: Session) throws {
+        switch try TchurchStudioLANWireCodec.decode(frame) {
+        case .subscribe(let request):
+            guard let challenge = session.challenge,
+                  request.schemaVersion == TchurchStudioLANSubscriptionRequest.currentSchemaVersion,
+                  request.channel == .stage else {
+                throw TchurchStudioLANError.protocolViolation
+            }
+            let grant = try liveGrant(
+                challenge: challenge,
+                request: request,
+                identity: identity,
+                secret: secret,
+                minimumSequence: 12,
+                selectedPayloadVersion: 3
+            )
+            if mode == .unsolicitedPong {
+                try send([.grant(grant), .pong("unsolicited")], to: session)
+            } else {
+                try send([.grant(grant)], to: session)
+            }
+        case .ping(let nonce) where !nonce.isEmpty && nonce.utf8.count <= 128:
+            onPing(session.index, nonce)
+            switch mode {
+            case .silent, .unsolicitedPong:
+                break
+            case .wrongPong:
+                try send([.pong("\(nonce)-wrong")], to: session)
+            case .silentThenEcho where session.index == 1:
+                break
+            case .silentThenEcho:
+                try send([.pong(nonce)], to: session)
+            }
+        case .pong:
+            break
+        default:
+            throw TchurchStudioLANError.protocolViolation
+        }
+    }
+
+    private func send(_ messages: [TchurchStudioLANWireMessage], to session: Session) throws {
+        var content = Data()
+        for message in messages {
+            content.append(try TchurchStudioLANWireCodec.encode(
+                message,
+                maximumFrameBytes: TchurchStudioLANLimits.production.maximumFrameBytes
+            ))
+        }
+        session.connection.send(content: content, completion: .contentProcessed { _ in })
+    }
+
+    private func close(_ session: Session) {
+        sessions.removeValue(forKey: ObjectIdentifier(session.connection))
+        session.connection.stateUpdateHandler = nil
+        session.connection.cancel()
+    }
+}
+
 private struct ExactReplayRangeRequestObservation: Equatable {
     let connection: Int
     let offset: Int64
@@ -3075,6 +3548,8 @@ private final class ExactReplayRangeStudioServer: @unchecked Sendable {
             }
         case .assetRequest(let request):
             try handle(request, session: session)
+        case .ping(let nonce) where !nonce.isEmpty && nonce.utf8.count <= 128:
+            try send([.pong(nonce)], to: session)
         case .pong:
             break
         default:

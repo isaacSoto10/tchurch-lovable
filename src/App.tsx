@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { lazy, Suspense, useEffect } from "react";
-import { BrowserRouter, HashRouter, Navigate, Route, Routes, useNavigate } from "react-router-dom";
+import { lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from "react";
+import { BrowserRouter, HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { Capacitor } from "@capacitor/core";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
@@ -9,6 +9,7 @@ import { ClerkProvider } from "@/providers/ClerkProvider";
 import { ChurchProvider } from "@/providers/ChurchProvider";
 import { UserActionLoggingProvider } from "@/providers/UserActionLoggingProvider";
 import { RequireAuth } from "@/components/RequireAuth";
+import { StudioLANLocalPrivacyBoundary } from "@/components/StudioLANLocalPrivacyBoundary";
 import { useNativeDeepLinks } from "@/hooks/useNativeDeepLinks";
 import { scheduleNativeAppDataWarmup } from "@/lib/nativeAppWarmup";
 import { appRouteLoaders, scheduleNativeAppPreload } from "@/lib/appRoutePreloaders";
@@ -95,18 +96,17 @@ function PageLoader() {
   );
 }
 
-function NativeDeepLinkHandler() {
+function NativeLaunchGate({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
-  useNativeDeepLinks(navigate);
+  const [launchResolved, setLaunchResolved] = useState(!isNativePlatform);
+  const handleInitialLaunchResolved = useCallback(() => setLaunchResolved(true), []);
+  useNativeDeepLinks(navigate, undefined, handleInitialLaunchResolved);
 
-  return null;
+  return launchResolved ? children : <PageLoader />;
 }
 
-const App = () => {
+function CloudApplication() {
   useEffect(() => {
-    const savedLanguage = localStorage.getItem("tchurch_language");
-    document.documentElement.lang = savedLanguage === "en" ? "en" : "es";
-
     if (isNativePlatform) {
       const cancelRoutePreload = scheduleNativeAppPreload();
       const cancelDataWarmup = scheduleNativeAppDataWarmup();
@@ -118,69 +118,97 @@ const App = () => {
   }, []);
 
   return (
+    <ClerkProvider>
+      <UserActionLoggingProvider>
+        <ChurchProvider>
+          <Suspense fallback={<PageLoader />}>
+            <Routes>
+              <Route path="/" element={<Landing />} />
+              <Route path="/pricing" element={<Navigate to="/" replace />} />
+              <Route path="/login/*" element={<Login />} />
+              <Route path="/signup/*" element={<Signup />} />
+              <Route path="/app/services/:id/presentation" element={<RequireAuth><ServicePresentation /></RequireAuth>} />
+              <Route path="/app" element={<RequireAuth><AppLayout /></RequireAuth>}>
+                <Route index element={<Dashboard />} />
+                <Route path="songs" element={<Songs />} />
+                <Route path="songs/proposals" element={<SongLyricsProposals />} />
+                <Route path="songs/:id" element={<SongDetail />} />
+                <Route path="services" element={<Services />} />
+                <Route path="services/:id" element={<ServiceDetail />} />
+                <Route path="announcements" element={<Announcements />} />
+                <Route path="devotionals" element={<Devotionals />} />
+                <Route path="media" element={<Media />} />
+                <Route path="media/:id" element={<MediaDetail />} />
+                <Route path="giving" element={<Giving />} />
+                <Route path="ministries" element={<Ministries />} />
+                <Route path="ministries/:id" element={<MinistryDetail />} />
+                <Route path="events" element={<Events />} />
+                <Route path="events/:id/rsvp" element={<EventDetail />} />
+                <Route path="events/:id/my-qr" element={<EventDetail />} />
+                <Route path="events/:id/participation" element={<EventDetail />} />
+                <Route path="events/:id/check-in" element={<EventDetail />} />
+                <Route path="events/:id/admin" element={<EventDetail />} />
+                <Route path="events/:id/qr" element={<EventQr />} />
+                <Route path="events/:id/scanner" element={<EventScanner />} />
+                <Route path="events/:id" element={<EventDetail />} />
+                <Route path="teams" element={<Teams />} />
+                <Route path="teams/:id" element={<TeamDetail />} />
+                <Route path="my-assignments" element={<MyAssignments />} />
+                <Route path="settings" element={<Settings />} />
+                <Route path="messages" element={<Messages />} />
+                <Route path="prayer" element={<Prayer />} />
+                <Route path="training" element={<Training />} />
+                <Route path="calendar" element={<Calendar />} />
+                <Route path="users" element={<Users />} />
+                <Route path="blockouts" element={<Blockouts />} />
+              </Route>
+              <Route path="/onboarding" element={<RequireAuth><Onboarding /></RequireAuth>} />
+              <Route path="/join-church" element={<JoinChurch />} />
+              <Route path="/create-church" element={<RequireAuth><CreateChurchForm /></RequireAuth>} />
+              <Route path="/app/presets" element={<RequireAuth><Presets /></RequireAuth>} />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </Suspense>
+        </ChurchProvider>
+      </UserActionLoggingProvider>
+    </ClerkProvider>
+  );
+}
+
+function RoutedApplication() {
+  const location = useLocation();
+  const pathname = location.pathname.replace(/\/+$/, "") || "/";
+
+  if (pathname === "/app/studio-stage") {
+    return (
+      <StudioLANLocalPrivacyBoundary>
+        <Suspense fallback={<PageLoader />}>
+          <StudioLANStage />
+        </Suspense>
+      </StudioLANLocalPrivacyBoundary>
+    );
+  }
+
+  return <CloudApplication />;
+}
+
+const App = () => {
+  useEffect(() => {
+    const savedLanguage = localStorage.getItem("tchurch_language");
+    document.documentElement.lang = savedLanguage === "en" ? "en" : "es";
+  }, []);
+
+  return (
     <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Toaster />
-      <Sonner />
-      <Router>
-        <NativeDeepLinkHandler />
-        <ClerkProvider>
-          <UserActionLoggingProvider>
-            <ChurchProvider>
-              <Suspense fallback={<PageLoader />}>
-                <Routes>
-                  <Route path="/" element={<Landing />} />
-                  <Route path="/pricing" element={<Navigate to="/" replace />} />
-                  <Route path="/login/*" element={<Login />} />
-                  <Route path="/signup/*" element={<Signup />} />
-                  <Route path="/app/services/:id/presentation" element={<RequireAuth><ServicePresentation /></RequireAuth>} />
-                  <Route path="/app/studio-stage" element={<StudioLANStage />} />
-                  <Route path="/app" element={<RequireAuth><AppLayout /></RequireAuth>}>
-                    <Route index element={<Dashboard />} />
-                    <Route path="songs" element={<Songs />} />
-                    <Route path="songs/proposals" element={<SongLyricsProposals />} />
-                    <Route path="songs/:id" element={<SongDetail />} />
-                    <Route path="services" element={<Services />} />
-                    <Route path="services/:id" element={<ServiceDetail />} />
-                    <Route path="announcements" element={<Announcements />} />
-                    <Route path="devotionals" element={<Devotionals />} />
-                    <Route path="media" element={<Media />} />
-                    <Route path="media/:id" element={<MediaDetail />} />
-                    <Route path="giving" element={<Giving />} />
-                    <Route path="ministries" element={<Ministries />} />
-                    <Route path="ministries/:id" element={<MinistryDetail />} />
-                    <Route path="events" element={<Events />} />
-                    <Route path="events/:id/rsvp" element={<EventDetail />} />
-                    <Route path="events/:id/my-qr" element={<EventDetail />} />
-                    <Route path="events/:id/participation" element={<EventDetail />} />
-                    <Route path="events/:id/check-in" element={<EventDetail />} />
-                    <Route path="events/:id/admin" element={<EventDetail />} />
-                    <Route path="events/:id/qr" element={<EventQr />} />
-                    <Route path="events/:id/scanner" element={<EventScanner />} />
-                    <Route path="events/:id" element={<EventDetail />} />
-                    <Route path="teams" element={<Teams />} />
-                    <Route path="teams/:id" element={<TeamDetail />} />
-                    <Route path="my-assignments" element={<MyAssignments />} />
-                    <Route path="settings" element={<Settings />} />
-                    <Route path="messages" element={<Messages />} />
-                    <Route path="prayer" element={<Prayer />} />
-                    <Route path="training" element={<Training />} />
-                    <Route path="calendar" element={<Calendar />} />
-                    <Route path="users" element={<Users />} />
-                    <Route path="blockouts" element={<Blockouts />} />
-                  </Route>
-                  <Route path="/onboarding" element={<RequireAuth><Onboarding /></RequireAuth>} />
-                  <Route path="/join-church" element={<JoinChurch />} />
-                  <Route path="/create-church" element={<RequireAuth><CreateChurchForm /></RequireAuth>} />
-                  <Route path="/app/presets" element={<RequireAuth><Presets /></RequireAuth>} />
-                  <Route path="*" element={<NotFound />} />
-                </Routes>
-              </Suspense>
-            </ChurchProvider>
-          </UserActionLoggingProvider>
-        </ClerkProvider>
-      </Router>
-    </TooltipProvider>
+      <TooltipProvider>
+        <Toaster />
+        <Sonner />
+        <Router>
+          <NativeLaunchGate>
+            <RoutedApplication />
+          </NativeLaunchGate>
+        </Router>
+      </TooltipProvider>
     </QueryClientProvider>
   );
 };

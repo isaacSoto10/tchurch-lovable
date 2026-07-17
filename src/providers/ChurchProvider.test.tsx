@@ -149,6 +149,22 @@ describe("ChurchProvider Studio LAN privacy coordination", () => {
     expect(screen.getByTestId("selected")).toHaveTextContent("church-2");
   });
 
+  it("aborts the active membership request when the Cloud provider unmounts", async () => {
+    let requestSignal: AbortSignal | null | undefined;
+    mocks.fetchSelection.mockImplementationOnce((_token, options) => {
+      requestSignal = options?.signal;
+      return new Promise(() => undefined);
+    });
+
+    const view = render(<ChurchProvider><Probe /></ChurchProvider>);
+    await waitFor(() => expect(mocks.fetchSelection).toHaveBeenCalledOnce());
+    expect(requestSignal?.aborted).toBe(false);
+
+    view.unmount();
+
+    expect(requestSignal?.aborted).toBe(true);
+  });
+
   it("does not let a pending manual switch publish after the account changes", async () => {
     mocks.fetchSelection
       .mockResolvedValueOnce({ churches: [church("church-1"), church("church-2")], selectedChurchId: "church-1" })

@@ -71,6 +71,8 @@ enum TchurchStudioLANConnectionEndCause: Equatable {
     case serviceUnavailable
     case eof
     case cancelled
+    case heartbeatTimeout
+    case heartbeatProtocolViolation
     case timeout(lastNetworkFailure: TchurchStudioLANNetworkFailure?)
     case network(TchurchStudioLANNetworkFailure)
 
@@ -80,7 +82,7 @@ enum TchurchStudioLANConnectionEndCause: Equatable {
             return failure.isDeterministicPSKRejection
         case .timeout(let failure):
             return failure?.isDeterministicPSKRejection == true
-        case .serviceUnavailable, .eof, .cancelled:
+        case .serviceUnavailable, .eof, .cancelled, .heartbeatTimeout, .heartbeatProtocolViolation:
             return false
         }
     }
@@ -91,7 +93,7 @@ enum TchurchStudioLANConnectionEndCause: Equatable {
             return failure
         case .timeout(let failure):
             return failure
-        case .serviceUnavailable, .eof, .cancelled:
+        case .serviceUnavailable, .eof, .cancelled, .heartbeatTimeout, .heartbeatProtocolViolation:
             return nil
         }
     }
@@ -104,6 +106,7 @@ enum TchurchStudioLANConnectionEndDisposition: Equatable {
 
 private enum TchurchStudioLANClientProcessingError: Error {
     case localStateUnavailable
+    case heartbeatProtocolViolation
 }
 
 /// Keeps ordinary transport recovery separate from credential compromise.
@@ -295,6 +298,21 @@ final class TchurchStudioLANAssetRequestWatchdog: @unchecked Sendable {
     func cancel() {
         workItem?.cancel()
         workItem = nil
+    }
+}
+
+struct TchurchStudioLANHeartbeatTimings: Equatable {
+    static let production = TchurchStudioLANHeartbeatTimings(
+        idleInterval: 10,
+        pongTimeout: 25
+    )
+
+    let idleInterval: TimeInterval
+    let pongTimeout: TimeInterval
+
+    var isValid: Bool {
+        idleInterval.isFinite && pongTimeout.isFinite &&
+            idleInterval > 0 && pongTimeout > 0
     }
 }
 
@@ -643,6 +661,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
     private let assetIOQueue = DispatchQueue(label: "app.tchurch.studio-lan.assets", qos: .utility)
     private lazy var assetRequestWatchdog = TchurchStudioLANAssetRequestWatchdog(queue: queue)
     private let limits: TchurchStudioLANLimits
+    private let heartbeatTimings: TchurchStudioLANHeartbeatTimings
     private let secretStore: TchurchStudioLANSecretStoring
     private let defaults: UserDefaults
     private let assetCache: TchurchStudioLANAssetCache
@@ -668,6 +687,9 @@ final class TchurchStudioLANClient: @unchecked Sendable {
     private var reconnectWork: DispatchWorkItem?
     private var discoveryTimeoutWork: DispatchWorkItem?
     private var connectionTimeoutWork: DispatchWorkItem?
+    private var heartbeatIdleWork: DispatchWorkItem?
+    private var heartbeatTimeoutWork: DispatchWorkItem?
+    private var pendingHeartbeatNonce: String?
     private var lastWaitingNetworkFailure: TchurchStudioLANNetworkFailure?
     private var currentConnectionIsAutomaticReconnect = false
     private var intentionalDisconnect = true
@@ -691,14 +713,18 @@ final class TchurchStudioLANClient: @unchecked Sendable {
 
     init(
         limits: TchurchStudioLANLimits = .production,
+        heartbeatTimings: TchurchStudioLANHeartbeatTimings = .production,
         secretStore: TchurchStudioLANSecretStoring = TchurchStudioLANKeychainSecretStore(),
         defaults: UserDefaults = .standard,
         assetCache: TchurchStudioLANAssetCache = TchurchStudioLANAssetCache(),
         assetCachePurge: (() throws -> Void)? = nil,
         privacyStateStore: TchurchStudioLANPrivacyStateStoring = TchurchStudioLANKeychainPrivacyStateStore()
     ) throws {
-        guard limits.isValid else { throw TchurchStudioLANError.invalidConfiguration }
+        guard limits.isValid, heartbeatTimings.isValid else {
+            throw TchurchStudioLANError.invalidConfiguration
+        }
         self.limits = limits
+        self.heartbeatTimings = heartbeatTimings
         self.secretStore = secretStore
         self.defaults = defaults
         self.assetCache = assetCache
@@ -809,6 +835,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             self.reconnectWork = nil
             self.connectionTimeoutWork?.cancel()
             self.connectionTimeoutWork = nil
+            self.cancelHeartbeat()
             self.intentionalDisconnect = true
             self.connection?.stateUpdateHandler = nil
             self.connection?.cancel()
@@ -1299,6 +1326,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         exactReplayAssetRehydration.clearConnectionEligibility()
         connectionTimeoutWork?.cancel()
         connectionTimeoutWork = nil
+        cancelHeartbeat()
         connection?.stateUpdateHandler = nil
         connection?.cancel()
         resetAssetTransfer()
@@ -1401,6 +1429,13 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                             recoveryMessage: "No se pudo usar el almacenamiento seguro. Conservamos los datos existentes y reintentaremos."
                         )
                         return
+                    } catch TchurchStudioLANClientProcessingError.heartbeatProtocolViolation {
+                        self.handleConnectionEnded(
+                            connection,
+                            cause: .heartbeatProtocolViolation,
+                            recoveryMessage: "Studio respondió a una verificación LAN inválida. Cerramos ese transporte y reconectaremos."
+                        )
+                        return
                     }
                 }
                 self.receiveNext(connection)
@@ -1487,6 +1522,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             reconnectPolicy.recordAuthenticatedSession()
             connectionTimeoutWork?.cancel()
             connectionTimeoutWork = nil
+            armHeartbeatIdle(connection)
             if pendingSecret != nil {
                 do {
                     try secretStore.write(secret.transportKeyMaterial, serviceID: desired.serviceID)
@@ -1535,6 +1571,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                     connection: connection,
                     mode: .exactReplay(pendingObjectIDs: pendingObjectIDs)
                 )
+                recordAuthenticatedInboundActivity(connection)
                 return
             }
             replayGuards[key] = replayGuard
@@ -1547,12 +1584,18 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             )
             envelopeHandler?(envelope)
             registerImageAssets(from: envelope, connection: connection, mode: .acceptedEnvelope)
+            recordAuthenticatedInboundActivity(connection)
         case .assetChunk(let chunk):
             try handleAssetChunk(chunk, connection: connection)
+            recordAuthenticatedInboundActivity(connection)
         case .assetUnavailable(let unavailable):
             try handleAssetUnavailable(unavailable, connection: connection)
+            recordAuthenticatedInboundActivity(connection)
         case .ping(let nonce) where !nonce.isEmpty && nonce.utf8.count <= 128:
             try send(.pong(nonce), connection: connection)
+            recordAuthenticatedInboundActivity(connection)
+        case .pong(let nonce):
+            try acceptHeartbeatPong(nonce, connection: connection)
         case .error:
             throw TchurchStudioLANError.protocolViolation
         default:
@@ -1961,6 +2004,83 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         })
     }
 
+    private func recordAuthenticatedInboundActivity(_ connection: NWConnection) {
+        guard self.connection === connection,
+              didAuthenticate,
+              pendingHeartbeatNonce == nil else { return }
+        armHeartbeatIdle(connection)
+    }
+
+    private func armHeartbeatIdle(_ connection: NWConnection) {
+        heartbeatIdleWork?.cancel()
+        heartbeatIdleWork = nil
+        guard self.connection === connection,
+              didAuthenticate,
+              !suspended,
+              pendingHeartbeatNonce == nil else { return }
+        let work = DispatchWorkItem { [weak self, weak connection] in
+            guard let self, let connection,
+                  self.connection === connection,
+                  self.didAuthenticate,
+                  !self.suspended,
+                  self.pendingHeartbeatNonce == nil else { return }
+            self.heartbeatIdleWork = nil
+            let nonce = UUID().uuidString.lowercased()
+            self.pendingHeartbeatNonce = nonce
+            do {
+                try self.send(.ping(nonce), connection: connection)
+                self.armHeartbeatTimeout(nonce: nonce, connection: connection)
+            } catch {
+                self.handleConnectionEnded(
+                    connection,
+                    cause: .heartbeatProtocolViolation,
+                    recoveryMessage: "No se pudo verificar la conexión LAN. Reconectando…"
+                )
+            }
+        }
+        heartbeatIdleWork = work
+        queue.asyncAfter(deadline: .now() + heartbeatTimings.idleInterval, execute: work)
+    }
+
+    private func armHeartbeatTimeout(nonce: String, connection: NWConnection) {
+        heartbeatTimeoutWork?.cancel()
+        let work = DispatchWorkItem { [weak self, weak connection] in
+            guard let self, let connection,
+                  self.connection === connection,
+                  self.didAuthenticate,
+                  self.pendingHeartbeatNonce == nonce else { return }
+            self.heartbeatTimeoutWork = nil
+            self.handleConnectionEnded(
+                connection,
+                cause: .heartbeatTimeout,
+                recoveryMessage: "Studio dejó de responder en la red local. Reconectando…"
+            )
+        }
+        heartbeatTimeoutWork = work
+        queue.asyncAfter(deadline: .now() + heartbeatTimings.pongTimeout, execute: work)
+    }
+
+    private func acceptHeartbeatPong(_ nonce: String, connection: NWConnection) throws {
+        guard self.connection === connection,
+              didAuthenticate,
+              let expectedNonce = pendingHeartbeatNonce,
+              nonce == expectedNonce else {
+            throw TchurchStudioLANClientProcessingError.heartbeatProtocolViolation
+        }
+        heartbeatTimeoutWork?.cancel()
+        heartbeatTimeoutWork = nil
+        pendingHeartbeatNonce = nil
+        armHeartbeatIdle(connection)
+    }
+
+    private func cancelHeartbeat() {
+        heartbeatIdleWork?.cancel()
+        heartbeatIdleWork = nil
+        heartbeatTimeoutWork?.cancel()
+        heartbeatTimeoutWork = nil
+        pendingHeartbeatNonce = nil
+    }
+
     private func failProtocol(_ connection: NWConnection) {
         guard self.connection === connection else { return }
         requestPrivateStatePurge(
@@ -1982,6 +2102,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         self.connection = nil
         connectionTimeoutWork?.cancel()
         connectionTimeoutWork = nil
+        cancelHeartbeat()
         verifier = nil
         challenge = nil
         request = nil
@@ -2008,6 +2129,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
 
         connectionTimeoutWork?.cancel()
         connectionTimeoutWork = nil
+        cancelHeartbeat()
         connection.stateUpdateHandler = nil
         connection.cancel()
         self.connection = nil
@@ -2060,6 +2182,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         reconnectWork = nil
         connectionTimeoutWork?.cancel()
         connectionTimeoutWork = nil
+        cancelHeartbeat()
         intentionalDisconnect = true
         connection?.stateUpdateHandler = nil
         connection?.cancel()

@@ -66,6 +66,7 @@ export function ChurchProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
 
     async function loadChurches() {
       if (!isLoaded) return;
@@ -108,7 +109,9 @@ export function ChurchProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        const churchSelection = await fetchUserChurchSelection<Church>(token);
+        const churchSelection = await fetchUserChurchSelection<Church>(token, {
+          signal: controller.signal,
+        });
         if (!transitionIsCurrent()) return;
         const userChurches = churchSelection.churches.map(normalizeChurch);
 
@@ -154,7 +157,10 @@ export function ChurchProvider({ children }: { children: ReactNode }) {
     }
 
     void loadChurches();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
   }, [isLoaded, isSignedIn, userId, getToken]);
 
   const selectChurch = async (church: Church) => {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   connectStudioLANBridge,
   connectToStudioLAN,
@@ -26,52 +26,68 @@ export function useStudioLANClient() {
   const [status, setStatus] = useState(INITIAL_STATUS);
   const [update, setUpdate] = useState<StudioLANUpdate | null>(null);
   const [imageAsset, setImageAsset] = useState<StudioLANImageAssetStatus | null>(null);
+  const connectedRef = useRef(false);
 
   useEffect(() => {
     let active = true;
     let cleanup: (() => Promise<void>) | undefined;
     void connectStudioLANBridge({
       onStatus(next) {
-        if (active) setStatus(next);
+        if (!active) return;
+        connectedRef.current = next.phase === "connected";
+        setStatus(next);
+        if (next.phase === "failed") {
+          setUpdate(null);
+          setImageAsset(null);
+        }
       },
       onUpdate(next) {
-        if (active) setUpdate(next);
+        if (active && connectedRef.current) setUpdate(next);
       },
       onImageAsset(next) {
-        if (active) setImageAsset(next);
+        if (active && connectedRef.current) setImageAsset(next);
       },
     }).then((session) => {
       if (!active) void session.disconnect();
       else cleanup = session.disconnect;
     }).catch(() => {
-      if (active) setStatus((current) => ({
-        ...current,
-        phase: "failed",
-        message: "La conexión LAN no está disponible. Desconecta y vuelve a emparejar.",
-      }));
+      if (active) {
+        connectedRef.current = false;
+        setUpdate(null);
+        setImageAsset(null);
+        setStatus((current) => ({
+          ...current,
+          phase: "failed",
+          message: "La conexión LAN no está disponible. Desconecta y vuelve a emparejar.",
+        }));
+      }
     });
     return () => {
       active = false;
+      connectedRef.current = false;
       void cleanup?.();
     };
   }, []);
 
   const connect = useCallback(async (serviceId: string, channel: StudioLANChannel, pairingCode: string) => {
+    connectedRef.current = false;
     setUpdate(null);
     setImageAsset(null);
     await connectToStudioLAN(serviceId, channel, pairingCode);
   }, []);
 
   const disconnect = useCallback(async () => {
-    await disconnectFromStudioLAN();
+    connectedRef.current = false;
     setUpdate(null);
     setImageAsset(null);
+    await disconnectFromStudioLAN();
   }, []);
 
   const forget = useCallback(async (serviceId: string) => {
-    await forgetStudioLANPairing(serviceId);
+    connectedRef.current = false;
     setUpdate(null);
     setImageAsset(null);
+    await forgetStudioLANPairing(serviceId);
   }, []);
 
   const refresh = useCallback(async () => {

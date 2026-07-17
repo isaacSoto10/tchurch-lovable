@@ -1,0 +1,181 @@
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type {
+  StudioLANImageAssetStatus,
+  StudioLANStatus,
+  StudioLANUpdate,
+} from "@/lib/studioLANClient";
+
+type BridgeCallbacks = {
+  onStatus: (status: StudioLANStatus) => void;
+  onUpdate: (update: StudioLANUpdate) => void;
+  onImageAsset: (status: StudioLANImageAssetStatus) => void;
+};
+
+const mocks = vi.hoisted(() => ({
+  callbacks: null as BridgeCallbacks | null,
+  cleanup: vi.fn(),
+  connect: vi.fn(),
+  disconnect: vi.fn(),
+  forget: vi.fn(),
+  refresh: vi.fn(),
+}));
+
+vi.mock("@/lib/studioLANClient", () => ({
+  isStudioLANSupported: () => true,
+  connectStudioLANBridge: vi.fn(async (callbacks: BridgeCallbacks) => {
+    mocks.callbacks = callbacks;
+    return { disconnect: mocks.cleanup };
+  }),
+  connectToStudioLAN: mocks.connect,
+  disconnectFromStudioLAN: mocks.disconnect,
+  forgetStudioLANPairing: mocks.forget,
+  refreshStudioLANDiscovery: mocks.refresh,
+}));
+
+import { useStudioLANClient } from "./useStudioLANClient";
+
+const serviceId = "a".repeat(32);
+const connectedStatus: StudioLANStatus = {
+  supported: true,
+  phase: "connected",
+  services: [{ id: serviceId, name: "Tchurch Studio" }],
+  selectedServiceId: serviceId,
+  channel: "stage",
+  paired: true,
+  message: null,
+};
+
+const update: StudioLANUpdate = {
+  channel: "stage",
+  payloadVersion: 1,
+  sequence: "12",
+  revision: "8",
+  receivedAtMs: 1_753_000_000_000,
+  authority: {
+    runId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    authorityEpoch: "7",
+    packageId: "package",
+    serviceVersion: "v1",
+  },
+  audience: {
+    currentCueId: "cue-1",
+    currentCueIndex: 0,
+    cueCount: 1,
+    isBlackout: false,
+    countdown: null,
+    cue: {
+      cueId: "cue-1",
+      title: "Verso",
+      lines: ["Gracia sobre gracia"],
+      mediaAssetId: null,
+      imageAsset: null,
+    },
+  },
+  stage: { nextCue: null, chordLines: [], currentChordSlide: null, timers: [], message: null },
+};
+
+const imageAsset: StudioLANImageAssetStatus = {
+  cueId: "cue-1",
+  objectId: `sha256:${"b".repeat(64)}`,
+  phase: "ready",
+  receivedBytes: "1024",
+  totalBytes: "1024",
+  imageFit: "cover",
+  localUrl: "capacitor://localhost/_capacitor_file_/private/cache/image.png",
+  message: null,
+};
+
+describe("useStudioLANClient transport lifecycle", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.callbacks = null;
+    mocks.cleanup.mockResolvedValue(undefined);
+    mocks.connect.mockResolvedValue(undefined);
+    mocks.disconnect.mockResolvedValue(undefined);
+    mocks.forget.mockResolvedValue(undefined);
+    mocks.refresh.mockResolvedValue(undefined);
+  });
+
+  it("freezes the last verified frame while reconnecting and clears terminal failures", async () => {
+    const view = renderHook(() => useStudioLANClient());
+    await waitFor(() => expect(mocks.callbacks).not.toBeNull());
+
+    act(() => mocks.callbacks?.onUpdate(update));
+    expect(view.result.current.update).toBeNull();
+
+    act(() => {
+      mocks.callbacks?.onStatus(connectedStatus);
+      mocks.callbacks?.onUpdate(update);
+      mocks.callbacks?.onImageAsset(imageAsset);
+    });
+    expect(view.result.current.update).toEqual(update);
+    expect(view.result.current.imageAsset).toEqual(imageAsset);
+
+    act(() => mocks.callbacks?.onStatus({
+      ...connectedStatus,
+      phase: "reconnecting",
+      message: "Se perdió la conexión LAN. Reintentando…",
+    }));
+    expect(view.result.current.update).toEqual(update);
+    expect(view.result.current.imageAsset).toEqual(imageAsset);
+
+    act(() => mocks.callbacks?.onStatus({
+      ...connectedStatus,
+      phase: "suspended",
+      message: "En espera: abre Tchurch para volver a conectar.",
+    }));
+    expect(view.result.current.update).toEqual(update);
+    expect(view.result.current.imageAsset).toEqual(imageAsset);
+
+    act(() => {
+      mocks.callbacks?.onUpdate(update);
+      mocks.callbacks?.onImageAsset(imageAsset);
+    });
+    expect(view.result.current.update).toEqual(update);
+    expect(view.result.current.imageAsset).toEqual(imageAsset);
+
+    act(() => mocks.callbacks?.onStatus({
+      ...connectedStatus,
+      phase: "failed",
+      message: "Studio envió datos que no pudieron verificarse. La pantalla quedó cerrada por seguridad.",
+    }));
+    expect(view.result.current.update).toBeNull();
+    expect(view.result.current.imageAsset).toBeNull();
+
+    act(() => {
+      mocks.callbacks?.onStatus(connectedStatus);
+      mocks.callbacks?.onUpdate({ ...update, sequence: "13", revision: "9" });
+    });
+    expect(view.result.current.update?.sequence).toBe("13");
+
+    view.unmount();
+    await waitFor(() => expect(mocks.cleanup).toHaveBeenCalledOnce());
+  });
+
+  it("clears the visible frame at every manual connection boundary", async () => {
+    const view = renderHook(() => useStudioLANClient());
+    await waitFor(() => expect(mocks.callbacks).not.toBeNull());
+
+    const publishFrame = () => act(() => {
+      mocks.callbacks?.onStatus(connectedStatus);
+      mocks.callbacks?.onUpdate(update);
+      mocks.callbacks?.onImageAsset(imageAsset);
+    });
+
+    publishFrame();
+    await act(async () => view.result.current.connect(serviceId, "stage", "tchurch-studio:pairing"));
+    expect(view.result.current.update).toBeNull();
+    expect(view.result.current.imageAsset).toBeNull();
+
+    publishFrame();
+    await act(async () => view.result.current.disconnect());
+    expect(view.result.current.update).toBeNull();
+    expect(view.result.current.imageAsset).toBeNull();
+
+    publishFrame();
+    await act(async () => view.result.current.forget(serviceId));
+    expect(view.result.current.update).toBeNull();
+    expect(view.result.current.imageAsset).toBeNull();
+  });
+});

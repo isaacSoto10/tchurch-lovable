@@ -225,3 +225,81 @@ gesture evidence must be completed after unlocking the Mac. Physical release
 still requires an actual Studio peer, camera QR flow, real access-point
 multicast/client-isolation behavior, actual Wi-Fi interruption during transfer,
 background/foreground, and wrong-key alert classification on shipping devices.
+
+## Local-only Stage follower and heartbeat follow-up
+
+This follow-up was completed in the isolated worktree
+`/Users/isaacsoto/Tchurch/.codex-local/ios-studio-lan-follower` on branch
+`codex/studio-lan-follower-ios`. It has not been committed or pushed, and the
+canonical `/Users/isaacsoto/Tchurch-app` checkout was not modified.
+
+The native launch path now stays behind a local loading gate until Capacitor's
+initial `getLaunchUrl()` request settles. A deferred-launch integration test
+starts from `#/`, holds that request pending, and proves that Clerk,
+`ChurchProvider`, analytics, preloads, application warmups, and `fetch` all
+remain at zero before resolution. Resolving the launch URL to
+`#/app/studio-stage` renders the local route while those Cloud counters remain
+at zero. The exact Studio route is separated before Cloud providers mount.
+
+Cloud work already in flight is bounded as well: native warmups and church
+selection calls receive `AbortSignal`s and are aborted during route/account
+transitions. User-action transport can be suspended without discarding its
+queue and resumes after leaving the local privacy boundary. The Stage follower
+keeps its last verified update or image during reconnecting and suspended
+states, ignores new frames unless the transport is connected, and clears the
+retained frame on failed/manual connect, disconnect, or forget.
+
+The native TLS-PSK client now sends an authenticated heartbeat after 10 seconds
+of idle time and requires the exact nonce-bearing pong within 25 seconds. A
+silent peer, wrong pong, unsolicited pong, or timeout closes only that
+transport and reconnects; it does not delete the PSK, purge the last verified
+frame, or write a privacy tombstone. Four loopback integration tests cover
+those cases, including proving that a stale timer from a previous transport
+cannot close its replacement. The three heartbeat failures are normalized to
+the fixed, non-sensitive `SAFE_MESSAGES` strings in the JavaScript bridge.
+
+Final automated validation after the complete follow-up:
+
+- Focused web tests: 9 files, 49 tests, 0 failures.
+- Full web suite: 78 files, 584 tests, 0 failures.
+- `npx tsc --noEmit -p tsconfig.app.json`: passed.
+- `npm run build`: passed.
+- `npx cap sync ios`: passed with six plugins.
+- Two consecutive fresh build/sync runs produced the same embedded public-tree
+  SHA-256:
+  `aec3529c2fd0c95f93f0bf8487939eaff02d016b6e91230b06a4899cd045e564`.
+- Signed iPhone 17 Pro native suite on iOS Simulator 26.5: 52 tests, 0
+  failures, 0 skipped. Result bundle:
+  `/tmp/tchurch-ios-lan-follower-native-final2.xcresult`; derived data:
+  `/tmp/tchurch-ios-lan-follower-native-derived-final2`.
+- Dedicated signed iPhone and iPad builds passed. Derived data:
+  `/tmp/tchurch-ios-lan-follower-iphone-build-final2` and
+  `/tmp/tchurch-ios-lan-follower-ipad-build-final2`.
+
+The final embedded binary was exercised on both simulator form factors. On
+iPhone, a clean reinstall followed by a terminated cold deep link opened the
+local Stage route directly in its fail-closed authorization state. The
+Stage/Audience selector, scrolled setup state, return to the top, and local back
+button were exercised; the back button mounted Cloud login only after leaving
+the LAN route. On iPad, the terminated cold deep link was exercised in both
+landscape and portrait, then backgrounded to the Home screen and resumed back
+to Studio without losing state or clipping. Returning to `/app/services`
+restored the signed-in Cloud Services surface with its bottom navigation and
+loaded data.
+
+Simulator evidence:
+
+- `/tmp/tchurch-ios-lan-follower-iphone-final2-cold.png`
+- `/tmp/tchurch-ios-lan-follower-iphone-final2-scrolled.png`
+- `/tmp/tchurch-ios-lan-follower-ipad-final2-landscape-upright.png`
+- `/tmp/tchurch-ios-lan-follower-ipad-final2-portrait-upright.png`
+- `/tmp/tchurch-ios-lan-follower-ipad-final2-background-resume.png`
+- `/tmp/tchurch-ios-lan-follower-ipad-final2-cloud-return.png`
+
+These simulator checks supersede the locked-Mac limitation recorded in the
+previous section. System-wide networking was not disabled during this run; the
+deferred-launch integration with rejecting/mocked Cloud transports is the
+evidence that the Studio cold path makes zero Cloud attempts. Physical release
+still requires an actual Studio peer, camera pairing, multicast/client-isolation
+checks on real access points, an actual Wi-Fi interruption, and wrong-key alert
+classification on shipping devices.

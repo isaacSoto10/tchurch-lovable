@@ -111,6 +111,8 @@ export default function StudioLANStage() {
   const currentImageHasCopy = Boolean(currentCue?.title || currentCue?.lines.length || currentChordSlide);
   const countdown = update?.audience.countdown;
   const countdownRemaining = countdown ? Math.max(0, countdown.targetAtMs - now) : null;
+  const needsInitialCloudAuthorization = status.phase === "failed"
+    && status.message === "Verificando el acceso local de Studio antes de continuar…";
 
   useEffect(() => {
     setFailedImageObjectId(null);
@@ -203,7 +205,12 @@ export default function StudioLANStage() {
               <>
                 {status.message && (
                   <div className={`rounded-2xl border px-4 py-3 text-sm font-semibold ${status.phase === "failed" ? "border-red-300/20 bg-red-300/10 text-red-100" : "border-amber-300/20 bg-amber-300/10 text-amber-100"}`} role="status">
-                    {status.message}
+                    <p>{status.message}</p>
+                    {needsInitialCloudAuthorization ? (
+                      <p className="mt-2 text-xs font-medium leading-5 text-red-100/80">
+                        La primera configuración requiere abrir Servicios con internet una vez. Después, esta pantalla puede volver a usar el mismo acceso sin cloud.
+                      </p>
+                    ) : null}
                   </div>
                 )}
 

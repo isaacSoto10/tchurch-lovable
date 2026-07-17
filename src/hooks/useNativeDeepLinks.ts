@@ -30,9 +30,11 @@ const capacitorDeepLinkRuntime: NativeDeepLinkRuntime = {
 export function useNativeDeepLinks(
   navigate: NavigateToRoute,
   runtime: NativeDeepLinkRuntime = capacitorDeepLinkRuntime,
+  onInitialLaunchResolved?: () => void,
 ) {
   const location = useLocation();
   const navigateRef = useRef(navigate);
+  const onInitialLaunchResolvedRef = useRef(onInitialLaunchResolved);
   const currentRouteRef = useRef(`${location.pathname}${location.search}${location.hash}`);
 
   useEffect(() => {
@@ -40,11 +42,18 @@ export function useNativeDeepLinks(
   }, [navigate]);
 
   useEffect(() => {
+    onInitialLaunchResolvedRef.current = onInitialLaunchResolved;
+  }, [onInitialLaunchResolved]);
+
+  useEffect(() => {
     currentRouteRef.current = `${location.pathname}${location.search}${location.hash}`;
   }, [location.pathname, location.search, location.hash]);
 
   useEffect(() => {
-    if (!runtime.isNativePlatform()) return undefined;
+    if (!runtime.isNativePlatform()) {
+      onInitialLaunchResolvedRef.current?.();
+      return undefined;
+    }
 
     let mounted = true;
     const initialRoute = currentRouteRef.current;
@@ -66,7 +75,10 @@ export function useNativeDeepLinks(
           navigateRef.current(route!, { replace: true });
         }
       })
-      .catch((error) => runtime.warn("[DeepLink] No se pudo leer el launch URL:", error));
+      .catch((error) => runtime.warn("[DeepLink] No se pudo leer el launch URL:", error))
+      .finally(() => {
+        if (mounted) onInitialLaunchResolvedRef.current?.();
+      });
 
     const listener = runtime.addListener("appUrlOpen", (event) => {
       openRoute(event.url);

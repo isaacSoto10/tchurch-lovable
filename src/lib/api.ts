@@ -224,7 +224,10 @@ export async function apiFetch<T = unknown>(
   }
 }
 
-export async function fetchUserChurchSelection<T = unknown>(token: string): Promise<{
+export async function fetchUserChurchSelection<T = unknown>(
+  token: string,
+  options: Pick<RequestInit, "signal"> = {},
+): Promise<{
   churches: T[];
   selectedChurchId: string | null;
 }> {
@@ -246,6 +249,7 @@ export async function fetchUserChurchSelection<T = unknown>(token: string): Prom
     res = await fetch(url, {
       cache: "no-store",
       headers,
+      signal: options.signal,
     });
   } catch (error) {
     logApiRequestSummary({
@@ -279,8 +283,11 @@ export async function fetchUserChurchSelection<T = unknown>(token: string): Prom
   };
 }
 
-export async function fetchUserChurches<T = unknown>(token: string): Promise<T[]> {
-  return (await fetchUserChurchSelection<T>(token)).churches;
+export async function fetchUserChurches<T = unknown>(
+  token: string,
+  options: Pick<RequestInit, "signal"> = {},
+): Promise<T[]> {
+  return (await fetchUserChurchSelection<T>(token, options)).churches;
 }
 
 export function eventCollectionPath(search?: string) {

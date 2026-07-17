@@ -148,6 +148,18 @@ describe("Studio LAN stage route", () => {
     expect(screen.queryByRole("button", { name: /siguiente|anterior|blackout/i })).not.toBeInTheDocument();
   });
 
+  it("explains the one-time Cloud authorization required before first offline use", () => {
+    mocks.status = {
+      ...baseStatus,
+      phase: "failed",
+      message: "Verificando el acceso local de Studio antes de continuar…",
+    };
+    render(<MemoryRouter><StudioLANStage /></MemoryRouter>);
+
+    expect(screen.getByRole("status")).toHaveTextContent(/primera configuración requiere abrir Servicios con internet una vez/i);
+    expect(screen.getByRole("status")).toHaveTextContent(/después.+sin cloud/i);
+  });
+
   it("renders only sanitized stage data in a scrollable live surface", () => {
     mocks.status = { ...baseStatus, phase: "connected", selectedServiceId: serviceId, channel: "stage", paired: true };
     mocks.update = update;
