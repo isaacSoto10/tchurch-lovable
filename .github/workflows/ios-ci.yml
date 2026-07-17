@@ -1,0 +1,91 @@
+name: iOS CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web-contract:
+    name: Web and release contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify release metadata
+        run: npm run check:ios-release
+
+      - name: Typecheck
+        run: npx tsc --noEmit -p tsconfig.app.json
+
+      - name: Run web tests
+        run: npm test
+
+      - name: Build and sync iOS assets
+        run: |
+          npm run build
+          npx cap sync ios
+
+      - name: Reject generated asset drift
+        run: git diff --exit-code
+
+  native-contract:
+    name: Native iOS contract
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install local Swift package dependencies
+        run: npm ci
+
+      - name: Select an available iPhone simulator
+        id: simulator
+        shell: bash
+        run: |
+          destination=$(xcodebuild \
+            -project ios/App/Tchurch.xcodeproj \
+            -scheme Tchurch \
+            -showdestinations 2>/dev/null \
+            | sed -nE '/name:iPhone/ s/.*id:([0-9A-Fa-f-]{36}),.*/\1/p' \
+            | head -1)
+          if [ -z "$destination" ]; then
+            echo "No available iOS Simulator destination was found." >&2
+            exit 1
+          fi
+          echo "id=$destination" >> "$GITHUB_OUTPUT"
+
+      - name: Run native tests
+        run: |
+          xcodebuild test \
+            -project ios/App/Tchurch.xcodeproj \
+            -scheme Tchurch \
+            -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' \
+            -derivedDataPath "$RUNNER_TEMP/tchurch-ios-derived" \
+            -resultBundlePath "$RUNNER_TEMP/tchurch-ios-tests.xcresult"
