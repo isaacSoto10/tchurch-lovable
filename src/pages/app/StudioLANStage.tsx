@@ -6,12 +6,20 @@ import {
   CapacitorBarcodeScannerScanOrientation,
   CapacitorBarcodeScannerTypeHint,
 } from "@capacitor/barcode-scanner";
-import { ArrowLeft, Eye, LoaderCircle, MonitorUp, Music2, Radio, RefreshCw, ScanLine, ShieldCheck, Unplug, Wifi } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Eye, LoaderCircle, MonitorUp, Music2, Radio, RefreshCw, ScanLine, ShieldCheck, Unplug, Wifi } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useStudioLANClient } from "@/hooks/useStudioLANClient";
 import { scannerErrorNotice } from "@/lib/barcodeScannerErrors";
-import { normalizeStudioLANPairingQR, type StudioLANChannel, type StudioLANChordLine, type StudioLANTimer } from "@/lib/studioLANClient";
+import { normalizeStudioLANPairingQR, type StudioLANChannel, type StudioLANChordLine, type StudioLANDeviceRole, type StudioLANTimer } from "@/lib/studioLANClient";
+
+const ROLE_LABELS: Record<StudioLANDeviceRole, string> = {
+  audience: "Audiencia",
+  worshipLeader: "Líder de adoración",
+  musicians: "Músicos",
+  preacher: "Predicador",
+  production: "Producción",
+};
 
 function formatClock(milliseconds: number) {
   const seconds = Math.max(0, Math.floor(milliseconds / 1_000));
@@ -66,9 +74,10 @@ function ChordLyricLine({ line }: { line: StudioLANChordLine }) {
 
 export default function StudioLANStage() {
   const navigate = useNavigate();
-  const { status, update, imageAsset, connect, disconnect, forget, refresh } = useStudioLANClient();
+  const { status, update, imageAsset, connect, disconnect, forget, refresh, requestReapproval } = useStudioLANClient();
   const [selectedServiceId, setSelectedServiceId] = useState("");
   const [channel, setChannel] = useState<StudioLANChannel>("stage");
+  const [requestedRole, setRequestedRole] = useState<StudioLANDeviceRole>("musicians");
   const [pairingCode, setPairingCode] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [scanning, setScanning] = useState(false);
@@ -76,6 +85,8 @@ export default function StudioLANStage() {
   const [showSetup, setShowSetup] = useState(true);
   const [now, setNow] = useState(Date.now());
   const [failedImageObjectId, setFailedImageObjectId] = useState<string | null>(null);
+  const [reapproving, setReapproving] = useState(false);
+  const [reapprovalError, setReapprovalError] = useState<string | null>(null);
 
   useEffect(() => {
     if (status.selectedServiceId) setSelectedServiceId(status.selectedServiceId);
@@ -83,9 +94,13 @@ export default function StudioLANStage() {
   }, [selectedServiceId, status.selectedServiceId, status.services]);
 
   useEffect(() => {
-    if (status.phase === "connected") setShowSetup(false);
-    if (status.phase === "failed") setShowSetup(true);
-  }, [status.phase]);
+    if (status.phase === "connected" && status.enrollmentState !== "pending" && status.enrollmentState !== "revoked") setShowSetup(false);
+    if (status.phase === "failed" || status.enrollmentState === "pending" || status.enrollmentState === "revoked") setShowSetup(true);
+  }, [status.enrollmentState, status.phase]);
+
+  useEffect(() => {
+    if (status.role) setRequestedRole(status.role);
+  }, [status.role]);
 
   useEffect(() => {
     if (!update?.stage?.timers.some((timer) => timer.isRunning) && !update?.audience.countdown) return undefined;
@@ -111,8 +126,7 @@ export default function StudioLANStage() {
   const currentImageHasCopy = Boolean(currentCue?.title || currentCue?.lines.length || currentChordSlide);
   const countdown = update?.audience.countdown;
   const countdownRemaining = countdown ? Math.max(0, countdown.targetAtMs - now) : null;
-  const needsInitialCloudAuthorization = status.phase === "failed"
-    && status.message === "Verificando el acceso local de Studio antes de continuar…";
+  const enrollmentBlocked = status.enrollmentState === "pending" || status.enrollmentState === "revoked";
 
   useEffect(() => {
     setFailedImageObjectId(null);
@@ -123,7 +137,7 @@ export default function StudioLANStage() {
     setScanNotice(null);
     setSubmitting(true);
     try {
-      await connect(selectedServiceId, channel, pairingCode);
+      await connect(selectedServiceId, channel, pairingCode, requestedRole);
       setPairingCode("");
     } finally {
       setSubmitting(false);
@@ -148,7 +162,7 @@ export default function StudioLANStage() {
         setScanNotice("Ese QR no pertenece a Tchurch Studio.");
         return;
       }
-      await connect(selectedServiceId, channel, scannedCode);
+      await connect(selectedServiceId, channel, scannedCode, requestedRole);
       setPairingCode("");
     } catch (error) {
       const notice = scannerErrorNotice(error);
@@ -161,6 +175,19 @@ export default function StudioLANStage() {
   async function openSetup() {
     await disconnect();
     setShowSetup(true);
+  }
+
+  async function rotateAndRequestReapproval() {
+    if (reapproving) return;
+    setReapproving(true);
+    setReapprovalError(null);
+    try {
+      await requestReapproval();
+    } catch {
+      setReapprovalError("No se pudo crear la identidad nueva. Intenta otra vez.");
+    } finally {
+      setReapproving(false);
+    }
   }
 
   return (
@@ -203,14 +230,47 @@ export default function StudioLANStage() {
               </div>
             ) : (
               <>
+                {status.enrollmentState === "pending" && (
+                  <div className="rounded-3xl border border-amber-300/25 bg-amber-300/10 p-5" role="status" data-testid="studio-lan-pending-approval">
+                    <div className="flex items-start gap-3">
+                      <LoaderCircle className="mt-0.5 h-5 w-5 shrink-0 animate-spin text-amber-200" />
+                      <div>
+                        <p className="font-black text-amber-100">Esperando aprobación</p>
+                        <p className="mt-1 text-sm leading-6 text-amber-100/80">Aprueba este dispositivo en la Mac de Studio. Rol solicitado: {ROLE_LABELS[requestedRole]}.</p>
+                        <p className="mt-2 text-xs font-semibold text-amber-100/65">La solicitud y la aprobación viajan solo por esta red local; no usan internet ni cloud.</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {status.enrollmentState === "revoked" && (
+                  <div className="rounded-3xl border border-red-300/25 bg-red-300/10 p-5" role="alert" data-testid="studio-lan-revoked">
+                    <div className="flex items-start gap-3">
+                      <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-red-200" />
+                      <div>
+                        <p className="font-black text-red-100">Dispositivo revocado</p>
+                        <p className="mt-1 text-sm leading-6 text-red-100/80">Studio cerró esta identidad local. La diapositiva y las imágenes guardadas fueron retiradas de esta pantalla.</p>
+                        {status.role && <p className="mt-2 text-xs font-semibold text-red-100/65">Rol anterior: {ROLE_LABELS[status.role]}</p>}
+                        <p className="mt-2 text-xs font-semibold leading-5 text-red-100/65">Una solicitud nueva crea otra clave protegida y otro ID local. La identidad revocada nunca se reutiliza.</p>
+                        <Button type="button" variant="outline" className="mt-4 h-11 rounded-2xl border-red-100/25 bg-transparent font-black text-red-50 hover:bg-red-100/10 hover:text-white" disabled={reapproving} onClick={() => void rotateAndRequestReapproval()}>
+                          {reapproving ? <><LoaderCircle className="h-4 w-4 animate-spin" />Creando identidad…</> : <><ShieldCheck className="h-4 w-4" />Solicitar nueva aprobación</>}
+                        </Button>
+                        {reapprovalError && <p className="mt-2 text-xs font-bold text-red-100" role="status">{reapprovalError}</p>}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {status.enrollmentState === "approved" && status.role && (
+                  <div className="rounded-2xl border border-emerald-300/20 bg-emerald-300/[0.08] px-4 py-3 text-sm text-emerald-100" role="status" data-testid="studio-lan-approved-role">
+                    <span className="font-black">Aprobado · {ROLE_LABELS[status.role]}</span>
+                    <span className="ml-2 text-xs text-emerald-100/70">Solo observar; ningún control de producción está activo.</span>
+                  </div>
+                )}
+
                 {status.message && (
                   <div className={`rounded-2xl border px-4 py-3 text-sm font-semibold ${status.phase === "failed" ? "border-red-300/20 bg-red-300/10 text-red-100" : "border-amber-300/20 bg-amber-300/10 text-amber-100"}`} role="status">
                     <p>{status.message}</p>
-                    {needsInitialCloudAuthorization ? (
-                      <p className="mt-2 text-xs font-medium leading-5 text-red-100/80">
-                        La primera configuración requiere abrir Servicios con internet una vez. Después, esta pantalla puede volver a usar el mismo acceso sin cloud.
-                      </p>
-                    ) : null}
                   </div>
                 )}
 
@@ -247,19 +307,26 @@ export default function StudioLANStage() {
                 <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
                   <p className="text-xs font-black uppercase tracking-[0.18em] text-violet-200">2 · Salida</p>
                   <div className="mt-4 grid grid-cols-2 gap-2" role="group" aria-label="Tipo de salida LAN">
-                    <button type="button" className={`min-h-14 rounded-2xl border px-3 text-sm font-black ${channel === "stage" ? "border-violet-300/50 bg-violet-300/10" : "border-white/10 bg-black/20"}`} aria-pressed={channel === "stage"} onClick={() => setChannel("stage")}><Music2 className="mx-auto mb-1 h-4 w-4" />Escenario</button>
-                    <button type="button" className={`min-h-14 rounded-2xl border px-3 text-sm font-black ${channel === "audience" ? "border-violet-300/50 bg-violet-300/10" : "border-white/10 bg-black/20"}`} aria-pressed={channel === "audience"} onClick={() => setChannel("audience")}><Eye className="mx-auto mb-1 h-4 w-4" />Audiencia</button>
+                    <button type="button" className={`min-h-14 rounded-2xl border px-3 text-sm font-black ${channel === "stage" ? "border-violet-300/50 bg-violet-300/10" : "border-white/10 bg-black/20"}`} aria-pressed={channel === "stage"} onClick={() => { setChannel("stage"); if (requestedRole === "audience") setRequestedRole("musicians"); }}><Music2 className="mx-auto mb-1 h-4 w-4" />Escenario</button>
+                    <button type="button" className={`min-h-14 rounded-2xl border px-3 text-sm font-black ${channel === "audience" ? "border-violet-300/50 bg-violet-300/10" : "border-white/10 bg-black/20"}`} aria-pressed={channel === "audience"} onClick={() => { setChannel("audience"); setRequestedRole("audience"); }}><Eye className="mx-auto mb-1 h-4 w-4" />Audiencia</button>
                   </div>
+                  {channel === "stage" && (
+                    <div className="mt-3 grid grid-cols-3 gap-2" role="group" aria-label="Rol de este dispositivo">
+                      {(["worshipLeader", "musicians", "preacher"] as const).map((role) => (
+                        <button key={role} type="button" className={`min-h-11 rounded-xl border px-2 text-[11px] font-black ${requestedRole === role ? "border-emerald-300/50 bg-emerald-300/10 text-emerald-100" : "border-white/10 bg-black/20 text-slate-300"}`} aria-pressed={requestedRole === role} onClick={() => setRequestedRole(role)}>{ROLE_LABELS[role]}</button>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
                   <label htmlFor="studio-pairing-code" className="text-xs font-black uppercase tracking-[0.18em] text-violet-200">3 · Código de emparejamiento</label>
                   <p className="mt-2 text-xs leading-5 text-slate-400">Escanea el QR visible en Studio. El secreto se guarda cifrado en Keychain y puede cambiar cuando inicia una autoridad nueva.</p>
                   {scanNotice && <p className="mt-3 rounded-2xl border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs font-semibold text-amber-100" role="alert">{scanNotice}</p>}
-                  <Button type="button" className="mt-4 h-12 w-full rounded-2xl font-black" disabled={!selectedService || scanning || submitting} onClick={() => void scanPairingQR()}>{scanning ? <><LoaderCircle className="h-4 w-4 animate-spin" />Abriendo cámara…</> : <><ScanLine className="h-4 w-4" />Escanear QR de Studio</>}</Button>
+                  <Button type="button" className="mt-4 h-12 w-full rounded-2xl font-black" disabled={!selectedService || scanning || submitting || enrollmentBlocked} onClick={() => void scanPairingQR()}>{scanning ? <><LoaderCircle className="h-4 w-4 animate-spin" />Abriendo cámara…</> : <><ScanLine className="h-4 w-4" />Escanear QR de Studio</>}</Button>
                   <div className="my-4 flex items-center gap-3 text-[10px] font-black uppercase tracking-[0.16em] text-slate-600"><span className="h-px flex-1 bg-white/10" />o pegar manualmente<span className="h-px flex-1 bg-white/10" /></div>
                   <Input id="studio-pairing-code" type="password" autoComplete="off" spellCheck={false} value={pairingCode} onChange={(event) => setPairingCode(event.target.value)} placeholder="tchurch-studio:…" className="h-12 rounded-2xl border-white/15 bg-black/30 text-white placeholder:text-slate-600" />
-                  <Button type="button" variant="outline" className="mt-3 h-12 w-full rounded-2xl border-white/15 bg-transparent font-black text-white hover:bg-white/10 hover:text-white" disabled={!selectedService || submitting || scanning} onClick={() => void submitConnection()}>
+                  <Button type="button" variant="outline" className="mt-3 h-12 w-full rounded-2xl border-white/15 bg-transparent font-black text-white hover:bg-white/10 hover:text-white" disabled={!selectedService || submitting || scanning || enrollmentBlocked} onClick={() => void submitConnection()}>
                     {submitting || status.phase === "connecting" || status.phase === "authenticating" ? <><LoaderCircle className="h-4 w-4 animate-spin" />Verificando…</> : <><ShieldCheck className="h-4 w-4" />Conectar de forma segura</>}
                   </Button>
                   {selectedServiceId && status.paired && (

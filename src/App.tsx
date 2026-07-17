@@ -26,6 +26,7 @@ const Services = lazy(appRouteLoaders.Services);
 const ServiceDetail = lazy(appRouteLoaders.ServiceDetail);
 const ServicePresentation = lazy(appRouteLoaders.ServicePresentation);
 const StudioLANStage = lazy(appRouteLoaders.StudioLANStage);
+const StudioLANProduction = lazy(appRouteLoaders.StudioLANProduction);
 const Announcements = lazy(appRouteLoaders.Announcements);
 const Devotionals = lazy(appRouteLoaders.Devotionals);
 const Media = lazy(appRouteLoaders.Media);
@@ -179,11 +180,11 @@ function RoutedApplication() {
   const location = useLocation();
   const pathname = location.pathname.replace(/\/+$/, "") || "/";
 
-  if (pathname === "/app/studio-stage") {
+  if (pathname === "/app/studio-stage" || pathname === "/app/studio-production") {
     return (
       <StudioLANLocalPrivacyBoundary>
         <Suspense fallback={<PageLoader />}>
-          <StudioLANStage />
+          {pathname === "/app/studio-production" ? <StudioLANProduction /> : <StudioLANStage />}
         </Suspense>
       </StudioLANLocalPrivacyBoundary>
     );

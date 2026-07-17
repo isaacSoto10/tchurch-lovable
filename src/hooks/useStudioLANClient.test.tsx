@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   disconnect: vi.fn(),
   forget: vi.fn(),
   refresh: vi.fn(),
+  reapproval: vi.fn(),
 }));
 
 vi.mock("@/lib/studioLANClient", () => ({
@@ -31,6 +32,8 @@ vi.mock("@/lib/studioLANClient", () => ({
   disconnectFromStudioLAN: mocks.disconnect,
   forgetStudioLANPairing: mocks.forget,
   refreshStudioLANDiscovery: mocks.refresh,
+  requestStudioLANDeviceReapproval: mocks.reapproval,
+  sendStudioLANRemoteCommand: vi.fn(),
 }));
 
 import { useStudioLANClient } from "./useStudioLANClient";
@@ -39,11 +42,20 @@ const serviceId = "a".repeat(32);
 const connectedStatus: StudioLANStatus = {
   supported: true,
   phase: "connected",
-  services: [{ id: serviceId, name: "Tchurch Studio" }],
+  services: [{ id: serviceId, name: "Tchurch Studio", protocolFloor: 1 }],
   selectedServiceId: serviceId,
   channel: "stage",
   paired: true,
   message: null,
+  enrollmentState: "unenrolled",
+  protocolFloor: 1,
+  role: null,
+  permissions: [],
+  permissionRevision: "0",
+  revocationGeneration: "0",
+  studioId: null,
+  remoteControlAvailable: false,
+  remoteCommandInFlight: false,
 };
 
 const update: StudioLANUpdate = {
@@ -73,6 +85,7 @@ const update: StudioLANUpdate = {
     },
   },
   stage: { nextCue: null, chordLines: [], currentChordSlide: null, timers: [], message: null },
+  control: null,
 };
 
 const imageAsset: StudioLANImageAssetStatus = {
@@ -95,6 +108,10 @@ describe("useStudioLANClient transport lifecycle", () => {
     mocks.disconnect.mockResolvedValue(undefined);
     mocks.forget.mockResolvedValue(undefined);
     mocks.refresh.mockResolvedValue(undefined);
+    mocks.reapproval.mockResolvedValue({
+      accepted: true,
+      deviceId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    });
   });
 
   it("freezes the last verified frame while reconnecting and clears terminal failures", async () => {
@@ -175,6 +192,52 @@ describe("useStudioLANClient transport lifecycle", () => {
 
     publishFrame();
     await act(async () => view.result.current.forget(serviceId));
+    expect(view.result.current.update).toBeNull();
+    expect(view.result.current.imageAsset).toBeNull();
+  });
+
+  it("purges the visible frame immediately when v4 trust becomes pending or revoked", async () => {
+    const view = renderHook(() => useStudioLANClient());
+    await waitFor(() => expect(mocks.callbacks).not.toBeNull());
+
+    act(() => {
+      mocks.callbacks?.onStatus(connectedStatus);
+      mocks.callbacks?.onUpdate(update);
+      mocks.callbacks?.onImageAsset(imageAsset);
+    });
+    expect(view.result.current.update).toEqual(update);
+
+    act(() => mocks.callbacks?.onStatus({
+      ...connectedStatus,
+      phase: "authenticating",
+      enrollmentState: "pending",
+      protocolFloor: 4,
+      role: null,
+    }));
+    expect(view.result.current.update).toBeNull();
+    expect(view.result.current.imageAsset).toBeNull();
+
+    act(() => {
+      mocks.callbacks?.onStatus(connectedStatus);
+      mocks.callbacks?.onUpdate(update);
+    });
+    act(() => mocks.callbacks?.onStatus({
+      ...connectedStatus,
+      phase: "failed",
+      enrollmentState: "revoked",
+      protocolFloor: 4,
+      role: "musicians",
+      permissions: ["observe"],
+      permissionRevision: "2",
+      revocationGeneration: "1",
+      studioId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      message: "Este dispositivo fue revocado en Tchurch Studio.",
+    }));
+    expect(view.result.current.update).toBeNull();
+    expect(view.result.current.imageAsset).toBeNull();
+
+    await act(async () => view.result.current.requestReapproval());
+    expect(mocks.reapproval).toHaveBeenCalledOnce();
     expect(view.result.current.update).toBeNull();
     expect(view.result.current.imageAsset).toBeNull();
   });

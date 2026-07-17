@@ -14,6 +14,8 @@
 		C5E400010000000000000003 /* StudioLANClientNetwork.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5E400010000000000000004 /* StudioLANClientNetwork.swift */; };
 		C5E400010000000000000005 /* StudioLANClientPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5E400010000000000000006 /* StudioLANClientPlugin.swift */; };
 		C5E400010000000000000009 /* StudioLANAssetCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5E40001000000000000000A /* StudioLANAssetCache.swift */; };
+		C5E40001000000000000000B /* StudioLANDeviceTrust.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5E40001000000000000000C /* StudioLANDeviceTrust.swift */; };
+		C5E40001000000000000000D /* StudioLANRemoteControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5E40001000000000000000E /* StudioLANRemoteControl.swift */; };
 		2FAD9763203C412B000D30F8 /* config.xml in Resources */ = {isa = PBXBuildFile; fileRef = 2FAD9762203C412B000D30F8 /* config.xml */; };
 		4D22ABE92AF431CB00220026 /* CapApp-SPM in Frameworks */ = {isa = PBXBuildFile; productRef = 4D22ABE82AF431CB00220026 /* CapApp-SPM */; };
 		50379B232058CBB4000EE86E /* capacitor.config.json in Resources */ = {isa = PBXBuildFile; fileRef = 50379B222058CBB4000EE86E /* capacitor.config.json */; };
@@ -32,6 +34,8 @@
 		C5E400010000000000000004 /* StudioLANClientNetwork.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioLANClientNetwork.swift; sourceTree = "<group>"; };
 		C5E400010000000000000006 /* StudioLANClientPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioLANClientPlugin.swift; sourceTree = "<group>"; };
 		C5E40001000000000000000A /* StudioLANAssetCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioLANAssetCache.swift; sourceTree = "<group>"; };
+		C5E40001000000000000000C /* StudioLANDeviceTrust.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioLANDeviceTrust.swift; sourceTree = "<group>"; };
+		C5E40001000000000000000E /* StudioLANRemoteControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioLANRemoteControl.swift; sourceTree = "<group>"; };
 		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
 		50379B222058CBB4000EE86E /* capacitor.config.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = capacitor.config.json; sourceTree = "<group>"; };
 		504EC3041FED79650016851F /* App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = App.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -82,6 +86,8 @@
 				C5E400010000000000000004 /* StudioLANClientNetwork.swift */,
 				C5E400010000000000000006 /* StudioLANClientPlugin.swift */,
 				C5E40001000000000000000A /* StudioLANAssetCache.swift */,
+				C5E40001000000000000000C /* StudioLANDeviceTrust.swift */,
+				C5E40001000000000000000E /* StudioLANRemoteControl.swift */,
 				A4C200010000000000000004 /* TchurchBridgeViewController.swift */,
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
 				504EC3071FED79650016851F /* AppDelegate.swift */,
@@ -182,6 +188,8 @@
 				C5E400010000000000000003 /* StudioLANClientNetwork.swift in Sources */,
 				C5E400010000000000000005 /* StudioLANClientPlugin.swift in Sources */,
 				C5E400010000000000000009 /* StudioLANAssetCache.swift in Sources */,
+				C5E40001000000000000000B /* StudioLANDeviceTrust.swift in Sources */,
+				C5E40001000000000000000D /* StudioLANRemoteControl.swift in Sources */,
 				A4C200010000000000000003 /* TchurchBridgeViewController.swift in Sources */,
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
 			);

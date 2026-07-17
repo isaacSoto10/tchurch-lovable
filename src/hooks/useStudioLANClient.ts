@@ -6,8 +6,13 @@ import {
   forgetStudioLANPairing,
   isStudioLANSupported,
   refreshStudioLANDiscovery,
+  requestStudioLANDeviceReapproval,
+  sendStudioLANRemoteCommand,
   type StudioLANChannel,
+  type StudioLANDeviceRole,
   type StudioLANImageAssetStatus,
+  type StudioLANRemoteAction,
+  type StudioLANRemoteFeedback,
   type StudioLANStatus,
   type StudioLANUpdate,
 } from "@/lib/studioLANClient";
@@ -20,12 +25,22 @@ const INITIAL_STATUS: StudioLANStatus = {
   channel: null,
   paired: false,
   message: isStudioLANSupported() ? null : "Tchurch Studio LAN está disponible en la app de iPhone o iPad.",
+  enrollmentState: "unenrolled",
+  protocolFloor: 1,
+  role: null,
+  permissions: [],
+  permissionRevision: "0",
+  revocationGeneration: "0",
+  studioId: null,
+  remoteControlAvailable: false,
+  remoteCommandInFlight: false,
 };
 
 export function useStudioLANClient() {
   const [status, setStatus] = useState(INITIAL_STATUS);
   const [update, setUpdate] = useState<StudioLANUpdate | null>(null);
   const [imageAsset, setImageAsset] = useState<StudioLANImageAssetStatus | null>(null);
+  const [remoteFeedback, setRemoteFeedback] = useState<StudioLANRemoteFeedback | null>(null);
   const connectedRef = useRef(false);
 
   useEffect(() => {
@@ -34,9 +49,10 @@ export function useStudioLANClient() {
     void connectStudioLANBridge({
       onStatus(next) {
         if (!active) return;
-        connectedRef.current = next.phase === "connected";
+        connectedRef.current = next.phase === "connected"
+          && (next.enrollmentState === "unenrolled" || next.enrollmentState === "approved");
         setStatus(next);
-        if (next.phase === "failed") {
+        if (next.phase === "failed" || next.enrollmentState === "pending" || next.enrollmentState === "revoked") {
           setUpdate(null);
           setImageAsset(null);
         }
@@ -46,6 +62,9 @@ export function useStudioLANClient() {
       },
       onImageAsset(next) {
         if (active && connectedRef.current) setImageAsset(next);
+      },
+      onRemoteFeedback(next) {
+        if (active) setRemoteFeedback(next);
       },
     }).then((session) => {
       if (!active) void session.disconnect();
@@ -69,17 +88,24 @@ export function useStudioLANClient() {
     };
   }, []);
 
-  const connect = useCallback(async (serviceId: string, channel: StudioLANChannel, pairingCode: string) => {
+  const connect = useCallback(async (
+    serviceId: string,
+    channel: StudioLANChannel,
+    pairingCode: string,
+    requestedRole?: StudioLANDeviceRole,
+  ) => {
     connectedRef.current = false;
     setUpdate(null);
     setImageAsset(null);
-    await connectToStudioLAN(serviceId, channel, pairingCode);
+    setRemoteFeedback(null);
+    await connectToStudioLAN(serviceId, channel, pairingCode, requestedRole);
   }, []);
 
   const disconnect = useCallback(async () => {
     connectedRef.current = false;
     setUpdate(null);
     setImageAsset(null);
+    setRemoteFeedback(null);
     await disconnectFromStudioLAN();
   }, []);
 
@@ -94,5 +120,28 @@ export function useStudioLANClient() {
     await refreshStudioLANDiscovery();
   }, []);
 
-  return { status, update, imageAsset, connect, disconnect, forget, refresh };
+  const sendRemoteCommand = useCallback(async (action: StudioLANRemoteAction) => {
+    await sendStudioLANRemoteCommand(action);
+  }, []);
+
+  const requestReapproval = useCallback(async () => {
+    connectedRef.current = false;
+    setUpdate(null);
+    setImageAsset(null);
+    setRemoteFeedback(null);
+    await requestStudioLANDeviceReapproval();
+  }, []);
+
+  return {
+    status,
+    update,
+    imageAsset,
+    remoteFeedback,
+    connect,
+    disconnect,
+    forget,
+    refresh,
+    sendRemoteCommand,
+    requestReapproval,
+  };
 }

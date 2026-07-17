@@ -18,6 +18,7 @@ export const appRouteLoaders = {
   ServiceDetail: () => import("@/pages/app/ServiceDetail"),
   ServicePresentation: () => import("@/pages/app/ServicePresentation"),
   StudioLANStage: () => import("@/pages/app/StudioLANStage"),
+  StudioLANProduction: () => import("@/pages/app/StudioLANProduction"),
   Announcements: () => import("@/pages/app/Announcements"),
   Devotionals: () => import("@/pages/app/Devotionals"),
   Media: () => import("@/pages/app/Media"),
@@ -79,6 +80,11 @@ export function preloadAppRoute(route: string) {
 
   if (path === "/app/studio-stage") {
     preload([appRouteLoaders.StudioLANStage]);
+    return;
+  }
+
+  if (path === "/app/studio-production") {
+    preload([appRouteLoaders.StudioLANProduction]);
     return;
   }
 
@@ -223,6 +229,7 @@ export function preloadPrimaryAppRoutes() {
     appRouteLoaders.ServiceDetail,
     appRouteLoaders.ServicePresentation,
     appRouteLoaders.StudioLANStage,
+    appRouteLoaders.StudioLANProduction,
     appRouteLoaders.Giving,
     appRouteLoaders.Ministries,
     appRouteLoaders.MinistryDetail,

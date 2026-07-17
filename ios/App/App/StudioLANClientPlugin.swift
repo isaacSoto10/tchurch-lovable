@@ -10,6 +10,8 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "startDiscovery", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "stopDiscovery", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "connect", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "sendRemoteCommand", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "requestDeviceReapproval", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "disconnect", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "forgetPairing", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "purgePrivateState", returnType: CAPPluginReturnPromise),
@@ -44,6 +46,9 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
         }
         client?.imageAssetHandler = { [weak self] status in
             DispatchQueue.main.async { self?.publish(status) }
+        }
+        client?.remoteFeedbackHandler = { [weak self] feedback in
+            DispatchQueue.main.async { self?.publish(feedback) }
         }
         installLifecycleObservers()
         client?.resumePendingPrivacyPurge()
@@ -81,23 +86,111 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
         }
         let serviceID = call.getString("serviceId")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let channelValue = call.getString("channel") ?? "stage"
+        let roleValue = call.getString("requestedRole") ?? {
+            switch channelValue {
+            case "audience": "audience"
+            case "control": "production"
+            default: "musicians"
+            }
+        }()
         guard !serviceID.isEmpty,
               let channel = TchurchStudioLANChannel(rawValue: channelValue),
-              channel.isReadOnlyOutput else {
+              channel.isSupportedSubscription,
+              let role = StudioLANDeviceRole(rawValue: roleValue),
+              role.channel == channel,
+              channel != .control || role == .production else {
             call.reject("Selecciona un Studio y una salida válida.", "INVALID_CONFIGURATION")
             return
         }
         client.connect(
             serviceID: serviceID,
             channel: channel,
-            pairingCode: call.getString("pairingCode")
+            pairingCode: call.getString("pairingCode"),
+            requestedRole: role
         )
         call.resolve(["accepted": true])
+    }
+
+    @objc public func sendRemoteCommand(_ call: CAPPluginCall) {
+        guard let client else {
+            call.reject("El control LAN no está disponible.", "UNAVAILABLE")
+            return
+        }
+        let cueID = call.getString("cueId")
+        let enabled = call.getBool("enabled")
+        let action: TchurchStudioLANRemoteAction
+        switch call.getString("kind").flatMap(TchurchStudioLANRemoteActionKind.init(rawValue:)) {
+        case .next where cueID == nil && enabled == nil:
+            action = .next
+        case .previous where cueID == nil && enabled == nil:
+            action = .previous
+        case .jump where enabled == nil:
+            guard let cueID else {
+                call.reject("Selecciona una diapositiva válida.", "INVALID_ACTION")
+                return
+            }
+            action = .jump(cueID: cueID)
+        case .setBlackout where cueID == nil:
+            guard let enabled else {
+                call.reject("Selecciona el estado de blackout.", "INVALID_ACTION")
+                return
+            }
+            action = .setBlackout(enabled)
+        default:
+            call.reject("Este control no está permitido.", "INVALID_ACTION")
+            return
+        }
+        guard action.isValid else {
+            call.reject("Este control no está permitido.", "INVALID_ACTION")
+            return
+        }
+        client.sendRemoteCommand(action: action) { result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let commandID):
+                    call.resolve([
+                        "accepted": true,
+                        "commandId": commandID.uuidString.lowercased(),
+                    ])
+                case .failure(TchurchStudioLANRemoteControlError.commandInFlight):
+                    call.reject("Espera la confirmación del control anterior.", "COMMAND_IN_FLIGHT")
+                case .failure(TchurchStudioLANRemoteControlError.invalidAction):
+                    call.reject("Este control no está permitido.", "INVALID_ACTION")
+                case .failure(TchurchStudioLANRemoteControlError.unauthorized):
+                    call.reject("Studio todavía no autorizó este control.", "UNAUTHORIZED")
+                case .failure:
+                    call.reject("El control LAN no está disponible.", "UNAVAILABLE")
+                }
+            }
+        }
     }
 
     @objc public func disconnect(_ call: CAPPluginCall) {
         client?.disconnect()
         call.resolve(["accepted": true])
+    }
+
+    @objc public func requestDeviceReapproval(_ call: CAPPluginCall) {
+        guard let client else {
+            call.reject("La conexión LAN no está disponible.", "UNAVAILABLE")
+            return
+        }
+        client.requestDeviceReapproval { result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let deviceID):
+                    call.resolve([
+                        "accepted": true,
+                        "deviceId": deviceID.uuidString.lowercased(),
+                    ])
+                case .failure:
+                    call.reject(
+                        "No se pudo crear una identidad nueva para aprobación.",
+                        "REAPPROVAL_FAILED"
+                    )
+                }
+            }
+        }
     }
 
     @objc public func forgetPairing(_ call: CAPPluginCall) {
@@ -111,9 +204,16 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
     }
 
     @objc public func getStatus(_ call: CAPPluginCall) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return call.reject("Bridge no disponible.", "UNAVAILABLE") }
-            call.resolve(self.statusPayload(self.latestStatus))
+        guard let client else {
+            call.reject("Bridge no disponible.", "UNAVAILABLE")
+            return
+        }
+        client.currentStatus { [weak self] status in
+            DispatchQueue.main.async {
+                guard let self else { return call.reject("Bridge no disponible.", "UNAVAILABLE") }
+                self.latestStatus = status
+                call.resolve(self.statusPayload(status))
+            }
         }
     }
 
@@ -212,15 +312,39 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
         ])
     }
 
+    private func publish(_ feedback: TchurchStudioLANRemoteFeedback) {
+        notifyListeners("studioLANRemoteFeedback", data: [
+            "commandId": feedback.commandID.uuidString.lowercased(),
+            "kind": feedback.action.kind.rawValue,
+            "cueId": feedback.action.cueID ?? NSNull(),
+            "enabled": feedback.action.enabled ?? NSNull(),
+            "state": feedback.state.rawValue,
+            "rejection": feedback.rejection?.rawValue ?? NSNull(),
+            "revision": feedback.revision.map(String.init) ?? NSNull(),
+            "wasIdempotentReplay": feedback.wasIdempotentReplay,
+        ])
+    }
+
     private func statusPayload(_ status: TchurchStudioLANClientStatus) -> [String: Any] {
         [
             "supported": true,
             "phase": status.phase.rawValue,
-            "services": status.services.map { ["id": $0.id, "name": $0.name] },
+            "services": status.services.map {
+                ["id": $0.id, "name": $0.name, "protocolFloor": $0.protocolFloor] as [String: Any]
+            },
             "selectedServiceId": status.selectedServiceID ?? NSNull(),
             "channel": status.channel?.rawValue ?? NSNull(),
             "paired": status.paired,
             "message": status.message ?? NSNull(),
+            "enrollmentState": status.enrollmentState.rawValue,
+            "protocolFloor": status.protocolFloor,
+            "role": status.role?.rawValue ?? NSNull(),
+            "permissions": status.permissions.map(\.rawValue),
+            "permissionRevision": String(status.permissionRevision),
+            "revocationGeneration": String(status.revocationGeneration),
+            "studioId": status.studioID?.uuidString.lowercased() ?? NSNull(),
+            "remoteControlAvailable": status.remoteControlAvailable,
+            "remoteCommandInFlight": status.remoteCommandInFlight,
         ]
     }
 
@@ -258,6 +382,20 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
             ]
         } else {
             result["stage"] = NSNull()
+        }
+        if let control = envelope.payload.control {
+            result["control"] = [
+                "chordsVisible": control.chordsVisible,
+                "lightingArmed": control.lightingArmed,
+                "healthyOutputCount": control.healthyOutputCount,
+                "expectedOutputCount": control.expectedOutputCount,
+                "routeEpoch": control.routeEpoch.map(String.init) ?? NSNull(),
+                "cueCatalog": control.cueCatalog?.map {
+                    ["cueId": $0.cueID, "title": $0.title]
+                } ?? NSNull(),
+            ] as [String: Any]
+        } else {
+            result["control"] = NSNull()
         }
         return result
     }

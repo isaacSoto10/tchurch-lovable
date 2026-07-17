@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   disconnect: vi.fn(),
   forget: vi.fn(),
   refresh: vi.fn(),
+  requestReapproval: vi.fn(),
   scanBarcode: vi.fn(),
 }));
 
@@ -30,6 +31,7 @@ vi.mock("@/hooks/useStudioLANClient", () => ({
     disconnect: mocks.disconnect,
     forget: mocks.forget,
     refresh: mocks.refresh,
+    requestReapproval: mocks.requestReapproval,
   }),
 }));
 
@@ -39,11 +41,20 @@ const serviceId = "a".repeat(32);
 const baseStatus: StudioLANStatus = {
   supported: true,
   phase: "discovering",
-  services: [{ id: serviceId, name: "Tchurch Studio" }],
+  services: [{ id: serviceId, name: "Tchurch Studio", protocolFloor: 1 }],
   selectedServiceId: null,
   channel: null,
   paired: false,
   message: null,
+  enrollmentState: "unenrolled",
+  protocolFloor: 1,
+  role: null,
+  permissions: [],
+  permissionRevision: "0",
+  revocationGeneration: "0",
+  studioId: null,
+  remoteControlAvailable: false,
+  remoteCommandInFlight: false,
 };
 
 const update: StudioLANUpdate = {
@@ -68,6 +79,7 @@ const update: StudioLANUpdate = {
     timers: [],
     message: "Puente dos veces",
   },
+  control: null,
 };
 
 const imageObjectA = `sha256:${"a".repeat(64)}`;
@@ -123,6 +135,7 @@ describe("Studio LAN stage route", () => {
     mocks.disconnect.mockReset().mockResolvedValue(undefined);
     mocks.forget.mockReset().mockResolvedValue(undefined);
     mocks.refresh.mockReset().mockResolvedValue(undefined);
+    mocks.requestReapproval.mockReset().mockResolvedValue(undefined);
     mocks.scanBarcode.mockReset().mockResolvedValue({ ScanResult: "" });
   });
 
@@ -148,7 +161,41 @@ describe("Studio LAN stage route", () => {
     expect(screen.queryByRole("button", { name: /siguiente|anterior|blackout/i })).not.toBeInTheDocument();
   });
 
-  it("explains the one-time Cloud authorization required before first offline use", () => {
+  it("shows local v4 approval, rotates terminal revocation, and exposes no production controls", async () => {
+    mocks.status = {
+      ...baseStatus,
+      phase: "authenticating",
+      enrollmentState: "pending",
+      protocolFloor: 4,
+      studioId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    };
+    const view = render(<MemoryRouter><StudioLANStage /></MemoryRouter>);
+    expect(screen.getByTestId("studio-lan-pending-approval")).toHaveTextContent(/Esperando aprobación/i);
+    expect(screen.getByTestId("studio-lan-pending-approval")).toHaveTextContent(/Músicos/i);
+    expect(screen.getByTestId("studio-lan-pending-approval")).toHaveTextContent(/solo por esta red local/i);
+
+    mocks.status = {
+      ...baseStatus,
+      phase: "failed",
+      enrollmentState: "revoked",
+      protocolFloor: 4,
+      role: "musicians",
+      permissions: ["observe"],
+      permissionRevision: "3",
+      revocationGeneration: "1",
+      studioId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      message: "Este dispositivo fue revocado en Tchurch Studio.",
+    };
+    view.rerender(<MemoryRouter><StudioLANStage /></MemoryRouter>);
+    expect(screen.getByTestId("studio-lan-revoked")).toHaveTextContent(/Dispositivo revocado/i);
+    expect(screen.getByTestId("studio-lan-revoked")).toHaveTextContent(/diapositiva.+imágenes.+retiradas/i);
+    expect(screen.getByTestId("studio-lan-revoked")).toHaveTextContent(/identidad revocada nunca se reutiliza/i);
+    fireEvent.click(screen.getByRole("button", { name: /Solicitar nueva aprobación/i }));
+    await waitFor(() => expect(mocks.requestReapproval).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("button", { name: /siguiente|anterior|blackout/i })).not.toBeInTheDocument();
+  });
+
+  it("keeps initial privacy verification local without requiring internet", () => {
     mocks.status = {
       ...baseStatus,
       phase: "failed",
@@ -156,8 +203,9 @@ describe("Studio LAN stage route", () => {
     };
     render(<MemoryRouter><StudioLANStage /></MemoryRouter>);
 
-    expect(screen.getByRole("status")).toHaveTextContent(/primera configuración requiere abrir Servicios con internet una vez/i);
-    expect(screen.getByRole("status")).toHaveTextContent(/después.+sin cloud/i);
+    expect(screen.getByRole("status")).toHaveTextContent(/verificando el acceso local/i);
+    expect(screen.queryByText(/requiere.+internet|abrir Servicios con internet/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/Directo · solo lectura · sin cloud/i)).toBeInTheDocument();
   });
 
   it("renders only sanitized stage data in a scrollable live surface", () => {
@@ -188,7 +236,7 @@ describe("Studio LAN stage route", () => {
     mocks.scanBarcode.mockResolvedValue({ ScanResult: pairingQR });
     render(<MemoryRouter><StudioLANStage /></MemoryRouter>);
     fireEvent.click(await screen.findByRole("button", { name: /escanear QR de Studio/i }));
-    await waitFor(() => expect(mocks.connect).toHaveBeenCalledWith(serviceId, "stage", pairingQR));
+    await waitFor(() => expect(mocks.connect).toHaveBeenCalledWith(serviceId, "stage", pairingQR, "musicians"));
     expect(screen.queryByText(pairingQR)).not.toBeInTheDocument();
     expect(screen.getByLabelText(/código de emparejamiento/i)).toHaveValue("");
   });
@@ -209,7 +257,7 @@ describe("Studio LAN stage route", () => {
     fireEvent.change(pairingInput, { target: { value: input } });
     fireEvent.click(screen.getByRole("button", { name: /conectar de forma segura/i }));
 
-    await waitFor(() => expect(mocks.connect).toHaveBeenCalledWith(serviceId, "stage", input));
+    await waitFor(() => expect(mocks.connect).toHaveBeenCalledWith(serviceId, "stage", input, "musicians"));
     expect(pairingInput).toHaveValue("");
     expect(screen.queryByText(input)).not.toBeInTheDocument();
   });

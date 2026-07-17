@@ -479,9 +479,7 @@ final class StudioLANClientCoreTests: XCTestCase {
         }
 
         let control = Data(#"{"channel":"control","control":{"privateNotes":"must not decode"}}"#.utf8)
-        XCTAssertThrowsError(try TchurchStudioLANCoding.decoder().decode(TchurchStudioLANChannelPayload.self, from: control)) {
-            XCTAssertEqual($0 as? TchurchStudioLANError, .unsupportedChannel)
-        }
+        XCTAssertThrowsError(try TchurchStudioLANCoding.decoder().decode(TchurchStudioLANChannelPayload.self, from: control))
     }
 
     func testV2EnvelopePreservesUnicodeChordOffsetsAndRejectsMismatch() throws {
@@ -2202,12 +2200,31 @@ final class StudioLANPrivateStateTests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
         defaults.set(UUID().uuidString.lowercased(), forKey: "tchurch.studio-lan.client-id")
+        let identityProvider = TestStudioLANDeviceIdentityProvider()
+        let trustStore = TestStudioLANDeviceTrustStateStore()
+        let deviceTrust = try StudioLANDeviceTrustController(
+            identityProvider: identityProvider,
+            stateStore: trustStore
+        )
+        let studioID = UUID()
+        let identity = try deviceTrust.beginEnrollment(studioID: studioID)
+        try deviceTrust.accept(
+            makeStudioLANDeviceGrant(
+                identity: identity,
+                signer: Curve25519.Signing.PrivateKey(),
+                studioID: studioID,
+                permissions: [.observe, .controlProgram],
+                role: .production
+            ),
+            nowMilliseconds: 1_100_000
+        )
 
         let client = try TchurchStudioLANClient(
             secretStore: secretStore,
             defaults: defaults,
             assetCache: TchurchStudioLANAssetCache(rootURL: rootURL),
-            privacyStateStore: RecordingStudioLANPrivacyStateStore()
+            privacyStateStore: RecordingStudioLANPrivacyStateStore(),
+            deviceTrust: deviceTrust
         )
         let purged = expectation(description: "private Studio LAN state purged")
         var purgeError: Error?
@@ -2222,6 +2239,27 @@ final class StudioLANPrivateStateTests: XCTestCase {
         XCTAssertTrue(secretStore.entries.isEmpty)
         XCTAssertNil(defaults.string(forKey: "tchurch.studio-lan.client-id"))
         XCTAssertFalse(FileManager.default.fileExists(atPath: rootURL.path))
+        XCTAssertNil(trustStore.state)
+        XCTAssertNil(trustStore.recoveryMarker)
+        XCTAssertEqual(trustStore.protocolFloor, 4)
+        XCTAssertFalse(identityProvider.hasIdentity)
+        XCTAssertEqual(deviceTrust.snapshot.enrollmentState, .unenrolled)
+        XCTAssertEqual(deviceTrust.snapshot.protocolFloor, 4)
+        XCTAssertNil(deviceTrust.presentedGrant)
+        XCTAssertFalse(deviceTrust.permitsLegacyFallback)
+
+        let restartedTrust = try StudioLANDeviceTrustController(
+            identityProvider: identityProvider,
+            stateStore: trustStore
+        )
+        XCTAssertEqual(restartedTrust.snapshot.enrollmentState, .unenrolled)
+        XCTAssertEqual(restartedTrust.snapshot.protocolFloor, 4)
+        XCTAssertFalse(identityProvider.hasIdentity, "restart must not recreate a purged P-256 identity")
+        let freshIdentity = try restartedTrust.beginEnrollment(studioID: UUID())
+        XCTAssertNotEqual(freshIdentity.deviceID, identity.deviceID)
+        XCTAssertNotEqual(freshIdentity.fingerprint, identity.fingerprint)
+        XCTAssertEqual(restartedTrust.snapshot.enrollmentState, .pending)
+        XCTAssertNil(restartedTrust.presentedGrant)
 
         let statusRead = expectation(description: "disconnected status read")
         client.currentStatus { status in
@@ -2238,21 +2276,46 @@ final class StudioLANPrivateStateTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: rootURL) }
         let privacy = RecordingStudioLANPrivacyStateStore()
         let secrets = RecordingStudioLANSecretStore()
+        let identityProvider = TestStudioLANDeviceIdentityProvider()
+        let trustStore = TestStudioLANDeviceTrustStateStore()
+        let initialTrust = try StudioLANDeviceTrustController(
+            identityProvider: identityProvider,
+            stateStore: trustStore
+        )
         let initial = try TchurchStudioLANClient(
             secretStore: secrets,
             assetCache: TchurchStudioLANAssetCache(rootURL: rootURL),
-            privacyStateStore: privacy
+            privacyStateStore: privacy,
+            deviceTrust: initialTrust
         )
         try synchronize(initial, access: .authorized, principalID: "user-1", churchID: "church-1")
         XCTAssertEqual(secrets.deleteAllCount, 1)
+        let studioID = UUID()
+        let productionIdentity = try initialTrust.beginEnrollment(studioID: studioID)
+        try initialTrust.accept(
+            makeStudioLANDeviceGrant(
+                identity: productionIdentity,
+                signer: Curve25519.Signing.PrivateKey(),
+                studioID: studioID,
+                permissions: [.observe, .controlProgram],
+                role: .production
+            ),
+            nowMilliseconds: 1_100_000
+        )
 
+        let offlineTrust = try StudioLANDeviceTrustController(
+            identityProvider: identityProvider,
+            stateStore: trustStore
+        )
         let offlineRestart = try TchurchStudioLANClient(
             secretStore: secrets,
             assetCache: TchurchStudioLANAssetCache(rootURL: rootURL),
-            privacyStateStore: privacy
+            privacyStateStore: privacy,
+            deviceTrust: offlineTrust
         )
         try synchronize(offlineRestart, access: .principal, principalID: "user-1", churchID: nil)
         XCTAssertEqual(secrets.deleteAllCount, 1, "same cached principal keeps the verified offline scope")
+        XCTAssertEqual(offlineTrust.snapshot.role, .production)
         let ready = expectation(description: "same-principal offline scope ready")
         offlineRestart.currentStatus { status in
             XCTAssertEqual(status.phase, .idle)
@@ -2265,13 +2328,22 @@ final class StudioLANPrivateStateTests: XCTestCase {
         XCTAssertEqual(secrets.deleteAllCount, 2)
         XCTAssertNil(privacy.state.scopeFingerprint)
         XCTAssertFalse(FileManager.default.fileExists(atPath: rootURL.path))
-        let blocked = expectation(description: "different principal blocked pending church scope")
+        XCTAssertNil(trustStore.state)
+        XCTAssertFalse(identityProvider.hasIdentity)
+        XCTAssertEqual(offlineTrust.snapshot.enrollmentState, .unenrolled)
+        XCTAssertEqual(offlineTrust.snapshot.protocolFloor, 4)
+        XCTAssertNil(offlineTrust.presentedGrant)
+        let isolated = expectation(description: "different principal owns an isolated local-only scope")
         offlineRestart.currentStatus { status in
-            XCTAssertEqual(status.phase, .failed)
+            XCTAssertEqual(status.phase, .idle)
             XCTAssertFalse(status.paired)
-            blocked.fulfill()
+            isolated.fulfill()
         }
-        wait(for: [blocked], timeout: 1)
+        wait(for: [isolated], timeout: 1)
+
+        try synchronize(offlineRestart, access: .authorized, principalID: "user-2", churchID: "church-2")
+        XCTAssertEqual(secrets.deleteAllCount, 3, "learning the church isolates the principal-only scope before use")
+        XCTAssertNotNil(privacy.state.scopeFingerprint)
     }
 
     func testCentralPrivacyContextPurgesOnlyForPrincipalChurchLogoutOrRevocation() throws {
@@ -2279,10 +2351,12 @@ final class StudioLANPrivateStateTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: rootURL) }
         let secrets = RecordingStudioLANSecretStore()
         let privacy = RecordingStudioLANPrivacyStateStore()
+        let deviceTrust = try isolatedDeviceTrust()
         let client = try TchurchStudioLANClient(
             secretStore: secrets,
             assetCache: TchurchStudioLANAssetCache(rootURL: rootURL),
-            privacyStateStore: privacy
+            privacyStateStore: privacy,
+            deviceTrust: deviceTrust
         )
 
         try synchronize(client, access: .authorized, principalID: "user-1", churchID: "church-1")
@@ -2328,11 +2402,13 @@ final class StudioLANPrivateStateTests: XCTestCase {
         let privacy = RecordingStudioLANPrivacyStateStore(state: scopedPrivacyState(clientID: clientID))
         privacy.failingWriteAttempts = [1]
         let secrets = RecordingStudioLANSecretStore()
+        let deviceTrust = try isolatedDeviceTrust()
         try seedPrivateState(rootURL: rootURL, secrets: secrets)
         let firstClient = try TchurchStudioLANClient(
             secretStore: secrets,
             assetCache: TchurchStudioLANAssetCache(rootURL: rootURL),
-            privacyStateStore: privacy
+            privacyStateStore: privacy,
+            deviceTrust: deviceTrust
         )
 
         XCTAssertThrowsError(try purge(firstClient))
@@ -2345,7 +2421,8 @@ final class StudioLANPrivateStateTests: XCTestCase {
         let restarted = try TchurchStudioLANClient(
             secretStore: secrets,
             assetCache: TchurchStudioLANAssetCache(rootURL: rootURL),
-            privacyStateStore: privacy
+            privacyStateStore: privacy,
+            deviceTrust: deviceTrust
         )
         try synchronize(restarted, access: .signedOut, principalID: nil, churchID: nil)
         XCTAssertEqual(secrets.deleteAllCount, 1)
@@ -2362,11 +2439,13 @@ final class StudioLANPrivateStateTests: XCTestCase {
         let privacy = RecordingStudioLANPrivacyStateStore(state: scopedPrivacyState(clientID: clientID))
         privacy.failingWriteAttempts = [2]
         let secrets = RecordingStudioLANSecretStore()
+        let deviceTrust = try isolatedDeviceTrust()
         try seedPrivateState(rootURL: rootURL, secrets: secrets)
         let firstClient = try TchurchStudioLANClient(
             secretStore: secrets,
             assetCache: TchurchStudioLANAssetCache(rootURL: rootURL),
-            privacyStateStore: privacy
+            privacyStateStore: privacy,
+            deviceTrust: deviceTrust
         )
 
         XCTAssertThrowsError(try purge(firstClient))
@@ -2379,7 +2458,8 @@ final class StudioLANPrivateStateTests: XCTestCase {
         let restarted = try TchurchStudioLANClient(
             secretStore: secrets,
             assetCache: TchurchStudioLANAssetCache(rootURL: rootURL),
-            privacyStateStore: privacy
+            privacyStateStore: privacy,
+            deviceTrust: deviceTrust
         )
         let statusRead = expectation(description: "cold cache blocked")
         restarted.currentStatus { status in
@@ -2402,12 +2482,14 @@ final class StudioLANPrivateStateTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: rootURL) }
         let privacy = RecordingStudioLANPrivacyStateStore(state: scopedPrivacyState())
         let secrets = RecordingStudioLANSecretStore()
+        let deviceTrust = try isolatedDeviceTrust()
         try seedPrivateState(rootURL: rootURL, secrets: secrets)
         let failingClient = try TchurchStudioLANClient(
             secretStore: secrets,
             assetCache: TchurchStudioLANAssetCache(rootURL: rootURL),
             assetCachePurge: { throw TchurchStudioLANError.assetCacheUnavailable },
-            privacyStateStore: privacy
+            privacyStateStore: privacy,
+            deviceTrust: deviceTrust
         )
 
         XCTAssertThrowsError(try purge(failingClient))
@@ -2417,7 +2499,8 @@ final class StudioLANPrivateStateTests: XCTestCase {
         let restarted = try TchurchStudioLANClient(
             secretStore: secrets,
             assetCache: TchurchStudioLANAssetCache(rootURL: rootURL),
-            privacyStateStore: privacy
+            privacyStateStore: privacy,
+            deviceTrust: deviceTrust
         )
         try synchronize(restarted, access: .signedOut, principalID: nil, churchID: nil)
         XCTAssertFalse(privacy.state.purgeRequired)
@@ -2514,6 +2597,13 @@ final class StudioLANPrivateStateTests: XCTestCase {
     private func temporaryRoot(_ suffix: String) -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("tchurch-studio-\(suffix)-\(UUID().uuidString)", isDirectory: true)
+    }
+
+    private func isolatedDeviceTrust() throws -> StudioLANDeviceTrustController {
+        try StudioLANDeviceTrustController(
+            identityProvider: TestStudioLANDeviceIdentityProvider(),
+            stateStore: TestStudioLANDeviceTrustStateStore()
+        )
     }
 
     private func seedPrivateState(
@@ -3772,4 +3862,706 @@ private final class RecordingStudioLANPrivacyStateStore: TchurchStudioLANPrivacy
         self.state = state
         writes.append(state)
     }
+}
+
+final class StudioLANDeviceTrustV4Tests: XCTestCase {
+    func testPossessionProofAndSubscriptionHMACMatchStudioV4CanonicalContract() throws {
+        let identityProvider = TestStudioLANDeviceIdentityProvider()
+        let stateStore = TestStudioLANDeviceTrustStateStore()
+        let controller = try StudioLANDeviceTrustController(
+            identityProvider: identityProvider,
+            stateStore: stateStore
+        )
+        let studioID = UUID(uuidString: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")!
+        let challenge = TchurchStudioLANServerChallenge(
+            schemaVersion: 1,
+            challengeID: UUID(uuidString: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")!,
+            serverNonce: Data(repeating: 0x41, count: 32).base64EncodedString(),
+            authority: TchurchStudioLANAuthority(
+                runID: UUID(uuidString: "cccccccc-cccc-4ccc-8ccc-cccccccccccc")!,
+                authorityEpoch: 7,
+                packageID: "package",
+                serviceVersion: "v4"
+            ),
+            signingKeyID: "0123456789abcdef01234567",
+            issuedAtMilliseconds: 1_000_000,
+            expiresAtMilliseconds: 1_060_000,
+            deviceTrustVersion: 4,
+            minimumPayloadVersion: 4,
+            studioID: studioID
+        )
+        let requestID = UUID(uuidString: "dddddddd-dddd-4ddd-8ddd-dddddddddddd")!
+        let nonce = Data(repeating: 0x22, count: 24)
+        let versions = [4, 3, 2, 1]
+        let attestation = try controller.makeAttestation(
+            challenge: challenge,
+            requestID: requestID,
+            clientName: "Tchurch iOS",
+            channel: .stage,
+            clientNonce: nonce.base64EncodedString(),
+            supportedPayloadVersions: versions,
+            requestedRole: .musicians
+        )
+
+        XCTAssertEqual(attestation.schemaVersion, 4)
+        XCTAssertEqual(attestation.deviceID, identityProvider.identity.deviceID)
+        XCTAssertEqual(attestation.devicePublicKey.utf8.count, 88)
+        XCTAssertTrue(attestation.devicePublicKeyFingerprint.hasPrefix("sha256:"))
+        XCTAssertNil(attestation.presentedGrant)
+        let possession = TestStudioLANDevicePossessionProof(
+            schemaVersion: 4,
+            domain: "tchurch-studio-lan-device-possession-v4",
+            challenge: challenge,
+            requestID: requestID,
+            clientID: identityProvider.identity.deviceID,
+            clientName: "Tchurch iOS",
+            channel: .stage,
+            clientNonce: nonce.base64EncodedString(),
+            supportedPayloadVersions: versions,
+            deviceID: identityProvider.identity.deviceID,
+            requestedRole: .musicians,
+            keyAlgorithm: .p256Signing,
+            devicePublicKey: identityProvider.identity.publicKey,
+            devicePublicKeyFingerprint: identityProvider.identity.fingerprint,
+            presentedGrantChecksum: nil
+        )
+        let signatureData = try XCTUnwrap(Data(base64Encoded: attestation.proof))
+        let signature = try P256.Signing.ECDSASignature(derRepresentation: signatureData)
+        let publicKeyData = try XCTUnwrap(Data(base64Encoded: attestation.devicePublicKey))
+        let publicKey = try P256.Signing.PublicKey(x963Representation: publicKeyData)
+        XCTAssertTrue(publicKey.isValidSignature(
+            signature,
+            for: try TchurchStudioLANCoding.encoder().encode(possession)
+        ))
+
+        let secret = try TchurchStudioLANPairingSecret(rawRepresentation: Data(repeating: 0x55, count: 32))
+        let request = try TchurchStudioLANSubscriptionAuthenticator.makeRequest(
+            challenge: challenge,
+            clientID: identityProvider.identity.deviceID,
+            clientName: "Tchurch iOS",
+            channel: .stage,
+            secret: secret,
+            requestID: requestID,
+            clientNonce: nonce,
+            schemaVersion: TchurchStudioLANSubscriptionRequest.deviceTrustSchemaVersion,
+            offeredPayloadVersions: versions,
+            deviceAttestation: attestation
+        )
+        XCTAssertEqual(request.schemaVersion, 3)
+        XCTAssertEqual(request.supportedPayloadVersions, versions)
+        XCTAssertEqual(request.deviceAttestation, attestation)
+        XCTAssertTrue(TchurchStudioLANCrypto.validatesAuthenticationCode(
+            request.authenticationProof,
+            for: TestStudioLANSubscriptionRequestProofV4(
+                challenge: challenge,
+                requestID: requestID,
+                clientID: identityProvider.identity.deviceID,
+                clientName: "Tchurch iOS",
+                channel: .stage,
+                clientNonce: nonce.base64EncodedString(),
+                supportedPayloadVersions: versions,
+                deviceAttestation: attestation
+            ),
+            secret: secret
+        ))
+
+        var negotiation = TchurchStudioLANPayloadNegotiation(protocolFloor: 4)
+        XCTAssertEqual(negotiation.requestSchemaVersion, 3)
+        XCTAssertFalse(negotiation.attemptLegacyFallback(
+            afterSentRequest: request,
+            signal: .authenticatedLegacyError
+        ))
+        XCTAssertThrowsError(try controller.requireLegacyFallbackAllowed()) {
+            XCTAssertEqual($0 as? StudioLANDeviceTrustError, .legacyDowngradeDenied)
+        }
+    }
+
+    func testSignedDeviceGrantApprovalAndRevocationAreStickyAcrossRestart() throws {
+        let identityProvider = TestStudioLANDeviceIdentityProvider()
+        let stateStore = TestStudioLANDeviceTrustStateStore()
+        var controller = try StudioLANDeviceTrustController(
+            identityProvider: identityProvider,
+            stateStore: stateStore
+        )
+        let studioID = UUID(uuidString: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")!
+        _ = try controller.beginEnrollment(studioID: studioID)
+        XCTAssertEqual(controller.snapshot.enrollmentState, .pending)
+        XCTAssertEqual(controller.snapshot.protocolFloor, 4)
+
+        let signer = try Curve25519.Signing.PrivateKey(
+            rawRepresentation: Data(repeating: 0x33, count: 32)
+        )
+        let grant = try makeStudioLANDeviceGrant(
+            identity: identityProvider.identity,
+            signer: signer,
+            studioID: studioID,
+            permissions: [.observe, .controlProgram]
+        )
+        try controller.accept(grant, nowMilliseconds: 1_100_000)
+        XCTAssertEqual(controller.snapshot.enrollmentState, .approved)
+        XCTAssertEqual(controller.snapshot.role, .musicians)
+        XCTAssertEqual(controller.snapshot.permissions, [.observe, .controlProgram])
+        XCTAssertEqual(controller.snapshot.permissionRevision, 7)
+
+        controller = try StudioLANDeviceTrustController(
+            identityProvider: identityProvider,
+            stateStore: stateStore
+        )
+        XCTAssertEqual(controller.snapshot.enrollmentState, .approved)
+        XCTAssertFalse(controller.permitsLegacyFallback)
+
+        XCTAssertTrue(try controller.revoke(studioID: studioID, revocationGeneration: 3))
+        XCTAssertEqual(controller.snapshot.enrollmentState, .revoked)
+        XCTAssertEqual(controller.snapshot.revocationGeneration, 3)
+        XCTAssertThrowsError(try controller.accept(grant, nowMilliseconds: 1_100_001)) {
+            XCTAssertEqual($0 as? StudioLANDeviceTrustError, .revoked)
+        }
+
+        let reversed = try makeStudioLANDeviceGrant(
+            identity: identityProvider.identity,
+            signer: signer,
+            studioID: studioID,
+            permissions: [.controlProgram, .observe]
+        )
+        XCTAssertThrowsError(try reversed.verify(
+            identity: identityProvider.identity,
+            nowMilliseconds: 1_100_000,
+            pinnedStudioID: studioID
+        )) {
+            XCTAssertEqual($0 as? StudioLANDeviceTrustError, .invalidGrant)
+        }
+    }
+
+    func testExplicitReapprovalRotatesRevokedKeyAndDeviceIDWithoutDowngrade() throws {
+        let identityProvider = TestStudioLANDeviceIdentityProvider()
+        let stateStore = TestStudioLANDeviceTrustStateStore()
+        var controller = try StudioLANDeviceTrustController(
+            identityProvider: identityProvider,
+            stateStore: stateStore
+        )
+        let studioID = UUID(uuidString: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")!
+        let oldIdentity = try controller.beginEnrollment(studioID: studioID)
+        let signer = Curve25519.Signing.PrivateKey()
+        let oldGrant = try makeStudioLANDeviceGrant(
+            identity: oldIdentity,
+            signer: signer,
+            studioID: studioID,
+            permissions: [.observe, .controlProgram]
+        )
+        try controller.accept(oldGrant, nowMilliseconds: 1_100_000)
+        XCTAssertTrue(try controller.revoke(studioID: studioID, revocationGeneration: 9))
+
+        let newIdentity = try controller.rotateRevokedIdentityForReapproval()
+        XCTAssertNotEqual(newIdentity.deviceID, oldIdentity.deviceID)
+        XCTAssertNotEqual(newIdentity.fingerprint, oldIdentity.fingerprint)
+        XCTAssertEqual(controller.snapshot.enrollmentState, .pending)
+        XCTAssertEqual(controller.snapshot.protocolFloor, 4)
+        XCTAssertEqual(controller.snapshot.studioID, studioID)
+        XCTAssertEqual(controller.snapshot.permissionRevision, 0)
+        XCTAssertEqual(controller.snapshot.revocationGeneration, 0)
+        XCTAssertFalse(controller.permitsLegacyFallback)
+        XCTAssertNil(controller.presentedGrant)
+        XCTAssertThrowsError(try controller.accept(oldGrant, nowMilliseconds: 1_100_001)) {
+            XCTAssertEqual($0 as? StudioLANDeviceTrustError, .invalidGrant)
+        }
+
+        controller = try StudioLANDeviceTrustController(
+            identityProvider: identityProvider,
+            stateStore: stateStore
+        )
+        XCTAssertEqual(controller.snapshot.deviceID, newIdentity.deviceID)
+        XCTAssertEqual(controller.snapshot.enrollmentState, .pending)
+        XCTAssertEqual(controller.snapshot.protocolFloor, 4)
+    }
+
+    func testReapprovalRecoveryAfterMarkerWriteRotatesRevokedIdentityWithoutRestoringGrant() throws {
+        let identityProvider = TestStudioLANDeviceIdentityProvider()
+        let stateStore = TestStudioLANDeviceTrustStateStore()
+        let controller = try StudioLANDeviceTrustController(
+            identityProvider: identityProvider,
+            stateStore: stateStore
+        )
+        let studioID = UUID()
+        let revokedIdentity = try controller.beginEnrollment(studioID: studioID)
+        let grant = try makeStudioLANDeviceGrant(
+            identity: revokedIdentity,
+            signer: Curve25519.Signing.PrivateKey(),
+            studioID: studioID,
+            permissions: [.observe, .controlProgram],
+            role: .production
+        )
+        try controller.accept(grant, nowMilliseconds: 1_100_000)
+        XCTAssertTrue(try controller.revoke(studioID: studioID, revocationGeneration: 5))
+        try stateStore.writeRecoveryMarker(StudioLANDeviceTrustRecoveryMarker(
+            schemaVersion: StudioLANDeviceTrustRecoveryMarker.schemaVersion,
+            intent: .reapproveRevokedIdentity,
+            protocolFloor: 4,
+            revokedDeviceID: revokedIdentity.deviceID,
+            revokedPublicKeyFingerprint: revokedIdentity.fingerprint,
+            studioID: studioID
+        ))
+
+        let recovered = try StudioLANDeviceTrustController(
+            identityProvider: identityProvider,
+            stateStore: stateStore
+        )
+
+        XCTAssertEqual(identityProvider.deleteCount, 1)
+        XCTAssertNotEqual(recovered.snapshot.deviceID, revokedIdentity.deviceID)
+        XCTAssertNotEqual(recovered.snapshot.devicePublicKeyFingerprint, revokedIdentity.fingerprint)
+        XCTAssertEqual(recovered.snapshot.enrollmentState, .pending)
+        XCTAssertEqual(recovered.snapshot.protocolFloor, 4)
+        XCTAssertEqual(recovered.snapshot.permissionRevision, 0)
+        XCTAssertEqual(recovered.snapshot.revocationGeneration, 0)
+        XCTAssertNil(recovered.presentedGrant)
+        XCTAssertNil(stateStore.recoveryMarker)
+        XCTAssertFalse(recovered.permitsLegacyFallback)
+    }
+
+    func testReapprovalRecoveryAfterIdentityRotationFinishesPendingRecordWithoutASecondRotation() throws {
+        let identityProvider = TestStudioLANDeviceIdentityProvider()
+        let stateStore = TestStudioLANDeviceTrustStateStore()
+        let controller = try StudioLANDeviceTrustController(
+            identityProvider: identityProvider,
+            stateStore: stateStore
+        )
+        let studioID = UUID()
+        let revokedIdentity = try controller.beginEnrollment(studioID: studioID)
+        let grant = try makeStudioLANDeviceGrant(
+            identity: revokedIdentity,
+            signer: Curve25519.Signing.PrivateKey(),
+            studioID: studioID,
+            permissions: [.observe, .controlProgram],
+            role: .production
+        )
+        try controller.accept(grant, nowMilliseconds: 1_100_000)
+        XCTAssertTrue(try controller.revoke(studioID: studioID, revocationGeneration: 6))
+        try stateStore.writeRecoveryMarker(StudioLANDeviceTrustRecoveryMarker(
+            schemaVersion: StudioLANDeviceTrustRecoveryMarker.schemaVersion,
+            intent: .reapproveRevokedIdentity,
+            protocolFloor: 4,
+            revokedDeviceID: revokedIdentity.deviceID,
+            revokedPublicKeyFingerprint: revokedIdentity.fingerprint,
+            studioID: studioID
+        ))
+        let alreadyRotated = try identityProvider.rotateAfterRevocation()
+        XCTAssertEqual(identityProvider.deleteCount, 1)
+
+        let recovered = try StudioLANDeviceTrustController(
+            identityProvider: identityProvider,
+            stateStore: stateStore
+        )
+
+        XCTAssertEqual(identityProvider.deleteCount, 1)
+        XCTAssertEqual(recovered.snapshot.deviceID, alreadyRotated.deviceID)
+        XCTAssertEqual(recovered.snapshot.devicePublicKeyFingerprint, alreadyRotated.fingerprint)
+        XCTAssertEqual(recovered.snapshot.enrollmentState, .pending)
+        XCTAssertNil(recovered.presentedGrant)
+        XCTAssertNil(stateStore.recoveryMarker)
+        XCTAssertFalse(recovered.permitsLegacyFallback)
+    }
+
+    func testPrivatePurgeRecoveryAfterRecordDeletionRetiresIdentityAndKeepsOnlyFloor() throws {
+        let identityProvider = TestStudioLANDeviceIdentityProvider()
+        let stateStore = TestStudioLANDeviceTrustStateStore()
+        let controller = try StudioLANDeviceTrustController(
+            identityProvider: identityProvider,
+            stateStore: stateStore
+        )
+        let studioID = UUID()
+        let oldIdentity = try controller.beginEnrollment(studioID: studioID)
+        try controller.accept(
+            makeStudioLANDeviceGrant(
+                identity: oldIdentity,
+                signer: Curve25519.Signing.PrivateKey(),
+                studioID: studioID,
+                permissions: [.observe, .controlProgram],
+                role: .production
+            ),
+            nowMilliseconds: 1_100_000
+        )
+        try stateStore.writeRecoveryMarker(StudioLANDeviceTrustRecoveryMarker(
+            schemaVersion: StudioLANDeviceTrustRecoveryMarker.schemaVersion,
+            intent: .purgePrivateState,
+            protocolFloor: 4,
+            revokedDeviceID: nil,
+            revokedPublicKeyFingerprint: nil,
+            studioID: nil
+        ))
+        try stateStore.delete()
+
+        let recovered = try StudioLANDeviceTrustController(
+            identityProvider: identityProvider,
+            stateStore: stateStore
+        )
+
+        XCTAssertNil(stateStore.state)
+        XCTAssertNil(stateStore.recoveryMarker)
+        XCTAssertEqual(stateStore.protocolFloor, 4)
+        XCTAssertFalse(identityProvider.hasIdentity)
+        XCTAssertEqual(recovered.snapshot.enrollmentState, .unenrolled)
+        XCTAssertEqual(recovered.snapshot.protocolFloor, 4)
+        XCTAssertNil(recovered.snapshot.role)
+        XCTAssertTrue(recovered.snapshot.permissions.isEmpty)
+        XCTAssertNil(recovered.presentedGrant)
+        XCTAssertFalse(recovered.permitsLegacyFallback)
+    }
+
+    func testLegacySchemaCannotAdvertiseOrNegotiatePayloadV4() throws {
+        let identity = try Curve25519.Signing.PrivateKey(
+            rawRepresentation: Data(repeating: 0x33, count: 32)
+        )
+        let challenge = makeChallenge(identity: identity)
+        XCTAssertThrowsError(try TchurchStudioLANSubscriptionAuthenticator.makeRequest(
+            challenge: challenge,
+            clientID: UUID(uuidString: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")!,
+            clientName: "Tchurch iOS",
+            channel: .stage,
+            secret: fixedSecret(0x41),
+            requestID: UUID(uuidString: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")!,
+            clientNonce: Data(repeating: 0x22, count: 24),
+            schemaVersion: TchurchStudioLANSubscriptionRequest.currentSchemaVersion,
+            offeredPayloadVersions: [4, 3, 2, 1]
+        )) {
+            XCTAssertEqual($0 as? TchurchStudioLANError, .unsupportedPayloadVersion)
+        }
+    }
+
+    func testProductionRemoteCommandAndReceiptUseCanonicalSignedContract() throws {
+        let device = TestStudioLANDeviceIdentityProvider()
+        let studioSigner = try Curve25519.Signing.PrivateKey(
+            rawRepresentation: Data(repeating: 0x33, count: 32)
+        )
+        let grant = try makeStudioLANDeviceGrant(
+            identity: device.identity,
+            signer: studioSigner,
+            studioID: UUID(uuidString: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")!,
+            permissions: [.observe, .controlProgram],
+            role: .production
+        )
+        let encodedGrant = try TchurchStudioLANCoding.encoder().encode(grant)
+        let checksum = "sha256:\(TchurchStudioLANCrypto.sha256Hex(encodedGrant))"
+        let unsigned = TchurchStudioLANRemoteCommand(
+            schemaVersion: 1,
+            commandID: UUID(uuidString: "abcdefab-cdef-4abc-8def-abcdefabcdef")!,
+            sessionID: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!,
+            deviceID: grant.deviceID,
+            grantID: grant.grantID,
+            deviceGrantChecksum: checksum,
+            permissionRevision: grant.permissionRevision,
+            revocationGeneration: grant.revocationGeneration,
+            authority: TchurchStudioLANAuthority(
+                runID: UUID(uuidString: "22222222-2222-4222-8222-222222222222")!,
+                authorityEpoch: 9,
+                packageID: "package",
+                serviceVersion: "v4"
+            ),
+            routeEpoch: 12,
+            expectedRevision: 41,
+            issuedAtMilliseconds: 1_500_000,
+            expiresAtMilliseconds: 1_515_000,
+            action: .jump(cueID: "cue-2"),
+            signature: ""
+        )
+        let canonical = try TchurchStudioLANRemoteCommandCrypto.signingData(for: unsigned)
+        let json = String(decoding: canonical, as: UTF8.self)
+        XCTAssertTrue(json.contains("\"domain\":\"tchurch-studio-lan-remote-command-v1\""))
+        XCTAssertTrue(json.contains("\"commandID\":\"ABCDEFAB-CDEF-4ABC-8DEF-ABCDEFABCDEF\""))
+        let command = TchurchStudioLANRemoteCommand(
+            schemaVersion: unsigned.schemaVersion,
+            commandID: unsigned.commandID,
+            sessionID: unsigned.sessionID,
+            deviceID: unsigned.deviceID,
+            grantID: unsigned.grantID,
+            deviceGrantChecksum: unsigned.deviceGrantChecksum,
+            permissionRevision: unsigned.permissionRevision,
+            revocationGeneration: unsigned.revocationGeneration,
+            authority: unsigned.authority,
+            routeEpoch: unsigned.routeEpoch,
+            expectedRevision: unsigned.expectedRevision,
+            issuedAtMilliseconds: unsigned.issuedAtMilliseconds,
+            expiresAtMilliseconds: unsigned.expiresAtMilliseconds,
+            action: unsigned.action,
+            signature: try device.signPossessionProof(canonical)
+        )
+        XCTAssertNoThrow(try TchurchStudioLANRemoteCommandCrypto.verify(command, deviceGrant: grant))
+
+        let signingKeyID = String(
+            TchurchStudioLANCrypto.sha256Hex(studioSigner.publicKey.rawRepresentation).prefix(24)
+        )
+        let unsignedReceipt = TchurchStudioLANRemoteCommandReceipt(
+            schemaVersion: 1,
+            commandID: command.commandID,
+            deviceID: command.deviceID,
+            authority: command.authority,
+            routeEpoch: command.routeEpoch,
+            permissionRevision: command.permissionRevision,
+            status: .accepted,
+            rejection: nil,
+            revision: 42,
+            wasIdempotentReplay: false,
+            issuedAtMilliseconds: 1_500_100,
+            studioSigningKeyID: signingKeyID,
+            signature: ""
+        )
+        let receipt = TchurchStudioLANRemoteCommandReceipt(
+            schemaVersion: unsignedReceipt.schemaVersion,
+            commandID: unsignedReceipt.commandID,
+            deviceID: unsignedReceipt.deviceID,
+            authority: unsignedReceipt.authority,
+            routeEpoch: unsignedReceipt.routeEpoch,
+            permissionRevision: unsignedReceipt.permissionRevision,
+            status: unsignedReceipt.status,
+            rejection: unsignedReceipt.rejection,
+            revision: unsignedReceipt.revision,
+            wasIdempotentReplay: unsignedReceipt.wasIdempotentReplay,
+            issuedAtMilliseconds: unsignedReceipt.issuedAtMilliseconds,
+            studioSigningKeyID: unsignedReceipt.studioSigningKeyID,
+            signature: try studioSigner.signature(
+                for: TchurchStudioLANRemoteReceiptCrypto.signingData(for: unsignedReceipt)
+            ).base64EncodedString()
+        )
+        XCTAssertNoThrow(try TchurchStudioLANRemoteReceiptCrypto.verify(
+            receipt,
+            studioSigningPublicKey: studioSigner.publicKey.rawRepresentation.base64EncodedString()
+        ))
+
+        // A lost receipt is ambiguous: reconnect and re-sign for the new
+        // authenticated context, but retain the journal identity and the
+        // original optimistic action boundary exactly.
+        var recovery = TchurchStudioLANRemoteCommandRecoveryState(command: command)
+        XCTAssertTrue(recovery.markAmbiguous(nowMilliseconds: 1_518_000))
+        let recoveredUnsigned = TchurchStudioLANRemoteCommand(
+            schemaVersion: command.schemaVersion,
+            commandID: command.commandID,
+            sessionID: UUID(uuidString: "33333333-3333-4333-8333-333333333333")!,
+            deviceID: command.deviceID,
+            grantID: command.grantID,
+            deviceGrantChecksum: command.deviceGrantChecksum,
+            permissionRevision: command.permissionRevision,
+            revocationGeneration: command.revocationGeneration,
+            authority: TchurchStudioLANAuthority(
+                runID: UUID(uuidString: "44444444-4444-4444-8444-444444444444")!,
+                authorityEpoch: 10,
+                packageID: "package",
+                serviceVersion: "v4"
+            ),
+            routeEpoch: 13,
+            expectedRevision: command.expectedRevision,
+            issuedAtMilliseconds: 1_520_000,
+            expiresAtMilliseconds: 1_535_000,
+            action: command.action,
+            signature: ""
+        )
+        let recovered = TchurchStudioLANRemoteCommand(
+            schemaVersion: recoveredUnsigned.schemaVersion,
+            commandID: recoveredUnsigned.commandID,
+            sessionID: recoveredUnsigned.sessionID,
+            deviceID: recoveredUnsigned.deviceID,
+            grantID: recoveredUnsigned.grantID,
+            deviceGrantChecksum: recoveredUnsigned.deviceGrantChecksum,
+            permissionRevision: recoveredUnsigned.permissionRevision,
+            revocationGeneration: recoveredUnsigned.revocationGeneration,
+            authority: recoveredUnsigned.authority,
+            routeEpoch: recoveredUnsigned.routeEpoch,
+            expectedRevision: recoveredUnsigned.expectedRevision,
+            issuedAtMilliseconds: recoveredUnsigned.issuedAtMilliseconds,
+            expiresAtMilliseconds: recoveredUnsigned.expiresAtMilliseconds,
+            action: recoveredUnsigned.action,
+            signature: try device.signPossessionProof(
+                TchurchStudioLANRemoteCommandCrypto.signingData(for: recoveredUnsigned)
+            )
+        )
+        let changedRevision = TchurchStudioLANRemoteCommand(
+            schemaVersion: recovered.schemaVersion,
+            commandID: recovered.commandID,
+            sessionID: recovered.sessionID,
+            deviceID: recovered.deviceID,
+            grantID: recovered.grantID,
+            deviceGrantChecksum: recovered.deviceGrantChecksum,
+            permissionRevision: recovered.permissionRevision,
+            revocationGeneration: recovered.revocationGeneration,
+            authority: recovered.authority,
+            routeEpoch: recovered.routeEpoch,
+            expectedRevision: recovered.expectedRevision + 1,
+            issuedAtMilliseconds: recovered.issuedAtMilliseconds,
+            expiresAtMilliseconds: recovered.expiresAtMilliseconds,
+            action: recovered.action,
+            signature: recovered.signature
+        )
+        XCTAssertThrowsError(try recovery.recordResignedAttempt(
+            changedRevision,
+            nowMilliseconds: 1_520_000
+        )) {
+            XCTAssertEqual($0 as? TchurchStudioLANRemoteControlError, .invalidCommand)
+        }
+        try recovery.recordResignedAttempt(recovered, nowMilliseconds: 1_520_000)
+        XCTAssertEqual(recovered.commandID, command.commandID)
+        XCTAssertEqual(recovered.action, command.action)
+        XCTAssertEqual(recovered.expectedRevision, command.expectedRevision)
+        XCTAssertNotEqual(recovered.sessionID, command.sessionID)
+        XCTAssertNotEqual(recovered.routeEpoch, command.routeEpoch)
+        XCTAssertNoThrow(try TchurchStudioLANRemoteCommandCrypto.verify(
+            recovered,
+            deviceGrant: grant
+        ))
+        XCTAssertTrue(recovery.markAmbiguous(nowMilliseconds: 1_538_000))
+        try recovery.recordResignedAttempt(recovered, nowMilliseconds: 1_539_000)
+        XCTAssertFalse(recovery.markAmbiguous(nowMilliseconds: 1_540_000))
+    }
+}
+
+private struct TestStudioLANDevicePossessionProof: Codable {
+    let schemaVersion: Int
+    let domain: String
+    let challenge: TchurchStudioLANServerChallenge
+    let requestID: UUID
+    let clientID: UUID
+    let clientName: String
+    let channel: TchurchStudioLANChannel
+    let clientNonce: String
+    let supportedPayloadVersions: [Int]
+    let deviceID: UUID
+    let requestedRole: StudioLANDeviceRole
+    let keyAlgorithm: StudioLANPublicKeyAlgorithm
+    let devicePublicKey: String
+    let devicePublicKeyFingerprint: String
+    let presentedGrantChecksum: String?
+}
+
+private struct TestStudioLANSubscriptionRequestProofV4: Codable {
+    let challenge: TchurchStudioLANServerChallenge
+    let requestID: UUID
+    let clientID: UUID
+    let clientName: String
+    let channel: TchurchStudioLANChannel
+    let clientNonce: String
+    let supportedPayloadVersions: [Int]
+    let deviceAttestation: StudioLANDeviceAttestation
+}
+
+private final class TestStudioLANDeviceIdentityProvider: StudioLANDeviceIdentityProviding {
+    private var privateKey: P256.Signing.PrivateKey
+    private(set) var identity: StudioLANDeviceIdentity
+    private(set) var hasIdentity = true
+    private(set) var deleteCount = 0
+
+    init() {
+        privateKey = P256.Signing.PrivateKey()
+        let publicKey = privateKey.publicKey.x963Representation
+        identity = StudioLANDeviceIdentity(
+            deviceID: UUID(uuidString: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")!,
+            keyAlgorithm: .p256Signing,
+            publicKey: publicKey.base64EncodedString(),
+            fingerprint: StudioLANDeviceGrant.fingerprint(forPublicKeyData: publicKey),
+            secureEnclaveBacked: false
+        )
+    }
+
+    func loadOrCreate() throws -> StudioLANDeviceIdentity {
+        if !hasIdentity { generateIdentity() }
+        return identity
+    }
+
+    func deleteIdentity() throws {
+        hasIdentity = false
+        deleteCount += 1
+    }
+
+    func rotateAfterRevocation() throws -> StudioLANDeviceIdentity {
+        try deleteIdentity()
+        generateIdentity()
+        return identity
+    }
+
+    private func generateIdentity() {
+        privateKey = P256.Signing.PrivateKey()
+        let publicKey = privateKey.publicKey.x963Representation
+        identity = StudioLANDeviceIdentity(
+            deviceID: UUID(),
+            keyAlgorithm: .p256Signing,
+            publicKey: publicKey.base64EncodedString(),
+            fingerprint: StudioLANDeviceGrant.fingerprint(forPublicKeyData: publicKey),
+            secureEnclaveBacked: false
+        )
+        hasIdentity = true
+    }
+
+    func signPossessionProof(_ canonicalPayload: Data) throws -> String {
+        try privateKey.signature(for: canonicalPayload).derRepresentation.base64EncodedString()
+    }
+}
+
+private final class TestStudioLANDeviceTrustStateStore: StudioLANDeviceTrustStateStoring {
+    var state: StudioLANDeviceTrustRecord?
+    var protocolFloor: Int?
+    var recoveryMarker: StudioLANDeviceTrustRecoveryMarker?
+
+    func read() throws -> StudioLANDeviceTrustRecord? { state }
+    func write(_ state: StudioLANDeviceTrustRecord) throws { self.state = state }
+    func delete() throws { state = nil }
+    func readProtocolFloor() throws -> Int? { protocolFloor }
+    func writeProtocolFloor(_ protocolFloor: Int) throws {
+        guard protocolFloor >= (self.protocolFloor ?? 1) else {
+            throw StudioLANDeviceTrustError.legacyDowngradeDenied
+        }
+        self.protocolFloor = protocolFloor
+    }
+    func readRecoveryMarker() throws -> StudioLANDeviceTrustRecoveryMarker? { recoveryMarker }
+    func writeRecoveryMarker(_ marker: StudioLANDeviceTrustRecoveryMarker) throws {
+        recoveryMarker = marker
+    }
+    func deleteRecoveryMarker() throws { recoveryMarker = nil }
+}
+
+private func makeStudioLANDeviceGrant(
+    identity: StudioLANDeviceIdentity,
+    signer: Curve25519.Signing.PrivateKey,
+    studioID: UUID,
+    permissions: [StudioLANDevicePermission],
+    role: StudioLANDeviceRole = .musicians
+) throws -> StudioLANDeviceGrant {
+    let signingPublicKey = signer.publicKey.rawRepresentation
+    let signingKeyID = String(TchurchStudioLANCrypto.sha256Hex(signingPublicKey).prefix(24))
+    let unsigned = StudioLANDeviceGrant(
+        schemaVersion: 4,
+        protocolFloor: 4,
+        grantID: UUID(uuidString: "ffffffff-ffff-4fff-8fff-ffffffffffff")!,
+        deviceID: identity.deviceID,
+        deviceName: "Tchurch iOS",
+        role: role,
+        permissions: permissions,
+        keyAlgorithm: .p256Signing,
+        devicePublicKey: identity.publicKey,
+        devicePublicKeyFingerprint: identity.fingerprint,
+        studioID: studioID,
+        studioSigningKeyID: signingKeyID,
+        studioSigningPublicKey: signingPublicKey.base64EncodedString(),
+        permissionRevision: 7,
+        revocationGeneration: 2,
+        issuedAtMilliseconds: 1_000_000,
+        expiresAtMilliseconds: 2_000_000,
+        signature: ""
+    )
+    let signature = try signer.signature(for: unsigned.canonicalSigningData()).base64EncodedString()
+    return StudioLANDeviceGrant(
+        schemaVersion: unsigned.schemaVersion,
+        protocolFloor: unsigned.protocolFloor,
+        grantID: unsigned.grantID,
+        deviceID: unsigned.deviceID,
+        deviceName: unsigned.deviceName,
+        role: unsigned.role,
+        permissions: unsigned.permissions,
+        keyAlgorithm: unsigned.keyAlgorithm,
+        devicePublicKey: unsigned.devicePublicKey,
+        devicePublicKeyFingerprint: unsigned.devicePublicKeyFingerprint,
+        studioID: unsigned.studioID,
+        studioSigningKeyID: unsigned.studioSigningKeyID,
+        studioSigningPublicKey: unsigned.studioSigningPublicKey,
+        permissionRevision: unsigned.permissionRevision,
+        revocationGeneration: unsigned.revocationGeneration,
+        issuedAtMilliseconds: unsigned.issuedAtMilliseconds,
+        expiresAtMilliseconds: unsigned.expiresAtMilliseconds,
+        signature: signature
+    )
 }

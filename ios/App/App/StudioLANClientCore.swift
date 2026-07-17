@@ -40,6 +40,10 @@ enum TchurchStudioLANChannel: String, Codable, Equatable {
     case control
 
     var isReadOnlyOutput: Bool { self == .audience || self == .stage }
+
+    /// Control is subscription-only in device-trust v4. It is never accepted
+    /// by either legacy shared-secret subscription schema.
+    var isSupportedSubscription: Bool { true }
 }
 
 struct TchurchStudioLANAuthority: Codable, Equatable {
@@ -219,14 +223,36 @@ struct TchurchStudioLANStagePayload: Codable, Equatable {
     let stage: TchurchStudioLANStageSupplement
 }
 
+struct TchurchStudioLANRemoteCueDescriptor: Codable, Equatable {
+    let cueID: String
+    let title: String
+}
+
+struct TchurchStudioLANControlSupplement: Codable, Equatable {
+    let chordsVisible: Bool
+    let lightingArmed: Bool
+    let healthyOutputCount: Int
+    let expectedOutputCount: Int
+    let routeEpoch: UInt64?
+    let cueCatalog: [TchurchStudioLANRemoteCueDescriptor]?
+}
+
+struct TchurchStudioLANControlPayload: Codable, Equatable {
+    let audience: TchurchStudioLANAudiencePayload
+    let stage: TchurchStudioLANStageSupplement
+    let control: TchurchStudioLANControlSupplement
+}
+
 enum TchurchStudioLANChannelPayload: Codable, Equatable {
     case audience(TchurchStudioLANAudiencePayload)
     case stage(TchurchStudioLANStagePayload)
+    case control(TchurchStudioLANControlPayload)
 
     var channel: TchurchStudioLANChannel {
         switch self {
         case .audience: return .audience
         case .stage: return .stage
+        case .control: return .control
         }
     }
 
@@ -234,18 +260,28 @@ enum TchurchStudioLANChannelPayload: Codable, Equatable {
         switch self {
         case .audience(let payload): return payload
         case .stage(let payload): return payload.audience
+        case .control(let payload): return payload.audience
         }
     }
 
     var stage: TchurchStudioLANStageSupplement? {
-        guard case .stage(let payload) = self else { return nil }
-        return payload.stage
+        switch self {
+        case .stage(let payload): return payload.stage
+        case .control(let payload): return payload.stage
+        case .audience: return nil
+        }
+    }
+
+    var control: TchurchStudioLANControlSupplement? {
+        guard case .control(let payload) = self else { return nil }
+        return payload.control
     }
 
     private enum CodingKeys: String, CodingKey {
         case channel
         case audience
         case stage
+        case control
     }
 
     init(from decoder: Decoder) throws {
@@ -256,7 +292,7 @@ enum TchurchStudioLANChannelPayload: Codable, Equatable {
         case .stage:
             self = .stage(try container.decode(TchurchStudioLANStagePayload.self, forKey: .stage))
         case .control:
-            throw TchurchStudioLANError.unsupportedChannel
+            self = .control(try container.decode(TchurchStudioLANControlPayload.self, forKey: .control))
         }
     }
 
@@ -268,6 +304,8 @@ enum TchurchStudioLANChannelPayload: Codable, Equatable {
             try container.encode(payload, forKey: .audience)
         case .stage(let payload):
             try container.encode(payload, forKey: .stage)
+        case .control(let payload):
+            try container.encode(payload, forKey: .control)
         }
     }
 }
@@ -282,12 +320,41 @@ struct TchurchStudioLANServerChallenge: Codable, Equatable {
     let signingKeyID: String
     let issuedAtMilliseconds: Int64
     let expiresAtMilliseconds: Int64
+    let deviceTrustVersion: Int?
+    let minimumPayloadVersion: Int?
+    let studioID: UUID?
+
+    init(
+        schemaVersion: Int,
+        challengeID: UUID,
+        serverNonce: String,
+        authority: TchurchStudioLANAuthority,
+        signingKeyID: String,
+        issuedAtMilliseconds: Int64,
+        expiresAtMilliseconds: Int64,
+        deviceTrustVersion: Int? = nil,
+        minimumPayloadVersion: Int? = nil,
+        studioID: UUID? = nil
+    ) {
+        self.schemaVersion = schemaVersion
+        self.challengeID = challengeID
+        self.serverNonce = serverNonce
+        self.authority = authority
+        self.signingKeyID = signingKeyID
+        self.issuedAtMilliseconds = issuedAtMilliseconds
+        self.expiresAtMilliseconds = expiresAtMilliseconds
+        self.deviceTrustVersion = deviceTrustVersion
+        self.minimumPayloadVersion = minimumPayloadVersion
+        self.studioID = studioID
+    }
 }
 
 struct TchurchStudioLANSubscriptionRequest: Codable, Equatable {
     static let legacySchemaVersion = 1
     static let currentSchemaVersion = 2
+    static let deviceTrustSchemaVersion = 3
     static let supportedPayloadVersions = [3, 2, 1]
+    static let v4SupportedPayloadVersions = [4, 3, 2, 1]
 
     let schemaVersion: Int
     let requestID: UUID
@@ -298,6 +365,7 @@ struct TchurchStudioLANSubscriptionRequest: Codable, Equatable {
     let clientNonce: String
     let supportedPayloadVersions: [Int]?
     let authenticationProof: String
+    let deviceAttestation: StudioLANDeviceAttestation?
 
     init(
         schemaVersion: Int,
@@ -308,7 +376,8 @@ struct TchurchStudioLANSubscriptionRequest: Codable, Equatable {
         channel: TchurchStudioLANChannel,
         clientNonce: String,
         supportedPayloadVersions: [Int]? = nil,
-        authenticationProof: String
+        authenticationProof: String,
+        deviceAttestation: StudioLANDeviceAttestation? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.requestID = requestID
@@ -319,12 +388,14 @@ struct TchurchStudioLANSubscriptionRequest: Codable, Equatable {
         self.clientNonce = clientNonce
         self.supportedPayloadVersions = supportedPayloadVersions
         self.authenticationProof = authenticationProof
+        self.deviceAttestation = deviceAttestation
     }
 }
 
 struct TchurchStudioLANSubscriptionGrant: Codable, Equatable {
     static let legacySchemaVersion = 1
     static let currentSchemaVersion = 2
+    static let deviceTrustSchemaVersion = 3
 
     let schemaVersion: Int
     let sessionID: UUID
@@ -336,6 +407,7 @@ struct TchurchStudioLANSubscriptionGrant: Codable, Equatable {
     let minimumSequence: UInt64
     let expiresAtMilliseconds: Int64
     let selectedPayloadVersion: Int?
+    let deviceGrant: StudioLANDeviceGrant?
     let serverProof: String
 
     init(
@@ -349,6 +421,7 @@ struct TchurchStudioLANSubscriptionGrant: Codable, Equatable {
         minimumSequence: UInt64,
         expiresAtMilliseconds: Int64,
         selectedPayloadVersion: Int? = nil,
+        deviceGrant: StudioLANDeviceGrant? = nil,
         serverProof: String
     ) {
         self.schemaVersion = schemaVersion
@@ -361,12 +434,13 @@ struct TchurchStudioLANSubscriptionGrant: Codable, Equatable {
         self.minimumSequence = minimumSequence
         self.expiresAtMilliseconds = expiresAtMilliseconds
         self.selectedPayloadVersion = selectedPayloadVersion
+        self.deviceGrant = deviceGrant
         self.serverProof = serverProof
     }
 }
 
 struct TchurchStudioLANSignedEnvelope: Codable, Equatable {
-    static let supportedSchemaVersions = Set([1, 2, 3])
+    static let supportedSchemaVersions = Set([1, 2, 3, 4])
 
     let schemaVersion: Int
     let authority: TchurchStudioLANAuthority
@@ -550,6 +624,17 @@ private struct TchurchStudioLANSubscriptionRequestProofV2: Codable {
     let supportedPayloadVersions: [Int]
 }
 
+private struct TchurchStudioLANSubscriptionRequestProofV4: Codable {
+    let challenge: TchurchStudioLANServerChallenge
+    let requestID: UUID
+    let clientID: UUID
+    let clientName: String
+    let channel: TchurchStudioLANChannel
+    let clientNonce: String
+    let supportedPayloadVersions: [Int]
+    let deviceAttestation: StudioLANDeviceAttestation
+}
+
 private struct TchurchStudioLANSubscriptionGrantProof: Codable {
     let challengeID: UUID
     let sessionID: UUID
@@ -577,6 +662,21 @@ private struct TchurchStudioLANSubscriptionGrantProofV2: Codable {
     let selectedPayloadVersion: Int
 }
 
+private struct TchurchStudioLANSubscriptionGrantProofV4: Codable {
+    let challengeID: UUID
+    let sessionID: UUID
+    let requestID: UUID
+    let channel: TchurchStudioLANChannel
+    let authority: TchurchStudioLANAuthority
+    let signingKeyID: String
+    let signingPublicKey: String
+    let minimumSequence: UInt64
+    let expiresAtMilliseconds: Int64
+    let clientNonce: String
+    let selectedPayloadVersion: Int
+    let deviceGrantChecksum: String
+}
+
 private struct TchurchStudioLANEnvelopeSigningMaterial: Codable {
     let schemaVersion: Int
     let authority: TchurchStudioLANAuthority
@@ -594,10 +694,18 @@ struct TchurchStudioLANVerifiedSubscription {
     fileprivate let publicKey: Curve25519.Signing.PublicKey
 
     var authority: TchurchStudioLANAuthority { grant.authority }
+    var sessionID: UUID { grant.sessionID }
     var channel: TchurchStudioLANChannel { grant.channel }
     var signingKeyID: String { grant.signingKeyID }
+    var signingPublicKey: String { grant.signingPublicKey }
     var minimumSequence: UInt64 { grant.minimumSequence }
     var payloadVersion: Int { grant.selectedPayloadVersion ?? 1 }
+    var deviceGrant: StudioLANDeviceGrant? { grant.deviceGrant }
+    var deviceGrantChecksum: String? {
+        guard let deviceGrant,
+              let encoded = try? TchurchStudioLANCoding.encoder().encode(deviceGrant) else { return nil }
+        return "sha256:\(TchurchStudioLANCrypto.sha256Hex(encoded))"
+    }
 }
 
 enum TchurchStudioLANFallbackSignal: Equatable {
@@ -613,16 +721,30 @@ enum TchurchStudioLANFallbackSignal: Equatable {
 /// and no fallback is possible after an authenticated grant selected a
 /// payload version.
 struct TchurchStudioLANPayloadNegotiation: Equatable {
+    let protocolFloor: Int
     private(set) var didAttemptLegacyFallback = false
     private(set) var negotiatedPayloadVersion: Int?
+
+    init(protocolFloor: Int = 1) {
+        self.protocolFloor = max(1, protocolFloor)
+    }
 
     var requestSchemaVersion: Int {
         // Subscription schema and selected payload schema are independent.
         // A modern v2 subscription can bind payload v1, v2, or v3; only the
         // explicit authenticated legacy-fallback path may emit a v1 request.
+        if protocolFloor >= StudioLANDeviceTrustContract.protocolFloor {
+            return TchurchStudioLANSubscriptionRequest.deviceTrustSchemaVersion
+        }
         return didAttemptLegacyFallback
             ? TchurchStudioLANSubscriptionRequest.legacySchemaVersion
             : TchurchStudioLANSubscriptionRequest.currentSchemaVersion
+    }
+
+    var supportedPayloadVersions: [Int] {
+        protocolFloor >= StudioLANDeviceTrustContract.protocolFloor
+            ? TchurchStudioLANSubscriptionRequest.v4SupportedPayloadVersions
+            : TchurchStudioLANSubscriptionRequest.supportedPayloadVersions
     }
 
     mutating func attemptLegacyFallback(
@@ -630,10 +752,11 @@ struct TchurchStudioLANPayloadNegotiation: Equatable {
         signal: TchurchStudioLANFallbackSignal
     ) -> Bool {
         guard signal == .authenticatedLegacyError,
+              protocolFloor < StudioLANDeviceTrustRecord.protocolFloor,
               negotiatedPayloadVersion == nil,
               !didAttemptLegacyFallback,
               request?.schemaVersion == TchurchStudioLANSubscriptionRequest.currentSchemaVersion,
-              request?.supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.supportedPayloadVersions else {
+              request?.supportedPayloadVersions == supportedPayloadVersions else {
             return false
         }
         didAttemptLegacyFallback = true
@@ -642,7 +765,8 @@ struct TchurchStudioLANPayloadNegotiation: Equatable {
 
     mutating func recordAuthenticatedGrant(_ subscription: TchurchStudioLANVerifiedSubscription) throws {
         let selected = subscription.payloadVersion
-        guard TchurchStudioLANSubscriptionRequest.supportedPayloadVersions.contains(selected),
+        guard supportedPayloadVersions.contains(selected),
+              selected >= protocolFloor,
               negotiatedPayloadVersion.map({ $0 == selected }) ?? true else {
             throw TchurchStudioLANError.unsupportedPayloadVersion
         }
@@ -659,18 +783,23 @@ enum TchurchStudioLANSubscriptionAuthenticator {
         secret: TchurchStudioLANPairingSecret,
         requestID: UUID = UUID(),
         clientNonce: Data? = nil,
-        schemaVersion: Int = TchurchStudioLANSubscriptionRequest.currentSchemaVersion
+        schemaVersion: Int = TchurchStudioLANSubscriptionRequest.currentSchemaVersion,
+        offeredPayloadVersions: [Int]? = nil,
+        deviceAttestation: StudioLANDeviceAttestation? = nil
     ) throws -> TchurchStudioLANSubscriptionRequest {
         guard challenge.schemaVersion == TchurchStudioLANServerChallenge.schemaVersion,
               challenge.authority.authorityEpoch > 0,
               !challenge.authority.packageID.isEmpty,
               !challenge.authority.serviceVersion.isEmpty,
               !challenge.signingKeyID.isEmpty,
-              channel.isReadOnlyOutput,
+              channel.isSupportedSubscription,
+              (channel != .control ||
+                schemaVersion == TchurchStudioLANSubscriptionRequest.deviceTrustSchemaVersion),
               !clientName.isEmpty,
               clientName.utf8.count <= TchurchStudioLANLimits.production.maximumClientNameBytes,
               schemaVersion == TchurchStudioLANSubscriptionRequest.legacySchemaVersion ||
-                schemaVersion == TchurchStudioLANSubscriptionRequest.currentSchemaVersion else {
+                schemaVersion == TchurchStudioLANSubscriptionRequest.currentSchemaVersion ||
+                schemaVersion == TchurchStudioLANSubscriptionRequest.deviceTrustSchemaVersion else {
             throw TchurchStudioLANError.invalidChallenge
         }
         let nonce = try clientNonce ?? TchurchStudioLANCrypto.randomBytes(count: 24)
@@ -678,11 +807,51 @@ enum TchurchStudioLANSubscriptionAuthenticator {
             throw TchurchStudioLANError.invalidAuthenticationProof
         }
         let encodedNonce = nonce.base64EncodedString()
-        let supportedPayloadVersions = schemaVersion == TchurchStudioLANSubscriptionRequest.currentSchemaVersion
-            ? TchurchStudioLANSubscriptionRequest.supportedPayloadVersions
-            : nil
+        let supportedPayloadVersions: [Int]?
+        switch schemaVersion {
+        case TchurchStudioLANSubscriptionRequest.currentSchemaVersion:
+            guard offeredPayloadVersions == nil ||
+                    offeredPayloadVersions == TchurchStudioLANSubscriptionRequest.supportedPayloadVersions else {
+                throw TchurchStudioLANError.unsupportedPayloadVersion
+            }
+            supportedPayloadVersions = TchurchStudioLANSubscriptionRequest.supportedPayloadVersions
+        case TchurchStudioLANSubscriptionRequest.deviceTrustSchemaVersion:
+            supportedPayloadVersions = offeredPayloadVersions ?? TchurchStudioLANSubscriptionRequest.v4SupportedPayloadVersions
+        default:
+            supportedPayloadVersions = nil
+        }
+        guard supportedPayloadVersions == nil ||
+                supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.supportedPayloadVersions ||
+                (schemaVersion == TchurchStudioLANSubscriptionRequest.deviceTrustSchemaVersion &&
+                    supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.v4SupportedPayloadVersions) else {
+            throw TchurchStudioLANError.unsupportedPayloadVersion
+        }
         let authenticationProof: String
-        if let supportedPayloadVersions {
+        if schemaVersion == TchurchStudioLANSubscriptionRequest.deviceTrustSchemaVersion,
+           let supportedPayloadVersions,
+           let deviceAttestation {
+            guard supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.v4SupportedPayloadVersions,
+                  deviceAttestation.deviceID == clientID,
+                  deviceAttestation.requestedRole.channel == channel else {
+                throw TchurchStudioLANError.invalidAuthenticationProof
+            }
+            authenticationProof = try TchurchStudioLANCrypto.authenticationCode(
+                for: TchurchStudioLANSubscriptionRequestProofV4(
+                    challenge: challenge,
+                    requestID: requestID,
+                    clientID: clientID,
+                    clientName: clientName,
+                    channel: channel,
+                    clientNonce: encodedNonce,
+                    supportedPayloadVersions: supportedPayloadVersions,
+                    deviceAttestation: deviceAttestation
+                ),
+                secret: secret
+            )
+        } else if let supportedPayloadVersions {
+            guard deviceAttestation == nil else {
+                throw TchurchStudioLANError.invalidAuthenticationProof
+            }
             authenticationProof = try TchurchStudioLANCrypto.authenticationCode(
                 for: TchurchStudioLANSubscriptionRequestProofV2(
                     challenge: challenge,
@@ -696,6 +865,9 @@ enum TchurchStudioLANSubscriptionAuthenticator {
                 secret: secret
             )
         } else {
+            guard deviceAttestation == nil else {
+                throw TchurchStudioLANError.invalidAuthenticationProof
+            }
             authenticationProof = try TchurchStudioLANCrypto.authenticationCode(
                 for: TchurchStudioLANSubscriptionRequestProof(
                     challenge: challenge,
@@ -717,7 +889,8 @@ enum TchurchStudioLANSubscriptionAuthenticator {
             channel: channel,
             clientNonce: encodedNonce,
             supportedPayloadVersions: supportedPayloadVersions,
-            authenticationProof: authenticationProof
+            authenticationProof: authenticationProof,
+            deviceAttestation: deviceAttestation
         )
     }
 
@@ -731,9 +904,12 @@ enum TchurchStudioLANSubscriptionAuthenticator {
         guard challenge.schemaVersion == TchurchStudioLANServerChallenge.schemaVersion,
               challenge.expiresAtMilliseconds >= nowMilliseconds,
               request.schemaVersion == TchurchStudioLANSubscriptionRequest.legacySchemaVersion ||
-                request.schemaVersion == TchurchStudioLANSubscriptionRequest.currentSchemaVersion,
+                request.schemaVersion == TchurchStudioLANSubscriptionRequest.currentSchemaVersion ||
+                request.schemaVersion == TchurchStudioLANSubscriptionRequest.deviceTrustSchemaVersion,
               request.challengeID == challenge.challengeID,
-              request.channel.isReadOnlyOutput,
+              request.channel.isSupportedSubscription,
+              (request.channel != .control ||
+                request.schemaVersion == TchurchStudioLANSubscriptionRequest.deviceTrustSchemaVersion),
               grant.schemaVersion == request.schemaVersion,
               grant.requestID == request.requestID,
               grant.channel == request.channel,
@@ -751,7 +927,9 @@ enum TchurchStudioLANSubscriptionAuthenticator {
         switch request.schemaVersion {
         case TchurchStudioLANSubscriptionRequest.legacySchemaVersion:
             guard request.supportedPayloadVersions == nil,
-                  grant.selectedPayloadVersion == nil else {
+                  request.deviceAttestation == nil,
+                  grant.selectedPayloadVersion == nil,
+                  grant.deviceGrant == nil else {
                 throw TchurchStudioLANError.unsupportedPayloadVersion
             }
             proofIsValid = TchurchStudioLANCrypto.validatesAuthenticationCode(
@@ -771,10 +949,12 @@ enum TchurchStudioLANSubscriptionAuthenticator {
                 secret: secret
             )
         case TchurchStudioLANSubscriptionRequest.currentSchemaVersion:
-            guard request.supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.supportedPayloadVersions,
+            let offeredPayloadVersions = request.supportedPayloadVersions
+            guard offeredPayloadVersions == TchurchStudioLANSubscriptionRequest.supportedPayloadVersions,
+                  request.deviceAttestation == nil,
+                  grant.deviceGrant == nil,
                   let selectedPayloadVersion = grant.selectedPayloadVersion,
-                  TchurchStudioLANSubscriptionRequest.supportedPayloadVersions
-                    .contains(selectedPayloadVersion) else {
+                  offeredPayloadVersions?.contains(selectedPayloadVersion) == true else {
                 throw TchurchStudioLANError.unsupportedPayloadVersion
             }
             proofIsValid = TchurchStudioLANCrypto.validatesAuthenticationCode(
@@ -791,6 +971,58 @@ enum TchurchStudioLANSubscriptionAuthenticator {
                     expiresAtMilliseconds: grant.expiresAtMilliseconds,
                     clientNonce: request.clientNonce,
                     selectedPayloadVersion: selectedPayloadVersion
+                ),
+                secret: secret
+            )
+        case TchurchStudioLANSubscriptionRequest.deviceTrustSchemaVersion:
+            guard challenge.deviceTrustVersion == StudioLANDeviceTrustContract.schemaVersion,
+                  challenge.minimumPayloadVersion == StudioLANDeviceTrustContract.protocolFloor,
+                  let studioID = challenge.studioID,
+                  request.supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.v4SupportedPayloadVersions,
+                  let attestation = request.deviceAttestation,
+                  grant.selectedPayloadVersion == StudioLANDeviceTrustContract.protocolFloor,
+                  let deviceGrant = grant.deviceGrant,
+                  deviceGrant.deviceID == request.clientID,
+                  deviceGrant.deviceID == attestation.deviceID,
+                  deviceGrant.role == attestation.requestedRole,
+                  deviceGrant.devicePublicKey == attestation.devicePublicKey,
+                  deviceGrant.devicePublicKeyFingerprint == attestation.devicePublicKeyFingerprint else {
+                throw TchurchStudioLANError.invalidSubscription
+            }
+            let attestedIdentity = StudioLANDeviceIdentity(
+                deviceID: attestation.deviceID,
+                keyAlgorithm: attestation.keyAlgorithm,
+                publicKey: attestation.devicePublicKey,
+                fingerprint: attestation.devicePublicKeyFingerprint,
+                secureEnclaveBacked: false
+            )
+            do {
+                try deviceGrant.verify(
+                    identity: attestedIdentity,
+                    nowMilliseconds: nowMilliseconds,
+                    pinnedStudioID: studioID,
+                    pinnedStudioSigningPublicKey: grant.signingPublicKey
+                )
+            } catch {
+                throw TchurchStudioLANError.invalidSubscription
+            }
+            let encodedDeviceGrant = try TchurchStudioLANCoding.encoder().encode(deviceGrant)
+            let deviceGrantChecksum = "sha256:\(TchurchStudioLANCrypto.sha256Hex(encodedDeviceGrant))"
+            proofIsValid = TchurchStudioLANCrypto.validatesAuthenticationCode(
+                grant.serverProof,
+                for: TchurchStudioLANSubscriptionGrantProofV4(
+                    challengeID: challenge.challengeID,
+                    sessionID: grant.sessionID,
+                    requestID: grant.requestID,
+                    channel: grant.channel,
+                    authority: grant.authority,
+                    signingKeyID: grant.signingKeyID,
+                    signingPublicKey: grant.signingPublicKey,
+                    minimumSequence: grant.minimumSequence,
+                    expiresAtMilliseconds: grant.expiresAtMilliseconds,
+                    clientNonce: request.clientNonce,
+                    selectedPayloadVersion: StudioLANDeviceTrustContract.protocolFloor,
+                    deviceGrantChecksum: deviceGrantChecksum
                 ),
                 secret: secret
             )
@@ -974,7 +1206,31 @@ struct TchurchStudioLANEnvelopeVerifier {
                 audience: audience,
                 payloadVersion: envelope.schemaVersion
             )
-        } else if envelope.schemaVersion >= 2, envelope.channel == .stage {
+        } else if envelope.schemaVersion >= 2,
+                  envelope.channel == .stage || envelope.channel == .control {
+            throw TchurchStudioLANError.invalidPayload
+        }
+        if envelope.channel == .control {
+            guard envelope.schemaVersion == StudioLANDeviceTrustContract.protocolFloor,
+                  let control = envelope.payload.control,
+                  let routeEpoch = control.routeEpoch,
+                  routeEpoch > 0,
+                  routeEpoch != UInt64.max,
+                  let cueCatalog = control.cueCatalog,
+                  cueCatalog.count == snapshot.cueCount,
+                  cueCatalog.count <= 4_096,
+                  Set(cueCatalog.map(\.cueID)).count == cueCatalog.count,
+                  cueCatalog.allSatisfy({
+                      validText($0.cueID, maximumBytes: limits.maximumIdentifierBytes) &&
+                          validText($0.title, maximumBytes: limits.maximumTextBytes)
+                  }),
+                  control.healthyOutputCount >= 0,
+                  control.expectedOutputCount >= 0,
+                  control.healthyOutputCount <= control.expectedOutputCount,
+                  control.chordsVisible || envelope.payload.stage?.currentChordSlide == nil else {
+                throw TchurchStudioLANError.invalidPayload
+            }
+        } else if envelope.payload.control != nil {
             throw TchurchStudioLANError.invalidPayload
         }
     }
@@ -989,7 +1245,7 @@ struct TchurchStudioLANEnvelopeVerifier {
             guard slide == nil else { throw TchurchStudioLANError.invalidPayload }
             return
         }
-        guard payloadVersion == 2 || payloadVersion == 3 else {
+        guard payloadVersion == 2 || payloadVersion == 3 || payloadVersion == 4 else {
             throw TchurchStudioLANError.unsupportedPayloadVersion
         }
         guard let slide else {
@@ -1088,7 +1344,7 @@ struct TchurchStudioLANEnvelopeVerifier {
         payloadVersion: Int
     ) -> Bool {
         guard let descriptor else { return true }
-        guard payloadVersion == 3 else { return false }
+        guard payloadVersion == 3 || payloadVersion == 4 else { return false }
         return descriptor.schemaVersion == TchurchStudioLANImageAssetDescriptor.schemaVersion &&
             descriptor.objectID == mediaAssetID &&
             validAssetID(descriptor.referenceID) &&
@@ -1185,6 +1441,10 @@ struct TchurchStudioLANLengthPrefixedFrameDecoder {
 
 enum TchurchStudioLANWireErrorCode: String, Codable, Equatable {
     case authenticationFailed
+    case approvalPending
+    case deviceRevoked
+    case deviceExpired
+    case protocolUpgradeRequired
     case rateLimited
     case protocolViolation
     case overloaded
@@ -1201,15 +1461,19 @@ enum TchurchStudioLANWireMessage: Codable, Equatable {
     case assetRequest(TchurchStudioLANAssetRequest)
     case assetChunk(TchurchStudioLANAssetChunk)
     case assetUnavailable(TchurchStudioLANAssetUnavailable)
+    case remoteCommand(TchurchStudioLANRemoteCommand)
+    case remoteReceipt(TchurchStudioLANRemoteCommandReceipt)
     case error(TchurchStudioLANWireErrorCode)
 
     private enum Kind: String, Codable {
         case challenge, subscribe, grant, envelope, ping, pong
-        case assetRequest, assetChunk, assetUnavailable, error
+        case assetRequest, assetChunk, assetUnavailable
+        case remoteCommand, remoteReceipt, error
     }
     private enum CodingKeys: String, CodingKey {
         case kind, challenge, request, grant, envelope, nonce
-        case assetRequest, assetChunk, assetUnavailable, error
+        case assetRequest, assetChunk, assetUnavailable
+        case remoteCommand, remoteReceipt, error
     }
 
     init(from decoder: Decoder) throws {
@@ -1228,6 +1492,14 @@ enum TchurchStudioLANWireMessage: Codable, Equatable {
         case .assetUnavailable:
             self = .assetUnavailable(
                 try container.decode(TchurchStudioLANAssetUnavailable.self, forKey: .assetUnavailable)
+            )
+        case .remoteCommand:
+            self = .remoteCommand(
+                try container.decode(TchurchStudioLANRemoteCommand.self, forKey: .remoteCommand)
+            )
+        case .remoteReceipt:
+            self = .remoteReceipt(
+                try container.decode(TchurchStudioLANRemoteCommandReceipt.self, forKey: .remoteReceipt)
             )
         case .error: self = .error(try container.decode(TchurchStudioLANWireErrorCode.self, forKey: .error))
         }
@@ -1263,6 +1535,12 @@ enum TchurchStudioLANWireMessage: Codable, Equatable {
         case .assetUnavailable(let value):
             try container.encode(Kind.assetUnavailable, forKey: .kind)
             try container.encode(value, forKey: .assetUnavailable)
+        case .remoteCommand(let value):
+            try container.encode(Kind.remoteCommand, forKey: .kind)
+            try container.encode(value, forKey: .remoteCommand)
+        case .remoteReceipt(let value):
+            try container.encode(Kind.remoteReceipt, forKey: .kind)
+            try container.encode(value, forKey: .remoteReceipt)
         case .error(let value):
             try container.encode(Kind.error, forKey: .kind)
             try container.encode(value, forKey: .error)

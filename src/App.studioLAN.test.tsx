@@ -45,6 +45,9 @@ vi.mock("@/lib/appRoutePreloaders", async () => {
   appRouteLoaders.StudioLANStage = () => Promise.resolve({
     default: () => React.createElement("div", { "data-testid": "studio-lan-route" }, "Studio LAN local"),
   });
+  appRouteLoaders.StudioLANProduction = () => Promise.resolve({
+    default: () => React.createElement("div", { "data-testid": "studio-lan-production-route" }, "Studio LAN production local"),
+  });
   return { appRouteLoaders, scheduleNativeAppPreload: mocks.routePreload };
 });
 
@@ -107,6 +110,18 @@ describe("Studio LAN application boundary", () => {
     expect(mocks.analyticsMounted).not.toHaveBeenCalled();
     expect(mocks.routePreload).not.toHaveBeenCalled();
     expect(mocks.dataWarmup).not.toHaveBeenCalled();
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  });
+
+  it("opens production control inside the same local-only privacy boundary", async () => {
+    window.location.hash = "#/app/studio-production";
+    mocks.getLaunchUrl.mockResolvedValue({ url: "tchurchapp://tchurchapp.com/#/app/studio-production" });
+
+    render(<App />);
+
+    expect(await screen.findByTestId("studio-lan-production-route")).toHaveTextContent("production local");
+    expect(mocks.privacyMounted).toHaveBeenCalled();
+    expect(mocks.clerkMounted).not.toHaveBeenCalled();
     expect(mocks.fetch).not.toHaveBeenCalled();
   });
 

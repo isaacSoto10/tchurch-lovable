@@ -2,6 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const nativeMocks = vi.hoisted(() => ({
   synchronizePrivacyContext: vi.fn().mockResolvedValue({ accepted: true }),
+  requestDeviceReapproval: vi.fn().mockResolvedValue({
+    accepted: true,
+    deviceId: "BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB",
+  }),
 }));
 
 vi.mock("@capacitor/core", () => ({
@@ -15,8 +19,10 @@ vi.mock("@capacitor/core", () => ({
 import {
   normalizeStudioLANImageAssetStatus,
   normalizeStudioLANPairingQR,
+  normalizeStudioLANRemoteFeedback,
   normalizeStudioLANStatus,
   normalizeStudioLANUpdate,
+  requestStudioLANDeviceReapproval,
   synchronizeStudioLANPrivacyContext,
 } from "./studioLANClient";
 
@@ -71,11 +77,20 @@ describe("Studio LAN native bridge boundary", () => {
     })).toEqual({
       supported: true,
       phase: "connected",
-      services: [{ id: "a".repeat(32), name: "Tchurch Studio" }],
+      services: [{ id: "a".repeat(32), name: "Tchurch Studio", protocolFloor: 1 }],
       selectedServiceId: "a".repeat(32),
       channel: "stage",
       paired: true,
       message: null,
+      enrollmentState: "unenrolled",
+      protocolFloor: 1,
+      role: null,
+      permissions: [],
+      permissionRevision: "0",
+      revocationGeneration: "0",
+      studioId: null,
+      remoteControlAvailable: false,
+      remoteCommandInFlight: false,
     });
 
     const unsafe = normalizeStudioLANStatus({
@@ -106,7 +121,7 @@ describe("Studio LAN native bridge boundary", () => {
     });
   });
 
-  it("accepts the sanitized stage shape and rejects control, malformed sequence, and invalid asset IDs", () => {
+  it("accepts the sanitized stage shape and rejects incomplete control, malformed sequence, and invalid asset IDs", () => {
     expect(normalizeStudioLANUpdate(validUpdate())).toMatchObject({
       channel: "stage",
       sequence: "12",
@@ -123,6 +138,93 @@ describe("Studio LAN native bridge boundary", () => {
         cue: { ...validUpdate().audience.cue, mediaAssetId: "https://private.example/token" },
       },
     })).toBeNull();
+  });
+
+  it("accepts only a complete signed-control v4 projection and strict remote feedback", () => {
+    const base = validUpdate();
+    const control = {
+      ...base,
+      channel: "control",
+      payloadVersion: 4,
+      stage: { ...base.stage, chordLines: [] },
+      control: {
+        chordsVisible: true,
+        lightingArmed: false,
+        healthyOutputCount: 2,
+        expectedOutputCount: 3,
+        routeEpoch: "9",
+        cueCatalog: [
+          { cueId: "cue-1", title: "Verse" },
+          { cueId: "cue-2", title: "Chorus" },
+        ],
+      },
+    };
+    expect(normalizeStudioLANUpdate(control)).toMatchObject({
+      channel: "control",
+      payloadVersion: 4,
+      control: { routeEpoch: "9", cueCatalog: [{ cueId: "cue-1" }, { cueId: "cue-2" }] },
+    });
+    expect(normalizeStudioLANUpdate({ ...control, payloadVersion: 3 })).toBeNull();
+    expect(normalizeStudioLANUpdate({ ...control, control: { ...control.control, routeEpoch: "0" } })).toBeNull();
+    expect(normalizeStudioLANUpdate({
+      ...control,
+      control: { ...control.control, cueCatalog: [control.control.cueCatalog[0], control.control.cueCatalog[0]] },
+    })).toBeNull();
+
+    const accepted = {
+      commandId: "abcdefab-cdef-4abc-8def-abcdefabcdef",
+      kind: "next",
+      cueId: null,
+      enabled: null,
+      state: "accepted",
+      rejection: null,
+      revision: "42",
+      wasIdempotentReplay: false,
+    };
+    expect(normalizeStudioLANRemoteFeedback(accepted)).toEqual(accepted);
+    expect(normalizeStudioLANRemoteFeedback({ ...accepted, state: "rejected", rejection: "secretFailure" })).toBeNull();
+    expect(normalizeStudioLANRemoteFeedback({ ...accepted, kind: "jump", cueId: null })).toBeNull();
+  });
+
+  it("normalizes v4 device trust and fails closed on non-canonical permissions", () => {
+    const approved = normalizeStudioLANStatus({
+      supported: true,
+      phase: "connected",
+      services: [{ id: "a".repeat(32), name: "Studio", protocolFloor: 4 }],
+      selectedServiceId: "a".repeat(32),
+      channel: "stage",
+      paired: true,
+      message: null,
+      enrollmentState: "approved",
+      protocolFloor: 4,
+      role: "musicians",
+      permissions: ["observe", "controlProgram"],
+      permissionRevision: "9",
+      revocationGeneration: "2",
+      studioId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      remoteControlAvailable: false,
+      remoteCommandInFlight: false,
+    });
+    expect(approved).toMatchObject({
+      phase: "connected",
+      enrollmentState: "approved",
+      protocolFloor: 4,
+      role: "musicians",
+      permissions: ["observe", "controlProgram"],
+      permissionRevision: "9",
+      revocationGeneration: "2",
+    });
+    const v4Update = validUpdate();
+    expect(normalizeStudioLANUpdate({
+      ...v4Update,
+      payloadVersion: 4,
+      stage: { ...v4Update.stage, chordLines: [] },
+    })?.payloadVersion).toBe(4);
+
+    expect(normalizeStudioLANStatus({
+      ...approved,
+      permissions: ["controlProgram", "observe"],
+    }).phase).toBe("failed");
   });
 
   it("accepts v2 chord offsets across Unicode and rejects split surrogates or cue mismatch", () => {
@@ -329,5 +431,17 @@ describe("Studio LAN native bridge boundary", () => {
       churchId: "church-1",
     })).rejects.toThrow("studio_lan_invalid_privacy_context");
     expect(nativeMocks.synchronizePrivacyContext).toHaveBeenCalledTimes(3);
+  });
+
+  it("accepts only a valid rotated device identity from the native boundary", async () => {
+    await expect(requestStudioLANDeviceReapproval()).resolves.toEqual({
+      accepted: true,
+      deviceId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    });
+    nativeMocks.requestDeviceReapproval.mockResolvedValueOnce({
+      accepted: true,
+      deviceId: "not-a-device-id",
+    });
+    await expect(requestStudioLANDeviceReapproval()).rejects.toThrow("studio_lan_reapproval_failed");
   });
 });
