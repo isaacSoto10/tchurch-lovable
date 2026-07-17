@@ -51,8 +51,13 @@ struct TchurchStudioLANNetworkFailure: Equatable {
             self.init(domain: .dns, code: code)
         case .tls(let code):
             self.init(domain: .tls, code: code)
+#if compiler(>=6.2)
+        // `NWError.wifiAware` is only present in the SDK paired with Swift 6.2+.
+        // Keep the client buildable on Xcode 16 while preserving the richer
+        // diagnosis when compiled with newer Apple SDKs.
         case .wifiAware(let code):
             self.init(domain: .wifiAware, code: code)
+#endif
         @unknown default:
             self.init(domain: .unknown, code: 0)
         }
