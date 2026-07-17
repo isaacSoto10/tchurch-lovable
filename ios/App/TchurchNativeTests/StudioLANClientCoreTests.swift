@@ -171,6 +171,11 @@ final class StudioLANClientCoreTests: XCTestCase {
             var negotiation = TchurchStudioLANPayloadNegotiation()
             XCTAssertNoThrow(try negotiation.recordAuthenticatedGrant(subscription))
             XCTAssertEqual(negotiation.negotiatedPayloadVersion, selectedVersion)
+            XCTAssertEqual(
+                negotiation.requestSchemaVersion,
+                TchurchStudioLANSubscriptionRequest.currentSchemaVersion,
+                "payload v\(selectedVersion) must map back to a supported subscription schema"
+            )
         }
     }
 
@@ -1296,6 +1301,158 @@ final class StudioLANClientTLSIntegrationTests: XCTestCase {
     }
 }
 
+final class StudioLANExactReplayRangeIntegrationTests: XCTestCase {
+    func testAutomaticReconnectUsesExactCachedEnvelopeToResumeRemainingRangeWithoutRepublishingUI() throws {
+        let serviceName = "Tchurch Range \(UUID().uuidString.prefix(8))"
+        let secret = try fixedSecret(0x6A)
+        let identity = try Curve25519.Signing.PrivateKey(
+            rawRepresentation: Data(repeating: 0x5C, count: 32)
+        )
+        let authority = makeAuthority()
+        var assetBytes = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+        assetBytes.append(Data(
+            repeating: 0x71,
+            count: TchurchStudioLANAssetChunk.byteCount + 4_096 - assetBytes.count
+        ))
+        let descriptor = TchurchStudioLANImageAssetDescriptor(
+            schemaVersion: 1,
+            referenceID: "sha256:\(String(repeating: "b", count: 64))",
+            objectID: "sha256:\(TchurchStudioLANCrypto.sha256Hex(assetBytes))",
+            kind: .image,
+            mimeType: "image/png",
+            byteSize: Int64(assetBytes.count),
+            required: true,
+            imageFit: .cover
+        )
+        let payload = stageAssetPayload(authority: authority, descriptor: descriptor, revision: 8)
+        let envelope = try signEnvelope(
+            payload: payload,
+            authority: authority,
+            identity: identity,
+            sequence: 12,
+            revision: 8,
+            schemaVersion: 3
+        )
+        let encodedEnvelope = try TchurchStudioLANCoding.encoder().encode(envelope)
+
+        let listenerReady = expectation(description: "exact-replay Studio listener ready")
+        let rangeResumed = expectation(description: "remaining Range requested after exact replay")
+        let server = try ExactReplayRangeStudioServer(
+            serviceName: serviceName,
+            secret: secret,
+            identity: identity,
+            authority: authority,
+            encodedEnvelope: encodedEnvelope,
+            assetBytes: assetBytes,
+            objectID: descriptor.objectID,
+            onReady: { listenerReady.fulfill() },
+            onRemainingRange: { rangeResumed.fulfill() }
+        )
+        server.start()
+        defer { server.stop() }
+        wait(for: [listenerReady], timeout: 5)
+
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tchurch-exact-replay-range-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let suiteName = "app.tchurch.tests.exact-replay-range.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let secretStore = RecordingStudioLANSecretStore()
+        let client = try TchurchStudioLANClient(
+            secretStore: secretStore,
+            defaults: defaults,
+            assetCache: TchurchStudioLANAssetCache(
+                rootURL: rootURL,
+                diskCapacity: { _ in 10 * 1_024 * 1_024 * 1_024 }
+            ),
+            privacyStateStore: RecordingStudioLANPrivacyStateStore()
+        )
+        defer {
+            client.disconnect()
+            client.stopDiscovery()
+        }
+
+        let privacyReady = expectation(description: "exact-replay privacy ready")
+        client.synchronizePrivacyContext(
+            access: .authorized,
+            principalID: "range-principal",
+            churchID: "range-church"
+        ) { result in
+            if case .failure(let error) = result { XCTFail("privacy scope failed: \(error)") }
+            privacyReady.fulfill()
+        }
+        wait(for: [privacyReady], timeout: 3)
+        let privacySetupDeleteCount = secretStore.deleteAllCount
+
+        let observations = ExactReplayRangeClientObservations()
+        let discovered = expectation(description: "exact-replay Studio discovered")
+        let envelopePublished = expectation(description: "authenticated envelope published once")
+        envelopePublished.assertForOverFulfill = true
+        let imageReady = expectation(description: "ranged image completed after reconnect")
+        client.statusHandler = { status in
+            observations.recordStatus(status)
+            guard let service = status.services.first(where: { $0.name.hasPrefix(serviceName) }),
+                  observations.recordServiceIDIfNeeded(service.id) else { return }
+            discovered.fulfill()
+        }
+        client.envelopeHandler = { received in
+            guard received.sequence == envelope.sequence else { return }
+            observations.recordEnvelopePublication()
+            envelopePublished.fulfill()
+        }
+        client.imageAssetHandler = { status in
+            guard status.objectID == descriptor.objectID, status.phase == .ready else { return }
+            observations.recordReadyAsset(status)
+            imageReady.fulfill()
+        }
+
+        client.startDiscovery()
+        wait(for: [discovered], timeout: 10)
+        client.connect(
+            serviceID: try XCTUnwrap(observations.serviceID),
+            channel: .stage,
+            pairingCode: secret.transportKeyMaterial.base64EncodedString()
+        )
+        wait(for: [envelopePublished, rangeResumed, imageReady], timeout: 20)
+
+        XCTAssertEqual(observations.envelopePublicationCount, 1)
+        XCTAssertTrue(
+            observations.statuses.contains(where: { $0.phase == .reconnecting }),
+            "statuses: \(observations.statuses)"
+        )
+        XCTAssertFalse(
+            observations.statuses.contains(where: { $0.phase == .failed }),
+            "a valid reconnect after payload v3 must not fail closed or purge: \(observations.statuses)"
+        )
+        XCTAssertEqual(
+            secretStore.deleteAllCount,
+            privacySetupDeleteCount,
+            "a valid payload-v3 reconnect must not purge pairing"
+        )
+        XCTAssertEqual(
+            server.connectionCount,
+            2,
+            "server events: \(server.observedEvents); statuses: \(observations.statuses)"
+        )
+        XCTAssertEqual(observations.readyAsset?.receivedBytes, descriptor.byteSize)
+        XCTAssertNotNil(observations.readyAsset?.fileURL)
+        XCTAssertEqual(
+            server.observedRequests,
+            [
+                .init(connection: 1, offset: 0),
+                .init(connection: 1, offset: Int64(TchurchStudioLANAssetChunk.byteCount)),
+                .init(connection: 2, offset: Int64(TchurchStudioLANAssetChunk.byteCount)),
+            ],
+            "server events: \(server.observedEvents); statuses: \(observations.statuses)"
+        )
+        XCTAssertNil(
+            server.recordedFailure,
+            "server events: \(server.observedEvents); statuses: \(observations.statuses)"
+        )
+    }
+}
+
 final class StudioLANReconnectPolicyTests: XCTestCase {
     func testAuthenticatedWiFiLossAndRepeatedPreGrantFailuresPreserveRecoveryState() {
         var policy = TchurchStudioLANReconnectPolicy()
@@ -1359,6 +1516,120 @@ final class StudioLANReconnectPolicyTests: XCTestCase {
             negotiation.requestSchemaVersion,
             TchurchStudioLANSubscriptionRequest.currentSchemaVersion
         )
+    }
+
+    func testOnlyByteExactLatestAuthenticatedReplayCanRehydrateAssetsOnceOnReconnect() throws {
+        let fixture = try makeSubscriptionFixture(
+            channel: .stage,
+            requestSchemaVersion: TchurchStudioLANSubscriptionRequest.currentSchemaVersion
+        )
+        let envelope = try signEnvelope(
+            payload: stagePayloadV2(revision: 8),
+            authority: fixture.challenge.authority,
+            identity: fixture.identity,
+            sequence: 12,
+            revision: 8,
+            schemaVersion: 2
+        )
+        let encoded = try TchurchStudioLANCoding.encoder().encode(envelope)
+        var replayGuard = TchurchStudioLANReplayGuard()
+        try replayGuard.begin(fixture.subscription)
+        try replayGuard.accept(envelope)
+
+        var gate = TchurchStudioLANExactReplayAssetRehydrationGate()
+        let key = "service:stage"
+        gate.recordAccepted(replayKey: key, envelope: envelope, encodedEnvelope: encoded)
+        gate.beginAuthenticatedConnection(
+            replayKey: key,
+            subscription: fixture.subscription,
+            replayGuard: replayGuard,
+            isAutomaticReconnect: true
+        )
+        XCTAssertTrue(gate.consumeIfExactLatestReplay(
+            replayKey: key,
+            envelope: envelope,
+            encodedEnvelope: encoded,
+            replayGuard: replayGuard
+        ))
+        XCTAssertFalse(gate.consumeIfExactLatestReplay(
+            replayKey: key,
+            envelope: envelope,
+            encodedEnvelope: encoded,
+            replayGuard: replayGuard
+        ), "the exact replay is a one-shot asset rehydration, not a replay bypass")
+
+        gate.beginAuthenticatedConnection(
+            replayKey: key,
+            subscription: fixture.subscription,
+            replayGuard: replayGuard,
+            isAutomaticReconnect: true
+        )
+        var differentlyEncoded = encoded
+        differentlyEncoded.append(0x0A)
+        XCTAssertFalse(gate.consumeIfExactLatestReplay(
+            replayKey: key,
+            envelope: envelope,
+            encodedEnvelope: differentlyEncoded,
+            replayGuard: replayGuard
+        ), "semantically equivalent but byte-different JSON is not exact evidence")
+
+        let equivocated = try signEnvelope(
+            payload: stagePayloadV2(revision: 8, text: "Contenido distinto", chordOffset: 10),
+            authority: fixture.challenge.authority,
+            identity: fixture.identity,
+            sequence: 12,
+            revision: 8,
+            schemaVersion: 2
+        )
+        XCTAssertFalse(gate.consumeIfExactLatestReplay(
+            replayKey: key,
+            envelope: equivocated,
+            encodedEnvelope: try TchurchStudioLANCoding.encoder().encode(equivocated),
+            replayGuard: replayGuard
+        ))
+
+        let stale = try signEnvelope(
+            payload: stagePayloadV2(revision: 7),
+            authority: fixture.challenge.authority,
+            identity: fixture.identity,
+            sequence: 11,
+            revision: 7,
+            schemaVersion: 2
+        )
+        XCTAssertFalse(gate.consumeIfExactLatestReplay(
+            replayKey: key,
+            envelope: stale,
+            encodedEnvelope: try TchurchStudioLANCoding.encoder().encode(stale),
+            replayGuard: replayGuard
+        ))
+
+        let otherAuthority = try signEnvelope(
+            payload: stagePayloadV2(revision: 8),
+            authority: makeAuthority(epoch: 8),
+            identity: fixture.identity,
+            sequence: 12,
+            revision: 8,
+            schemaVersion: 2
+        )
+        XCTAssertFalse(gate.consumeIfExactLatestReplay(
+            replayKey: key,
+            envelope: otherAuthority,
+            encodedEnvelope: try TchurchStudioLANCoding.encoder().encode(otherAuthority),
+            replayGuard: replayGuard
+        ))
+
+        gate.beginAuthenticatedConnection(
+            replayKey: key,
+            subscription: fixture.subscription,
+            replayGuard: replayGuard,
+            isAutomaticReconnect: false
+        )
+        XCTAssertFalse(gate.consumeIfExactLatestReplay(
+            replayKey: key,
+            envelope: envelope,
+            encodedEnvelope: encoded,
+            replayGuard: replayGuard
+        ), "a fresh manual connection cannot consume retained replay evidence")
     }
 }
 
@@ -2179,6 +2450,444 @@ private func tamperedEnvelope(
         payloadChecksum: checksum,
         signingKeyID: envelope.signingKeyID,
         signature: envelope.signature
+    )
+}
+
+private func stageAssetPayload(
+    authority: TchurchStudioLANAuthority,
+    descriptor: TchurchStudioLANImageAssetDescriptor,
+    revision: UInt64
+) -> TchurchStudioLANChannelPayload {
+    .stage(.init(
+        audience: .init(
+            snapshot: .init(
+                schemaVersion: TchurchStudioLANAudienceSnapshot.schemaVersion,
+                runID: authority.runID,
+                authorityEpoch: authority.authorityEpoch,
+                packageID: authority.packageID,
+                serviceVersion: authority.serviceVersion,
+                revision: revision,
+                currentCueID: "cue-range",
+                currentCueIndex: 0,
+                cueCount: 1,
+                isBlackout: false,
+                countdown: nil
+            ),
+            cue: .init(
+                cueID: "cue-range",
+                title: "Range",
+                lines: ["Resume exacto"],
+                mediaAssetID: descriptor.objectID,
+                imageAsset: descriptor
+            )
+        ),
+        stage: .init(
+            nextCue: nil,
+            chordLines: [],
+            currentChordSlide: nil,
+            timers: [],
+            message: nil
+        )
+    ))
+}
+
+private struct ExactReplayRangeRequestObservation: Equatable {
+    let connection: Int
+    let offset: Int64
+}
+
+private final class ExactReplayRangeClientObservations: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedServiceID: String?
+    private var storedEnvelopePublicationCount = 0
+    private var storedReadyAsset: TchurchStudioLANImageAssetStatus?
+    private var storedStatuses: [TchurchStudioLANClientStatus] = []
+
+    var serviceID: String? {
+        lock.withLock { storedServiceID }
+    }
+
+    var envelopePublicationCount: Int {
+        lock.withLock { storedEnvelopePublicationCount }
+    }
+
+    var readyAsset: TchurchStudioLANImageAssetStatus? {
+        lock.withLock { storedReadyAsset }
+    }
+
+    var statuses: [TchurchStudioLANClientStatus] {
+        lock.withLock { storedStatuses }
+    }
+
+    func recordServiceIDIfNeeded(_ value: String) -> Bool {
+        lock.withLock {
+            guard storedServiceID == nil else { return false }
+            storedServiceID = value
+            return true
+        }
+    }
+
+    func recordEnvelopePublication() {
+        lock.withLock { storedEnvelopePublicationCount += 1 }
+    }
+
+    func recordReadyAsset(_ status: TchurchStudioLANImageAssetStatus) {
+        lock.withLock { storedReadyAsset = status }
+    }
+
+    func recordStatus(_ status: TchurchStudioLANClientStatus) {
+        lock.withLock { storedStatuses.append(status) }
+    }
+}
+
+private final class ExactReplayRangeStudioServer: @unchecked Sendable {
+    private final class Session: @unchecked Sendable {
+        let index: Int
+        let connection: NWConnection
+        var decoder: TchurchStudioLANLengthPrefixedFrameDecoder
+        var challenge: TchurchStudioLANServerChallenge?
+
+        init(index: Int, connection: NWConnection) throws {
+            self.index = index
+            self.connection = connection
+            decoder = try TchurchStudioLANLengthPrefixedFrameDecoder(
+                maximumFrameBytes: TchurchStudioLANLimits.production.maximumFrameBytes,
+                maximumBufferedBytes: TchurchStudioLANLimits.production.maximumBufferedInputBytes
+            )
+        }
+    }
+
+    private let queue = DispatchQueue(label: "app.tchurch.tests.exact-replay-range-server")
+    private let listener: NWListener
+    private let secret: TchurchStudioLANPairingSecret
+    private let identity: Curve25519.Signing.PrivateKey
+    private let authority: TchurchStudioLANAuthority
+    private let encodedEnvelope: Data
+    private let assetBytes: Data
+    private let objectID: String
+    private let onReady: @Sendable () -> Void
+    private let onRemainingRange: @Sendable () -> Void
+    private var sessions: [ObjectIdentifier: Session] = [:]
+    private var nextConnectionIndex = 0
+    private var requests: [ExactReplayRangeRequestObservation] = []
+    private var events: [String] = []
+    private var failure: Error?
+    private var signaledReady = false
+    private var signaledRemainingRange = false
+
+    init(
+        serviceName: String,
+        secret: TchurchStudioLANPairingSecret,
+        identity: Curve25519.Signing.PrivateKey,
+        authority: TchurchStudioLANAuthority,
+        encodedEnvelope: Data,
+        assetBytes: Data,
+        objectID: String,
+        onReady: @escaping @Sendable () -> Void,
+        onRemainingRange: @escaping @Sendable () -> Void
+    ) throws {
+        listener = try NWListener(
+            using: TchurchStudioLANNetworkParameters.makeListener(pairingSecret: secret),
+            on: .any
+        )
+        listener.service = .init(
+            name: serviceName,
+            type: TchurchStudioLANClient.bonjourServiceType,
+            domain: "local.",
+            txtRecord: nil
+        )
+        self.secret = secret
+        self.identity = identity
+        self.authority = authority
+        self.encodedEnvelope = encodedEnvelope
+        self.assetBytes = assetBytes
+        self.objectID = objectID
+        self.onReady = onReady
+        self.onRemainingRange = onRemainingRange
+    }
+
+    var observedRequests: [ExactReplayRangeRequestObservation] {
+        queue.sync { requests }
+    }
+
+    var recordedFailure: Error? {
+        queue.sync { failure }
+    }
+
+    var observedEvents: [String] {
+        queue.sync { events }
+    }
+
+    var connectionCount: Int {
+        queue.sync { nextConnectionIndex }
+    }
+
+    func start() {
+        listener.stateUpdateHandler = { [weak self] state in
+            guard let self else { return }
+            switch state {
+            case .ready where !self.signaledReady:
+                self.signaledReady = true
+                self.onReady()
+            case .failed(let error):
+                self.record(error)
+            default:
+                break
+            }
+        }
+        listener.newConnectionHandler = { [weak self] connection in
+            self?.accept(connection)
+        }
+        listener.start(queue: queue)
+    }
+
+    func stop() {
+        queue.sync {
+            listener.stateUpdateHandler = nil
+            listener.newConnectionHandler = nil
+            listener.cancel()
+            let retained = sessions.values
+            sessions.removeAll(keepingCapacity: false)
+            retained.forEach {
+                $0.connection.stateUpdateHandler = nil
+                $0.connection.cancel()
+            }
+        }
+    }
+
+    private func accept(_ connection: NWConnection) {
+        do {
+            nextConnectionIndex += 1
+            let session = try Session(index: nextConnectionIndex, connection: connection)
+            events.append("accepted-\(session.index)")
+            sessions[ObjectIdentifier(connection)] = session
+            connection.stateUpdateHandler = { [weak self, weak session] state in
+                guard let self, let session else { return }
+                switch state {
+                case .ready:
+                    self.events.append("ready-\(session.index)")
+                    self.begin(session)
+                case .failed, .cancelled:
+                    self.events.append("ended-\(session.index)-\(String(describing: state))")
+                    self.sessions.removeValue(forKey: ObjectIdentifier(connection))
+                default:
+                    break
+                }
+            }
+            connection.start(queue: queue)
+        } catch {
+            record(error)
+            connection.cancel()
+        }
+    }
+
+    private func begin(_ session: Session) {
+        let now = TchurchStudioLANTime.nowMilliseconds()
+        let challenge = TchurchStudioLANServerChallenge(
+            schemaVersion: TchurchStudioLANServerChallenge.schemaVersion,
+            challengeID: UUID(),
+            serverNonce: Data(repeating: UInt8(truncatingIfNeeded: session.index), count: 32)
+                .base64EncodedString(),
+            authority: authority,
+            signingKeyID: String(
+                TchurchStudioLANCrypto.sha256Hex(identity.publicKey.rawRepresentation).prefix(24)
+            ),
+            issuedAtMilliseconds: now,
+            expiresAtMilliseconds: now + 60_000
+        )
+        session.challenge = challenge
+        do {
+            events.append("challenge-\(session.index)")
+            try send([.challenge(challenge)], to: session)
+            receiveNext(session)
+        } catch {
+            record(error)
+            close(session)
+        }
+    }
+
+    private func receiveNext(_ session: Session) {
+        guard sessions[ObjectIdentifier(session.connection)] === session else { return }
+        session.connection.receive(
+            minimumIncompleteLength: 1,
+            maximumLength: 64 * 1_024
+        ) { [weak self, weak session] content, _, isComplete, error in
+            guard let self, let session,
+                  self.sessions[ObjectIdentifier(session.connection)] === session else { return }
+            if let error {
+                self.record(error)
+                self.close(session)
+                return
+            }
+            if isComplete {
+                self.close(session)
+                return
+            }
+            do {
+                if let content, !content.isEmpty {
+                    for frame in try session.decoder.append(content) {
+                        try self.process(frame, session: session)
+                        guard self.sessions[ObjectIdentifier(session.connection)] === session else { return }
+                    }
+                }
+                self.receiveNext(session)
+            } catch {
+                self.record(error)
+                self.close(session)
+            }
+        }
+    }
+
+    private func process(_ frame: Data, session: Session) throws {
+        switch try TchurchStudioLANWireCodec.decode(frame) {
+        case .subscribe(let request):
+            events.append("subscribe-\(session.index)")
+            guard let challenge = session.challenge,
+                  request.schemaVersion == TchurchStudioLANSubscriptionRequest.currentSchemaVersion,
+                  request.channel == .stage else {
+                throw TchurchStudioLANError.protocolViolation
+            }
+            let grant = try liveGrant(
+                challenge: challenge,
+                request: request,
+                identity: identity,
+                secret: secret,
+                minimumSequence: 12,
+                selectedPayloadVersion: 3
+            )
+            events.append("grant-envelope-\(session.index)")
+            try send([.grant(grant), .envelope(encodedEnvelope)], to: session)
+        case .assetRequest(let request):
+            try handle(request, session: session)
+        case .pong:
+            break
+        default:
+            throw TchurchStudioLANError.protocolViolation
+        }
+    }
+
+    private func handle(_ request: TchurchStudioLANAssetRequest, session: Session) throws {
+        guard request.schemaVersion == TchurchStudioLANAssetRequest.schemaVersion,
+              request.objectID == objectID,
+              request.maximumBytes == TchurchStudioLANAssetChunk.byteCount else {
+            throw TchurchStudioLANError.protocolViolation
+        }
+        requests.append(.init(connection: session.index, offset: request.offset))
+        events.append("asset-\(session.index)-\(request.offset)")
+        let remainingOffset = Int64(TchurchStudioLANAssetChunk.byteCount)
+
+        if session.index == 1, request.offset == remainingOffset {
+            // The first chunk is durably checkpointed before the client can
+            // ask for this next range. End the transport without answering it.
+            finishTransport(session)
+            return
+        }
+
+        if session.index >= 2, !signaledRemainingRange {
+            signaledRemainingRange = true
+            onRemainingRange()
+            if request.offset != remainingOffset {
+                record(TchurchStudioLANError.invalidAssetRequest)
+            }
+        }
+
+        guard request.offset >= 0,
+              request.offset < Int64(assetBytes.count) else {
+            throw TchurchStudioLANError.invalidAssetRequest
+        }
+        let start = Int(request.offset)
+        let end = min(assetBytes.count, start + request.maximumBytes)
+        let chunkData = Data(assetBytes[start ..< end])
+        let chunk = TchurchStudioLANAssetChunk(
+            schemaVersion: TchurchStudioLANAssetChunk.schemaVersion,
+            requestID: request.requestID,
+            objectID: request.objectID,
+            offset: request.offset,
+            totalByteSize: Int64(assetBytes.count),
+            data: chunkData,
+            dataSha256: "sha256:\(TchurchStudioLANCrypto.sha256Hex(chunkData))",
+            isFinal: end == assetBytes.count
+        )
+        try send([.assetChunk(chunk)], to: session)
+    }
+
+    private func send(_ messages: [TchurchStudioLANWireMessage], to session: Session) throws {
+        var content = Data()
+        for message in messages {
+            content.append(try TchurchStudioLANWireCodec.encode(
+                message,
+                maximumFrameBytes: TchurchStudioLANLimits.production.maximumFrameBytes
+            ))
+        }
+        session.connection.send(content: content, completion: .contentProcessed { [weak self] error in
+            if let error { self?.queue.async { self?.record(error) } }
+        })
+    }
+
+    private func close(_ session: Session) {
+        sessions.removeValue(forKey: ObjectIdentifier(session.connection))
+        session.connection.stateUpdateHandler = nil
+        session.connection.cancel()
+    }
+
+    private func finishTransport(_ session: Session) {
+        sessions.removeValue(forKey: ObjectIdentifier(session.connection))
+        session.connection.stateUpdateHandler = nil
+        session.connection.send(
+            content: nil,
+            contentContext: .finalMessage,
+            isComplete: true,
+            completion: .contentProcessed { [weak connection = session.connection] _ in
+                connection?.cancel()
+            }
+        )
+    }
+
+    private func record(_ error: Error) {
+        if failure == nil { failure = error }
+    }
+}
+
+private func liveGrant(
+    challenge: TchurchStudioLANServerChallenge,
+    request: TchurchStudioLANSubscriptionRequest,
+    identity: Curve25519.Signing.PrivateKey,
+    secret: TchurchStudioLANPairingSecret,
+    minimumSequence: UInt64,
+    selectedPayloadVersion: Int
+) throws -> TchurchStudioLANSubscriptionGrant {
+    let now = TchurchStudioLANTime.nowMilliseconds()
+    let expiresAtMilliseconds = now + 60_000
+    let sessionID = UUID()
+    let publicKey = identity.publicKey.rawRepresentation.base64EncodedString()
+    let proof = try TchurchStudioLANCrypto.authenticationCode(
+        for: TestGrantProofV2(
+            challengeID: challenge.challengeID,
+            sessionID: sessionID,
+            requestID: request.requestID,
+            channel: request.channel,
+            authority: challenge.authority,
+            signingKeyID: challenge.signingKeyID,
+            signingPublicKey: publicKey,
+            minimumSequence: minimumSequence,
+            expiresAtMilliseconds: expiresAtMilliseconds,
+            clientNonce: request.clientNonce,
+            selectedPayloadVersion: selectedPayloadVersion
+        ),
+        secret: secret
+    )
+    return TchurchStudioLANSubscriptionGrant(
+        schemaVersion: request.schemaVersion,
+        sessionID: sessionID,
+        requestID: request.requestID,
+        channel: request.channel,
+        authority: challenge.authority,
+        signingKeyID: challenge.signingKeyID,
+        signingPublicKey: publicKey,
+        minimumSequence: minimumSequence,
+        expiresAtMilliseconds: expiresAtMilliseconds,
+        selectedPayloadVersion: selectedPayloadVersion,
+        serverProof: proof
     )
 }
 

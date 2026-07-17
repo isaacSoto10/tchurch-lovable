@@ -118,7 +118,7 @@ access point, Wi-Fi client-isolation behavior, or real network interruption.
 
 ## P1 reconnect and privacy follow-up
 
-Validated on 2026-07-16 from the isolated worktree
+Validated on 2026-07-16 and revalidated on 2026-07-17 from the isolated worktree
 `/Users/isaacsoto/Tchurch/.codex-local/ios-p1`. This follow-up branch is
 `codex/lan-v3-p1-fixes-ios`, based on exact commit
 `7639c792310c4de699f70b521b834cefd57ebc6e`. The canonical iOS checkout was
@@ -156,17 +156,38 @@ different account purges before its membership request. Pending manual church
 switches and stale account responses cannot publish after a newer principal
 transition.
 
+The 2026-07-17 revalidation closes the interrupted-asset reconnect gap without
+weakening replay protection. After an automatic reconnect, the client may use
+the exact latest previously accepted envelope once to rebuild immutable image
+download intents and resume a durable Range checkpoint. The envelope must be
+byte-for-byte identical and match the retained authority, signing key,
+sequence, revision, and payload checksum. It is not republished to the UI and
+does not advance replay state. A second copy, a byte-different encoding,
+equivocation, stale state, another authority, or a fresh manual connection
+remains rejected.
+
+The same integrated reconnect test exposed and closed a subscription-version
+bug: after a modern subscription selected payload v3, reconnect incorrectly
+used `3` as the subscription request schema even though only schemas 1 and 2
+exist. Subscription schema is now independent of payload schema. Modern
+sessions keep schema 2 for payload v1, v2, or v3; only the explicit
+authenticated legacy-fallback path can use schema 1. The loopback test proves
+the second TLS-PSK session authenticates, does not enter the fail-closed purge
+path, requests the remaining offset 65,536, verifies the completed image, and
+invokes the envelope UI handler exactly once across both connections.
+
 Final automated validation after these changes:
 
 - `npm test`: 74 files, 567 tests, 0 failures.
 - `npx tsc --noEmit -p tsconfig.app.json`: passed.
 - `npm run build`: passed.
-- Two consecutive `npm run build` plus `npx cap sync ios` runs produced the
-  identical embedded public-tree SHA-256
+- `npx cap sync ios`: passed with six plugins and no generated drift.
+- A fresh build and sync retained the embedded public-tree SHA-256 previously
+  proven identical across two consecutive runs:
   `90d6e6d71c958030bac6fffcfd36a6b65958e6c277e22380350920271bc7f4cc`.
-- Signed iPhone 17 Pro native suite on iOS 26.5: 44 tests, 0 failures, 0
+- Signed iPhone 17 Pro native suite on iOS 26.5: 46 tests, 0 failures, 0
   skipped. Result bundle:
-  `/tmp/tchurch-ios-p1-final4-native-signed-20260716-1440.xcresult`.
+  `/tmp/tchurch-ios-p1-full-derived/Logs/Test/Test-Tchurch-2026.07.17_06-03-15--0500.xcresult`.
 - Debug iPhone 17 Pro and iPad Pro 13-inch (M5) builds on iOS 26.5: passed.
 - The v3 and retained v1 fixture hashes remain
   `a6b746d3ae32daca97e2e6653f7e2db52f0edd3618a89338dc0fd7a73a4f75e8`

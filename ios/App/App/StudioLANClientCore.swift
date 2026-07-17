@@ -617,9 +617,12 @@ struct TchurchStudioLANPayloadNegotiation: Equatable {
     private(set) var negotiatedPayloadVersion: Int?
 
     var requestSchemaVersion: Int {
-        negotiatedPayloadVersion ?? (didAttemptLegacyFallback
+        // Subscription schema and selected payload schema are independent.
+        // A modern v2 subscription can bind payload v1, v2, or v3; only the
+        // explicit authenticated legacy-fallback path may emit a v1 request.
+        return didAttemptLegacyFallback
             ? TchurchStudioLANSubscriptionRequest.legacySchemaVersion
-            : TchurchStudioLANSubscriptionRequest.currentSchemaVersion)
+            : TchurchStudioLANSubscriptionRequest.currentSchemaVersion
     }
 
     mutating func attemptLegacyFallback(

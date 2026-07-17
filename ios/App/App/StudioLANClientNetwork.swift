@@ -134,6 +134,113 @@ struct TchurchStudioLANReconnectPolicy: Equatable {
     }
 }
 
+/// Keeps the one narrow replay exception needed to resume an interrupted
+/// immutable asset transfer. The envelope itself remains rejected as a state
+/// update: only byte-identical evidence that was already accepted under the
+/// same authenticated authority and signing identity can rebuild asset intents
+/// once on an automatic reconnect.
+struct TchurchStudioLANExactReplayAssetRehydrationGate: Equatable {
+    private struct AcceptedEnvelope: Equatable {
+        let replayKey: String
+        let authority: TchurchStudioLANAuthority
+        let signingKeyID: String
+        let sequence: UInt64
+        let revision: UInt64
+        let payloadChecksum: String
+        let encodedEnvelope: Data
+
+        func exactlyMatches(
+            replayKey: String,
+            envelope: TchurchStudioLANSignedEnvelope,
+            encodedEnvelope: Data,
+            replayGuard: TchurchStudioLANReplayGuard
+        ) -> Bool {
+            self.replayKey == replayKey &&
+                authority == envelope.authority &&
+                signingKeyID == envelope.signingKeyID &&
+                sequence == envelope.sequence &&
+                revision == envelope.revision &&
+                payloadChecksum == envelope.payloadChecksum &&
+                self.encodedEnvelope == encodedEnvelope &&
+                replayGuard.authority == authority &&
+                replayGuard.signingKeyID == signingKeyID &&
+                replayGuard.lastSequence == sequence &&
+                replayGuard.lastRevision == revision &&
+                replayGuard.lastPayloadChecksum == payloadChecksum
+        }
+    }
+
+    private var lastAcceptedEnvelope: AcceptedEnvelope?
+    private var eligibleReplayKey: String?
+
+    mutating func beginAuthenticatedConnection(
+        replayKey: String,
+        subscription: TchurchStudioLANVerifiedSubscription,
+        replayGuard: TchurchStudioLANReplayGuard,
+        isAutomaticReconnect: Bool
+    ) {
+        eligibleReplayKey = nil
+        guard isAutomaticReconnect,
+              let accepted = lastAcceptedEnvelope,
+              accepted.replayKey == replayKey,
+              accepted.authority == subscription.authority,
+              accepted.signingKeyID == subscription.signingKeyID,
+              replayGuard.authority == accepted.authority,
+              replayGuard.signingKeyID == accepted.signingKeyID,
+              replayGuard.lastSequence == accepted.sequence,
+              replayGuard.lastRevision == accepted.revision,
+              replayGuard.lastPayloadChecksum == accepted.payloadChecksum else {
+            return
+        }
+        eligibleReplayKey = replayKey
+    }
+
+    mutating func recordAccepted(
+        replayKey: String,
+        envelope: TchurchStudioLANSignedEnvelope,
+        encodedEnvelope: Data
+    ) {
+        lastAcceptedEnvelope = AcceptedEnvelope(
+            replayKey: replayKey,
+            authority: envelope.authority,
+            signingKeyID: envelope.signingKeyID,
+            sequence: envelope.sequence,
+            revision: envelope.revision,
+            payloadChecksum: envelope.payloadChecksum,
+            encodedEnvelope: encodedEnvelope
+        )
+        eligibleReplayKey = nil
+    }
+
+    mutating func consumeIfExactLatestReplay(
+        replayKey: String,
+        envelope: TchurchStudioLANSignedEnvelope,
+        encodedEnvelope: Data,
+        replayGuard: TchurchStudioLANReplayGuard
+    ) -> Bool {
+        guard eligibleReplayKey == replayKey,
+              lastAcceptedEnvelope?.exactlyMatches(
+                replayKey: replayKey,
+                envelope: envelope,
+                encodedEnvelope: encodedEnvelope,
+                replayGuard: replayGuard
+              ) == true else {
+            return false
+        }
+        eligibleReplayKey = nil
+        return true
+    }
+
+    mutating func clearConnectionEligibility() {
+        eligibleReplayKey = nil
+    }
+
+    mutating func clearAll() {
+        lastAcceptedEnvelope = nil
+        eligibleReplayKey = nil
+    }
+}
+
 final class TchurchStudioLANAssetRequestWatchdog: @unchecked Sendable {
     private let queue: DispatchQueue
     private var workItem: DispatchWorkItem?
@@ -488,11 +595,13 @@ final class TchurchStudioLANClient: @unchecked Sendable {
     private var verifier: TchurchStudioLANEnvelopeVerifier?
     private var payloadNegotiation = TchurchStudioLANPayloadNegotiation()
     private var replayGuards: [String: TchurchStudioLANReplayGuard] = [:]
+    private var exactReplayAssetRehydration = TchurchStudioLANExactReplayAssetRehydrationGate()
     private var reconnectPolicy = TchurchStudioLANReconnectPolicy()
     private var reconnectWork: DispatchWorkItem?
     private var discoveryTimeoutWork: DispatchWorkItem?
     private var connectionTimeoutWork: DispatchWorkItem?
     private var lastWaitingNetworkFailure: TchurchStudioLANNetworkFailure?
+    private var currentConnectionIsAutomaticReconnect = false
     private var intentionalDisconnect = true
     private var suspended = false
     private var didAuthenticate = false
@@ -873,6 +982,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
 
         disconnectOnQueue(clearDesired: true)
         replayGuards.removeAll(keepingCapacity: false)
+        exactReplayAssetRehydration.clearAll()
         // This key is legacy-only. Once the checked Keychain state exists,
         // clientID() never consults it again, so a failed best-effort removal
         // cannot resurrect an identity after purge completion.
@@ -1109,6 +1219,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
 
         reconnectWork?.cancel()
         reconnectWork = nil
+        exactReplayAssetRehydration.clearConnectionEligibility()
         connectionTimeoutWork?.cancel()
         connectionTimeoutWork = nil
         connection?.stateUpdateHandler = nil
@@ -1124,6 +1235,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             maximumBufferedBytes: limits.maximumBufferedInputBytes
         )
         intentionalDisconnect = false
+        currentConnectionIsAutomaticReconnect = reconnecting
 
         let connection = NWConnection(
             to: endpoint,
@@ -1282,10 +1394,17 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                 nowMilliseconds: TchurchStudioLANTime.nowMilliseconds()
             )
             try payloadNegotiation.recordAuthenticatedGrant(subscription)
-            var replayGuard = replayGuards[replayKey(serviceID: desired.serviceID, channel: desired.channel)]
+            let key = replayKey(serviceID: desired.serviceID, channel: desired.channel)
+            var replayGuard = replayGuards[key]
                 ?? TchurchStudioLANReplayGuard()
             try replayGuard.begin(subscription)
-            replayGuards[replayKey(serviceID: desired.serviceID, channel: desired.channel)] = replayGuard
+            replayGuards[key] = replayGuard
+            exactReplayAssetRehydration.beginAuthenticatedConnection(
+                replayKey: key,
+                subscription: subscription,
+                replayGuard: replayGuard,
+                isAutomaticReconnect: currentConnectionIsAutomaticReconnect
+            )
             verifier = try TchurchStudioLANEnvelopeVerifier(subscription: subscription, limits: limits)
             didAuthenticate = true
             reconnectPolicy.recordAuthenticatedSession()
@@ -1320,8 +1439,29 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             let envelope = try verifier.verify(encodedEnvelope)
             let key = replayKey(serviceID: desired.serviceID, channel: desired.channel)
             var replayGuard = replayGuards[key] ?? TchurchStudioLANReplayGuard()
-            try replayGuard.accept(envelope)
+            do {
+                try replayGuard.accept(envelope)
+            } catch TchurchStudioLANError.replayedEnvelope {
+                guard exactReplayAssetRehydration.consumeIfExactLatestReplay(
+                    replayKey: key,
+                    envelope: envelope,
+                    encodedEnvelope: encodedEnvelope,
+                    replayGuard: replayGuard
+                ) else {
+                    throw TchurchStudioLANError.replayedEnvelope
+                }
+                // The UI already owns this exact authenticated state. Rebuild
+                // only immutable asset intents so a verified .part checkpoint
+                // can issue the remaining Range request on the new transport.
+                registerImageAssets(from: envelope, connection: connection)
+                return
+            }
             replayGuards[key] = replayGuard
+            exactReplayAssetRehydration.recordAccepted(
+                replayKey: key,
+                envelope: envelope,
+                encodedEnvelope: encodedEnvelope
+            )
             envelopeHandler?(envelope)
             registerImageAssets(from: envelope, connection: connection)
         case .assetChunk(let chunk):
@@ -1699,6 +1839,8 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         challenge = nil
         request = nil
         resetAssetTransfer()
+        exactReplayAssetRehydration.clearConnectionEligibility()
+        currentConnectionIsAutomaticReconnect = false
         if intentionalDisconnect || suspended { return }
         didAuthenticate = false
         lastWaitingNetworkFailure = cause.networkFailure
@@ -1725,6 +1867,8 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         challenge = nil
         request = nil
         verifier = nil
+        exactReplayAssetRehydration.clearConnectionEligibility()
+        currentConnectionIsAutomaticReconnect = false
         didAuthenticate = false
         decoder = try! TchurchStudioLANLengthPrefixedFrameDecoder(
             maximumFrameBytes: limits.maximumFrameBytes,
@@ -1782,6 +1926,8 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         didAuthenticate = false
         lastWaitingNetworkFailure = nil
         resetAssetTransfer()
+        exactReplayAssetRehydration.clearConnectionEligibility()
+        currentConnectionIsAutomaticReconnect = false
         if clearDesired {
             desired = nil
             payloadNegotiation = TchurchStudioLANPayloadNegotiation()
