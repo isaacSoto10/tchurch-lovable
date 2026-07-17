@@ -158,23 +158,38 @@ transition.
 
 The 2026-07-17 revalidation closes the interrupted-asset reconnect gap without
 weakening replay protection. After an automatic reconnect, the client may use
-the exact latest previously accepted envelope once to rebuild immutable image
-download intents and resume a durable Range checkpoint. The envelope must be
-byte-for-byte identical and match the retained authority, signing key,
-sequence, revision, and payload checksum. It is not republished to the UI and
-does not advance replay state. A second copy, a byte-different encoding,
-equivocation, stale state, another authority, or a fresh manual connection
-remains rejected.
+the exact latest previously accepted envelope once per new PSK-authenticated
+automatic connection to rebuild immutable image download intents and resume a
+durable Range checkpoint. This eligibility exists only while that exact
+envelope still has an unresolved image. It rearms after another transport loss
+but disappears as soon as every image resolves. The client retains only the
+encoded byte count and SHA-256 digest, not another Stage payload copy; both must
+match alongside authority, signing key, sequence, revision, and payload
+checksum. The envelope is not republished and does not advance replay state. A
+second copy on the same connection, a byte-different encoding, equivocation,
+stale state, another authority, or a fresh/manual disconnect or connect remains
+rejected. Manual boundaries clear the evidence completely, so their later
+automatic retry cannot revive an envelope from the prior session.
+
+Replay re-registration is silent: it does not emit a new initial loading event
+or rewrite the authorization manifest. Asset UI state is deduplicated by
+object and presentation generation; loading progress can only increase and a
+terminal ready/unavailable event can publish only once. A new progress offset
+or the first ready event still publishes because the UI needs that actual
+transition and local file URL.
 
 The same integrated reconnect test exposed and closed a subscription-version
 bug: after a modern subscription selected payload v3, reconnect incorrectly
 used `3` as the subscription request schema even though only schemas 1 and 2
 exist. Subscription schema is now independent of payload schema. Modern
 sessions keep schema 2 for payload v1, v2, or v3; only the explicit
-authenticated legacy-fallback path can use schema 1. The loopback test proves
-the second TLS-PSK session authenticates, does not enter the fail-closed purge
-path, requests the remaining offset 65,536, verifies the completed image, and
-invokes the envelope UI handler exactly once across both connections.
+authenticated legacy-fallback path can use schema 1. The loopback tests prove
+three successive TLS-PSK sessions resume offsets 65,536 and 131,072 after two
+transport losses, preserve one monotonic asset UI sequence and one envelope UI
+publication, do not rewrite authorization bookkeeping, and do not enter the
+fail-closed purge path. A separate real-network scenario proves manual reset
+blocks both the fresh connection and its subsequent automatic retry from using
+the old replay evidence.
 
 Final automated validation after these changes:
 
@@ -185,9 +200,9 @@ Final automated validation after these changes:
 - A fresh build and sync retained the embedded public-tree SHA-256 previously
   proven identical across two consecutive runs:
   `90d6e6d71c958030bac6fffcfd36a6b65958e6c277e22380350920271bc7f4cc`.
-- Signed iPhone 17 Pro native suite on iOS 26.5: 46 tests, 0 failures, 0
+- Signed iPhone 17 Pro native suite on iOS 26.5: 48 tests, 0 failures, 0
   skipped. Result bundle:
-  `/tmp/tchurch-ios-p1-full-derived/Logs/Test/Test-Tchurch-2026.07.17_06-03-15--0500.xcresult`.
+  `/tmp/tchurch-ios-p1-final-review2-full-derived/Logs/Test/Test-Tchurch-2026.07.17_06-36-36--0500.xcresult`.
 - Debug iPhone 17 Pro and iPad Pro 13-inch (M5) builds on iOS 26.5: passed.
 - The v3 and retained v1 fixture hashes remain
   `a6b746d3ae32daca97e2e6653f7e2db52f0edd3618a89338dc0fd7a73a4f75e8`

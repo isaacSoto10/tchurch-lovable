@@ -143,7 +143,8 @@ final class TchurchStudioLANAssetCache: @unchecked Sendable {
         descriptor: TchurchStudioLANImageAssetDescriptor,
         authority: TchurchStudioLANAuthority,
         cueID: String,
-        protectedObjectIDs: Set<String>
+        protectedObjectIDs: Set<String>,
+        recordsAuthorization: Bool = true
     ) throws -> TchurchStudioLANAssetCachePreparation {
         try validate(descriptor)
         guard limits.isValid, !cueID.isEmpty, cueID.utf8.count <= 160 else {
@@ -152,7 +153,9 @@ final class TchurchStudioLANAssetCache: @unchecked Sendable {
         try prepareDirectories()
         _ = try safeFiles(in: objectsURL, withExtension: nil)
         _ = try safeFiles(in: stagingURL, withExtension: "part")
-        try persistAuthorization(descriptor: descriptor, authority: authority, cueID: cueID)
+        if recordsAuthorization {
+            try persistAuthorization(descriptor: descriptor, authority: authority, cueID: cueID)
+        }
 
         let finalURL = try objectURL(for: descriptor)
         let partURL = try partialURL(for: descriptor.objectID)

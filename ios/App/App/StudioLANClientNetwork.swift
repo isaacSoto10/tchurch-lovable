@@ -138,7 +138,9 @@ struct TchurchStudioLANReconnectPolicy: Equatable {
 /// immutable asset transfer. The envelope itself remains rejected as a state
 /// update: only byte-identical evidence that was already accepted under the
 /// same authenticated authority and signing identity can rebuild asset intents
-/// once on an automatic reconnect.
+/// once per authenticated automatic connection while an exact asset remains
+/// unresolved. Only the envelope digest and byte count are retained; the
+/// potentially large Stage payload is not copied into recovery state.
 struct TchurchStudioLANExactReplayAssetRehydrationGate: Equatable {
     private struct AcceptedEnvelope: Equatable {
         let replayKey: String
@@ -147,7 +149,9 @@ struct TchurchStudioLANExactReplayAssetRehydrationGate: Equatable {
         let sequence: UInt64
         let revision: UInt64
         let payloadChecksum: String
-        let encodedEnvelope: Data
+        let encodedEnvelopeByteCount: Int
+        let encodedEnvelopeSha256: String
+        var pendingAssetObjectIDs: Set<String>
 
         func exactlyMatches(
             replayKey: String,
@@ -161,7 +165,8 @@ struct TchurchStudioLANExactReplayAssetRehydrationGate: Equatable {
                 sequence == envelope.sequence &&
                 revision == envelope.revision &&
                 payloadChecksum == envelope.payloadChecksum &&
-                self.encodedEnvelope == encodedEnvelope &&
+                encodedEnvelopeByteCount == encodedEnvelope.count &&
+                encodedEnvelopeSha256 == TchurchStudioLANCrypto.sha256Hex(encodedEnvelope) &&
                 replayGuard.authority == authority &&
                 replayGuard.signingKeyID == signingKeyID &&
                 replayGuard.lastSequence == sequence &&
@@ -182,6 +187,7 @@ struct TchurchStudioLANExactReplayAssetRehydrationGate: Equatable {
         eligibleReplayKey = nil
         guard isAutomaticReconnect,
               let accepted = lastAcceptedEnvelope,
+              !accepted.pendingAssetObjectIDs.isEmpty,
               accepted.replayKey == replayKey,
               accepted.authority == subscription.authority,
               accepted.signingKeyID == subscription.signingKeyID,
@@ -198,7 +204,8 @@ struct TchurchStudioLANExactReplayAssetRehydrationGate: Equatable {
     mutating func recordAccepted(
         replayKey: String,
         envelope: TchurchStudioLANSignedEnvelope,
-        encodedEnvelope: Data
+        encodedEnvelope: Data,
+        pendingAssetObjectIDs: Set<String>
     ) {
         lastAcceptedEnvelope = AcceptedEnvelope(
             replayKey: replayKey,
@@ -207,7 +214,9 @@ struct TchurchStudioLANExactReplayAssetRehydrationGate: Equatable {
             sequence: envelope.sequence,
             revision: envelope.revision,
             payloadChecksum: envelope.payloadChecksum,
-            encodedEnvelope: encodedEnvelope
+            encodedEnvelopeByteCount: encodedEnvelope.count,
+            encodedEnvelopeSha256: TchurchStudioLANCrypto.sha256Hex(encodedEnvelope),
+            pendingAssetObjectIDs: pendingAssetObjectIDs
         )
         eligibleReplayKey = nil
     }
@@ -217,18 +226,41 @@ struct TchurchStudioLANExactReplayAssetRehydrationGate: Equatable {
         envelope: TchurchStudioLANSignedEnvelope,
         encodedEnvelope: Data,
         replayGuard: TchurchStudioLANReplayGuard
-    ) -> Bool {
+    ) -> Set<String>? {
         guard eligibleReplayKey == replayKey,
-              lastAcceptedEnvelope?.exactlyMatches(
+              let accepted = lastAcceptedEnvelope,
+              !accepted.pendingAssetObjectIDs.isEmpty,
+              accepted.exactlyMatches(
                 replayKey: replayKey,
                 envelope: envelope,
                 encodedEnvelope: encodedEnvelope,
                 replayGuard: replayGuard
-              ) == true else {
-            return false
+              ) else {
+            return nil
         }
         eligibleReplayKey = nil
-        return true
+        return accepted.pendingAssetObjectIDs
+    }
+
+    mutating func resolveAsset(
+        replayKey: String,
+        authority: TchurchStudioLANAuthority,
+        signingKeyID: String,
+        sequence: UInt64,
+        revision: UInt64,
+        payloadChecksum: String,
+        objectID: String
+    ) {
+        guard var accepted = lastAcceptedEnvelope,
+              accepted.replayKey == replayKey,
+              accepted.authority == authority,
+              accepted.signingKeyID == signingKeyID,
+              accepted.sequence == sequence,
+              accepted.revision == revision,
+              accepted.payloadChecksum == payloadChecksum else { return }
+        accepted.pendingAssetObjectIDs.remove(objectID)
+        lastAcceptedEnvelope = accepted
+        if accepted.pendingAssetObjectIDs.isEmpty { eligibleReplayKey = nil }
     }
 
     mutating func clearConnectionEligibility() {
@@ -558,11 +590,47 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         case saved
     }
 
+    private enum ImageAssetRegistrationMode {
+        case acceptedEnvelope
+        case exactReplay(pendingObjectIDs: Set<String>)
+
+        var isReplayRecovery: Bool {
+            if case .exactReplay = self { return true }
+            return false
+        }
+
+        func includes(objectID: String) -> Bool {
+            switch self {
+            case .acceptedEnvelope:
+                return true
+            case .exactReplay(let pendingObjectIDs):
+                return pendingObjectIDs.contains(objectID)
+            }
+        }
+    }
+
+    private struct ImageAssetCandidate {
+        let cue: TchurchStudioLANPublicCue
+        let isCurrent: Bool
+    }
+
     private struct ImageAssetIntent: Equatable {
         let authority: TchurchStudioLANAuthority
         let cueID: String
         let descriptor: TchurchStudioLANImageAssetDescriptor
         let isCurrent: Bool
+        let generation: UInt64
+        let presentationGeneration: UInt64
+        let replayKey: String
+        let envelopeSigningKeyID: String
+        let envelopeSequence: UInt64
+        let envelopeRevision: UInt64
+        let envelopePayloadChecksum: String
+        let isReplayRecovery: Bool
+    }
+
+    private struct PublishedImageAssetKey: Hashable {
+        let objectID: String
         let generation: UInt64
     }
 
@@ -608,9 +676,11 @@ final class TchurchStudioLANClient: @unchecked Sendable {
     private var currentPhase: TchurchStudioLANConnectionPhase = .idle
     private var currentMessage: String?
     private var assetGeneration: UInt64 = 0
+    private var assetPresentationGeneration: UInt64 = 0
     private var imageAssetIntents: [ImageAssetIntent] = []
     private var inFlightAssetRequest: InFlightAssetRequest?
     private var assetRetryCount = 0
+    private var publishedImageAssetStatuses: [PublishedImageAssetKey: TchurchStudioLANImageAssetStatus] = [:]
     private var privacyPurgeInFlight = false
     private var privacyPurgeTargetPersistenceFailed = false
     private var privacyContextConfirmed = false
@@ -724,7 +794,11 @@ final class TchurchStudioLANClient: @unchecked Sendable {
     }
 
     func disconnect(clearDesired: Bool = true) {
-        queue.async { [weak self] in self?.disconnectOnQueue(clearDesired: clearDesired) }
+        queue.async { [weak self] in
+            guard let self else { return }
+            if !clearDesired { self.clearManualReplayRecoveryState() }
+            self.disconnectOnQueue(clearDesired: clearDesired)
+        }
     }
 
     func suspend() {
@@ -740,6 +814,8 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             self.connection?.cancel()
             self.connection = nil
             self.resetAssetTransfer()
+            self.exactReplayAssetRehydration.clearConnectionEligibility()
+            self.currentConnectionIsAutomaticReconnect = false
             self.setPhase(.suspended, message: "En espera: abre Tchurch para volver a conectar.")
         }
     }
@@ -1217,6 +1293,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             return
         }
 
+        if !reconnecting { clearManualReplayRecoveryState() }
         reconnectWork?.cancel()
         reconnectWork = nil
         exactReplayAssetRehydration.clearConnectionEligibility()
@@ -1442,7 +1519,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             do {
                 try replayGuard.accept(envelope)
             } catch TchurchStudioLANError.replayedEnvelope {
-                guard exactReplayAssetRehydration.consumeIfExactLatestReplay(
+                guard let pendingObjectIDs = exactReplayAssetRehydration.consumeIfExactLatestReplay(
                     replayKey: key,
                     envelope: envelope,
                     encodedEnvelope: encodedEnvelope,
@@ -1453,17 +1530,23 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                 // The UI already owns this exact authenticated state. Rebuild
                 // only immutable asset intents so a verified .part checkpoint
                 // can issue the remaining Range request on the new transport.
-                registerImageAssets(from: envelope, connection: connection)
+                registerImageAssets(
+                    from: envelope,
+                    connection: connection,
+                    mode: .exactReplay(pendingObjectIDs: pendingObjectIDs)
+                )
                 return
             }
             replayGuards[key] = replayGuard
+            beginNewImageAssetPresentation()
             exactReplayAssetRehydration.recordAccepted(
                 replayKey: key,
                 envelope: envelope,
-                encodedEnvelope: encodedEnvelope
+                encodedEnvelope: encodedEnvelope,
+                pendingAssetObjectIDs: imageAssetObjectIDs(from: envelope)
             )
             envelopeHandler?(envelope)
-            registerImageAssets(from: envelope, connection: connection)
+            registerImageAssets(from: envelope, connection: connection, mode: .acceptedEnvelope)
         case .assetChunk(let chunk):
             try handleAssetChunk(chunk, connection: connection)
         case .assetUnavailable(let unavailable):
@@ -1479,33 +1562,34 @@ final class TchurchStudioLANClient: @unchecked Sendable {
 
     private func registerImageAssets(
         from envelope: TchurchStudioLANSignedEnvelope,
-        connection: NWConnection
+        connection: NWConnection,
+        mode: ImageAssetRegistrationMode
     ) {
-        guard self.connection === connection else { return }
+        guard self.connection === connection, let desired else { return }
         assetGeneration &+= 1
         let generation = assetGeneration
-        var candidates: [(cue: TchurchStudioLANPublicCue, isCurrent: Bool)] = []
-        if let cue = envelope.payload.audience.cue, cue.imageAsset != nil {
-            candidates.append((cue, true))
-        }
-        if let cue = envelope.payload.stage?.nextCue, cue.imageAsset != nil {
-            candidates.append((cue, false))
-        }
-        var seen = Set<String>()
-        imageAssetIntents = candidates.compactMap { candidate in
+        let key = replayKey(serviceID: desired.serviceID, channel: envelope.channel)
+        imageAssetIntents = imageAssetCandidates(from: envelope).compactMap { candidate in
             guard envelope.schemaVersion == 3,
                   let descriptor = candidate.cue.imageAsset,
-                  seen.insert(descriptor.objectID).inserted else { return nil }
+                  mode.includes(objectID: descriptor.objectID) else { return nil }
             return ImageAssetIntent(
                 authority: envelope.authority,
                 cueID: candidate.cue.cueID,
                 descriptor: descriptor,
                 isCurrent: candidate.isCurrent,
-                generation: generation
+                generation: generation,
+                presentationGeneration: assetPresentationGeneration,
+                replayKey: key,
+                envelopeSigningKeyID: envelope.signingKeyID,
+                envelopeSequence: envelope.sequence,
+                envelopeRevision: envelope.revision,
+                envelopePayloadChecksum: envelope.payloadChecksum,
+                isReplayRecovery: mode.isReplayRecovery
             )
         }
         assetRetryCount = 0
-        for intent in imageAssetIntents where intent.isCurrent {
+        for intent in imageAssetIntents where intent.isCurrent && !intent.isReplayRecovery {
             publishImageAsset(
                 intent,
                 phase: .loading,
@@ -1515,6 +1599,30 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             )
         }
         beginNextImageAssetIfNeeded(connection: connection)
+    }
+
+    private func imageAssetCandidates(
+        from envelope: TchurchStudioLANSignedEnvelope
+    ) -> [ImageAssetCandidate] {
+        guard envelope.schemaVersion == 3 else { return [] }
+        var candidates: [ImageAssetCandidate] = []
+        if let cue = envelope.payload.audience.cue, cue.imageAsset != nil {
+            candidates.append(.init(cue: cue, isCurrent: true))
+        }
+        if let cue = envelope.payload.stage?.nextCue, cue.imageAsset != nil {
+            candidates.append(.init(cue: cue, isCurrent: false))
+        }
+        var seen = Set<String>()
+        return candidates.filter { candidate in
+            guard let objectID = candidate.cue.imageAsset?.objectID else { return false }
+            return seen.insert(objectID).inserted
+        }
+    }
+
+    private func imageAssetObjectIDs(
+        from envelope: TchurchStudioLANSignedEnvelope
+    ) -> Set<String> {
+        Set(imageAssetCandidates(from: envelope).compactMap { $0.cue.imageAsset?.objectID })
     }
 
     private func beginNextImageAssetIfNeeded(connection: NWConnection) {
@@ -1530,7 +1638,8 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                     descriptor: intent.descriptor,
                     authority: intent.authority,
                     cueID: intent.cueID,
-                    protectedObjectIDs: protectedObjectIDs
+                    protectedObjectIDs: protectedObjectIDs,
+                    recordsAuthorization: !intent.isReplayRecovery
                 )
                 self.queue.async { [weak self, weak connection] in
                     guard let self, let connection,
@@ -1538,7 +1647,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                           self.isAuthorized(intent) else { return }
                     switch preparation {
                     case .ready(let url):
-                        self.removeIntent(intent)
+                        self.resolveIntent(intent)
                         self.publishImageAsset(
                             intent,
                             phase: .ready,
@@ -1556,7 +1665,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                     guard let self, let connection,
                           self.connection === connection,
                           self.isAuthorized(intent) else { return }
-                    self.removeIntent(intent)
+                    self.resolveIntent(intent)
                     self.publishImageAsset(
                         intent,
                         phase: .unavailable,
@@ -1657,7 +1766,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                             self.beginNextImageAssetIfNeeded(connection: connection)
                         }
                     case .ready(let url):
-                        self.removeIntent(inFlight.intent)
+                        self.resolveIntent(inFlight.intent)
                         if self.isCurrentOrStillAuthorized(inFlight.intent) {
                             self.publishImageAsset(
                                 inFlight.intent,
@@ -1677,7 +1786,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                           self.connection === connection,
                           self.inFlightAssetRequest == inFlight else { return }
                     self.inFlightAssetRequest = nil
-                    self.removeIntent(inFlight.intent)
+                    self.resolveIntent(inFlight.intent)
                     if self.isCurrentOrStillAuthorized(inFlight.intent) {
                         self.publishImageAsset(
                             inFlight.intent,
@@ -1732,7 +1841,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                 }
             }
         default:
-            removeIntent(inFlight.intent)
+            resolveIntent(inFlight.intent)
             if isCurrentOrStillAuthorized(inFlight.intent) {
                 publishImageAsset(
                     inFlight.intent,
@@ -1765,6 +1874,19 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         }
     }
 
+    private func resolveIntent(_ intent: ImageAssetIntent) {
+        removeIntent(intent)
+        exactReplayAssetRehydration.resolveAsset(
+            replayKey: intent.replayKey,
+            authority: intent.authority,
+            signingKeyID: intent.envelopeSigningKeyID,
+            sequence: intent.envelopeSequence,
+            revision: intent.envelopeRevision,
+            payloadChecksum: intent.envelopePayloadChecksum,
+            objectID: intent.descriptor.objectID
+        )
+    }
+
     private func publishImageAsset(
         _ intent: ImageAssetIntent,
         phase: TchurchStudioLANImageAssetStatus.Phase,
@@ -1772,7 +1894,8 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         fileURL: URL?,
         message: String?
     ) {
-        imageAssetHandler?(.init(
+        guard intent.presentationGeneration == assetPresentationGeneration else { return }
+        let status = TchurchStudioLANImageAssetStatus(
             cueID: intent.cueID,
             objectID: intent.descriptor.objectID,
             phase: phase,
@@ -1781,7 +1904,21 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             imageFit: intent.descriptor.imageFit,
             fileURL: fileURL,
             message: message
-        ))
+        )
+        let key = PublishedImageAssetKey(
+            objectID: intent.descriptor.objectID,
+            generation: intent.presentationGeneration
+        )
+        if let previous = publishedImageAssetStatuses[key] {
+            switch previous.phase {
+            case .loading:
+                if status.phase == .loading, status.receivedBytes <= previous.receivedBytes { return }
+            case .ready, .unavailable:
+                return
+            }
+        }
+        publishedImageAssetStatuses[key] = status
+        imageAssetHandler?(status)
     }
 
     private func assetFailureMessage(_ error: Error) -> String {
@@ -1801,6 +1938,16 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         imageAssetIntents = []
         inFlightAssetRequest = nil
         assetRetryCount = 0
+    }
+
+    private func beginNewImageAssetPresentation() {
+        assetPresentationGeneration &+= 1
+        publishedImageAssetStatuses.removeAll(keepingCapacity: false)
+    }
+
+    private func clearManualReplayRecoveryState() {
+        exactReplayAssetRehydration.clearAll()
+        beginNewImageAssetPresentation()
     }
 
     private func send(_ message: TchurchStudioLANWireMessage, connection: NWConnection) throws {
@@ -1929,6 +2076,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         exactReplayAssetRehydration.clearConnectionEligibility()
         currentConnectionIsAutomaticReconnect = false
         if clearDesired {
+            clearManualReplayRecoveryState()
             desired = nil
             payloadNegotiation = TchurchStudioLANPayloadNegotiation()
             reconnectPolicy.resetForNewDesiredConnection()
