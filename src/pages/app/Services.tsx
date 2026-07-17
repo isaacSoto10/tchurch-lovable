@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
-import { Plus, Pencil, Trash2, Search, ChevronUp, ChevronDown, Music, FileText, Bell, X, Check, Clock, Users, GripVertical, FileDown, Maximize2, PlayCircle, Loader2, Link2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Search, ChevronUp, ChevronDown, Music, FileText, Bell, X, Check, Clock, Users, GripVertical, FileDown, Maximize2, PlayCircle, Loader2, Link2, Radio, Gamepad2 } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
 import { useChurch } from "@/providers/ChurchProvider";
@@ -1324,9 +1324,17 @@ export default function Services() {
             <h1 className="mt-1 text-3xl font-black tracking-tight text-zinc-950">Servicios</h1>
             <p className="mt-1 text-sm text-muted-foreground">Organiza el flujo, canciones y equipo de cada reunión.</p>
           </div>
-          {isPlanner && <Button size="sm" onClick={openNewDialog} className="h-11 shrink-0 rounded-2xl px-4 shadow-sm">
-          <Plus className="w-4 h-4 mr-1" /> Nuevo
-        </Button>}
+          <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
+            {isNativeMobileAuth && <Button type="button" size="sm" variant="outline" onClick={() => navigate("/app/studio-stage")} className="h-11 rounded-2xl px-3 shadow-sm">
+              <Radio className="mr-1 h-4 w-4" /> Stage LAN
+            </Button>}
+            {isNativeMobileAuth && <Button type="button" size="sm" variant="outline" onClick={() => navigate("/app/studio-production")} className="h-11 rounded-2xl px-3 shadow-sm">
+              <Gamepad2 className="mr-1 h-4 w-4" /> Control LAN
+            </Button>}
+            {isPlanner && <Button size="sm" onClick={openNewDialog} className="h-11 rounded-2xl px-4 shadow-sm">
+              <Plus className="mr-1 h-4 w-4" /> Nuevo
+            </Button>}
+          </div>
         </div>
       </div>
 

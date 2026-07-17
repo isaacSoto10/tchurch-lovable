@@ -108,6 +108,8 @@ let transportDisabled = import.meta.env.VITE_USER_ACTION_LOGGING === "false";
 let queue: UserActionPayload[] = [];
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let flushing = false;
+let transportSuspended = false;
+let activeFlushController: AbortController | null = null;
 
 function getActionLogEndpoint() {
   return configuredEndpoint || import.meta.env.VITE_USER_ACTION_LOG_ENDPOINT || DEFAULT_LOG_ENDPOINT;
@@ -306,7 +308,7 @@ export function sanitizeActionMetadata(metadata: UserActionMetadata = {}) {
 }
 
 function scheduleFlush() {
-  if (transportDisabled || queue.length === 0 || flushTimer) return;
+  if (transportDisabled || transportSuspended || queue.length === 0 || flushTimer) return;
 
   flushTimer = setTimeout(() => {
     flushTimer = null;
@@ -319,7 +321,25 @@ export function configureUserActionLogger(config: LoggerConfig) {
   configuredEndpoint = config.endpoint === null ? null : config.endpoint ? normalizeEndpoint(config.endpoint) : configuredEndpoint;
 }
 
+/**
+ * Studio LAN is a strict local-only surface. Suspending cancels both delayed
+ * and active telemetry transport while preserving the queue for the next
+ * ordinary Cloud route.
+ */
+export function setUserActionLoggingSuspended(suspended: boolean) {
+  transportSuspended = suspended;
+  if (suspended) {
+    if (flushTimer) clearTimeout(flushTimer);
+    flushTimer = null;
+    activeFlushController?.abort();
+    return;
+  }
+  scheduleFlush();
+}
+
 export function resetUserActionLoggerForTests() {
+  activeFlushController?.abort();
+  activeFlushController = null;
   tokenProvider = null;
   configuredEndpoint = null;
   transportDisabled = import.meta.env.VITE_USER_ACTION_LOGGING === "false";
@@ -327,10 +347,11 @@ export function resetUserActionLoggerForTests() {
   if (flushTimer) clearTimeout(flushTimer);
   flushTimer = null;
   flushing = false;
+  transportSuspended = false;
 }
 
 export function logUserAction(type: string, metadata: UserActionMetadata = {}, options: { immediate?: boolean } = {}) {
-  if (transportDisabled || typeof window === "undefined") return;
+  if (transportDisabled || transportSuspended || typeof window === "undefined") return;
 
   const route = getCurrentActionRoute();
   queue.push({
@@ -360,15 +381,22 @@ export function logUserAction(type: string, metadata: UserActionMetadata = {}, o
 }
 
 export async function flushUserActionLogs() {
-  if (transportDisabled || flushing || queue.length === 0 || typeof fetch === "undefined") return;
+  if (transportDisabled || transportSuspended || flushing || queue.length === 0 || typeof fetch === "undefined") return;
 
   flushing = true;
   const batch = queue.splice(0, MAX_BATCH_SIZE);
   let shouldRetrySoon = true;
+  let flushController: AbortController | null = null;
 
   try {
     const token = await tokenProvider?.();
     if (!token) {
+      queue = [...batch, ...queue].slice(-MAX_QUEUE_SIZE);
+      shouldRetrySoon = false;
+      return;
+    }
+
+    if (transportSuspended) {
       queue = [...batch, ...queue].slice(-MAX_QUEUE_SIZE);
       shouldRetrySoon = false;
       return;
@@ -383,11 +411,14 @@ export async function flushUserActionLogs() {
     if (churchId) headers["x-church-id"] = churchId;
 
     const body = JSON.stringify({ events: batch });
+    flushController = new AbortController();
+    activeFlushController = flushController;
     const response = await fetch(getActionLogEndpoint(), {
       method: "POST",
       headers,
       body,
       keepalive: body.length < 60000,
+      signal: flushController.signal,
     });
 
     if (response.status === 404 || response.status === 405 || response.status === 501) {
@@ -402,9 +433,11 @@ export async function flushUserActionLogs() {
     }
   } catch {
     queue = [...batch, ...queue].slice(-MAX_QUEUE_SIZE);
+    if (transportSuspended) shouldRetrySoon = false;
   } finally {
+    if (activeFlushController === flushController) activeFlushController = null;
     flushing = false;
-    if (queue.length > 0 && !transportDisabled && shouldRetrySoon) scheduleFlush();
+    if (queue.length > 0 && !transportDisabled && !transportSuspended && shouldRetrySoon) scheduleFlush();
   }
 }
 

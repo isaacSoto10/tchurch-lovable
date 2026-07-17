@@ -53,8 +53,17 @@ function warmupPaths(churchId: string) {
   ];
 }
 
-async function warmNativeAppData() {
-  if (!isNativeMobileAuth || typeof window === "undefined") return;
+function isStudioLANRouteActive() {
+  if (typeof window === "undefined") return false;
+  const route = window.location.hash.startsWith("#/")
+    ? window.location.hash.slice(1)
+    : window.location.pathname;
+  const pathname = route.split(/[?#]/, 1)[0].replace(/\/+$/, "") || "/";
+  return pathname === "/app/studio-stage";
+}
+
+async function warmNativeAppData(signal: AbortSignal) {
+  if (!isNativeMobileAuth || typeof window === "undefined" || signal.aborted || isStudioLANRouteActive()) return;
   if (!getMobileAuthSession()) return;
 
   const churchId = getStoredChurchId();
@@ -62,17 +71,23 @@ async function warmNativeAppData() {
 
   const paths = warmupPaths(churchId);
   for (let index = 0; index < paths.length; index += WARMUP_BATCH_SIZE) {
+    if (signal.aborted || isStudioLANRouteActive()) return;
     const batch = paths.slice(index, index + WARMUP_BATCH_SIZE);
-    await Promise.allSettled(batch.map((path) => apiFetch(path)));
+    await Promise.allSettled(batch.map((path) => apiFetch(path, { signal })));
   }
 }
 
 export function scheduleNativeAppDataWarmup() {
   if (!isNativeMobileAuth || typeof window === "undefined") return undefined;
 
+  const controller = new AbortController();
+
   const handle = window.setTimeout(() => {
-    void warmNativeAppData();
+    void warmNativeAppData(controller.signal);
   }, 1200);
 
-  return () => window.clearTimeout(handle);
+  return () => {
+    window.clearTimeout(handle);
+    controller.abort();
+  };
 }

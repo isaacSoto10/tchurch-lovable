@@ -9,6 +9,7 @@ import {
   resetUserActionLoggerForTests,
   sanitizeActionMetadata,
   sanitizeActionPath,
+  setUserActionLoggingSuspended,
 } from "./userActionLogger";
 import { API_BASE } from "./apiConfig";
 
@@ -157,5 +158,54 @@ describe("user action logger", () => {
     await flushUserActionLogs();
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves queued telemetry without sending it while Studio LAN is active", async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    window.fetch = fetchMock as unknown as typeof fetch;
+    configureUserActionLogger({ tokenProvider: async () => "test-auth-token" });
+
+    logUserAction("navigation.changed", { to: "/app/services" });
+    setUserActionLoggingSuspended(true);
+    await flushUserActionLogs();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    logUserAction("interaction.click", { label: "LAN local" });
+    setUserActionLoggingSuspended(false);
+    await flushUserActionLogs();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, request] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const payload = JSON.parse(String(request.body));
+    expect(payload.events).toHaveLength(1);
+    expect(payload.events[0].type).toBe("navigation.changed");
+  });
+
+  it("aborts an active telemetry flush and retries the preserved batch after LAN exit", async () => {
+    let firstSignal: AbortSignal | null = null;
+    let attempt = 0;
+    const fetchMock = vi.fn((_url: string | URL | Request, request?: RequestInit) => {
+      attempt += 1;
+      if (attempt > 1) return Promise.resolve(new Response(null, { status: 204 }));
+      firstSignal = request?.signal as AbortSignal;
+      return new Promise<Response>((_resolve, reject) => {
+        firstSignal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+      });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    window.fetch = fetchMock as unknown as typeof fetch;
+    configureUserActionLogger({ tokenProvider: async () => "test-auth-token" });
+    logUserAction("navigation.changed", { to: "/app/services" });
+
+    const activeFlush = flushUserActionLogs();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    setUserActionLoggingSuspended(true);
+    await activeFlush;
+    expect(firstSignal?.aborted).toBe(true);
+
+    setUserActionLoggingSuspended(false);
+    await flushUserActionLogs();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

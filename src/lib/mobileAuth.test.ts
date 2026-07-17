@@ -1,10 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { API_BASE } from "./apiConfig";
 import {
+  clearMobileAuthSession,
+  getMobileAuthPrincipalId,
   MobileAuthApiError,
   requestMobileJoinAuthCode,
+  saveMobileAuthSession,
   verifyMobileJoinAuthCode,
 } from "./mobileAuth";
+
+vi.mock("@capacitor/core", () => ({
+  Capacitor: { isNativePlatform: () => true },
+}));
 
 describe("mobile auth join flow", () => {
   const originalFetch = globalThis.fetch;
@@ -80,5 +87,29 @@ describe("mobile auth join flow", () => {
       joinCode: "ABCD1234",
       verificationCode: "123456",
     });
+  });
+
+  it("keeps a non-secret principal hint for verified offline LAN after token expiry", () => {
+    saveMobileAuthSession({
+      token: "tm_expired-token",
+      expiresAt: "2020-01-01T00:00:00.000Z",
+      user: { id: "user_offline", email: "person@example.com" },
+    });
+
+    expect(getMobileAuthPrincipalId()).toBe("user_offline");
+    expect(localStorage.getItem("tchurch_mobile_auth_session")).toBeNull();
+  });
+
+  it("removes both the bearer session and offline principal hint on explicit logout", () => {
+    saveMobileAuthSession({
+      token: "tm_test-token",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      user: { id: "user_1", email: "person@example.com" },
+    });
+
+    clearMobileAuthSession();
+
+    expect(getMobileAuthPrincipalId()).toBeNull();
+    expect(localStorage.getItem("tchurch_mobile_auth_session")).toBeNull();
   });
 });

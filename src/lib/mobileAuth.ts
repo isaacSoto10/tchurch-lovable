@@ -3,6 +3,7 @@ import { API_BASE } from "@/lib/apiConfig";
 import { actionNow, logApiRequestSummary } from "@/lib/userActionLogger";
 
 const STORAGE_KEY = "tchurch_mobile_auth_session";
+const PRINCIPAL_STORAGE_KEY = "tchurch_mobile_auth_principal";
 const CHANGE_EVENT = "tchurch-mobile-auth-change";
 
 export type MobileAuthUser = {
@@ -100,6 +101,17 @@ function isExpired(session: MobileAuthSession) {
   return new Date(session.expiresAt).getTime() <= Date.now();
 }
 
+function validPrincipalId(value: unknown): value is string {
+  return typeof value === "string"
+    && value.length > 0
+    && value.length <= 256
+    && !/[\u0000-\u001f\u007f]/.test(value);
+}
+
+function rememberPrincipal(principalId: string) {
+  if (validPrincipalId(principalId)) localStorage.setItem(PRINCIPAL_STORAGE_KEY, principalId);
+}
+
 function emitChange() {
   window.dispatchEvent(new Event(CHANGE_EVENT));
 }
@@ -159,7 +171,16 @@ export function getMobileAuthSession(): MobileAuthSession | null {
     if (!raw) return null;
 
     const session = JSON.parse(raw) as MobileAuthSession;
-    if (!session?.token || !session?.user?.id || isExpired(session)) {
+    if (!session?.token || !validPrincipalId(session?.user?.id)) {
+      localStorage.removeItem(STORAGE_KEY);
+      return null;
+    }
+
+    // Keep only the non-secret principal hint after token expiry. Studio LAN
+    // can then prove that it still belongs to the same Keychain scope without
+    // making a Cloud request or retaining an expired bearer token.
+    rememberPrincipal(session.user.id);
+    if (isExpired(session)) {
       localStorage.removeItem(STORAGE_KEY);
       return null;
     }
@@ -171,13 +192,31 @@ export function getMobileAuthSession(): MobileAuthSession | null {
   }
 }
 
+export function getMobileAuthPrincipalId(): string | null {
+  if (!isNativeMobileAuth) return null;
+
+  const session = getMobileAuthSession();
+  if (session) return session.user.id;
+
+  try {
+    const principalId = localStorage.getItem(PRINCIPAL_STORAGE_KEY);
+    if (validPrincipalId(principalId)) return principalId;
+    localStorage.removeItem(PRINCIPAL_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 export function saveMobileAuthSession(session: MobileAuthSession) {
+  rememberPrincipal(session.user.id);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
   emitChange();
 }
 
 export function clearMobileAuthSession() {
   localStorage.removeItem(STORAGE_KEY);
+  localStorage.removeItem(PRINCIPAL_STORAGE_KEY);
   emitChange();
 }
 
