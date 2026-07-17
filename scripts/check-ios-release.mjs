@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 
-const EXPECTED_MARKETING_VERSION = "4.0.13";
-const EXPECTED_BUILD_NUMBER = "212";
+const EXPECTED_MARKETING_VERSION = "4.0.14";
+const EXPECTED_BUILD_NUMBER = "214";
 const projectPaths = [
   "ios/App/App.xcodeproj/project.pbxproj",
   "ios/App/Tchurch.xcodeproj/project.pbxproj",
@@ -34,6 +34,18 @@ for (const projectPath of projectPaths) {
 const workflow = await readFile(".github/workflows/ios-appstore-agent.yml", "utf8");
 assert(valuesFor(workflow, /ASC_TARGET_BUILD_NUMBER:\s*"([^"]+)"/g).join(",") === EXPECTED_BUILD_NUMBER, "App Store workflow build pin is inconsistent.");
 assert(valuesFor(workflow, /ASC_TARGET_MARKETING_VERSION:\s*"([^"]+)"/g).join(",") === EXPECTED_MARKETING_VERSION, "App Store workflow marketing pin is inconsistent.");
+
+const releaseAgentDocs = await readFile("docs/ios-appstore-agent.md", "utf8");
+const documentedBuildNumbers = valuesFor(releaseAgentDocs, /ASC_TARGET_BUILD_NUMBER=([0-9]+)/g);
+const documentedMarketingVersions = valuesFor(releaseAgentDocs, /ASC_TARGET_MARKETING_VERSION=([0-9.]+)/g);
+assert(documentedBuildNumbers.length === 2, "App Store docs must include both release commands.");
+assert(documentedBuildNumbers.every((value) => value === EXPECTED_BUILD_NUMBER), "App Store docs build pins are inconsistent.");
+assert(documentedMarketingVersions.length === 2, "App Store docs must include both marketing-version pins.");
+assert(documentedMarketingVersions.every((value) => value === EXPECTED_MARKETING_VERSION), "App Store docs marketing pins are inconsistent.");
+assert(releaseAgentDocs.includes(`CI_BUILD_NUMBER=${EXPECTED_BUILD_NUMBER}`), "App Store docs Xcode Cloud build is inconsistent.");
+
+const releaseCandidateDocs = await readFile(`docs/ios-${EXPECTED_MARKETING_VERSION}-release.md`, "utf8");
+assert(releaseCandidateDocs.includes(`Release candidate: \`${EXPECTED_MARKETING_VERSION} (${EXPECTED_BUILD_NUMBER})\`.`), "Release-candidate docs are inconsistent.");
 
 const postClone = await readFile("ios/App/ci_scripts/ci_post_clone.sh", "utf8");
 assert(

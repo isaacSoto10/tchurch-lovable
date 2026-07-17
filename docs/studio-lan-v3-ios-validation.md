@@ -230,8 +230,10 @@ background/foreground, and wrong-key alert classification on shipping devices.
 
 This follow-up was completed in the isolated worktree
 `/Users/isaacsoto/Tchurch/.codex-local/ios-studio-lan-follower` on branch
-`codex/studio-lan-follower-ios`. It has not been committed or pushed, and the
-canonical `/Users/isaacsoto/Tchurch-app` checkout was not modified.
+`codex/studio-lan-follower-ios`. The completed follow-up is commit
+`e7bbe9e6ac0aea8a2bfe5106bb8d3ba117a4a134`, pushed to
+`origin/codex/lan-v3-release-integration-ios`; the canonical
+`/Users/isaacsoto/Tchurch-app` checkout was not modified.
 
 The native launch path now stays behind a local loading gate until Capacitor's
 initial `getLaunchUrl()` request settles. A deferred-launch integration test
