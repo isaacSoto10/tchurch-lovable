@@ -37,6 +37,7 @@ describe("StudioLANLocalPrivacyBoundary", () => {
   });
 
   it("verifies the locally remembered principal before exposing Studio", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
     let release: (() => void) | undefined;
     mocks.principal.mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve; }));
 
@@ -50,8 +51,10 @@ describe("StudioLANLocalPrivacyBoundary", () => {
     await act(async () => { release?.(); });
     expect(await screen.findByText("Salida de músicos")).toBeInTheDocument();
     expect(mocks.suspendLogging).toHaveBeenCalledWith(true);
+    expect(fetchSpy).not.toHaveBeenCalled();
 
     view.unmount();
+    fetchSpy.mockRestore();
     expect(mocks.suspendLogging).toHaveBeenLastCalledWith(false);
   });
 

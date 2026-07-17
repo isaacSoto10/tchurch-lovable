@@ -5,6 +5,13 @@ import Security
 struct TchurchStudioLANService: Equatable {
     let id: String
     let name: String
+    let protocolFloor: Int
+
+    init(id: String, name: String, protocolFloor: Int = 1) {
+        self.id = id
+        self.name = name
+        self.protocolFloor = protocolFloor
+    }
 }
 
 enum TchurchStudioLANConnectionPhase: String, Equatable {
@@ -328,6 +335,49 @@ struct TchurchStudioLANClientStatus: Equatable {
     let channel: TchurchStudioLANChannel?
     let paired: Bool
     let message: String?
+    let enrollmentState: StudioLANDeviceEnrollmentState
+    let protocolFloor: Int
+    let role: StudioLANDeviceRole?
+    let permissions: [StudioLANDevicePermission]
+    let permissionRevision: UInt64
+    let revocationGeneration: UInt64
+    let studioID: UUID?
+    let remoteControlAvailable: Bool
+    let remoteCommandInFlight: Bool
+
+    init(
+        phase: TchurchStudioLANConnectionPhase,
+        services: [TchurchStudioLANService],
+        selectedServiceID: String?,
+        channel: TchurchStudioLANChannel?,
+        paired: Bool,
+        message: String?,
+        enrollmentState: StudioLANDeviceEnrollmentState = .unenrolled,
+        protocolFloor: Int = 1,
+        role: StudioLANDeviceRole? = nil,
+        permissions: [StudioLANDevicePermission] = [],
+        permissionRevision: UInt64 = 0,
+        revocationGeneration: UInt64 = 0,
+        studioID: UUID? = nil,
+        remoteControlAvailable: Bool = false,
+        remoteCommandInFlight: Bool = false
+    ) {
+        self.phase = phase
+        self.services = services
+        self.selectedServiceID = selectedServiceID
+        self.channel = channel
+        self.paired = paired
+        self.message = message
+        self.enrollmentState = enrollmentState
+        self.protocolFloor = protocolFloor
+        self.role = role
+        self.permissions = permissions
+        self.permissionRevision = permissionRevision
+        self.revocationGeneration = revocationGeneration
+        self.studioID = studioID
+        self.remoteControlAvailable = remoteControlAvailable
+        self.remoteCommandInFlight = remoteCommandInFlight
+    }
 }
 
 protocol TchurchStudioLANSecretStoring {
@@ -602,10 +652,12 @@ final class TchurchStudioLANClient: @unchecked Sendable {
     var statusHandler: ((TchurchStudioLANClientStatus) -> Void)?
     var envelopeHandler: ((TchurchStudioLANSignedEnvelope) -> Void)?
     var imageAssetHandler: ((TchurchStudioLANImageAssetStatus) -> Void)?
+    var remoteFeedbackHandler: ((TchurchStudioLANRemoteFeedback) -> Void)?
 
     private struct DesiredConnection {
         let serviceID: String
         let channel: TchurchStudioLANChannel
+        let requestedRole: StudioLANDeviceRole
     }
 
     private enum SecretSource {
@@ -662,6 +714,11 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         let intent: ImageAssetIntent
     }
 
+    private struct InFlightRemoteCommand: Equatable {
+        var command: TchurchStudioLANRemoteCommand
+        var recovery: TchurchStudioLANRemoteCommandRecoveryState
+    }
+
     private let queue = DispatchQueue(label: "app.tchurch.studio-lan.client")
     private let assetIOQueue = DispatchQueue(label: "app.tchurch.studio-lan.assets", qos: .utility)
     private lazy var assetRequestWatchdog = TchurchStudioLANAssetRequestWatchdog(queue: queue)
@@ -672,6 +729,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
     private let assetCache: TchurchStudioLANAssetCache
     private let assetCachePurge: () throws -> Void
     private let privacyStateStore: TchurchStudioLANPrivacyStateStoring
+    private let deviceTrust: StudioLANDeviceTrustController
 
     private var browser: NWBrowser?
     private var discoveredEndpoints: [String: NWEndpoint] = [:]
@@ -685,6 +743,12 @@ final class TchurchStudioLANClient: @unchecked Sendable {
     private var challenge: TchurchStudioLANServerChallenge?
     private var request: TchurchStudioLANSubscriptionRequest?
     private var verifier: TchurchStudioLANEnvelopeVerifier?
+    private var activeSubscription: TchurchStudioLANVerifiedSubscription?
+    private var latestControlEnvelope: TchurchStudioLANSignedEnvelope?
+    private var minimumControlEnvelopeRevision: UInt64?
+    private var inFlightRemoteCommand: InFlightRemoteCommand?
+    private var remoteCommandTimeoutWork: DispatchWorkItem?
+    private var remoteCommandRecoveryDeadlineWork: DispatchWorkItem?
     private var payloadNegotiation = TchurchStudioLANPayloadNegotiation()
     private var replayGuards: [String: TchurchStudioLANReplayGuard] = [:]
     private var exactReplayAssetRehydration = TchurchStudioLANExactReplayAssetRehydrationGate()
@@ -723,7 +787,8 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         defaults: UserDefaults = .standard,
         assetCache: TchurchStudioLANAssetCache = TchurchStudioLANAssetCache(),
         assetCachePurge: (() throws -> Void)? = nil,
-        privacyStateStore: TchurchStudioLANPrivacyStateStoring = TchurchStudioLANKeychainPrivacyStateStore()
+        privacyStateStore: TchurchStudioLANPrivacyStateStoring = TchurchStudioLANKeychainPrivacyStateStore(),
+        deviceTrust: StudioLANDeviceTrustController? = nil
     ) throws {
         guard limits.isValid, heartbeatTimings.isValid else {
             throw TchurchStudioLANError.invalidConfiguration
@@ -735,6 +800,10 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         self.assetCache = assetCache
         self.assetCachePurge = assetCachePurge ?? { try assetCache.purgeAll() }
         self.privacyStateStore = privacyStateStore
+        self.deviceTrust = try deviceTrust ?? StudioLANDeviceTrustController()
+        payloadNegotiation = TchurchStudioLANPayloadNegotiation(
+            protocolFloor: self.deviceTrust.snapshot.protocolFloor
+        )
         do {
             privacyState = try privacyStateStore.read()
             privacyStateReadFailed = false
@@ -777,7 +846,12 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         }
     }
 
-    func connect(serviceID: String, channel: TchurchStudioLANChannel, pairingCode: String?) {
+    func connect(
+        serviceID: String,
+        channel: TchurchStudioLANChannel,
+        pairingCode: String?,
+        requestedRole: StudioLANDeviceRole? = nil
+    ) {
         queue.async { [weak self] in
             guard let self = self else { return }
             guard !self.privacyAccessBlocked else {
@@ -790,8 +864,23 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                 )
                 return
             }
-            guard channel.isReadOnlyOutput, self.discoveredEndpoints[serviceID] != nil else {
+            guard channel.isSupportedSubscription,
+                  self.discoveredEndpoints[serviceID] != nil,
+                  let service = self.discoveredServices[serviceID] else {
                 self.setPhase(.failed, message: "Selecciona un Tchurch Studio disponible.")
+                return
+            }
+            let role = requestedRole ?? (channel == .audience ? .audience : .musicians)
+            guard role.channel == channel,
+                  channel != .control || (
+                    role == .production &&
+                    service.protocolFloor >= StudioLANDeviceTrustContract.protocolFloor
+                  ) else {
+                self.setPhase(.failed, message: "El rol solicitado no corresponde a esta salida local.")
+                return
+            }
+            if self.deviceTrust.snapshot.enrollmentState == .revoked {
+                self.closeForDeviceRevocation()
                 return
             }
             do {
@@ -808,18 +897,36 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                     self.setPhase(.failed, message: "Ingresa el código de emparejamiento de Tchurch Studio.")
                     return
                 }
-                self.desired = DesiredConnection(serviceID: serviceID, channel: channel)
+                let requiresV4 = service.protocolFloor >= StudioLANDeviceTrustRecord.protocolFloor ||
+                    self.deviceTrust.snapshot.protocolFloor >= StudioLANDeviceTrustRecord.protocolFloor
+                if requiresV4 {
+                    _ = try self.deviceTrust.beginEnrollment()
+                }
+                self.desired = DesiredConnection(
+                    serviceID: serviceID,
+                    channel: channel,
+                    requestedRole: role
+                )
                 self.activeSecret = secret
-                self.payloadNegotiation = TchurchStudioLANPayloadNegotiation()
+                self.payloadNegotiation = TchurchStudioLANPayloadNegotiation(
+                    protocolFloor: requiresV4 ? StudioLANDeviceTrustRecord.protocolFloor : 1
+                )
                 self.intentionalDisconnect = false
                 self.suspended = false
                 self.reconnectPolicy.resetForNewDesiredConnection()
                 self.beginConnection(reconnecting: false)
+            } catch StudioLANDeviceTrustError.revoked {
+                self.closeForDeviceRevocation()
             } catch {
                 self.pendingSecret = nil
                 self.activeSecret = nil
                 self.activeSecretSource = nil
-                self.setPhase(.failed, message: "El código de emparejamiento no es válido.")
+                self.setPhase(
+                    .failed,
+                    message: self.deviceTrust.snapshot.protocolFloor >= StudioLANDeviceTrustRecord.protocolFloor
+                        ? "No se pudo proteger la identidad local de este dispositivo."
+                        : "El código de emparejamiento no es válido."
+                )
             }
         }
     }
@@ -829,6 +936,92 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             guard let self else { return }
             if !clearDesired { self.clearManualReplayRecoveryState() }
             self.disconnectOnQueue(clearDesired: clearDesired)
+        }
+    }
+
+    func sendRemoteCommand(
+        action: TchurchStudioLANRemoteAction,
+        completion: @escaping (Result<UUID, Error>) -> Void
+    ) {
+        queue.async { [weak self] in
+            guard let self else {
+                completion(.failure(TchurchStudioLANRemoteControlError.unavailable))
+                return
+            }
+            do {
+                let command = try self.makeRemoteCommand(action: action)
+                guard let connection = self.connection else {
+                    throw TchurchStudioLANRemoteControlError.unavailable
+                }
+                self.inFlightRemoteCommand = InFlightRemoteCommand(
+                    command: command,
+                    recovery: TchurchStudioLANRemoteCommandRecoveryState(command: command)
+                )
+                self.armRemoteCommandTimeout(commandID: command.commandID, connection: connection)
+                do {
+                    try self.send(.remoteCommand(command), connection: connection)
+                } catch {
+                    self.cancelRemoteCommand(
+                        state: .interrupted,
+                        expectedCommandID: command.commandID
+                    )
+                    throw error
+                }
+                self.remoteFeedbackHandler?(TchurchStudioLANRemoteFeedback(
+                    commandID: command.commandID,
+                    action: command.action,
+                    state: .queued,
+                    rejection: nil,
+                    revision: nil,
+                    wasIdempotentReplay: false
+                ))
+                self.emitStatus()
+                completion(.success(command.commandID))
+            } catch {
+                completion(.failure(error))
+            }
+        }
+    }
+
+    func requestDeviceReapproval(
+        completion: @escaping (Result<UUID, Error>) -> Void
+    ) {
+        queue.async { [weak self] in
+            guard let self else {
+                completion(.failure(StudioLANDeviceTrustError.identityUnavailable))
+                return
+            }
+            guard self.deviceTrust.snapshot.enrollmentState == .revoked,
+                  !self.privacyAccessBlocked else {
+                completion(.failure(StudioLANDeviceTrustError.revoked))
+                return
+            }
+            do {
+                // Rotate the durable transport client identifier separately
+                // from the v4 device identity. Neither revoked identifier is
+                // ever offered again, even to a legacy discovery peer.
+                var nextPrivacy = self.privacyState
+                nextPrivacy.clientIdentityInitialized = true
+                nextPrivacy.clientID = UUID().uuidString.lowercased()
+                try self.privacyStateStore.write(nextPrivacy)
+                self.privacyState = nextPrivacy
+                self.privacyStateReadFailed = false
+                self.defaults.removeObject(forKey: Self.clientIDDefaultsKey)
+
+                let identity = try self.deviceTrust.rotateRevokedIdentityForReapproval()
+                self.intentionalDisconnect = false
+                self.payloadNegotiation = TchurchStudioLANPayloadNegotiation(
+                    protocolFloor: StudioLANDeviceTrustContract.protocolFloor
+                )
+                self.reconnectPolicy.resetForNewDesiredConnection()
+                self.startDiscoveryOnQueue()
+                if self.desired != nil { self.beginConnection(reconnecting: true) }
+                self.emitStatus()
+                completion(.success(identity.deviceID))
+            } catch {
+                self.emitStatus()
+                completion(.failure(error))
+            }
         }
     }
 
@@ -845,6 +1038,9 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             self.connection?.stateUpdateHandler = nil
             self.connection?.cancel()
             self.connection = nil
+            self.verifier = nil
+            self.clearRemoteControlSession(interruptCommand: true)
+            self.didAuthenticate = false
             self.resetAssetTransfer()
             self.exactReplayAssetRehydration.clearConnectionEligibility()
             self.currentConnectionIsAutomaticReconnect = false
@@ -976,6 +1172,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                 )
             case .signedOut, .revoked:
                 if self.privacyScopeInitialized,
+                   self.privacyState.principalFingerprint == nil,
                    self.currentPrivacyScopeFingerprint == nil,
                    !self.hasPendingPrivacyPurge,
                    !self.privacyPurgeInFlight {
@@ -1010,7 +1207,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
     private var privacyAccessBlocked: Bool {
         hasPendingPrivacyPurge || privacyPurgeInFlight ||
             !privacyState.scopeInitialized || !privacyContextConfirmed ||
-            currentPrivacyScopeFingerprint == nil
+            privacyState.principalFingerprint == nil
     }
 
     private var privacyScopeInitialized: Bool {
@@ -1106,6 +1303,16 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         } catch {
             secretsDeleted = false
         }
+        let trustDeleted: Bool
+        do {
+            try deviceTrust.purgePrivateTrustPreservingProtocolFloor()
+            payloadNegotiation = TchurchStudioLANPayloadNegotiation(
+                protocolFloor: deviceTrust.snapshot.protocolFloor
+            )
+            trustDeleted = true
+        } catch {
+            trustDeleted = false
+        }
 
         assetIOQueue.async { [weak self] in
             guard let self else { return }
@@ -1121,7 +1328,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                 self.privacyPurgeInFlight = false
                 let completions = self.privacyPurgeCompletions
                 self.privacyPurgeCompletions.removeAll(keepingCapacity: false)
-                guard secretsDeleted && cacheDeleted else {
+                guard secretsDeleted && trustDeleted && cacheDeleted else {
                     self.setPhase(.failed, message: failureMessage)
                     completions.forEach { $0(.failure(TchurchStudioLANError.assetCacheUnavailable)) }
                     return
@@ -1245,8 +1452,19 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                   type == Self.bonjourServiceType else { continue }
             let identity = "\(name)|\(type)|\(domain)".lowercased()
             let id = String(TchurchStudioLANCrypto.sha256Hex(Data(identity.utf8)).prefix(32))
+            let advertisedProtocolFloor: Int
+            if case .bonjour(let txtRecord) = result.metadata,
+               txtRecord["trust"] == String(StudioLANDeviceTrustContract.protocolFloor) {
+                advertisedProtocolFloor = StudioLANDeviceTrustContract.protocolFloor
+            } else {
+                advertisedProtocolFloor = 1
+            }
             endpoints[id] = result.endpoint
-            services[id] = TchurchStudioLANService(id: id, name: String(name.prefix(120)))
+            services[id] = TchurchStudioLANService(
+                id: id,
+                name: String(name.prefix(120)),
+                protocolFloor: advertisedProtocolFloor
+            )
         }
         discoveredEndpoints = endpoints
         discoveredServices = services
@@ -1338,6 +1556,12 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         challenge = nil
         request = nil
         verifier = nil
+        let preserveAmbiguousCommand = reconnecting &&
+            (inFlightRemoteCommand?.recovery.isAwaitingAuthenticatedContext == true)
+        clearRemoteControlSession(
+            interruptCommand: !preserveAmbiguousCommand,
+            preserveAmbiguousCommand: preserveAmbiguousCommand
+        )
         didAuthenticate = false
         lastWaitingNetworkFailure = nil
         decoder = try! TchurchStudioLANLengthPrefixedFrameDecoder(
@@ -1462,26 +1686,57 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                       let secret = activeSecret else {
                     throw TchurchStudioLANError.expiredChallenge
                 }
-                let stableClientID: UUID
-                do {
-                    stableClientID = try clientID()
-                } catch {
-                    // A local Keychain failure is not evidence that the peer
-                    // rejected the PSK or compromised the protocol. Preserve
-                    // every existing private artifact and retry later.
-                    throw TchurchStudioLANClientProcessingError.localStateUnavailable
-                }
                 let request: TchurchStudioLANSubscriptionRequest
                 do {
+                    let challengeRequiresV4 = challenge.deviceTrustVersion == StudioLANDeviceTrustContract.schemaVersion &&
+                        challenge.minimumPayloadVersion == StudioLANDeviceTrustContract.protocolFloor &&
+                        challenge.studioID != nil
+                    let localRequiresV4 = payloadNegotiation.protocolFloor >= StudioLANDeviceTrustContract.protocolFloor ||
+                        deviceTrust.snapshot.protocolFloor >= StudioLANDeviceTrustContract.protocolFloor
+                    guard !localRequiresV4 || challengeRequiresV4 else {
+                        throw StudioLANDeviceTrustError.legacyDowngradeDenied
+                    }
+                    if challengeRequiresV4 && payloadNegotiation.protocolFloor < StudioLANDeviceTrustContract.protocolFloor {
+                        payloadNegotiation = TchurchStudioLANPayloadNegotiation(
+                            protocolFloor: StudioLANDeviceTrustContract.protocolFloor
+                        )
+                    }
+                    let requestID = UUID()
+                    let requestNonce = try TchurchStudioLANCrypto.randomBytes(count: 24)
+                    let stableClientID: UUID
+                    let attestation: StudioLANDeviceAttestation?
+                    if challengeRequiresV4 {
+                        let identity = try deviceTrust.beginEnrollment(studioID: challenge.studioID)
+                        stableClientID = identity.deviceID
+                        let requestedRole = deviceTrust.snapshot.role ?? desired.requestedRole
+                        attestation = try deviceTrust.makeAttestation(
+                            challenge: challenge,
+                            requestID: requestID,
+                            clientName: "Tchurch iOS",
+                            channel: desired.channel,
+                            clientNonce: requestNonce.base64EncodedString(),
+                            supportedPayloadVersions: payloadNegotiation.supportedPayloadVersions,
+                            requestedRole: requestedRole
+                        )
+                    } else {
+                        stableClientID = try clientID()
+                        attestation = nil
+                    }
                     request = try TchurchStudioLANSubscriptionAuthenticator.makeRequest(
                         challenge: challenge,
                         clientID: stableClientID,
                         clientName: "Tchurch iOS",
                         channel: desired.channel,
                         secret: secret,
-                        schemaVersion: payloadNegotiation.requestSchemaVersion
+                        requestID: requestID,
+                        clientNonce: requestNonce,
+                        schemaVersion: payloadNegotiation.requestSchemaVersion,
+                        offeredPayloadVersions: payloadNegotiation.supportedPayloadVersions,
+                        deviceAttestation: attestation
                     )
                 } catch TchurchStudioLANError.entropyUnavailable {
+                    throw TchurchStudioLANClientProcessingError.localStateUnavailable
+                } catch is StudioLANDeviceTrustError {
                     throw TchurchStudioLANClientProcessingError.localStateUnavailable
                 }
                 self.challenge = challenge
@@ -1490,10 +1745,27 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                 return
             }
 
-            if case .error(let code) = message,
-               code == .authenticationFailed || code == .protocolViolation,
-               beginLegacyFallbackIfEligible(connection) {
-                return
+            if case .error(let code) = message {
+                switch code {
+                case .approvalPending:
+                    waitForDeviceApproval(connection)
+                    return
+                case .deviceExpired:
+                    if let studioID = challenge?.studioID {
+                        try? deviceTrust.markPendingForApproval(studioID: studioID)
+                    }
+                    waitForDeviceApproval(connection)
+                    return
+                case .deviceRevoked:
+                    markDeviceRevokedAndClose()
+                    return
+                case .protocolUpgradeRequired:
+                    throw TchurchStudioLANError.unsupportedPayloadVersion
+                case .authenticationFailed, .protocolViolation:
+                    if beginLegacyFallbackIfEligible(connection) { return }
+                case .rateLimited, .overloaded, .serverUnavailable:
+                    break
+                }
             }
 
             guard case .grant(let grant) = message,
@@ -1503,14 +1775,25 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                   let desired = desired else {
                 throw TchurchStudioLANError.protocolViolation
             }
+            let nowMilliseconds = TchurchStudioLANTime.nowMilliseconds()
             let subscription = try TchurchStudioLANSubscriptionAuthenticator.verifyGrant(
                 grant,
                 request: request,
                 challenge: challenge,
                 secret: secret,
-                nowMilliseconds: TchurchStudioLANTime.nowMilliseconds()
+                nowMilliseconds: nowMilliseconds
             )
             try payloadNegotiation.recordAuthenticatedGrant(subscription)
+            if payloadNegotiation.protocolFloor >= StudioLANDeviceTrustContract.protocolFloor {
+                guard let deviceGrant = subscription.deviceGrant else {
+                    throw TchurchStudioLANError.invalidSubscription
+                }
+                do {
+                    try deviceTrust.accept(deviceGrant, nowMilliseconds: nowMilliseconds)
+                } catch {
+                    throw TchurchStudioLANError.invalidSubscription
+                }
+            }
             let key = replayKey(serviceID: desired.serviceID, channel: desired.channel)
             var replayGuard = replayGuards[key]
                 ?? TchurchStudioLANReplayGuard()
@@ -1523,6 +1806,9 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                 isAutomaticReconnect: currentConnectionIsAutomaticReconnect
             )
             verifier = try TchurchStudioLANEnvelopeVerifier(subscription: subscription, limits: limits)
+            activeSubscription = subscription
+            latestControlEnvelope = nil
+            minimumControlEnvelopeRevision = nil
             didAuthenticate = true
             reconnectPolicy.recordAuthenticatedSession()
             connectionTimeoutWork?.cancel()
@@ -1576,6 +1862,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                     connection: connection,
                     mode: .exactReplay(pendingObjectIDs: pendingObjectIDs)
                 )
+                recordVerifiedControlEnvelope(envelope)
                 recordAuthenticatedInboundActivity(connection)
                 return
             }
@@ -1588,6 +1875,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                 pendingAssetObjectIDs: imageAssetObjectIDs(from: envelope)
             )
             envelopeHandler?(envelope)
+            recordVerifiedControlEnvelope(envelope)
             registerImageAssets(from: envelope, connection: connection, mode: .acceptedEnvelope)
             recordAuthenticatedInboundActivity(connection)
         case .assetChunk(let chunk):
@@ -1601,6 +1889,16 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             recordAuthenticatedInboundActivity(connection)
         case .pong(let nonce):
             try acceptHeartbeatPong(nonce, connection: connection)
+        case .remoteReceipt(let receipt):
+            try handleRemoteReceipt(receipt)
+            recordAuthenticatedInboundActivity(connection)
+        case .error(.deviceRevoked):
+            markDeviceRevokedAndClose()
+        case .error(.deviceExpired), .error(.approvalPending):
+            if let studioID = deviceTrust.snapshot.studioID {
+                try? deviceTrust.markPendingForApproval(studioID: studioID)
+            }
+            waitForDeviceApproval(connection)
         case .error:
             throw TchurchStudioLANError.protocolViolation
         default:
@@ -1618,7 +1916,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         let generation = assetGeneration
         let key = replayKey(serviceID: desired.serviceID, channel: envelope.channel)
         imageAssetIntents = imageAssetCandidates(from: envelope).compactMap { candidate in
-            guard envelope.schemaVersion == 3,
+            guard envelope.schemaVersion == 3 || envelope.schemaVersion == 4,
                   let descriptor = candidate.cue.imageAsset,
                   mode.includes(objectID: descriptor.objectID) else { return nil }
             return ImageAssetIntent(
@@ -1652,7 +1950,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
     private func imageAssetCandidates(
         from envelope: TchurchStudioLANSignedEnvelope
     ) -> [ImageAssetCandidate] {
-        guard envelope.schemaVersion == 3 else { return [] }
+        guard envelope.schemaVersion == 3 || envelope.schemaVersion == 4 else { return [] }
         var candidates: [ImageAssetCandidate] = []
         if let cue = envelope.payload.audience.cue, cue.imageAsset != nil {
             candidates.append(.init(cue: cue, isCurrent: true))
@@ -1998,6 +2296,300 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         beginNewImageAssetPresentation()
     }
 
+    private func makeRemoteCommand(
+        action: TchurchStudioLANRemoteAction,
+        preserving recovery: TchurchStudioLANRemoteCommandRecoveryState? = nil
+    ) throws -> TchurchStudioLANRemoteCommand {
+        guard action.isValid else {
+            throw TchurchStudioLANRemoteControlError.invalidAction
+        }
+        guard recovery.map({ $0.action == action }) ?? true else {
+            throw TchurchStudioLANRemoteControlError.invalidAction
+        }
+        guard recovery != nil || inFlightRemoteCommand == nil else {
+            throw TchurchStudioLANRemoteControlError.commandInFlight
+        }
+        let trust = deviceTrust.snapshot
+        guard didAuthenticate,
+              currentPhase == .connected,
+              desired?.channel == .control,
+              trust.enrollmentState == .approved,
+              trust.role == .production,
+              trust.permissions.contains(.observe),
+              trust.permissions.contains(.controlProgram),
+              let subscription = activeSubscription,
+              subscription.channel == .control,
+              subscription.payloadVersion == StudioLANDeviceTrustContract.protocolFloor,
+              let deviceGrant = subscription.deviceGrant,
+              deviceGrant.role == .production,
+              deviceGrant.permissions.contains(.observe),
+              deviceGrant.permissions.contains(.controlProgram),
+              let deviceGrantChecksum = subscription.deviceGrantChecksum,
+              let envelope = latestControlEnvelope,
+              envelope.authority == subscription.authority,
+              envelope.channel == .control,
+              envelope.schemaVersion == StudioLANDeviceTrustContract.protocolFloor,
+              let control = envelope.payload.control,
+              let routeEpoch = control.routeEpoch,
+              routeEpoch > 0,
+              let cueCatalog = control.cueCatalog,
+              minimumControlEnvelopeRevision.map({ envelope.revision >= $0 }) ?? true else {
+            throw TchurchStudioLANRemoteControlError.unauthorized
+        }
+        if action.kind == .jump, recovery == nil {
+            guard let cueID = action.cueID,
+                  cueCatalog.contains(where: { $0.cueID == cueID }) else {
+                throw TchurchStudioLANRemoteControlError.invalidAction
+            }
+        }
+        let now = TchurchStudioLANTime.nowMilliseconds()
+        let expiresAt = now + TchurchStudioLANRemoteControlContract.maximumCommandLifetimeMilliseconds
+        let unsigned = TchurchStudioLANRemoteCommand(
+            schemaVersion: TchurchStudioLANRemoteCommand.schemaVersion,
+            commandID: recovery?.commandID ?? UUID(),
+            sessionID: subscription.sessionID,
+            deviceID: deviceGrant.deviceID,
+            grantID: deviceGrant.grantID,
+            deviceGrantChecksum: deviceGrantChecksum,
+            permissionRevision: deviceGrant.permissionRevision,
+            revocationGeneration: deviceGrant.revocationGeneration,
+            authority: subscription.authority,
+            routeEpoch: routeEpoch,
+            expectedRevision: recovery?.expectedRevision ?? envelope.payload.audience.snapshot.revision,
+            issuedAtMilliseconds: now,
+            expiresAtMilliseconds: expiresAt,
+            action: action,
+            signature: ""
+        )
+        let signature = try deviceTrust.signPossessionProof(
+            TchurchStudioLANRemoteCommandCrypto.signingData(for: unsigned)
+        )
+        let command = TchurchStudioLANRemoteCommand(
+            schemaVersion: unsigned.schemaVersion,
+            commandID: unsigned.commandID,
+            sessionID: unsigned.sessionID,
+            deviceID: unsigned.deviceID,
+            grantID: unsigned.grantID,
+            deviceGrantChecksum: unsigned.deviceGrantChecksum,
+            permissionRevision: unsigned.permissionRevision,
+            revocationGeneration: unsigned.revocationGeneration,
+            authority: unsigned.authority,
+            routeEpoch: unsigned.routeEpoch,
+            expectedRevision: unsigned.expectedRevision,
+            issuedAtMilliseconds: unsigned.issuedAtMilliseconds,
+            expiresAtMilliseconds: unsigned.expiresAtMilliseconds,
+            action: unsigned.action,
+            signature: signature
+        )
+        try TchurchStudioLANRemoteCommandCrypto.verify(command, deviceGrant: deviceGrant)
+        return command
+    }
+
+    private func handleRemoteReceipt(
+        _ receipt: TchurchStudioLANRemoteCommandReceipt
+    ) throws {
+        guard let inFlight = inFlightRemoteCommand,
+              let subscription = activeSubscription else {
+            throw TchurchStudioLANRemoteControlError.invalidReceipt
+        }
+        let command = inFlight.command
+        guard receipt.commandID == command.commandID,
+              receipt.deviceID == command.deviceID,
+              receipt.authority == command.authority,
+              receipt.routeEpoch == command.routeEpoch,
+              receipt.permissionRevision == command.permissionRevision,
+              receipt.issuedAtMilliseconds >= command.issuedAtMilliseconds -
+                TchurchStudioLANRemoteControlContract.maximumFutureClockSkewMilliseconds,
+              receipt.issuedAtMilliseconds <= TchurchStudioLANTime.nowMilliseconds() +
+                TchurchStudioLANRemoteControlContract.maximumFutureClockSkewMilliseconds else {
+            throw TchurchStudioLANRemoteControlError.invalidReceipt
+        }
+        try TchurchStudioLANRemoteReceiptCrypto.verify(
+            receipt,
+            studioSigningPublicKey: subscription.signingPublicKey
+        )
+        remoteCommandTimeoutWork?.cancel()
+        remoteCommandTimeoutWork = nil
+        remoteCommandRecoveryDeadlineWork?.cancel()
+        remoteCommandRecoveryDeadlineWork = nil
+        inFlightRemoteCommand = nil
+        if receipt.status == .accepted {
+            if latestControlEnvelope.map({ $0.revision < receipt.revision }) ?? true {
+                minimumControlEnvelopeRevision = receipt.revision
+            } else {
+                minimumControlEnvelopeRevision = nil
+            }
+        } else if receipt.rejection == .staleRoute ||
+                    receipt.rejection == .routeDisabled ||
+                    receipt.rejection == .authorityMismatch {
+            latestControlEnvelope = nil
+        } else if latestControlEnvelope.map({ $0.revision < receipt.revision }) ?? true {
+            minimumControlEnvelopeRevision = receipt.revision
+        }
+        remoteFeedbackHandler?(TchurchStudioLANRemoteFeedback(
+            commandID: command.commandID,
+            action: command.action,
+            state: receipt.status == .accepted ? .accepted : .rejected,
+            rejection: receipt.rejection,
+            revision: receipt.revision,
+            wasIdempotentReplay: receipt.wasIdempotentReplay
+        ))
+        emitStatus()
+    }
+
+    private func recordVerifiedControlEnvelope(
+        _ envelope: TchurchStudioLANSignedEnvelope
+    ) {
+        guard envelope.channel == .control,
+              envelope.schemaVersion == StudioLANDeviceTrustContract.protocolFloor,
+              envelope.payload.control?.routeEpoch != nil,
+              envelope.payload.control?.cueCatalog != nil else { return }
+        latestControlEnvelope = envelope
+        if let minimum = minimumControlEnvelopeRevision,
+           envelope.revision >= minimum {
+            minimumControlEnvelopeRevision = nil
+        }
+        replayAmbiguousRemoteCommandIfReady()
+        emitStatus()
+    }
+
+    private func replayAmbiguousRemoteCommandIfReady() {
+        guard var inFlight = inFlightRemoteCommand,
+              inFlight.recovery.isAwaitingAuthenticatedContext,
+              let connection,
+              didAuthenticate,
+              currentPhase == .connected else { return }
+        let now = TchurchStudioLANTime.nowMilliseconds()
+        do {
+            let command = try makeRemoteCommand(
+                action: inFlight.recovery.action,
+                preserving: inFlight.recovery
+            )
+            try inFlight.recovery.recordResignedAttempt(
+                command,
+                nowMilliseconds: now
+            )
+            inFlight.command = command
+            inFlightRemoteCommand = inFlight
+            armRemoteCommandTimeout(commandID: command.commandID, connection: connection)
+            do {
+                try send(.remoteCommand(command), connection: connection)
+            } catch {
+                _ = prepareAmbiguousRemoteCommandRecovery()
+                handleConnectionEnded(
+                    connection,
+                    cause: .heartbeatProtocolViolation,
+                    recoveryMessage: "Studio no confirmó el control local. Reconectando…"
+                )
+                return
+            }
+            remoteFeedbackHandler?(TchurchStudioLANRemoteFeedback(
+                commandID: command.commandID,
+                action: command.action,
+                state: .queued,
+                rejection: nil,
+                revision: nil,
+                wasIdempotentReplay: false
+            ))
+        } catch {
+            cancelRemoteCommand(state: .timedOut)
+        }
+    }
+
+    @discardableResult
+    private func prepareAmbiguousRemoteCommandRecovery() -> Bool {
+        guard var inFlight = inFlightRemoteCommand else { return false }
+        remoteCommandTimeoutWork?.cancel()
+        remoteCommandTimeoutWork = nil
+        if inFlight.recovery.isAwaitingAuthenticatedContext {
+            return true
+        }
+        let now = TchurchStudioLANTime.nowMilliseconds()
+        guard inFlight.recovery.markAmbiguous(nowMilliseconds: now) else {
+            cancelRemoteCommand(state: .timedOut)
+            return false
+        }
+        inFlightRemoteCommand = inFlight
+        armRemoteCommandRecoveryDeadline(
+            commandID: inFlight.command.commandID,
+            deadlineMilliseconds: inFlight.recovery.recoverUntilMilliseconds
+        )
+        emitStatus()
+        return true
+    }
+
+    private func armRemoteCommandRecoveryDeadline(
+        commandID: UUID,
+        deadlineMilliseconds: Int64
+    ) {
+        remoteCommandRecoveryDeadlineWork?.cancel()
+        let now = TchurchStudioLANTime.nowMilliseconds()
+        let delay = max(0, deadlineMilliseconds - now)
+        let work = DispatchWorkItem { [weak self] in
+            guard let self,
+                  self.inFlightRemoteCommand?.command.commandID == commandID else { return }
+            self.remoteCommandRecoveryDeadlineWork = nil
+            self.cancelRemoteCommand(state: .timedOut, expectedCommandID: commandID)
+            if let connection = self.connection {
+                self.handleConnectionEnded(
+                    connection,
+                    cause: .heartbeatTimeout,
+                    recoveryMessage: "Studio no confirmó el control local. Reconectando…"
+                )
+            }
+        }
+        remoteCommandRecoveryDeadlineWork = work
+        queue.asyncAfter(
+            deadline: .now() + .milliseconds(Int(min(delay, Int64(Int.max)))),
+            execute: work
+        )
+    }
+
+    private func armRemoteCommandTimeout(commandID: UUID, connection: NWConnection) {
+        remoteCommandTimeoutWork?.cancel()
+        let work = DispatchWorkItem { [weak self, weak connection] in
+            guard let self,
+                  let connection,
+                  self.connection === connection,
+                  self.inFlightRemoteCommand?.command.commandID == commandID else { return }
+            self.remoteCommandTimeoutWork = nil
+            self.handleConnectionEnded(
+                connection,
+                cause: .heartbeatTimeout,
+                recoveryMessage: "Studio no confirmó el control local. Reconectando…"
+            )
+        }
+        remoteCommandTimeoutWork = work
+        queue.asyncAfter(
+            deadline: .now() + .milliseconds(
+                Int(TchurchStudioLANRemoteControlContract.maximumCommandLifetimeMilliseconds + 3_000)
+            ),
+            execute: work
+        )
+    }
+
+    private func cancelRemoteCommand(
+        state: TchurchStudioLANRemoteFeedbackState,
+        expectedCommandID: UUID? = nil
+    ) {
+        guard let inFlight = inFlightRemoteCommand,
+              expectedCommandID.map({ $0 == inFlight.command.commandID }) ?? true else { return }
+        remoteCommandTimeoutWork?.cancel()
+        remoteCommandTimeoutWork = nil
+        remoteCommandRecoveryDeadlineWork?.cancel()
+        remoteCommandRecoveryDeadlineWork = nil
+        inFlightRemoteCommand = nil
+        remoteFeedbackHandler?(TchurchStudioLANRemoteFeedback(
+            commandID: inFlight.command.commandID,
+            action: inFlight.command.action,
+            state: state,
+            rejection: nil,
+            revision: nil,
+            wasIdempotentReplay: false
+        ))
+        emitStatus()
+    }
+
     private func send(_ message: TchurchStudioLANWireMessage, connection: NWConnection) throws {
         let frame = try TchurchStudioLANWireCodec.encode(message, maximumFrameBytes: limits.maximumFrameBytes)
         connection.send(content: frame, completion: .contentProcessed { [weak self, weak connection] error in
@@ -2086,6 +2678,27 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         pendingHeartbeatNonce = nil
     }
 
+    private func clearRemoteControlSession(
+        interruptCommand: Bool,
+        preserveAmbiguousCommand: Bool = false
+    ) {
+        if preserveAmbiguousCommand {
+            remoteCommandTimeoutWork?.cancel()
+            remoteCommandTimeoutWork = nil
+        } else if interruptCommand {
+            cancelRemoteCommand(state: .interrupted)
+        } else {
+            remoteCommandTimeoutWork?.cancel()
+            remoteCommandTimeoutWork = nil
+            remoteCommandRecoveryDeadlineWork?.cancel()
+            remoteCommandRecoveryDeadlineWork = nil
+            inFlightRemoteCommand = nil
+        }
+        activeSubscription = nil
+        latestControlEnvelope = nil
+        minimumControlEnvelopeRevision = nil
+    }
+
     private func failProtocol(_ connection: NWConnection) {
         guard self.connection === connection else { return }
         requestPrivateStatePurge(
@@ -2109,6 +2722,13 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         connectionTimeoutWork = nil
         cancelHeartbeat()
         verifier = nil
+        let preserveAmbiguousCommand = !intentionalDisconnect &&
+            !suspended &&
+            prepareAmbiguousRemoteCommandRecovery()
+        clearRemoteControlSession(
+            interruptCommand: !preserveAmbiguousCommand,
+            preserveAmbiguousCommand: preserveAmbiguousCommand
+        )
         challenge = nil
         request = nil
         resetAssetTransfer()
@@ -2141,6 +2761,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         challenge = nil
         request = nil
         verifier = nil
+        clearRemoteControlSession(interruptCommand: true)
         exactReplayAssetRehydration.clearConnectionEligibility()
         currentConnectionIsAutomaticReconnect = false
         didAuthenticate = false
@@ -2193,6 +2814,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         connection?.cancel()
         connection = nil
         verifier = nil
+        clearRemoteControlSession(interruptCommand: true)
         challenge = nil
         request = nil
         pendingSecret = nil
@@ -2206,7 +2828,9 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         if clearDesired {
             clearManualReplayRecoveryState()
             desired = nil
-            payloadNegotiation = TchurchStudioLANPayloadNegotiation()
+            payloadNegotiation = TchurchStudioLANPayloadNegotiation(
+                protocolFloor: deviceTrust.snapshot.protocolFloor
+            )
             reconnectPolicy.resetForNewDesiredConnection()
         }
         if browser == nil {
@@ -2221,6 +2845,77 @@ final class TchurchStudioLANClient: @unchecked Sendable {
 
     private func replayKey(serviceID: String, channel: TchurchStudioLANChannel) -> String {
         "\(serviceID):\(channel.rawValue)"
+    }
+
+    private func closeForDeviceRevocation() {
+        reconnectWork?.cancel()
+        reconnectWork = nil
+        connectionTimeoutWork?.cancel()
+        connectionTimeoutWork = nil
+        cancelHeartbeat()
+        intentionalDisconnect = true
+        connection?.stateUpdateHandler = nil
+        connection?.cancel()
+        connection = nil
+        verifier = nil
+        clearRemoteControlSession(interruptCommand: true)
+        challenge = nil
+        request = nil
+        pendingSecret = nil
+        activeSecret = nil
+        activeSecretSource = nil
+        didAuthenticate = false
+        lastWaitingNetworkFailure = nil
+        resetAssetTransfer()
+        replayGuards.removeAll(keepingCapacity: false)
+        exactReplayAssetRehydration.clearAll()
+        clearManualReplayRecoveryState()
+        do {
+            try assetCachePurge()
+        } catch {
+            // The presentation is already closed in memory. Keep the client
+            // revoked and retry disk cleanup on the next privacy purge/start.
+        }
+        setPhase(.failed, message: "Este dispositivo fue revocado en Tchurch Studio.")
+    }
+
+    private func markDeviceRevokedAndClose() {
+        if let studioID = challenge?.studioID ?? deviceTrust.snapshot.studioID {
+            let currentGeneration = deviceTrust.snapshot.revocationGeneration
+            let nextGeneration = currentGeneration == UInt64.max
+                ? currentGeneration
+                : currentGeneration + 1
+            _ = try? deviceTrust.revoke(
+                studioID: studioID,
+                revocationGeneration: nextGeneration
+            )
+        }
+        closeForDeviceRevocation()
+    }
+
+    private func waitForDeviceApproval(_ connection: NWConnection) {
+        guard self.connection === connection else { return }
+        connectionTimeoutWork?.cancel()
+        connectionTimeoutWork = nil
+        cancelHeartbeat()
+        connection.stateUpdateHandler = nil
+        connection.cancel()
+        self.connection = nil
+        verifier = nil
+        clearRemoteControlSession(interruptCommand: true)
+        challenge = nil
+        request = nil
+        didAuthenticate = false
+        resetAssetTransfer()
+        exactReplayAssetRehydration.clearConnectionEligibility()
+        currentConnectionIsAutomaticReconnect = false
+        setPhase(.authenticating, message: nil)
+        reconnectWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.beginConnection(reconnecting: true)
+        }
+        reconnectWork = work
+        queue.asyncAfter(deadline: .now() + .seconds(2), execute: work)
     }
 
     private func clientID() throws -> UUID {
@@ -2267,19 +2962,51 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         }
         let selectedServiceID = desired?.serviceID
         let privateStateBlocked = privacyAccessBlocked
-        let paired = !privateStateBlocked &&
+        let trust = deviceTrust.snapshot
+        let revoked = trust.enrollmentState == .revoked
+        let paired = !privateStateBlocked && !revoked &&
             selectedServiceID.flatMap { try? secretStore.read(serviceID: $0) } != nil
+        let controlEnvelopeReady = latestControlEnvelope.map { envelope in
+            envelope.channel == .control &&
+                envelope.schemaVersion == StudioLANDeviceTrustContract.protocolFloor &&
+                envelope.payload.control?.routeEpoch != nil &&
+                envelope.payload.control?.cueCatalog != nil &&
+                (minimumControlEnvelopeRevision.map({ envelope.revision >= $0 }) ?? true)
+        } ?? false
+        let remoteControlAvailable = !privateStateBlocked && !revoked &&
+            currentPhase == .connected &&
+            didAuthenticate &&
+            desired?.channel == .control &&
+            trust.enrollmentState == .approved &&
+            trust.role == .production &&
+            trust.permissions.contains(.observe) &&
+            trust.permissions.contains(.controlProgram) &&
+            activeSubscription?.channel == .control &&
+            activeSubscription?.payloadVersion == StudioLANDeviceTrustContract.protocolFloor &&
+            controlEnvelopeReady &&
+            inFlightRemoteCommand == nil
         return TchurchStudioLANClientStatus(
-            phase: privateStateBlocked ? .failed : currentPhase,
+            phase: privateStateBlocked || revoked ? .failed : currentPhase,
             services: services,
-            selectedServiceID: privateStateBlocked ? nil : selectedServiceID,
-            channel: privateStateBlocked ? nil : desired?.channel,
+            selectedServiceID: privateStateBlocked || revoked ? nil : selectedServiceID,
+            channel: privateStateBlocked || revoked ? nil : desired?.channel,
             paired: paired,
-            message: privateStateBlocked
+            message: revoked
+                ? "Este dispositivo fue revocado en Tchurch Studio."
+                : privateStateBlocked
                 ? (currentMessage ?? (hasPendingPrivacyPurge
                     ? "Borrando datos privados de Studio antes de continuar…"
                     : "Verificando el acceso local de Studio antes de continuar…"))
-                : currentMessage
+                : currentMessage,
+            enrollmentState: trust.enrollmentState,
+            protocolFloor: trust.protocolFloor,
+            role: trust.role,
+            permissions: trust.permissions,
+            permissionRevision: trust.permissionRevision,
+            revocationGeneration: trust.revocationGeneration,
+            studioID: trust.studioID,
+            remoteControlAvailable: remoteControlAvailable,
+            remoteCommandInFlight: inFlightRemoteCommand != nil
         )
     }
 }

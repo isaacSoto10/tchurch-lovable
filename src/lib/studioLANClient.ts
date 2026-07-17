@@ -1,9 +1,12 @@
 import { Capacitor, registerPlugin, type PluginListenerHandle } from "@capacitor/core";
 
-export type StudioLANChannel = "audience" | "stage";
+export type StudioLANChannel = "audience" | "stage" | "control";
 export type StudioLANPhase = "idle" | "discovering" | "connecting" | "authenticating" | "connected" | "reconnecting" | "failed" | "suspended";
+export type StudioLANDeviceEnrollmentState = "unenrolled" | "pending" | "approved" | "revoked";
+export type StudioLANDeviceRole = "audience" | "worshipLeader" | "musicians" | "preacher" | "production";
+export type StudioLANDevicePermission = "observe" | "controlProgram";
 
-export type StudioLANService = { id: string; name: string };
+export type StudioLANService = { id: string; name: string; protocolFloor: number };
 export type StudioLANStatus = {
   supported: boolean;
   phase: StudioLANPhase;
@@ -12,6 +15,15 @@ export type StudioLANStatus = {
   channel: StudioLANChannel | null;
   paired: boolean;
   message: string | null;
+  enrollmentState: StudioLANDeviceEnrollmentState;
+  protocolFloor: number;
+  role: StudioLANDeviceRole | null;
+  permissions: StudioLANDevicePermission[];
+  permissionRevision: string;
+  revocationGeneration: string;
+  studioId: string | null;
+  remoteControlAvailable: boolean;
+  remoteCommandInFlight: boolean;
 };
 
 export type StudioLANCue = {
@@ -60,7 +72,7 @@ export type StudioLANTimer = {
 
 export type StudioLANUpdate = {
   channel: StudioLANChannel;
-  payloadVersion: 1 | 2 | 3;
+  payloadVersion: 1 | 2 | 3 | 4;
   sequence: string;
   revision: string;
   receivedAtMs: number;
@@ -85,12 +97,51 @@ export type StudioLANUpdate = {
     timers: StudioLANTimer[];
     message: string | null;
   } | null;
+  control: {
+    chordsVisible: boolean;
+    lightingArmed: boolean;
+    healthyOutputCount: number;
+    expectedOutputCount: number;
+    routeEpoch: string;
+    cueCatalog: Array<{ cueId: string; title: string }>;
+  } | null;
+};
+
+export type StudioLANRemoteAction =
+  | { kind: "next" | "previous" }
+  | { kind: "jump"; cueId: string }
+  | { kind: "setBlackout"; enabled: boolean };
+
+export type StudioLANRemoteRejection =
+  | "routeDisabled"
+  | "unauthorizedDevice"
+  | "staleRoute"
+  | "authorityMismatch"
+  | "expiredCommand"
+  | "invalidSignature"
+  | "invalidCommand"
+  | "revisionConflict"
+  | "commandIDCollision"
+  | "rateLimited"
+  | "unavailable";
+
+export type StudioLANRemoteFeedback = {
+  commandId: string;
+  kind: StudioLANRemoteAction["kind"];
+  cueId: string | null;
+  enabled: boolean | null;
+  state: "queued" | "accepted" | "rejected" | "timedOut" | "interrupted";
+  rejection: StudioLANRemoteRejection | null;
+  revision: string | null;
+  wasIdempotentReplay: boolean;
 };
 
 interface StudioLANNativePlugin {
   startDiscovery(): Promise<{ accepted: boolean }>;
   stopDiscovery(): Promise<{ accepted: boolean }>;
-  connect(options: { serviceId: string; channel: StudioLANChannel; pairingCode?: string }): Promise<{ accepted: boolean }>;
+  connect(options: { serviceId: string; channel: StudioLANChannel; requestedRole: StudioLANDeviceRole; pairingCode?: string }): Promise<{ accepted: boolean }>;
+  sendRemoteCommand(options: StudioLANRemoteAction): Promise<{ accepted: boolean; commandId: string }>;
+  requestDeviceReapproval(): Promise<{ accepted: boolean; deviceId: string }>;
   disconnect(): Promise<{ accepted: boolean }>;
   forgetPairing(options: { serviceId: string }): Promise<{ accepted: boolean }>;
   purgePrivateState(): Promise<{ accepted: boolean }>;
@@ -104,10 +155,13 @@ interface StudioLANNativePlugin {
   addListener(eventName: "studioLANStatus", listener: (status: unknown) => void): Promise<PluginListenerHandle>;
   addListener(eventName: "studioLANUpdate", listener: (update: unknown) => void): Promise<PluginListenerHandle>;
   addListener(eventName: "studioLANImageAsset", listener: (status: unknown) => void): Promise<PluginListenerHandle>;
+  addListener(eventName: "studioLANRemoteFeedback", listener: (feedback: unknown) => void): Promise<PluginListenerHandle>;
 }
 
 const StudioLANNative = registerPlugin<StudioLANNativePlugin>("StudioLANClient");
 const PHASES = new Set<StudioLANPhase>(["idle", "discovering", "connecting", "authenticating", "connected", "reconnecting", "failed", "suspended"]);
+const ENROLLMENT_STATES = new Set<StudioLANDeviceEnrollmentState>(["unenrolled", "pending", "approved", "revoked"]);
+const DEVICE_ROLES = new Set<StudioLANDeviceRole>(["audience", "worshipLeader", "musicians", "preacher", "production"]);
 const UINT64 = /^(0|[1-9][0-9]{0,19})$/;
 const SERVICE_ID = /^[0-9a-f]{32}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -115,6 +169,10 @@ const ASSET_ID = /^sha256:[0-9a-f]{64}$/;
 const CHORD_KEY = /^(?:[A-G](?:#|b)?|Do|Re|Mi|Fa|Sol|La|Si)$/i;
 const CHORD_TOKEN = /^(?:(?:[A-G](?:#|b)?)(?:(?:maj|min|m|dim|aug|sus|add)?[0-9]*)?(?:\/[A-G](?:#|b)?)?|N\.?C\.?|[1-7](?:#|b)?(?:m)?(?:\/[1-7](?:#|b)?)?)$/i;
 const IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/avif", "image/gif"]);
+const REMOTE_REJECTIONS = new Set<StudioLANRemoteRejection>([
+  "routeDisabled", "unauthorizedDevice", "staleRoute", "authorityMismatch", "expiredCommand",
+  "invalidSignature", "invalidCommand", "revisionConflict", "commandIDCollision", "rateLimited", "unavailable",
+]);
 const MAXIMUM_IMAGE_BYTES = 64 * 1_024 * 1_024;
 const CONTROL_CHARACTER = /\p{Cc}/u;
 const SAFE_MESSAGES = new Set([
@@ -142,6 +200,10 @@ const SAFE_MESSAGES = new Set([
   "Studio respondió a una verificación LAN inválida. Cerramos ese transporte y reconectaremos.",
   "No se pudo verificar la conexión LAN. Reconectando…",
   "Studio dejó de responder en la red local. Reconectando…",
+  "Este dispositivo fue revocado en Tchurch Studio.",
+  "No se pudo proteger la identidad local de este dispositivo.",
+  "El rol solicitado no corresponde a esta salida local.",
+  "Studio no confirmó el control local. Reconectando…",
 ]);
 const SAFE_ASSET_MESSAGES = new Set([
   "Preparando imagen offline…",
@@ -160,6 +222,15 @@ const DEFAULT_STATUS: StudioLANStatus = {
   channel: null,
   paired: false,
   message: "Tchurch Studio LAN está disponible en la app de iPhone o iPad.",
+  enrollmentState: "unenrolled",
+  protocolFloor: 1,
+  role: null,
+  permissions: [],
+  permissionRevision: "0",
+  revocationGeneration: "0",
+  studioId: null,
+  remoteControlAvailable: false,
+  remoteCommandInFlight: false,
 };
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -213,7 +284,7 @@ function imageAsset(value: unknown): StudioLANImageAssetDescriptor | null | unde
   };
 }
 
-function cue(value: unknown, payloadVersion: 1 | 2 | 3): StudioLANCue | null | undefined {
+function cue(value: unknown, payloadVersion: 1 | 2 | 3 | 4): StudioLANCue | null | undefined {
   if (value === null || value === undefined) return null;
   const source = record(value);
   if (!source) return undefined;
@@ -310,20 +381,60 @@ export function normalizeStudioLANStatus(value: unknown): StudioLANStatus {
   const phase = source?.phase;
   const channel = source?.channel;
   const selectedServiceId = source?.selectedServiceId;
+  const enrollmentState = source?.enrollmentState;
+  const protocolFloor = Number(source?.protocolFloor ?? 1);
+  const role = source?.role;
+  const permissionRevision = boundedString(source?.permissionRevision ?? "0", 20);
+  const revocationGeneration = boundedString(source?.revocationGeneration ?? "0", 20);
+  const studioId = source?.studioId == null ? null : boundedString(source.studioId, 36);
+  const rawPermissions = Array.isArray(source?.permissions) ? source.permissions : [];
+  const permissions = rawPermissions.filter((permission): permission is StudioLANDevicePermission => permission === "observe" || permission === "controlProgram");
   const services = Array.isArray(source?.services) ? source.services.flatMap((item) => {
     const service = record(item);
     const id = boundedString(service?.id, 32);
     const name = boundedString(service?.name, 120);
-    return id && SERVICE_ID.test(id) && name ? [{ id, name }] : [];
+    const serviceProtocolFloor = Number(service?.protocolFloor ?? 1);
+    return id && SERVICE_ID.test(id) && name && (serviceProtocolFloor === 1 || serviceProtocolFloor === 4)
+      ? [{ id, name, protocolFloor: serviceProtocolFloor }] : [];
   }).slice(0, 64) : [];
+  const normalizedEnrollmentState = typeof enrollmentState === "string" && ENROLLMENT_STATES.has(enrollmentState as StudioLANDeviceEnrollmentState)
+    ? enrollmentState as StudioLANDeviceEnrollmentState : "unenrolled";
+  const normalizedRole = typeof role === "string" && DEVICE_ROLES.has(role as StudioLANDeviceRole) ? role as StudioLANDeviceRole : null;
+  const permissionsAreCanonical = permissions.length === rawPermissions.length
+    && permissions.every((permission, index) => permission === (["observe", "controlProgram"] as const).filter((candidate) => permissions.includes(candidate))[index]);
+  const trustIsValid = (protocolFloor === 1 || protocolFloor === 4)
+    && (normalizedEnrollmentState === "unenrolled" ? protocolFloor === 1 : protocolFloor === 4)
+    && permissionRevision != null && UINT64.test(permissionRevision)
+    && revocationGeneration != null && UINT64.test(revocationGeneration)
+    && permissionsAreCanonical
+    && (source?.studioId == null || (studioId != null && UUID.test(studioId)))
+    && (source?.role == null || normalizedRole != null)
+    && (normalizedEnrollmentState !== "approved" || (normalizedRole != null && permissions.includes("observe")));
   return {
     supported: true,
-    phase: typeof phase === "string" && PHASES.has(phase as StudioLANPhase) ? phase as StudioLANPhase : "failed",
+    phase: trustIsValid && typeof phase === "string" && PHASES.has(phase as StudioLANPhase) ? phase as StudioLANPhase : "failed",
     services,
     selectedServiceId: typeof selectedServiceId === "string" && SERVICE_ID.test(selectedServiceId) ? selectedServiceId : null,
-    channel: channel === "audience" || channel === "stage" ? channel : null,
+    channel: channel === "audience" || channel === "stage" || channel === "control" ? channel : null,
     paired: source?.paired === true,
-    message: safeMessage(source?.message),
+    message: trustIsValid ? safeMessage(source?.message) : "La conexión LAN no está disponible. Desconecta y vuelve a emparejar.",
+    enrollmentState: normalizedEnrollmentState,
+    protocolFloor: trustIsValid ? protocolFloor : 4,
+    role: normalizedRole,
+    permissions: permissionsAreCanonical ? permissions : [],
+    permissionRevision: permissionRevision && UINT64.test(permissionRevision) ? permissionRevision : "0",
+    revocationGeneration: revocationGeneration && UINT64.test(revocationGeneration) ? revocationGeneration : "0",
+    studioId: studioId && UUID.test(studioId) ? studioId.toLowerCase() : null,
+    remoteControlAvailable: source?.remoteControlAvailable === true
+      && phase === "connected"
+      && channel === "control"
+      && normalizedEnrollmentState === "approved"
+      && normalizedRole === "production"
+      && permissions.includes("observe")
+      && permissions.includes("controlProgram"),
+    remoteCommandInFlight: source?.remoteCommandInFlight === true
+      && phase === "connected"
+      && channel === "control",
   };
 }
 
@@ -343,9 +454,9 @@ export function normalizeStudioLANUpdate(value: unknown): StudioLANUpdate | null
   const currentCueId = audience.currentCueId == null ? null : boundedString(audience.currentCueId, 160);
   const currentCueIndex = audience.currentCueIndex == null ? null : Number(audience.currentCueIndex);
   const cueCount = Number(audience.cueCount);
-  if (payloadVersion !== 1 && payloadVersion !== 2 && payloadVersion !== 3) return null;
+  if (payloadVersion !== 1 && payloadVersion !== 2 && payloadVersion !== 3 && payloadVersion !== 4) return null;
   const audienceCue = cue(audience.cue, payloadVersion);
-  if ((channel !== "audience" && channel !== "stage")
+  if ((channel !== "audience" && channel !== "stage" && channel !== "control")
     || !sequence || !UINT64.test(sequence) || !revision || !UINT64.test(revision)
     || !runId || !UUID.test(runId) || !authorityEpoch || !UINT64.test(authorityEpoch) || !packageId || !serviceVersion
     || (audience.currentCueId != null && !currentCueId) || (currentCueIndex != null && !Number.isSafeInteger(currentCueIndex))
@@ -388,14 +499,48 @@ export function normalizeStudioLANUpdate(value: unknown): StudioLANUpdate | null
       || currentChordSlide.lines.some((line, index) => line.text !== audienceCue.lines[index]))) return null;
     stage = { nextCue, chordLines: chordLines as string[], currentChordSlide, timers: timers as StudioLANTimer[], message };
   }
-  if (channel === "stage" && !stage) return null;
+  if ((channel === "stage" || channel === "control") && !stage) return null;
   if (channel === "audience" && stage) return null;
+
+  let control: StudioLANUpdate["control"] = null;
+  if (source.control != null) {
+    const sourceControl = record(source.control);
+    const healthyOutputCount = Number(sourceControl?.healthyOutputCount);
+    const expectedOutputCount = Number(sourceControl?.expectedOutputCount);
+    const routeEpoch = boundedString(sourceControl?.routeEpoch, 20);
+    if (!sourceControl || channel !== "control" || payloadVersion !== 4
+      || typeof sourceControl.chordsVisible !== "boolean" || typeof sourceControl.lightingArmed !== "boolean"
+      || !Number.isSafeInteger(healthyOutputCount) || healthyOutputCount < 0
+      || !Number.isSafeInteger(expectedOutputCount) || expectedOutputCount < healthyOutputCount
+      || !routeEpoch || !UINT64.test(routeEpoch) || BigInt(routeEpoch) <= 0n || BigInt(routeEpoch) >= 18_446_744_073_709_551_615n
+      || !Array.isArray(sourceControl.cueCatalog) || sourceControl.cueCatalog.length !== cueCount
+      || sourceControl.cueCatalog.length > 4_096) return null;
+    const cueCatalog = sourceControl.cueCatalog.flatMap((value) => {
+      const item = record(value);
+      const cueId = boundedString(item?.cueId, 160);
+      const title = boundedString(item?.title);
+      return item && cueId && title ? [{ cueId, title }] : [];
+    });
+    if (cueCatalog.length !== sourceControl.cueCatalog.length
+      || new Set(cueCatalog.map((item) => item.cueId)).size !== cueCatalog.length
+      || (sourceControl.chordsVisible === false && stage?.currentChordSlide != null)) return null;
+    control = {
+      chordsVisible: sourceControl.chordsVisible,
+      lightingArmed: sourceControl.lightingArmed,
+      healthyOutputCount,
+      expectedOutputCount,
+      routeEpoch,
+      cueCatalog,
+    };
+  }
+  if (channel === "control" && !control) return null;
+  if (channel !== "control" && control) return null;
 
   const receivedAtMs = Number(source.receivedAtMs);
   if (!Number.isSafeInteger(receivedAtMs)) return null;
   return {
     channel,
-    payloadVersion: payloadVersion as 1 | 2 | 3,
+    payloadVersion: payloadVersion as 1 | 2 | 3 | 4,
     sequence,
     revision,
     receivedAtMs,
@@ -409,6 +554,7 @@ export function normalizeStudioLANUpdate(value: unknown): StudioLANUpdate | null
       cue: audienceCue,
     },
     stage,
+    control,
   };
 }
 
@@ -451,10 +597,41 @@ export function normalizeStudioLANImageAssetStatus(value: unknown): StudioLANIma
   return { cueId, objectId, phase, receivedBytes, totalBytes, imageFit, localUrl, message };
 }
 
+export function normalizeStudioLANRemoteFeedback(value: unknown): StudioLANRemoteFeedback | null {
+  const source = record(value);
+  const commandId = boundedString(source?.commandId, 36);
+  const kind = source?.kind;
+  const state = source?.state;
+  const cueId = source?.cueId == null ? null : boundedString(source.cueId, 160);
+  const enabled = source?.enabled == null ? null : source.enabled;
+  const rejection = source?.rejection == null ? null : source.rejection;
+  const revision = source?.revision == null ? null : boundedString(source.revision, 20);
+  if (!source || !commandId || !UUID.test(commandId)
+    || (kind !== "next" && kind !== "previous" && kind !== "jump" && kind !== "setBlackout")
+    || (state !== "queued" && state !== "accepted" && state !== "rejected" && state !== "timedOut" && state !== "interrupted")
+    || (kind === "jump" ? !cueId || enabled != null : cueId != null)
+    || (kind === "setBlackout" ? typeof enabled !== "boolean" : enabled != null)
+    || (rejection != null && (typeof rejection !== "string" || !REMOTE_REJECTIONS.has(rejection as StudioLANRemoteRejection)))
+    || (state === "rejected" ? rejection == null : rejection != null)
+    || (revision != null && !UINT64.test(revision))
+    || typeof source.wasIdempotentReplay !== "boolean") return null;
+  return {
+    commandId: commandId.toLowerCase(),
+    kind,
+    cueId,
+    enabled: enabled as boolean | null,
+    state,
+    rejection: rejection as StudioLANRemoteRejection | null,
+    revision,
+    wasIdempotentReplay: source.wasIdempotentReplay,
+  };
+}
+
 export async function connectStudioLANBridge(callbacks: {
   onStatus: (status: StudioLANStatus) => void;
   onUpdate: (update: StudioLANUpdate) => void;
   onImageAsset: (status: StudioLANImageAssetStatus) => void;
+  onRemoteFeedback?: (feedback: StudioLANRemoteFeedback) => void;
 }) {
   if (!isStudioLANSupported()) {
     callbacks.onStatus(DEFAULT_STATUS);
@@ -469,6 +646,10 @@ export async function connectStudioLANBridge(callbacks: {
     StudioLANNative.addListener("studioLANImageAsset", (value) => {
       const status = normalizeStudioLANImageAssetStatus(value);
       if (status) callbacks.onImageAsset(status);
+    }),
+    StudioLANNative.addListener("studioLANRemoteFeedback", (value) => {
+      const feedback = normalizeStudioLANRemoteFeedback(value);
+      if (feedback) callbacks.onRemoteFeedback?.(feedback);
     }),
   ]);
   try {
@@ -490,9 +671,33 @@ export async function connectStudioLANBridge(callbacks: {
   }
 }
 
-export async function connectToStudioLAN(serviceId: string, channel: StudioLANChannel, pairingCode: string) {
+export async function connectToStudioLAN(
+  serviceId: string,
+  channel: StudioLANChannel,
+  pairingCode: string,
+  requestedRole: StudioLANDeviceRole = channel === "audience" ? "audience" : channel === "control" ? "production" : "musicians",
+) {
   if (!isStudioLANSupported() || !SERVICE_ID.test(serviceId)) throw new Error("studio_lan_unavailable");
-  await StudioLANNative.connect({ serviceId, channel, ...(pairingCode.trim() ? { pairingCode } : {}) });
+  await StudioLANNative.connect({ serviceId, channel, requestedRole, ...(pairingCode.trim() ? { pairingCode } : {}) });
+}
+
+export async function sendStudioLANRemoteCommand(action: StudioLANRemoteAction) {
+  if (!isStudioLANSupported()) throw new Error("studio_lan_unavailable");
+  if (action.kind === "jump") {
+    if (!boundedString(action.cueId, 160) || action.cueId.trim() !== action.cueId) {
+      throw new Error("studio_lan_invalid_action");
+    }
+  }
+  return StudioLANNative.sendRemoteCommand(action);
+}
+
+export async function requestStudioLANDeviceReapproval() {
+  if (!isStudioLANSupported()) throw new Error("studio_lan_unavailable");
+  const result = await StudioLANNative.requestDeviceReapproval();
+  if (!result.accepted || !UUID.test(result.deviceId)) {
+    throw new Error("studio_lan_reapproval_failed");
+  }
+  return { ...result, deviceId: result.deviceId.toLowerCase() };
 }
 
 export async function refreshStudioLANDiscovery() {
