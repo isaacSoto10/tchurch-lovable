@@ -69,16 +69,17 @@ jobs:
         id: simulator
         shell: bash
         run: |
-          destination=$(xcodebuild \
-            -project ios/App/Tchurch.xcodeproj \
-            -scheme Tchurch \
-            -showdestinations 2>/dev/null \
-            | sed -nE '/name:iPhone/ s/.*id:([0-9A-Fa-f-]{36}),.*/\1/p' \
-            | head -1)
+          devices=$(xcrun simctl list devices available)
+          destination=$(printf '%s\n' "$devices" \
+            | sed -nE '/iPhone/ s/.*\(([0-9A-Fa-f-]{36})\) \((Booted|Shutdown)\).*/\1/p' \
+            | sed -n '1p')
           if [ -z "$destination" ]; then
+            printf '%s\n' "$devices" >&2
             echo "No available iOS Simulator destination was found." >&2
             exit 1
           fi
+          xcrun simctl boot "$destination" 2>/dev/null || true
+          xcrun simctl bootstatus "$destination" -b
           echo "id=$destination" >> "$GITHUB_OUTPUT"
 
       - name: Run native tests
@@ -87,5 +88,6 @@ jobs:
             -project ios/App/Tchurch.xcodeproj \
             -scheme Tchurch \
             -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' \
+            -parallel-testing-enabled NO \
             -derivedDataPath "$RUNNER_TEMP/tchurch-ios-derived" \
             -resultBundlePath "$RUNNER_TEMP/tchurch-ios-tests.xcresult"
