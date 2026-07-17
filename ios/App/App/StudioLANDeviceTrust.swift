@@ -841,8 +841,8 @@ final class StudioLANDeviceTrustController {
         guard challenge.deviceTrustVersion == StudioLANDeviceTrustContract.schemaVersion,
               challenge.minimumPayloadVersion == StudioLANDeviceTrustContract.protocolFloor,
               let studioID = challenge.studioID,
-              supportedPayloadVersions.first == StudioLANDeviceTrustContract.protocolFloor,
-              Set(supportedPayloadVersions).count == supportedPayloadVersions.count,
+              supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.deviceTrustSupportedPayloadVersions ||
+                supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.v4SupportedPayloadVersions,
               requestedRole.channel == channel else {
             throw StudioLANDeviceTrustError.invalidGrant
         }

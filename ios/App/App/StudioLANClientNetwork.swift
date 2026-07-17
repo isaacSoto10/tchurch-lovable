@@ -380,6 +380,24 @@ struct TchurchStudioLANClientStatus: Equatable {
     }
 }
 
+enum TchurchStudioLANCueCatalogPhase: String, Equatable {
+    case loading
+    case ready
+    case unavailable
+}
+
+struct TchurchStudioLANCueCatalogStatus: Equatable {
+    let phase: TchurchStudioLANCueCatalogPhase
+    let catalogID: String?
+    let routeEpoch: UInt64?
+    let totalCount: Int
+    let receivedCount: Int
+    /// Non-nil only after the complete binary digest matches the signed
+    /// manifest. Loading and failure events never carry partial cue data.
+    let cues: [TchurchStudioLANRemoteCueDescriptor]?
+    let message: String?
+}
+
 protocol TchurchStudioLANSecretStoring {
     func read(serviceID: String) throws -> Data?
     func write(_ secret: Data, serviceID: String) throws
@@ -644,15 +662,124 @@ enum TchurchStudioLANNetworkParameters {
     }
 }
 
+enum TchurchStudioLANBoundedRequestOperation: Equatable {
+    case asset(UUID)
+    case catalog(UUID)
+    case remoteCommand(UUID)
+}
+
+enum TchurchStudioLANBoundedRequestKind: Equatable {
+    case remoteCommand
+    case catalog
+    case asset
+}
+
+enum TchurchStudioLANBoundedRequestPriority {
+    static func remoteCommandBlocksCatalogRequest(
+        isAwaitingReceipt: Bool,
+        isAwaitingAuthenticatedContext: Bool
+    ) -> Bool {
+        isAwaitingReceipt || !isAwaitingAuthenticatedContext
+    }
+
+    static func next(
+        remoteCommandQueued: Bool,
+        catalogReady: Bool,
+        catalogHasPriority: Bool,
+        assetReady: Bool
+    ) -> TchurchStudioLANBoundedRequestKind? {
+        if remoteCommandQueued { return .remoteCommand }
+        if catalogReady && catalogHasPriority { return .catalog }
+        if assetReady { return .asset }
+        if catalogReady { return .catalog }
+        return nil
+    }
+}
+
+/// Studio processes asset, catalog, and Program command request/response pairs
+/// on one bounded lane. The client must never write a second operation until
+/// the authenticated response for the active operation has released the lane.
+struct TchurchStudioLANBoundedRequestLane: Equatable {
+    private(set) var active: TchurchStudioLANBoundedRequestOperation?
+
+    var isIdle: Bool { active == nil }
+
+    mutating func begin(_ operation: TchurchStudioLANBoundedRequestOperation) -> Bool {
+        guard active == nil else { return false }
+        active = operation
+        return true
+    }
+
+    mutating func finish(_ operation: TchurchStudioLANBoundedRequestOperation) -> Bool {
+        guard active == operation else { return false }
+        active = nil
+        return true
+    }
+
+    mutating func cancel(_ operation: TchurchStudioLANBoundedRequestOperation) {
+        if active == operation { active = nil }
+    }
+
+    mutating func reset() {
+        active = nil
+    }
+}
+
+struct TchurchStudioLANDiscardedRequestIDs: Equatable {
+    static let capacity = 64
+    private(set) var values: [UUID] = []
+
+    mutating func remember(_ requestID: UUID) {
+        values.removeAll { $0 == requestID }
+        values.append(requestID)
+        if values.count > Self.capacity {
+            values.removeFirst(values.count - Self.capacity)
+        }
+    }
+
+    mutating func consume(_ requestID: UUID) -> Bool {
+        guard let index = values.firstIndex(of: requestID) else { return false }
+        values.remove(at: index)
+        return true
+    }
+
+    mutating func reset() {
+        values.removeAll(keepingCapacity: false)
+    }
+}
+
+enum TchurchStudioLANCatalogResponseStrictness {
+    @discardableResult
+    static func validateCurrentUnavailableRequest(
+        responseRequestID: UUID,
+        inFlightRequestID: UUID?
+    ) throws -> UUID {
+        guard let inFlightRequestID,
+              responseRequestID == inFlightRequestID else {
+            throw TchurchStudioLANError.protocolViolation
+        }
+        return inFlightRequestID
+    }
+}
+
 final class TchurchStudioLANClient: @unchecked Sendable {
     static let bonjourServiceType = "_tchurch-show._tcp"
     static let assetRequestTimeoutSeconds: TimeInterval = 15
+    static let catalogRequestTimeoutSeconds: TimeInterval = 15
+    static let catalogInterPageDelaySeconds: TimeInterval = 0.050
+    static let maximumCatalogOverloadRetries = 3
     static let clientIDDefaultsKey = "tchurch.studio-lan.client-id"
+
+    static func catalogOverloadRetryDelaySeconds(_ retryCount: Int) -> TimeInterval? {
+        guard (1 ... maximumCatalogOverloadRetries).contains(retryCount) else { return nil }
+        return TimeInterval(min(4, 1 << (retryCount - 1)))
+    }
 
     var statusHandler: ((TchurchStudioLANClientStatus) -> Void)?
     var envelopeHandler: ((TchurchStudioLANSignedEnvelope) -> Void)?
     var imageAssetHandler: ((TchurchStudioLANImageAssetStatus) -> Void)?
     var remoteFeedbackHandler: ((TchurchStudioLANRemoteFeedback) -> Void)?
+    var cueCatalogHandler: ((TchurchStudioLANCueCatalogStatus) -> Void)?
 
     private struct DesiredConnection {
         let serviceID: String
@@ -714,14 +841,34 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         let intent: ImageAssetIntent
     }
 
+    private struct PendingAssetContinuation: Equatable {
+        let intent: ImageAssetIntent
+        let offset: Int64
+    }
+
     private struct InFlightRemoteCommand: Equatable {
         var command: TchurchStudioLANRemoteCommand
         var recovery: TchurchStudioLANRemoteCommandRecoveryState
+        var isAwaitingReceipt: Bool
+    }
+
+    private struct CueCatalogKey: Equatable {
+        let authority: TchurchStudioLANAuthority
+        let routeEpoch: UInt64
+        let catalogID: String
+        let deviceGrantChecksum: String
+        let routing: TchurchStudioLANRoutingProjection
+    }
+
+    private struct VerifiedCueCatalog: Equatable {
+        let key: CueCatalogKey
+        let cues: [TchurchStudioLANRemoteCueDescriptor]
     }
 
     private let queue = DispatchQueue(label: "app.tchurch.studio-lan.client")
     private let assetIOQueue = DispatchQueue(label: "app.tchurch.studio-lan.assets", qos: .utility)
     private lazy var assetRequestWatchdog = TchurchStudioLANAssetRequestWatchdog(queue: queue)
+    private lazy var catalogRequestWatchdog = TchurchStudioLANAssetRequestWatchdog(queue: queue)
     private let limits: TchurchStudioLANLimits
     private let heartbeatTimings: TchurchStudioLANHeartbeatTimings
     private let secretStore: TchurchStudioLANSecretStoring
@@ -746,7 +893,18 @@ final class TchurchStudioLANClient: @unchecked Sendable {
     private var activeSubscription: TchurchStudioLANVerifiedSubscription?
     private var latestControlEnvelope: TchurchStudioLANSignedEnvelope?
     private var minimumControlEnvelopeRevision: UInt64?
+    private var cueCatalogKey: CueCatalogKey?
+    private var cueCatalogAccumulator: TchurchStudioLANCueCatalogAccumulator?
+    private var inFlightCatalogRequest: TchurchStudioLANCatalogRequest?
+    private var verifiedCueCatalog: VerifiedCueCatalog?
+    private var unavailableCueCatalogKey: CueCatalogKey?
+    private var catalogRetryCount = 0
+    private var catalogPumpWork: DispatchWorkItem?
+    private var catalogBackoffUntil: DispatchTime?
+    private var catalogGeneration: UInt64 = 0
+    private var discardedCatalogRequestIDs = TchurchStudioLANDiscardedRequestIDs()
     private var inFlightRemoteCommand: InFlightRemoteCommand?
+    private var boundedRequestLane = TchurchStudioLANBoundedRequestLane()
     private var remoteCommandTimeoutWork: DispatchWorkItem?
     private var remoteCommandRecoveryDeadlineWork: DispatchWorkItem?
     private var payloadNegotiation = TchurchStudioLANPayloadNegotiation()
@@ -770,7 +928,10 @@ final class TchurchStudioLANClient: @unchecked Sendable {
     private var assetPresentationGeneration: UInt64 = 0
     private var imageAssetIntents: [ImageAssetIntent] = []
     private var inFlightAssetRequest: InFlightAssetRequest?
+    private var assetPreparationIntent: ImageAssetIntent?
+    private var pendingAssetContinuation: PendingAssetContinuation?
     private var assetRetryCount = 0
+    private var assetRetryWork: DispatchWorkItem?
     private var publishedImageAssetStatuses: [PublishedImageAssetKey: TchurchStudioLANImageAssetStatus] = [:]
     private var privacyPurgeInFlight = false
     private var privacyPurgeTargetPersistenceFailed = false
@@ -955,11 +1116,11 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                 }
                 self.inFlightRemoteCommand = InFlightRemoteCommand(
                     command: command,
-                    recovery: TchurchStudioLANRemoteCommandRecoveryState(command: command)
+                    recovery: TchurchStudioLANRemoteCommandRecoveryState(command: command),
+                    isAwaitingReceipt: false
                 )
-                self.armRemoteCommandTimeout(commandID: command.commandID, connection: connection)
                 do {
-                    try self.send(.remoteCommand(command), connection: connection)
+                    _ = try self.deliverQueuedRemoteCommandIfPossible(connection: connection)
                 } catch {
                     self.cancelRemoteCommand(
                         state: .interrupted,
@@ -1809,6 +1970,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             activeSubscription = subscription
             latestControlEnvelope = nil
             minimumControlEnvelopeRevision = nil
+            resetCueCatalog(publishUnavailable: false)
             didAuthenticate = true
             reconnectPolicy.recordAuthenticatedSession()
             connectionTimeoutWork?.cancel()
@@ -1863,6 +2025,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                     mode: .exactReplay(pendingObjectIDs: pendingObjectIDs)
                 )
                 recordVerifiedControlEnvelope(envelope)
+                try updateCueCatalog(from: envelope, connection: connection)
                 recordAuthenticatedInboundActivity(connection)
                 return
             }
@@ -1876,6 +2039,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             )
             envelopeHandler?(envelope)
             recordVerifiedControlEnvelope(envelope)
+            try updateCueCatalog(from: envelope, connection: connection)
             registerImageAssets(from: envelope, connection: connection, mode: .acceptedEnvelope)
             recordAuthenticatedInboundActivity(connection)
         case .assetChunk(let chunk):
@@ -1891,6 +2055,12 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             try acceptHeartbeatPong(nonce, connection: connection)
         case .remoteReceipt(let receipt):
             try handleRemoteReceipt(receipt)
+            recordAuthenticatedInboundActivity(connection)
+        case .catalogPage(let page):
+            try handleCatalogPage(page, connection: connection)
+            recordAuthenticatedInboundActivity(connection)
+        case .catalogUnavailable(let unavailable):
+            try handleCatalogUnavailable(unavailable, connection: connection)
             recordAuthenticatedInboundActivity(connection)
         case .error(.deviceRevoked):
             markDeviceRevokedAndClose()
@@ -1914,9 +2084,12 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         guard self.connection === connection, let desired else { return }
         assetGeneration &+= 1
         let generation = assetGeneration
+        assetPreparationIntent = nil
+        pendingAssetContinuation = nil
         let key = replayKey(serviceID: desired.serviceID, channel: envelope.channel)
         imageAssetIntents = imageAssetCandidates(from: envelope).compactMap { candidate in
-            guard envelope.schemaVersion == 3 || envelope.schemaVersion == 4,
+            guard envelope.schemaVersion == 3 || envelope.schemaVersion == 4 ||
+                    envelope.schemaVersion == 5,
                   let descriptor = candidate.cue.imageAsset,
                   mode.includes(objectID: descriptor.objectID) else { return nil }
             return ImageAssetIntent(
@@ -1950,7 +2123,8 @@ final class TchurchStudioLANClient: @unchecked Sendable {
     private func imageAssetCandidates(
         from envelope: TchurchStudioLANSignedEnvelope
     ) -> [ImageAssetCandidate] {
-        guard envelope.schemaVersion == 3 || envelope.schemaVersion == 4 else { return [] }
+        guard envelope.schemaVersion == 3 || envelope.schemaVersion == 4 ||
+                envelope.schemaVersion == 5 else { return [] }
         var candidates: [ImageAssetCandidate] = []
         if let cue = envelope.payload.audience.cue, cue.imageAsset != nil {
             candidates.append(.init(cue: cue, isCurrent: true))
@@ -1975,7 +2149,28 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         guard self.connection === connection,
               verifier != nil,
               inFlightAssetRequest == nil,
-              let intent = imageAssetIntents.first else { return }
+              inFlightCatalogRequest == nil,
+              inFlightRemoteCommand == nil,
+              boundedRequestLane.isIdle,
+              assetRetryWork == nil,
+              assetPreparationIntent == nil else { return }
+        if let continuation = pendingAssetContinuation {
+            guard isAuthorized(continuation.intent) else {
+                pendingAssetContinuation = nil
+                resumeBoundedRequestLane(connection: connection, catalogPriority: true)
+                return
+            }
+            if sendAssetRequest(
+                intent: continuation.intent,
+                offset: continuation.offset,
+                connection: connection
+            ) {
+                pendingAssetContinuation = nil
+            }
+            return
+        }
+        guard let intent = imageAssetIntents.first else { return }
+        assetPreparationIntent = intent
         let protectedObjectIDs = Set(imageAssetIntents.map { $0.descriptor.objectID })
         assetIOQueue.async { [weak self, weak connection] in
             guard let self, let connection else { return }
@@ -1990,7 +2185,9 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                 self.queue.async { [weak self, weak connection] in
                     guard let self, let connection,
                           self.connection === connection,
+                          self.assetPreparationIntent == intent,
                           self.isAuthorized(intent) else { return }
+                    self.assetPreparationIntent = nil
                     switch preparation {
                     case .ready(let url):
                         self.resolveIntent(intent)
@@ -2001,7 +2198,10 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                             fileURL: url,
                             message: nil
                         )
-                        self.beginNextImageAssetIfNeeded(connection: connection)
+                        self.resumeBoundedRequestLane(
+                            connection: connection,
+                            catalogPriority: true
+                        )
                     case .resume(let offset):
                         self.sendAssetRequest(intent: intent, offset: offset, connection: connection)
                     }
@@ -2010,7 +2210,9 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                 self.queue.async { [weak self, weak connection] in
                     guard let self, let connection,
                           self.connection === connection,
+                          self.assetPreparationIntent == intent,
                           self.isAuthorized(intent) else { return }
+                    self.assetPreparationIntent = nil
                     self.resolveIntent(intent)
                     self.publishImageAsset(
                         intent,
@@ -2019,22 +2221,29 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                         fileURL: nil,
                         message: self.assetFailureMessage(error)
                     )
-                    self.beginNextImageAssetIfNeeded(connection: connection)
+                    self.resumeBoundedRequestLane(
+                        connection: connection,
+                        catalogPriority: true
+                    )
                 }
             }
         }
     }
 
+    @discardableResult
     private func sendAssetRequest(
         intent: ImageAssetIntent,
         offset: Int64,
         connection: NWConnection
-    ) {
+    ) -> Bool {
         guard self.connection === connection,
               inFlightAssetRequest == nil,
+              inFlightCatalogRequest == nil,
+              inFlightRemoteCommand == nil,
+              boundedRequestLane.isIdle,
               isAuthorized(intent),
               offset >= 0,
-              offset < intent.descriptor.byteSize else { return }
+              offset < intent.descriptor.byteSize else { return false }
         let request = TchurchStudioLANAssetRequest(
             schemaVersion: TchurchStudioLANAssetRequest.schemaVersion,
             requestID: UUID(),
@@ -2042,6 +2251,8 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             offset: offset,
             maximumBytes: TchurchStudioLANAssetChunk.byteCount
         )
+        let operation = TchurchStudioLANBoundedRequestOperation.asset(request.requestID)
+        guard boundedRequestLane.begin(operation) else { return false }
         inFlightAssetRequest = .init(request: request, intent: intent)
         do {
             try send(.assetRequest(request), connection: connection)
@@ -2051,6 +2262,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                       self.connection === connection,
                       self.inFlightAssetRequest?.request.requestID == requestID else { return }
                 self.assetRequestWatchdog.cancel()
+                self.boundedRequestLane.cancel(.asset(requestID))
                 connection.stateUpdateHandler = nil
                 connection.cancel()
                 self.handleConnectionEnded(
@@ -2061,8 +2273,11 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         } catch {
             assetRequestWatchdog.cancel()
             inFlightAssetRequest = nil
+            boundedRequestLane.cancel(operation)
             handleConnectionEnded(connection, cause: .eof)
+            return false
         }
+        return true
     }
 
     private func handleAssetChunk(
@@ -2083,6 +2298,10 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             throw TchurchStudioLANError.invalidAssetChunk
         }
         assetRequestWatchdog.cancel()
+        guard boundedRequestLane.finish(.asset(inFlight.request.requestID)) else {
+            throw TchurchStudioLANError.invalidAssetChunk
+        }
+        _ = deliverQueuedRemoteCommandOrCancel(connection: connection)
         assetIOQueue.async { [weak self, weak connection] in
             guard let self, let connection else { return }
             do {
@@ -2103,13 +2322,19 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                                 fileURL: nil,
                                 message: "Descargando imagen offline…"
                             )
-                            self.sendAssetRequest(
+                            self.pendingAssetContinuation = PendingAssetContinuation(
                                 intent: inFlight.intent,
-                                offset: nextOffset,
-                                connection: connection
+                                offset: nextOffset
+                            )
+                            self.resumeBoundedRequestLane(
+                                connection: connection,
+                                catalogPriority: true
                             )
                         } else {
-                            self.beginNextImageAssetIfNeeded(connection: connection)
+                            self.resumeBoundedRequestLane(
+                                connection: connection,
+                                catalogPriority: true
+                            )
                         }
                     case .ready(let url):
                         self.resolveIntent(inFlight.intent)
@@ -2122,7 +2347,10 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                                 message: nil
                             )
                         }
-                        self.beginNextImageAssetIfNeeded(connection: connection)
+                        self.resumeBoundedRequestLane(
+                            connection: connection,
+                            catalogPriority: true
+                        )
                     }
                 }
             } catch {
@@ -2142,7 +2370,10 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                             message: self.assetFailureMessage(error)
                         )
                     }
-                    self.beginNextImageAssetIfNeeded(connection: connection)
+                    self.resumeBoundedRequestLane(
+                        connection: connection,
+                        catalogPriority: true
+                    )
                 }
             }
         }
@@ -2159,13 +2390,19 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             throw TchurchStudioLANError.invalidAssetChunk
         }
         assetRequestWatchdog.cancel()
+        guard boundedRequestLane.finish(.asset(inFlight.request.requestID)) else {
+            throw TchurchStudioLANError.invalidAssetChunk
+        }
         inFlightAssetRequest = nil
         switch unavailable.code {
         case .overloaded where assetRetryCount < 3:
             assetRetryCount += 1
             let delay = min(4, 1 << (assetRetryCount - 1))
-            queue.asyncAfter(deadline: .now() + .seconds(delay)) { [weak self, weak connection] in
-                guard let self, let connection,
+            assetRetryWork?.cancel()
+            let work = DispatchWorkItem { [weak self, weak connection] in
+                guard let self else { return }
+                self.assetRetryWork = nil
+                guard let connection,
                       self.connection === connection,
                       self.isAuthorized(inFlight.intent) else { return }
                 self.sendAssetRequest(
@@ -2173,6 +2410,12 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                     offset: inFlight.request.offset,
                     connection: connection
                 )
+            }
+            assetRetryWork = work
+            queue.asyncAfter(deadline: .now() + .seconds(delay), execute: work)
+            _ = deliverQueuedRemoteCommandOrCancel(connection: connection)
+            if cueCatalogAccumulator != nil {
+                scheduleCatalogPump(after: 0, connection: connection)
             }
         case .invalidRange where assetRetryCount == 0:
             assetRetryCount = 1
@@ -2186,6 +2429,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                     self.sendAssetRequest(intent: inFlight.intent, offset: 0, connection: connection)
                 }
             }
+            _ = deliverQueuedRemoteCommandOrCancel(connection: connection)
         default:
             resolveIntent(inFlight.intent)
             if isCurrentOrStillAuthorized(inFlight.intent) {
@@ -2197,7 +2441,8 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                     message: "Studio no pudo entregar esta imagen offline."
                 )
             }
-            beginNextImageAssetIfNeeded(connection: connection)
+            _ = deliverQueuedRemoteCommandOrCancel(connection: connection)
+            resumeBoundedRequestLane(connection: connection, catalogPriority: true)
         }
     }
 
@@ -2280,15 +2525,468 @@ final class TchurchStudioLANClient: @unchecked Sendable {
 
     private func resetAssetTransfer() {
         assetRequestWatchdog.cancel()
+        assetRetryWork?.cancel()
+        assetRetryWork = nil
+        if let inFlightAssetRequest {
+            boundedRequestLane.cancel(.asset(inFlightAssetRequest.request.requestID))
+        }
         assetGeneration &+= 1
         imageAssetIntents = []
         inFlightAssetRequest = nil
+        assetPreparationIntent = nil
+        pendingAssetContinuation = nil
         assetRetryCount = 0
     }
 
     private func beginNewImageAssetPresentation() {
         assetPresentationGeneration &+= 1
         publishedImageAssetStatuses.removeAll(keepingCapacity: false)
+    }
+
+    private func updateCueCatalog(
+        from envelope: TchurchStudioLANSignedEnvelope,
+        connection: NWConnection
+    ) throws {
+        guard self.connection === connection,
+              envelope.channel == .control else { return }
+        guard envelope.schemaVersion == 5 else {
+            if cueCatalogKey != nil || verifiedCueCatalog != nil || cueCatalogAccumulator != nil {
+                resetCueCatalog(
+                    publishUnavailable: true,
+                    message: "Studio usa el catálogo compatible del protocolo v4."
+                )
+                resumeBoundedRequestLane(connection: connection, catalogPriority: false)
+            }
+            return
+        }
+        let trust = deviceTrust.snapshot
+        guard let subscription = activeSubscription,
+              subscription.channel == .control,
+              subscription.payloadVersion == 5,
+              subscription.authority == envelope.authority,
+              subscription.deviceGrant?.role == .production,
+              subscription.deviceGrant?.permissions.contains(.observe) == true,
+              subscription.deviceGrant?.permissions.contains(.controlProgram) == true,
+              trust.enrollmentState == .approved,
+              trust.role == .production,
+              trust.permissions.contains(.observe),
+              trust.permissions.contains(.controlProgram),
+              let grantChecksum = subscription.deviceGrantChecksum,
+              let control = envelope.payload.control,
+              let routeEpoch = control.routeEpoch,
+              let routing = control.routing,
+              routing.lanRemoteControl,
+              !routing.tchurchCloudProgram,
+              let manifest = control.cueCatalogManifest else {
+            throw TchurchStudioLANError.protocolViolation
+        }
+        if let previous = cueCatalogKey,
+           previous.authority == envelope.authority {
+            guard routeEpoch >= previous.routeEpoch else {
+                throw TchurchStudioLANError.protocolViolation
+            }
+            if routeEpoch == previous.routeEpoch,
+               previous.routing != routing {
+                throw TchurchStudioLANError.protocolViolation
+            }
+        }
+        let key = CueCatalogKey(
+            authority: envelope.authority,
+            routeEpoch: routeEpoch,
+            catalogID: manifest.catalogID,
+            deviceGrantChecksum: grantChecksum,
+            routing: routing
+        )
+        if cueCatalogKey == key {
+            if verifiedCueCatalog?.key == key || unavailableCueCatalogKey == key ||
+                cueCatalogAccumulator != nil || inFlightCatalogRequest != nil {
+                return
+            }
+        } else {
+            resetCueCatalog(publishUnavailable: false)
+        }
+
+        let accumulator = try TchurchStudioLANCueCatalogAccumulator(
+            manifest: manifest,
+            routeEpoch: routeEpoch
+        )
+        cueCatalogKey = key
+        unavailableCueCatalogKey = nil
+        catalogRetryCount = 0
+        if accumulator.isEmptyAndComplete {
+            let cues = try accumulator.verifiedEmptyCatalog()
+            verifiedCueCatalog = VerifiedCueCatalog(key: key, cues: cues)
+            cueCatalogAccumulator = nil
+            publishCueCatalog(
+                phase: .ready,
+                key: key,
+                totalCount: manifest.totalCount,
+                receivedCount: cues.count,
+                cues: cues,
+                message: nil
+            )
+            replayAmbiguousRemoteCommandIfReady()
+            resumeBoundedRequestLane(connection: connection, catalogPriority: false)
+            return
+        }
+        cueCatalogAccumulator = accumulator
+        publishCueCatalog(
+            phase: .loading,
+            key: key,
+            totalCount: manifest.totalCount,
+            receivedCount: 0,
+            cues: nil,
+            message: "Cargando el catálogo local firmado…"
+        )
+        scheduleCatalogPump(
+            after: Self.catalogInterPageDelaySeconds,
+            connection: connection
+        )
+        resumeBoundedRequestLane(connection: connection, catalogPriority: false)
+    }
+
+    private func requestNextCatalogPage(connection: NWConnection) throws {
+        guard self.connection === connection,
+              didAuthenticate,
+              currentPhase == .connected,
+              boundedRequestLane.isIdle,
+              inFlightAssetRequest == nil,
+              inFlightCatalogRequest == nil,
+              let key = cueCatalogKey,
+              let accumulator = cueCatalogAccumulator,
+              accumulator.nextOffset < accumulator.totalCount else { return }
+        if let inFlightRemoteCommand,
+           TchurchStudioLANBoundedRequestPriority.remoteCommandBlocksCatalogRequest(
+                isAwaitingReceipt: inFlightRemoteCommand.isAwaitingReceipt,
+                isAwaitingAuthenticatedContext:
+                    inFlightRemoteCommand.recovery.isAwaitingAuthenticatedContext
+           ) {
+            return
+        }
+        if let backoffUntil = catalogBackoffUntil {
+            let now = DispatchTime.now()
+            if now < backoffUntil {
+                let remaining = TimeInterval(backoffUntil.uptimeNanoseconds - now.uptimeNanoseconds) / 1_000_000_000
+                scheduleCatalogPump(after: remaining, connection: connection)
+                return
+            }
+            catalogBackoffUntil = nil
+        }
+        let request = TchurchStudioLANCatalogRequest(
+            schemaVersion: TchurchStudioLANCatalogRequest.schemaVersion,
+            requestID: UUID(),
+            catalogID: key.catalogID,
+            routeEpoch: key.routeEpoch,
+            offset: accumulator.nextOffset,
+            maximumEntries: min(accumulator.pageSize, accumulator.totalCount - accumulator.nextOffset)
+        )
+        let operation = TchurchStudioLANBoundedRequestOperation.catalog(request.requestID)
+        guard boundedRequestLane.begin(operation) else { return }
+        inFlightCatalogRequest = request
+        do {
+            try send(.catalogRequest(request), connection: connection)
+        } catch {
+            inFlightCatalogRequest = nil
+            boundedRequestLane.cancel(operation)
+            throw error
+        }
+        catalogRequestWatchdog.arm(after: Self.catalogRequestTimeoutSeconds) { [weak self, weak connection] in
+            guard let self, let connection else { return }
+            guard self.connection === connection,
+                  self.inFlightCatalogRequest?.requestID == request.requestID else { return }
+            self.finishCatalogUnavailable(
+                message: "Studio no respondió al catálogo local. Los controles directos siguen disponibles."
+            )
+            self.boundedRequestLane.cancel(.catalog(request.requestID))
+            self.resumeBoundedRequestLane(connection: connection, catalogPriority: false)
+        }
+    }
+
+    private func scheduleCatalogPump(
+        after delay: TimeInterval,
+        connection: NWConnection
+    ) {
+        guard self.connection === connection,
+              didAuthenticate,
+              currentPhase == .connected,
+              let key = cueCatalogKey,
+              let accumulator = cueCatalogAccumulator,
+              accumulator.nextOffset < accumulator.totalCount else { return }
+        let generation = catalogGeneration
+        let effectiveDelay: TimeInterval
+        let now = DispatchTime.now()
+        if let backoffUntil = catalogBackoffUntil,
+           now < backoffUntil {
+            let remaining = TimeInterval(
+                backoffUntil.uptimeNanoseconds - now.uptimeNanoseconds
+            ) / 1_000_000_000
+            effectiveDelay = max(delay, remaining)
+        } else {
+            effectiveDelay = delay
+        }
+        catalogPumpWork?.cancel()
+        let work = DispatchWorkItem { [weak self, weak connection] in
+            guard let self, let connection,
+                  self.connection === connection,
+                  self.catalogGeneration == generation,
+                  self.cueCatalogKey == key else { return }
+            self.catalogPumpWork = nil
+            do {
+                try self.requestNextCatalogPage(connection: connection)
+            } catch {
+                self.handleConnectionEnded(connection, cause: .heartbeatProtocolViolation)
+            }
+        }
+        catalogPumpWork = work
+        queue.asyncAfter(deadline: .now() + max(0, effectiveDelay), execute: work)
+    }
+
+    /// Resume the shared lane after a bounded response. Program always wins;
+    /// catalog may then take priority after yielding to an asset response.
+    private func resumeBoundedRequestLane(
+        connection: NWConnection,
+        catalogPriority: Bool
+    ) {
+        guard self.connection === connection,
+              didAuthenticate,
+              currentPhase == .connected,
+              boundedRequestLane.isIdle else { return }
+        let catalogNeedsPage = cueCatalogAccumulator.map {
+            $0.nextOffset < $0.totalCount
+        } ?? false
+        let catalogBackingOff = catalogBackoffUntil.map { DispatchTime.now() < $0 } ?? false
+        let remoteCommandQueued = inFlightRemoteCommand.map {
+            !$0.isAwaitingReceipt && !$0.recovery.isAwaitingAuthenticatedContext
+        } ?? false
+        let assetReady = assetPreparationIntent == nil && assetRetryWork == nil &&
+            (pendingAssetContinuation != nil || !imageAssetIntents.isEmpty)
+        let next = TchurchStudioLANBoundedRequestPriority.next(
+            remoteCommandQueued: remoteCommandQueued,
+            catalogReady: catalogNeedsPage && !catalogBackingOff,
+            catalogHasPriority: catalogPriority,
+            assetReady: assetReady
+        )
+        if catalogNeedsPage && next != .catalog {
+            scheduleCatalogPump(
+                after: Self.catalogInterPageDelaySeconds,
+                connection: connection
+            )
+        }
+        switch next {
+        case .remoteCommand:
+            _ = deliverQueuedRemoteCommandOrCancel(connection: connection)
+        case .catalog:
+            scheduleCatalogPump(
+                after: catalogPriority ? 0 : Self.catalogInterPageDelaySeconds,
+                connection: connection
+            )
+        case .asset:
+            beginNextImageAssetIfNeeded(connection: connection)
+        case nil:
+            if catalogNeedsPage {
+                scheduleCatalogPump(
+                    after: Self.catalogInterPageDelaySeconds,
+                    connection: connection
+                )
+            }
+        }
+    }
+
+    private func rememberDiscardedCatalogRequest(_ requestID: UUID) {
+        discardedCatalogRequestIDs.remember(requestID)
+    }
+
+    private func consumeDiscardedCatalogRequest(_ requestID: UUID) -> Bool {
+        discardedCatalogRequestIDs.consume(requestID)
+    }
+
+    private func handleCatalogPage(
+        _ page: TchurchStudioLANCatalogPage,
+        connection: NWConnection
+    ) throws {
+        guard self.connection === connection else { return }
+        if consumeDiscardedCatalogRequest(page.requestID) { return }
+        guard let key = cueCatalogKey else { return }
+        guard let request = inFlightCatalogRequest else {
+            if page.catalogID != key.catalogID || page.routeEpoch != key.routeEpoch { return }
+            throw TchurchStudioLANError.protocolViolation
+        }
+        guard page.catalogID == key.catalogID,
+              page.routeEpoch == key.routeEpoch else {
+            // A route/catalog replacement invalidates old pages in flight.
+            return
+        }
+        guard page.requestID == request.requestID,
+              page.cues.count <= request.maximumEntries,
+              var accumulator = cueCatalogAccumulator else {
+            throw TchurchStudioLANError.protocolViolation
+        }
+        catalogRequestWatchdog.cancel()
+        let completed = try accumulator.append(page, expectedRequestID: request.requestID)
+        guard boundedRequestLane.finish(.catalog(request.requestID)) else {
+            throw TchurchStudioLANError.protocolViolation
+        }
+        inFlightCatalogRequest = nil
+        catalogRetryCount = 0
+        catalogBackoffUntil = nil
+        if let completed {
+            cueCatalogAccumulator = nil
+            verifiedCueCatalog = VerifiedCueCatalog(key: key, cues: completed)
+            publishCueCatalog(
+                phase: .ready,
+                key: key,
+                totalCount: completed.count,
+                receivedCount: completed.count,
+                cues: completed,
+                message: nil
+            )
+            replayAmbiguousRemoteCommandIfReady()
+            resumeBoundedRequestLane(connection: connection, catalogPriority: false)
+        } else {
+            cueCatalogAccumulator = accumulator
+            publishCueCatalog(
+                phase: .loading,
+                key: key,
+                totalCount: accumulator.totalCount,
+                receivedCount: accumulator.nextOffset,
+                cues: nil,
+                message: "Cargando el catálogo local firmado…"
+            )
+            resumeBoundedRequestLane(connection: connection, catalogPriority: false)
+        }
+    }
+
+    private func handleCatalogUnavailable(
+        _ unavailable: TchurchStudioLANCatalogUnavailable,
+        connection: NWConnection
+    ) throws {
+        guard self.connection === connection else { return }
+        if consumeDiscardedCatalogRequest(unavailable.requestID) { return }
+        guard unavailable.schemaVersion == TchurchStudioLANCatalogUnavailable.schemaVersion,
+              let key = cueCatalogKey else {
+            throw TchurchStudioLANError.protocolViolation
+        }
+        guard unavailable.catalogID == key.catalogID else {
+            // Never retry a response belonging to a replaced manifest.
+            return
+        }
+        let currentRequestID = try TchurchStudioLANCatalogResponseStrictness
+            .validateCurrentUnavailableRequest(
+                responseRequestID: unavailable.requestID,
+                inFlightRequestID: inFlightCatalogRequest?.requestID
+            )
+        guard let request = inFlightCatalogRequest,
+              request.requestID == currentRequestID else {
+            throw TchurchStudioLANError.protocolViolation
+        }
+        catalogRequestWatchdog.cancel()
+        guard boundedRequestLane.finish(.catalog(request.requestID)) else {
+            throw TchurchStudioLANError.protocolViolation
+        }
+        inFlightCatalogRequest = nil
+        switch unavailable.code {
+        case .overloaded where catalogRetryCount < Self.maximumCatalogOverloadRetries:
+            catalogRetryCount += 1
+            guard let delay = Self.catalogOverloadRetryDelaySeconds(catalogRetryCount) else {
+                throw TchurchStudioLANError.protocolViolation
+            }
+            catalogBackoffUntil = .now() + delay
+            scheduleCatalogPump(after: delay, connection: connection)
+            _ = deliverQueuedRemoteCommandOrCancel(connection: connection)
+            beginNextImageAssetIfNeeded(connection: connection)
+        case .overloaded:
+            finishCatalogUnavailable(
+                message: "Studio está ocupado. Los controles directos siguen disponibles."
+            )
+            resumeBoundedRequestLane(connection: connection, catalogPriority: false)
+        case .staleCatalog:
+            finishCatalogUnavailable(
+                message: "El catálogo cambió en Studio. Esperando el manifiesto nuevo…"
+            )
+            resumeBoundedRequestLane(connection: connection, catalogPriority: false)
+        case .invalidRange:
+            finishCatalogUnavailable(
+                message: "Studio rechazó esta página del catálogo local."
+            )
+            resumeBoundedRequestLane(connection: connection, catalogPriority: false)
+        }
+    }
+
+    private func publishCueCatalog(
+        phase: TchurchStudioLANCueCatalogPhase,
+        key: CueCatalogKey,
+        totalCount: Int,
+        receivedCount: Int,
+        cues: [TchurchStudioLANRemoteCueDescriptor]?,
+        message: String?
+    ) {
+        cueCatalogHandler?(TchurchStudioLANCueCatalogStatus(
+            phase: phase,
+            catalogID: key.catalogID,
+            routeEpoch: key.routeEpoch,
+            totalCount: totalCount,
+            receivedCount: receivedCount,
+            cues: phase == .ready ? cues : nil,
+            message: message
+        ))
+    }
+
+    private func finishCatalogUnavailable(message: String) {
+        catalogRequestWatchdog.cancel()
+        catalogPumpWork?.cancel()
+        catalogPumpWork = nil
+        catalogBackoffUntil = nil
+        catalogGeneration &+= 1
+        if let request = inFlightCatalogRequest {
+            rememberDiscardedCatalogRequest(request.requestID)
+            boundedRequestLane.cancel(.catalog(request.requestID))
+        }
+        inFlightCatalogRequest = nil
+        cueCatalogAccumulator = nil
+        verifiedCueCatalog = nil
+        if let key = cueCatalogKey {
+            unavailableCueCatalogKey = key
+            publishCueCatalog(
+                phase: .unavailable,
+                key: key,
+                totalCount: 0,
+                receivedCount: 0,
+                cues: nil,
+                message: message
+            )
+        }
+    }
+
+    private func resetCueCatalog(
+        publishUnavailable: Bool,
+        message: String = "El catálogo local se cerró con la conexión."
+    ) {
+        let oldKey = cueCatalogKey
+        catalogRequestWatchdog.cancel()
+        catalogPumpWork?.cancel()
+        catalogPumpWork = nil
+        catalogBackoffUntil = nil
+        catalogGeneration &+= 1
+        if let request = inFlightCatalogRequest {
+            rememberDiscardedCatalogRequest(request.requestID)
+            boundedRequestLane.cancel(.catalog(request.requestID))
+        }
+        inFlightCatalogRequest = nil
+        cueCatalogAccumulator = nil
+        verifiedCueCatalog = nil
+        unavailableCueCatalogKey = nil
+        cueCatalogKey = nil
+        catalogRetryCount = 0
+        if publishUnavailable, let oldKey {
+            publishCueCatalog(
+                phase: .unavailable,
+                key: oldKey,
+                totalCount: 0,
+                receivedCount: 0,
+                cues: nil,
+                message: message
+            )
+        }
     }
 
     private func clearManualReplayRecoveryState() {
@@ -2319,7 +3017,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
               trust.permissions.contains(.controlProgram),
               let subscription = activeSubscription,
               subscription.channel == .control,
-              subscription.payloadVersion == StudioLANDeviceTrustContract.protocolFloor,
+              subscription.payloadVersion == 4 || subscription.payloadVersion == 5,
               let deviceGrant = subscription.deviceGrant,
               deviceGrant.role == .production,
               deviceGrant.permissions.contains(.observe),
@@ -2328,18 +3026,30 @@ final class TchurchStudioLANClient: @unchecked Sendable {
               let envelope = latestControlEnvelope,
               envelope.authority == subscription.authority,
               envelope.channel == .control,
-              envelope.schemaVersion == StudioLANDeviceTrustContract.protocolFloor,
+              envelope.schemaVersion == subscription.payloadVersion,
               let control = envelope.payload.control,
               let routeEpoch = control.routeEpoch,
               routeEpoch > 0,
-              let cueCatalog = control.cueCatalog,
               minimumControlEnvelopeRevision.map({ envelope.revision >= $0 }) ?? true else {
             throw TchurchStudioLANRemoteControlError.unauthorized
         }
-        if action.kind == .jump, recovery == nil {
-            guard let cueID = action.cueID,
-                  cueCatalog.contains(where: { $0.cueID == cueID }) else {
+        if action.kind == .jump {
+            guard let cueID = action.cueID else {
                 throw TchurchStudioLANRemoteControlError.invalidAction
+            }
+            if subscription.payloadVersion == 4 {
+                guard control.cueCatalog?.contains(where: { $0.cueID == cueID }) == true else {
+                    throw TchurchStudioLANRemoteControlError.invalidAction
+                }
+            } else {
+                guard let key = cueCatalogKey,
+                      key.authority == envelope.authority,
+                      key.routeEpoch == routeEpoch,
+                      key.catalogID == control.cueCatalogManifest?.catalogID,
+                      verifiedCueCatalog?.key == key,
+                      verifiedCueCatalog?.cues.contains(where: { $0.cueID == cueID }) == true else {
+                    throw TchurchStudioLANRemoteControlError.invalidAction
+                }
             }
         }
         let now = TchurchStudioLANTime.nowMilliseconds()
@@ -2385,10 +3095,62 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         return command
     }
 
+    /// Program control always wins the next free bounded request slot. A
+    /// command may be accepted by the UI while an authenticated asset/catalog
+    /// response is still outstanding, but it is not written until that one
+    /// request releases the lane.
+    @discardableResult
+    private func deliverQueuedRemoteCommandIfPossible(
+        connection: NWConnection
+    ) throws -> Bool {
+        guard self.connection === connection,
+              didAuthenticate,
+              currentPhase == .connected,
+              boundedRequestLane.isIdle,
+              var inFlight = inFlightRemoteCommand,
+              !inFlight.isAwaitingReceipt,
+              !inFlight.recovery.isAwaitingAuthenticatedContext else { return false }
+        let command = try makeRemoteCommand(
+            action: inFlight.recovery.action,
+            preserving: inFlight.recovery
+        )
+        let operation = TchurchStudioLANBoundedRequestOperation.remoteCommand(command.commandID)
+        guard boundedRequestLane.begin(operation) else { return false }
+        inFlight.command = command
+        inFlight.isAwaitingReceipt = true
+        inFlightRemoteCommand = inFlight
+        do {
+            try send(.remoteCommand(command), connection: connection)
+            armRemoteCommandTimeout(commandID: command.commandID, connection: connection)
+            return true
+        } catch {
+            boundedRequestLane.cancel(operation)
+            if var retained = inFlightRemoteCommand,
+               retained.command.commandID == command.commandID {
+                retained.isAwaitingReceipt = false
+                inFlightRemoteCommand = retained
+            }
+            throw error
+        }
+    }
+
+    @discardableResult
+    private func deliverQueuedRemoteCommandOrCancel(
+        connection: NWConnection
+    ) -> Bool {
+        do {
+            return try deliverQueuedRemoteCommandIfPossible(connection: connection)
+        } catch {
+            cancelRemoteCommand(state: .interrupted)
+            return false
+        }
+    }
+
     private func handleRemoteReceipt(
         _ receipt: TchurchStudioLANRemoteCommandReceipt
     ) throws {
         guard let inFlight = inFlightRemoteCommand,
+              inFlight.isAwaitingReceipt,
               let subscription = activeSubscription else {
             throw TchurchStudioLANRemoteControlError.invalidReceipt
         }
@@ -2408,6 +3170,9 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             receipt,
             studioSigningPublicKey: subscription.signingPublicKey
         )
+        guard boundedRequestLane.finish(.remoteCommand(command.commandID)) else {
+            throw TchurchStudioLANRemoteControlError.invalidReceipt
+        }
         remoteCommandTimeoutWork?.cancel()
         remoteCommandTimeoutWork = nil
         remoteCommandRecoveryDeadlineWork?.cancel()
@@ -2423,6 +3188,10 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                     receipt.rejection == .routeDisabled ||
                     receipt.rejection == .authorityMismatch {
             latestControlEnvelope = nil
+            resetCueCatalog(
+                publishUnavailable: true,
+                message: "La ruta local cambió en Studio. Esperando el estado firmado nuevo…"
+            )
         } else if latestControlEnvelope.map({ $0.revision < receipt.revision }) ?? true {
             minimumControlEnvelopeRevision = receipt.revision
         }
@@ -2435,15 +3204,23 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             wasIdempotentReplay: receipt.wasIdempotentReplay
         ))
         emitStatus()
+        if let connection {
+            resumeBoundedRequestLane(connection: connection, catalogPriority: true)
+        }
     }
 
     private func recordVerifiedControlEnvelope(
         _ envelope: TchurchStudioLANSignedEnvelope
     ) {
         guard envelope.channel == .control,
-              envelope.schemaVersion == StudioLANDeviceTrustContract.protocolFloor,
-              envelope.payload.control?.routeEpoch != nil,
-              envelope.payload.control?.cueCatalog != nil else { return }
+              envelope.schemaVersion == 4 || envelope.schemaVersion == 5,
+              envelope.payload.control?.routeEpoch != nil else { return }
+        if envelope.schemaVersion == 4 {
+            guard envelope.payload.control?.cueCatalog != nil else { return }
+        } else {
+            guard envelope.payload.control?.routing?.lanRemoteControl == true,
+                  envelope.payload.control?.cueCatalogManifest != nil else { return }
+        }
         latestControlEnvelope = envelope
         if let minimum = minimumControlEnvelopeRevision,
            envelope.revision >= minimum {
@@ -2458,7 +3235,25 @@ final class TchurchStudioLANClient: @unchecked Sendable {
               inFlight.recovery.isAwaitingAuthenticatedContext,
               let connection,
               didAuthenticate,
-              currentPhase == .connected else { return }
+              currentPhase == .connected,
+              boundedRequestLane.isIdle else { return }
+        if inFlight.recovery.action.kind == .jump,
+           activeSubscription?.payloadVersion == 5 {
+            guard let envelope = latestControlEnvelope,
+                  let control = envelope.payload.control,
+                  let routeEpoch = control.routeEpoch,
+                  let key = cueCatalogKey,
+                  key.authority == envelope.authority,
+                  key.routeEpoch == routeEpoch,
+                  key.catalogID == control.cueCatalogManifest?.catalogID,
+                  let catalog = verifiedCueCatalog,
+                  catalog.key == key else { return }
+            guard let cueID = inFlight.recovery.action.cueID,
+                  catalog.cues.contains(where: { $0.cueID == cueID }) else {
+                cancelRemoteCommand(state: .interrupted)
+                return
+            }
+        }
         let now = TchurchStudioLANTime.nowMilliseconds()
         do {
             let command = try makeRemoteCommand(
@@ -2470,11 +3265,15 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                 nowMilliseconds: now
             )
             inFlight.command = command
+            inFlight.isAwaitingReceipt = true
+            let operation = TchurchStudioLANBoundedRequestOperation.remoteCommand(command.commandID)
+            guard boundedRequestLane.begin(operation) else { return }
             inFlightRemoteCommand = inFlight
             armRemoteCommandTimeout(commandID: command.commandID, connection: connection)
             do {
                 try send(.remoteCommand(command), connection: connection)
             } catch {
+                boundedRequestLane.cancel(operation)
                 _ = prepareAmbiguousRemoteCommandRecovery()
                 handleConnectionEnded(
                     connection,
@@ -2501,7 +3300,10 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         guard var inFlight = inFlightRemoteCommand else { return false }
         remoteCommandTimeoutWork?.cancel()
         remoteCommandTimeoutWork = nil
+        boundedRequestLane.cancel(.remoteCommand(inFlight.command.commandID))
+        inFlight.isAwaitingReceipt = false
         if inFlight.recovery.isAwaitingAuthenticatedContext {
+            inFlightRemoteCommand = inFlight
             return true
         }
         let now = TchurchStudioLANTime.nowMilliseconds()
@@ -2579,6 +3381,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         remoteCommandRecoveryDeadlineWork?.cancel()
         remoteCommandRecoveryDeadlineWork = nil
         inFlightRemoteCommand = nil
+        boundedRequestLane.cancel(.remoteCommand(inFlight.command.commandID))
         remoteFeedbackHandler?(TchurchStudioLANRemoteFeedback(
             commandID: inFlight.command.commandID,
             action: inFlight.command.action,
@@ -2588,6 +3391,9 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             wasIdempotentReplay: false
         ))
         emitStatus()
+        if let connection {
+            resumeBoundedRequestLane(connection: connection, catalogPriority: true)
+        }
     }
 
     private func send(_ message: TchurchStudioLANWireMessage, connection: NWConnection) throws {
@@ -2692,11 +3498,15 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             remoteCommandTimeoutWork = nil
             remoteCommandRecoveryDeadlineWork?.cancel()
             remoteCommandRecoveryDeadlineWork = nil
+            if let inFlightRemoteCommand {
+                boundedRequestLane.cancel(.remoteCommand(inFlightRemoteCommand.command.commandID))
+            }
             inFlightRemoteCommand = nil
         }
         activeSubscription = nil
         latestControlEnvelope = nil
         minimumControlEnvelopeRevision = nil
+        resetCueCatalog(publishUnavailable: true)
     }
 
     private func failProtocol(_ connection: NWConnection) {
@@ -2732,6 +3542,8 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         challenge = nil
         request = nil
         resetAssetTransfer()
+        boundedRequestLane.reset()
+        discardedCatalogRequestIDs.reset()
         exactReplayAssetRehydration.clearConnectionEligibility()
         currentConnectionIsAutomaticReconnect = false
         if intentionalDisconnect || suspended { return }
@@ -2968,9 +3780,12 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             selectedServiceID.flatMap { try? secretStore.read(serviceID: $0) } != nil
         let controlEnvelopeReady = latestControlEnvelope.map { envelope in
             envelope.channel == .control &&
-                envelope.schemaVersion == StudioLANDeviceTrustContract.protocolFloor &&
+                (envelope.schemaVersion == 4 || envelope.schemaVersion == 5) &&
                 envelope.payload.control?.routeEpoch != nil &&
-                envelope.payload.control?.cueCatalog != nil &&
+                (envelope.schemaVersion == 4
+                    ? envelope.payload.control?.cueCatalog != nil
+                    : envelope.payload.control?.routing?.lanRemoteControl == true &&
+                        envelope.payload.control?.cueCatalogManifest != nil) &&
                 (minimumControlEnvelopeRevision.map({ envelope.revision >= $0 }) ?? true)
         } ?? false
         let remoteControlAvailable = !privateStateBlocked && !revoked &&
@@ -2982,7 +3797,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             trust.permissions.contains(.observe) &&
             trust.permissions.contains(.controlProgram) &&
             activeSubscription?.channel == .control &&
-            activeSubscription?.payloadVersion == StudioLANDeviceTrustContract.protocolFloor &&
+            (activeSubscription?.payloadVersion == 4 || activeSubscription?.payloadVersion == 5) &&
             controlEnvelopeReady &&
             inFlightRemoteCommand == nil
         return TchurchStudioLANClientStatus(

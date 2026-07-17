@@ -70,9 +70,36 @@ export type StudioLANTimer = {
   isRunning: boolean;
 };
 
+export type StudioLANRouting = {
+  schemaVersion: 1;
+  localAudience: boolean;
+  localBroadcast: boolean;
+  stageAndMusicians: boolean;
+  lanRemoteControl: true;
+  lightingAndMIDI: boolean;
+  tchurchCloudProgram: false;
+};
+
+export type StudioLANCueCatalogManifest = {
+  schemaVersion: 1;
+  catalogId: string;
+  totalCount: number;
+  pageSize: 128;
+};
+
+export type StudioLANCueCatalogStatus = {
+  phase: "loading" | "ready" | "unavailable";
+  catalogId: string;
+  routeEpoch: string;
+  totalCount: number;
+  receivedCount: number;
+  cues: Array<{ cueId: string; title: string }> | null;
+  message: string | null;
+};
+
 export type StudioLANUpdate = {
   channel: StudioLANChannel;
-  payloadVersion: 1 | 2 | 3 | 4;
+  payloadVersion: 1 | 2 | 3 | 4 | 5;
   sequence: string;
   revision: string;
   receivedAtMs: number;
@@ -103,7 +130,9 @@ export type StudioLANUpdate = {
     healthyOutputCount: number;
     expectedOutputCount: number;
     routeEpoch: string;
-    cueCatalog: Array<{ cueId: string; title: string }>;
+    cueCatalog: Array<{ cueId: string; title: string }> | null;
+    routing: StudioLANRouting | null;
+    cueCatalogManifest: StudioLANCueCatalogManifest | null;
   } | null;
 };
 
@@ -156,6 +185,7 @@ interface StudioLANNativePlugin {
   addListener(eventName: "studioLANUpdate", listener: (update: unknown) => void): Promise<PluginListenerHandle>;
   addListener(eventName: "studioLANImageAsset", listener: (status: unknown) => void): Promise<PluginListenerHandle>;
   addListener(eventName: "studioLANRemoteFeedback", listener: (feedback: unknown) => void): Promise<PluginListenerHandle>;
+  addListener(eventName: "studioLANCueCatalog", listener: (status: unknown) => void): Promise<PluginListenerHandle>;
 }
 
 const StudioLANNative = registerPlugin<StudioLANNativePlugin>("StudioLANClient");
@@ -166,6 +196,7 @@ const UINT64 = /^(0|[1-9][0-9]{0,19})$/;
 const SERVICE_ID = /^[0-9a-f]{32}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ASSET_ID = /^sha256:[0-9a-f]{64}$/;
+const CATALOG_ID = /^sha256:[0-9a-f]{64}$/;
 const CHORD_KEY = /^(?:[A-G](?:#|b)?|Do|Re|Mi|Fa|Sol|La|Si)$/i;
 const CHORD_TOKEN = /^(?:(?:[A-G](?:#|b)?)(?:(?:maj|min|m|dim|aug|sus|add)?[0-9]*)?(?:\/[A-G](?:#|b)?)?|N\.?C\.?|[1-7](?:#|b)?(?:m)?(?:\/[1-7](?:#|b)?)?)$/i;
 const IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/avif", "image/gif"]);
@@ -212,6 +243,16 @@ const SAFE_ASSET_MESSAGES = new Set([
   "La imagen excede el límite seguro para este dispositivo.",
   "La imagen no pudo verificarse y no se mostrará.",
   "Studio no pudo entregar esta imagen offline.",
+]);
+const SAFE_CATALOG_MESSAGES = new Set([
+  "Cargando el catálogo local firmado…",
+  "Studio no respondió al catálogo local. Los controles directos siguen disponibles.",
+  "Studio está ocupado. Los controles directos siguen disponibles.",
+  "El catálogo cambió en Studio. Esperando el manifiesto nuevo…",
+  "Studio rechazó esta página del catálogo local.",
+  "El catálogo local se cerró con la conexión.",
+  "Studio usa el catálogo compatible del protocolo v4.",
+  "La ruta local cambió en Studio. Esperando el estado firmado nuevo…",
 ]);
 
 const DEFAULT_STATUS: StudioLANStatus = {
@@ -284,7 +325,7 @@ function imageAsset(value: unknown): StudioLANImageAssetDescriptor | null | unde
   };
 }
 
-function cue(value: unknown, payloadVersion: 1 | 2 | 3 | 4): StudioLANCue | null | undefined {
+function cue(value: unknown, payloadVersion: 1 | 2 | 3 | 4 | 5): StudioLANCue | null | undefined {
   if (value === null || value === undefined) return null;
   const source = record(value);
   if (!source) return undefined;
@@ -454,7 +495,7 @@ export function normalizeStudioLANUpdate(value: unknown): StudioLANUpdate | null
   const currentCueId = audience.currentCueId == null ? null : boundedString(audience.currentCueId, 160);
   const currentCueIndex = audience.currentCueIndex == null ? null : Number(audience.currentCueIndex);
   const cueCount = Number(audience.cueCount);
-  if (payloadVersion !== 1 && payloadVersion !== 2 && payloadVersion !== 3 && payloadVersion !== 4) return null;
+  if (payloadVersion !== 1 && payloadVersion !== 2 && payloadVersion !== 3 && payloadVersion !== 4 && payloadVersion !== 5) return null;
   const audienceCue = cue(audience.cue, payloadVersion);
   if ((channel !== "audience" && channel !== "stage" && channel !== "control")
     || !sequence || !UINT64.test(sequence) || !revision || !UINT64.test(revision)
@@ -508,22 +549,55 @@ export function normalizeStudioLANUpdate(value: unknown): StudioLANUpdate | null
     const healthyOutputCount = Number(sourceControl?.healthyOutputCount);
     const expectedOutputCount = Number(sourceControl?.expectedOutputCount);
     const routeEpoch = boundedString(sourceControl?.routeEpoch, 20);
-    if (!sourceControl || channel !== "control" || payloadVersion !== 4
+    if (!sourceControl || channel !== "control" || (payloadVersion !== 4 && payloadVersion !== 5)
       || typeof sourceControl.chordsVisible !== "boolean" || typeof sourceControl.lightingArmed !== "boolean"
       || !Number.isSafeInteger(healthyOutputCount) || healthyOutputCount < 0
       || !Number.isSafeInteger(expectedOutputCount) || expectedOutputCount < healthyOutputCount
       || !routeEpoch || !UINT64.test(routeEpoch) || BigInt(routeEpoch) <= 0n || BigInt(routeEpoch) >= 18_446_744_073_709_551_615n
-      || !Array.isArray(sourceControl.cueCatalog) || sourceControl.cueCatalog.length !== cueCount
-      || sourceControl.cueCatalog.length > 4_096) return null;
-    const cueCatalog = sourceControl.cueCatalog.flatMap((value) => {
-      const item = record(value);
-      const cueId = boundedString(item?.cueId, 160);
-      const title = boundedString(item?.title);
-      return item && cueId && title ? [{ cueId, title }] : [];
-    });
-    if (cueCatalog.length !== sourceControl.cueCatalog.length
-      || new Set(cueCatalog.map((item) => item.cueId)).size !== cueCatalog.length
       || (sourceControl.chordsVisible === false && stage?.currentChordSlide != null)) return null;
+    let cueCatalog: Array<{ cueId: string; title: string }> | null = null;
+    let routing: StudioLANRouting | null = null;
+    let cueCatalogManifest: StudioLANCueCatalogManifest | null = null;
+    if (payloadVersion === 4) {
+      if (!Array.isArray(sourceControl.cueCatalog) || sourceControl.cueCatalog.length > cueCount
+        || sourceControl.cueCatalog.length > 4_096
+        || sourceControl.routing != null || sourceControl.cueCatalogManifest != null) return null;
+      cueCatalog = sourceControl.cueCatalog.flatMap((value) => {
+        const item = record(value);
+        const cueId = boundedString(item?.cueId, 160);
+        const title = boundedString(item?.title);
+        return item && cueId && title ? [{ cueId, title }] : [];
+      });
+      if (cueCatalog.length !== sourceControl.cueCatalog.length
+        || new Set(cueCatalog.map((item) => item.cueId)).size !== cueCatalog.length) return null;
+    } else {
+      const rawRouting = record(sourceControl.routing);
+      const rawManifest = record(sourceControl.cueCatalogManifest);
+      const catalogId = boundedString(rawManifest?.catalogId, 71);
+      const totalCount = Number(rawManifest?.totalCount);
+      if (sourceControl.cueCatalog != null || !rawRouting || !rawManifest
+        || rawRouting.schemaVersion !== 1
+        || typeof rawRouting.localAudience !== "boolean"
+        || typeof rawRouting.localBroadcast !== "boolean"
+        || typeof rawRouting.stageAndMusicians !== "boolean"
+        || rawRouting.lanRemoteControl !== true
+        || typeof rawRouting.lightingAndMIDI !== "boolean"
+        || rawRouting.tchurchCloudProgram !== false
+        || rawManifest.schemaVersion !== 1
+        || !catalogId || !CATALOG_ID.test(catalogId)
+        || !Number.isSafeInteger(totalCount) || totalCount < 0 || totalCount > 20_000
+        || totalCount !== cueCount || rawManifest.pageSize !== 128) return null;
+      routing = {
+        schemaVersion: 1,
+        localAudience: rawRouting.localAudience,
+        localBroadcast: rawRouting.localBroadcast,
+        stageAndMusicians: rawRouting.stageAndMusicians,
+        lanRemoteControl: true,
+        lightingAndMIDI: rawRouting.lightingAndMIDI,
+        tchurchCloudProgram: false,
+      };
+      cueCatalogManifest = { schemaVersion: 1, catalogId, totalCount, pageSize: 128 };
+    }
     control = {
       chordsVisible: sourceControl.chordsVisible,
       lightingArmed: sourceControl.lightingArmed,
@@ -531,6 +605,8 @@ export function normalizeStudioLANUpdate(value: unknown): StudioLANUpdate | null
       expectedOutputCount,
       routeEpoch,
       cueCatalog,
+      routing,
+      cueCatalogManifest,
     };
   }
   if (channel === "control" && !control) return null;
@@ -540,7 +616,7 @@ export function normalizeStudioLANUpdate(value: unknown): StudioLANUpdate | null
   if (!Number.isSafeInteger(receivedAtMs)) return null;
   return {
     channel,
-    payloadVersion: payloadVersion as 1 | 2 | 3 | 4,
+    payloadVersion: payloadVersion as 1 | 2 | 3 | 4 | 5,
     sequence,
     revision,
     receivedAtMs,
@@ -597,6 +673,36 @@ export function normalizeStudioLANImageAssetStatus(value: unknown): StudioLANIma
   return { cueId, objectId, phase, receivedBytes, totalBytes, imageFit, localUrl, message };
 }
 
+export function normalizeStudioLANCueCatalogStatus(value: unknown): StudioLANCueCatalogStatus | null {
+  const source = record(value);
+  const phase = source?.phase;
+  const catalogId = boundedString(source?.catalogId, 71);
+  const routeEpoch = boundedString(source?.routeEpoch, 20);
+  const totalCount = Number(source?.totalCount);
+  const receivedCount = Number(source?.receivedCount);
+  const message = source?.message == null ? null
+    : typeof source.message === "string" && SAFE_CATALOG_MESSAGES.has(source.message) ? source.message : null;
+  if (!source || (phase !== "loading" && phase !== "ready" && phase !== "unavailable")
+    || !catalogId || !CATALOG_ID.test(catalogId)
+    || !routeEpoch || !UINT64.test(routeEpoch) || BigInt(routeEpoch) <= 0n
+    || !Number.isSafeInteger(totalCount) || totalCount < 0 || totalCount > 20_000
+    || !Number.isSafeInteger(receivedCount) || receivedCount < 0 || receivedCount > totalCount
+    || (source.message != null && message == null)) return null;
+  if (phase !== "ready") {
+    if (source.cues != null) return null;
+    return { phase, catalogId, routeEpoch, totalCount, receivedCount, cues: null, message };
+  }
+  if (!Array.isArray(source.cues) || source.cues.length !== totalCount || receivedCount !== totalCount) return null;
+  const cues = source.cues.flatMap((value) => {
+    const item = record(value);
+    const cueId = boundedString(item?.cueId, 160);
+    const title = boundedString(item?.title, 512);
+    return item && cueId && title ? [{ cueId, title }] : [];
+  });
+  if (cues.length !== source.cues.length || new Set(cues.map((item) => item.cueId)).size !== cues.length) return null;
+  return { phase, catalogId, routeEpoch, totalCount, receivedCount, cues, message };
+}
+
 export function normalizeStudioLANRemoteFeedback(value: unknown): StudioLANRemoteFeedback | null {
   const source = record(value);
   const commandId = boundedString(source?.commandId, 36);
@@ -632,6 +738,7 @@ export async function connectStudioLANBridge(callbacks: {
   onUpdate: (update: StudioLANUpdate) => void;
   onImageAsset: (status: StudioLANImageAssetStatus) => void;
   onRemoteFeedback?: (feedback: StudioLANRemoteFeedback) => void;
+  onCueCatalog?: (status: StudioLANCueCatalogStatus) => void;
 }) {
   if (!isStudioLANSupported()) {
     callbacks.onStatus(DEFAULT_STATUS);
@@ -650,6 +757,10 @@ export async function connectStudioLANBridge(callbacks: {
     StudioLANNative.addListener("studioLANRemoteFeedback", (value) => {
       const feedback = normalizeStudioLANRemoteFeedback(value);
       if (feedback) callbacks.onRemoteFeedback?.(feedback);
+    }),
+    StudioLANNative.addListener("studioLANCueCatalog", (value) => {
+      const status = normalizeStudioLANCueCatalogStatus(value);
+      if (status) callbacks.onCueCatalog?.(status);
     }),
   ]);
   try {

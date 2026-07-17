@@ -1,12 +1,13 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { StudioLANRemoteFeedback, StudioLANStatus, StudioLANUpdate } from "@/lib/studioLANClient";
+import type { StudioLANCueCatalogStatus, StudioLANRemoteFeedback, StudioLANStatus, StudioLANUpdate } from "@/lib/studioLANClient";
 
 const mocks = vi.hoisted(() => ({
   status: null as StudioLANStatus | null,
   update: null as StudioLANUpdate | null,
   remoteFeedback: null as StudioLANRemoteFeedback | null,
+  cueCatalog: null as StudioLANCueCatalogStatus | null,
   connect: vi.fn(),
   disconnect: vi.fn(),
   forget: vi.fn(),
@@ -29,6 +30,7 @@ vi.mock("@/hooks/useStudioLANClient", () => ({
     update: mocks.update,
     imageAsset: null,
     remoteFeedback: mocks.remoteFeedback,
+    cueCatalog: mocks.cueCatalog,
     connect: mocks.connect,
     disconnect: mocks.disconnect,
     forget: mocks.forget,
@@ -94,6 +96,8 @@ const controlUpdate: StudioLANUpdate = {
     expectedOutputCount: 2,
     routeEpoch: "5",
     cueCatalog: [{ cueId: "cue-1", title: "Verso" }, { cueId: "cue-2", title: "Coro" }],
+    routing: null,
+    cueCatalogManifest: null,
   },
 };
 
@@ -118,6 +122,7 @@ describe("Studio LAN production route", () => {
     mocks.status = baseStatus;
     mocks.update = null;
     mocks.remoteFeedback = null;
+    mocks.cueCatalog = null;
     mocks.connect.mockReset().mockResolvedValue(undefined);
     mocks.disconnect.mockReset().mockResolvedValue(undefined);
     mocks.forget.mockReset().mockResolvedValue(undefined);
@@ -172,13 +177,14 @@ describe("Studio LAN production route", () => {
     const view = render(<MemoryRouter><StudioLANProduction /></MemoryRouter>);
 
     const controls = await screen.findByTestId("studio-lan-production-controls");
-    expect(controls).toHaveTextContent(/Stage separado/i);
-    fireEvent.click(screen.getByRole("button", { name: /Siguiente/i }));
+    expect(controls).toHaveTextContent(/Routing firmado por la Mac/i);
+    expect(controls).toHaveTextContent(/Músicos.*Compat\. v4.*Cloud.*Compat\. v4.*OBS.*Compat\. v4.*Luces.*Compat\. v4/i);
+    fireEvent.click(screen.getByRole("button", { name: /^Siguiente$/i }));
     await waitFor(() => expect(mocks.sendRemoteCommand).toHaveBeenCalledWith({ kind: "next" }));
 
     mocks.status = { ...connectedStatus, remoteControlAvailable: false, remoteCommandInFlight: true };
     view.rerender(<MemoryRouter><StudioLANProduction /></MemoryRouter>);
-    expect(screen.getByRole("button", { name: /Anterior/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Anterior$/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: /Activar blackout/i })).toBeDisabled();
   });
 
@@ -198,9 +204,101 @@ describe("Studio LAN production route", () => {
     render(<MemoryRouter><StudioLANProduction /></MemoryRouter>);
 
     await screen.findByTestId("studio-lan-production-controls");
-    fireEvent.change(screen.getByLabelText(/Saltar a una diapositiva/i), { target: { value: "cue-2" } });
+    fireEvent.click(screen.getByRole("button", { name: /Coro/i }));
     fireEvent.click(screen.getByRole("button", { name: /Ir a selección/i }));
     await waitFor(() => expect(mocks.sendRemoteCommand).toHaveBeenCalledWith({ kind: "jump", cueId: "cue-2" }));
     expect(screen.getByTestId("studio-lan-production-feedback")).toHaveTextContent(/revisión nueva/i);
+  });
+
+  it("shows signed v5 routes and keeps direct controls open while the full catalog loads", async () => {
+    const catalogId = `sha256:${"8".repeat(64)}`;
+    mocks.status = connectedStatus;
+    mocks.update = {
+      ...controlUpdate,
+      payloadVersion: 5,
+      authority: { ...controlUpdate.authority, serviceVersion: "v5" },
+      control: {
+        ...controlUpdate.control!,
+        cueCatalog: null,
+        routing: {
+          schemaVersion: 1,
+          localAudience: true,
+          localBroadcast: true,
+          stageAndMusicians: false,
+          lanRemoteControl: true,
+          lightingAndMIDI: false,
+          tchurchCloudProgram: false,
+        },
+        cueCatalogManifest: { schemaVersion: 1, catalogId, totalCount: 2, pageSize: 128 },
+      },
+    };
+    mocks.cueCatalog = {
+      phase: "loading",
+      catalogId,
+      routeEpoch: "5",
+      totalCount: 2,
+      receivedCount: 0,
+      cues: null,
+      message: "Cargando el catálogo local firmado…",
+    };
+    render(<MemoryRouter><StudioLANProduction /></MemoryRouter>);
+
+    const routing = await screen.findByTestId("studio-lan-production-routing");
+    expect(routing).toHaveTextContent(/MúsicosApagadoCloudApagadoOBSActivoLucesApagado/i);
+    expect(screen.getByRole("button", { name: /^Siguiente$/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /Activar blackout/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /Ir a selección/i })).toBeDisabled();
+    expect(screen.getByTestId("studio-lan-production-catalog-status")).toHaveTextContent(/Cargando el catálogo/i);
+  });
+
+  it("pages the verified v5 catalog locally without exposing routing toggles", async () => {
+    const catalogId = `sha256:${"9".repeat(64)}`;
+    const cues = Array.from({ length: 49 }, (_, index) => ({
+      cueId: `cue-${index + 1}`,
+      title: `Diapositiva ${index + 1}`,
+    }));
+    mocks.status = connectedStatus;
+    mocks.update = {
+      ...controlUpdate,
+      payloadVersion: 5,
+      authority: { ...controlUpdate.authority, serviceVersion: "v5" },
+      control: {
+        ...controlUpdate.control!,
+        cueCatalog: null,
+        routing: {
+          schemaVersion: 1,
+          localAudience: true,
+          localBroadcast: true,
+          stageAndMusicians: false,
+          lanRemoteControl: true,
+          lightingAndMIDI: false,
+          tchurchCloudProgram: false,
+        },
+        cueCatalogManifest: { schemaVersion: 1, catalogId, totalCount: cues.length, pageSize: 128 },
+      },
+    };
+    mocks.cueCatalog = {
+      phase: "ready",
+      catalogId,
+      routeEpoch: "5",
+      totalCount: cues.length,
+      receivedCount: cues.length,
+      cues,
+      message: null,
+    };
+    render(<MemoryRouter><StudioLANProduction /></MemoryRouter>);
+
+    const catalog = await screen.findByTestId("studio-lan-production-catalog");
+    expect(catalog).toHaveTextContent("Diapositiva 48");
+    expect(catalog).not.toHaveTextContent("Diapositiva 49");
+    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Página siguiente/i }));
+    expect(catalog).toHaveTextContent("Diapositiva 49");
+    expect(catalog).not.toHaveTextContent("Diapositiva 48");
+    fireEvent.click(screen.getByRole("button", { name: /Diapositiva 49/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Ir a selección/i }));
+    await waitFor(() => expect(mocks.sendRemoteCommand).toHaveBeenCalledWith({ kind: "jump", cueId: "cue-49" }));
   });
 });

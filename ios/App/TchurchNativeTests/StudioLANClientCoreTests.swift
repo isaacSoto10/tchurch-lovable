@@ -4411,6 +4411,412 @@ final class StudioLANDeviceTrustV4Tests: XCTestCase {
     }
 }
 
+final class StudioLANCueCatalogV5Tests: XCTestCase {
+    func testSingleBoundedRequestLaneNeverOverlapsAndIgnoresLateCompletion() {
+        let assetID = UUID()
+        let catalogID = UUID()
+        let commandID = UUID()
+        var lane = TchurchStudioLANBoundedRequestLane()
+
+        XCTAssertTrue(lane.begin(.asset(assetID)))
+        XCTAssertFalse(lane.begin(.catalog(catalogID)))
+        XCTAssertFalse(lane.begin(.remoteCommand(commandID)))
+        XCTAssertFalse(lane.finish(.catalog(catalogID)))
+        XCTAssertEqual(lane.active, .asset(assetID))
+        XCTAssertTrue(lane.finish(.asset(assetID)))
+
+        XCTAssertTrue(lane.begin(.catalog(catalogID)))
+        lane.reset()
+        XCTAssertTrue(lane.begin(.remoteCommand(commandID)))
+        XCTAssertFalse(lane.finish(.catalog(catalogID)))
+        XCTAssertEqual(lane.active, .remoteCommand(commandID))
+        XCTAssertTrue(lane.finish(.remoteCommand(commandID)))
+        XCTAssertTrue(lane.isIdle)
+    }
+
+    func testDiscardedCatalogRequestIDsIgnoreOneLateResponseAndResetOnReconnect() {
+        let lateID = UUID()
+        var discarded = TchurchStudioLANDiscardedRequestIDs()
+        discarded.remember(lateID)
+        XCTAssertTrue(discarded.consume(lateID))
+        XCTAssertFalse(discarded.consume(lateID))
+
+        for _ in 0 ... TchurchStudioLANDiscardedRequestIDs.capacity {
+            discarded.remember(UUID())
+        }
+        XCTAssertEqual(discarded.values.count, TchurchStudioLANDiscardedRequestIDs.capacity)
+        discarded.reset()
+        XCTAssertTrue(discarded.values.isEmpty)
+    }
+
+    func testCurrentCatalogUnavailableFailsClosedUnlessItMatchesTheInFlightRequest() throws {
+        let activeID = UUID()
+        let unknownID = UUID()
+
+        XCTAssertNoThrow(try TchurchStudioLANCatalogResponseStrictness
+            .validateCurrentUnavailableRequest(
+                responseRequestID: activeID,
+                inFlightRequestID: activeID
+            ))
+        XCTAssertThrowsError(try TchurchStudioLANCatalogResponseStrictness
+            .validateCurrentUnavailableRequest(
+                responseRequestID: unknownID,
+                inFlightRequestID: activeID
+            )) {
+            XCTAssertEqual($0 as? TchurchStudioLANError, .protocolViolation)
+        }
+        XCTAssertThrowsError(try TchurchStudioLANCatalogResponseStrictness
+            .validateCurrentUnavailableRequest(
+                responseRequestID: unknownID,
+                inFlightRequestID: nil
+            )) {
+            XCTAssertEqual($0 as? TchurchStudioLANError, .protocolViolation)
+        }
+
+        // A known request cancelled during reset/reconnect is consumed before
+        // strict current-manifest validation and ignored exactly once.
+        var discarded = TchurchStudioLANDiscardedRequestIDs()
+        discarded.remember(unknownID)
+        XCTAssertTrue(discarded.consume(unknownID))
+        XCTAssertFalse(discarded.consume(unknownID))
+    }
+
+    func testCatalogPacingAndOverloadBackoffStayBoundedBelowServerRate() {
+        XCTAssertGreaterThanOrEqual(TchurchStudioLANClient.catalogInterPageDelaySeconds, 1.0 / 32.0)
+        XCTAssertEqual(
+            (1 ... TchurchStudioLANClient.maximumCatalogOverloadRetries).compactMap {
+                TchurchStudioLANClient.catalogOverloadRetryDelaySeconds($0)
+            },
+            [1, 2, 4]
+        )
+        XCTAssertNil(TchurchStudioLANClient.catalogOverloadRetryDelaySeconds(0))
+        XCTAssertNil(TchurchStudioLANClient.catalogOverloadRetryDelaySeconds(4))
+    }
+
+    func testProgramCommandAlwaysWinsTheNextFreeLaneSlot() {
+        XCTAssertEqual(
+            TchurchStudioLANBoundedRequestPriority.next(
+                remoteCommandQueued: true,
+                catalogReady: true,
+                catalogHasPriority: true,
+                assetReady: true
+            ),
+            .remoteCommand
+        )
+        XCTAssertEqual(
+            TchurchStudioLANBoundedRequestPriority.next(
+                remoteCommandQueued: false,
+                catalogReady: true,
+                catalogHasPriority: true,
+                assetReady: true
+            ),
+            .catalog
+        )
+        XCTAssertEqual(
+            TchurchStudioLANBoundedRequestPriority.next(
+                remoteCommandQueued: false,
+                catalogReady: true,
+                catalogHasPriority: false,
+                assetReady: true
+            ),
+            .asset
+        )
+    }
+
+    func testReconnectAmbiguousV5JumpLoadsPagedCatalogBeforeCommandReplay() throws {
+        // A v5 jump whose receipt was lost must wait for the new signed
+        // catalog, but it must not itself block the catalog request lane.
+        XCTAssertFalse(
+            TchurchStudioLANBoundedRequestPriority.remoteCommandBlocksCatalogRequest(
+                isAwaitingReceipt: false,
+                isAwaitingAuthenticatedContext: true
+            )
+        )
+        XCTAssertTrue(
+            TchurchStudioLANBoundedRequestPriority.remoteCommandBlocksCatalogRequest(
+                isAwaitingReceipt: true,
+                isAwaitingAuthenticatedContext: true
+            )
+        )
+
+        let cues = (0 ..< 129).map {
+            TchurchStudioLANRemoteCueDescriptor(cueID: "cue-\($0)", title: "Cue \($0)")
+        }
+        let manifest = TchurchStudioLANCueCatalogManifest(
+            schemaVersion: 1,
+            catalogID: try TchurchStudioLANCueCatalogDigest.catalogID(for: cues),
+            totalCount: cues.count,
+            pageSize: 128
+        )
+        var accumulator = try TchurchStudioLANCueCatalogAccumulator(
+            manifest: manifest,
+            routeEpoch: 17
+        )
+        var lane = TchurchStudioLANBoundedRequestLane()
+
+        XCTAssertEqual(
+            TchurchStudioLANBoundedRequestPriority.next(
+                remoteCommandQueued: false,
+                catalogReady: true,
+                catalogHasPriority: true,
+                assetReady: true
+            ),
+            .catalog
+        )
+        let firstRequestID = UUID()
+        XCTAssertTrue(lane.begin(.catalog(firstRequestID)))
+        XCTAssertNil(try accumulator.append(
+            TchurchStudioLANCatalogPage(
+                schemaVersion: 1,
+                requestID: firstRequestID,
+                catalogID: manifest.catalogID,
+                routeEpoch: 17,
+                offset: 0,
+                totalCount: cues.count,
+                cues: Array(cues[0 ..< 128]),
+                isFinal: false
+            ),
+            expectedRequestID: firstRequestID
+        ))
+        XCTAssertTrue(lane.finish(.catalog(firstRequestID)))
+
+        let secondRequestID = UUID()
+        XCTAssertTrue(lane.begin(.catalog(secondRequestID)))
+        let completed = try accumulator.append(
+            TchurchStudioLANCatalogPage(
+                schemaVersion: 1,
+                requestID: secondRequestID,
+                catalogID: manifest.catalogID,
+                routeEpoch: 17,
+                offset: 128,
+                totalCount: cues.count,
+                cues: [cues[128]],
+                isFinal: true
+            ),
+            expectedRequestID: secondRequestID
+        )
+        XCTAssertTrue(lane.finish(.catalog(secondRequestID)))
+        XCTAssertEqual(completed, cues)
+
+        // Once the complete catalog authenticates the jump target, Program
+        // becomes the next and only higher-priority operation.
+        XCTAssertEqual(
+            TchurchStudioLANBoundedRequestPriority.next(
+                remoteCommandQueued: true,
+                catalogReady: false,
+                catalogHasPriority: false,
+                assetReady: true
+            ),
+            .remoteCommand
+        )
+    }
+
+    func testCrossPlatformUnicodeCatalogDigestFixture() throws {
+        let cues = [
+            TchurchStudioLANRemoteCueDescriptor(cueID: "cue-1", title: "Bienvenida"),
+            TchurchStudioLANRemoteCueDescriptor(cueID: "cántico-α", title: "Gracia y paz — Jesús"),
+            TchurchStudioLANRemoteCueDescriptor(cueID: "emoji-🙏", title: "Oración 🙏"),
+        ]
+        XCTAssertEqual(
+            try TchurchStudioLANCueCatalogDigest.catalogID(for: cues),
+            "sha256:f9288023c2d9aefdad7c477a6df4a42034c99d672f97c5ba26d08ea04a7830bd"
+        )
+    }
+
+    func testCatalogAccumulatorVerifiesBoundaryCatalogSizesWithoutPublishingPartialCues() throws {
+        for count in [0, 1, 4_096, 4_097, 20_000] {
+            let cues = (0 ..< count).map {
+                TchurchStudioLANRemoteCueDescriptor(cueID: "cue-\($0)", title: "Diapositiva \($0)")
+            }
+            let manifest = TchurchStudioLANCueCatalogManifest(
+                schemaVersion: 1,
+                catalogID: try TchurchStudioLANCueCatalogDigest.catalogID(for: cues),
+                totalCount: count,
+                pageSize: 128
+            )
+            var accumulator = try TchurchStudioLANCueCatalogAccumulator(manifest: manifest, routeEpoch: 9)
+            if count == 0 {
+                XCTAssertEqual(try accumulator.verifiedEmptyCatalog(), [])
+                continue
+            }
+            var completed: [TchurchStudioLANRemoteCueDescriptor]?
+            while accumulator.nextOffset < count {
+                let offset = accumulator.nextOffset
+                let end = min(offset + 128, count)
+                let requestID = UUID()
+                completed = try accumulator.append(
+                    TchurchStudioLANCatalogPage(
+                        schemaVersion: 1,
+                        requestID: requestID,
+                        catalogID: manifest.catalogID,
+                        routeEpoch: 9,
+                        offset: offset,
+                        totalCount: count,
+                        cues: Array(cues[offset ..< end]),
+                        isFinal: end == count
+                    ),
+                    expectedRequestID: requestID
+                )
+                if end < count { XCTAssertNil(completed) }
+            }
+            XCTAssertEqual(completed, cues)
+        }
+    }
+
+    func testCatalogAccumulatorRejectsReorderedDuplicateOversizedAndStalePages() throws {
+        let cues = (0 ..< 129).map {
+            TchurchStudioLANRemoteCueDescriptor(cueID: "cue-\($0)", title: "Slide \($0)")
+        }
+        let catalogID = try TchurchStudioLANCueCatalogDigest.catalogID(for: cues)
+        let manifest = TchurchStudioLANCueCatalogManifest(
+            schemaVersion: 1,
+            catalogID: catalogID,
+            totalCount: cues.count,
+            pageSize: 128
+        )
+        let requestID = UUID()
+
+        var reordered = try TchurchStudioLANCueCatalogAccumulator(manifest: manifest, routeEpoch: 5)
+        XCTAssertThrowsError(try reordered.append(
+            TchurchStudioLANCatalogPage(
+                schemaVersion: 1,
+                requestID: requestID,
+                catalogID: catalogID,
+                routeEpoch: 5,
+                offset: 1,
+                totalCount: cues.count,
+                cues: [cues[1]],
+                isFinal: false
+            ),
+            expectedRequestID: requestID
+        )) { XCTAssertEqual($0 as? TchurchStudioLANError, .protocolViolation) }
+
+        var duplicate = try TchurchStudioLANCueCatalogAccumulator(manifest: manifest, routeEpoch: 5)
+        let first = TchurchStudioLANCatalogPage(
+            schemaVersion: 1,
+            requestID: requestID,
+            catalogID: catalogID,
+            routeEpoch: 5,
+            offset: 0,
+            totalCount: cues.count,
+            cues: [cues[0]],
+            isFinal: false
+        )
+        XCTAssertNil(try duplicate.append(first, expectedRequestID: requestID))
+        XCTAssertThrowsError(try duplicate.append(first, expectedRequestID: requestID)) {
+            XCTAssertEqual($0 as? TchurchStudioLANError, .protocolViolation)
+        }
+
+        var oversized = try TchurchStudioLANCueCatalogAccumulator(manifest: manifest, routeEpoch: 5)
+        XCTAssertThrowsError(try oversized.append(
+            TchurchStudioLANCatalogPage(
+                schemaVersion: 1,
+                requestID: requestID,
+                catalogID: catalogID,
+                routeEpoch: 5,
+                offset: 0,
+                totalCount: cues.count,
+                cues: cues,
+                isFinal: true
+            ),
+            expectedRequestID: requestID
+        )) { XCTAssertEqual($0 as? TchurchStudioLANError, .protocolViolation) }
+
+        for (staleCatalogID, staleEpoch) in [(String(repeating: "a", count: 71), UInt64(5)), (catalogID, UInt64(6))] {
+            var stale = try TchurchStudioLANCueCatalogAccumulator(manifest: manifest, routeEpoch: 5)
+            XCTAssertThrowsError(try stale.append(
+                TchurchStudioLANCatalogPage(
+                    schemaVersion: 1,
+                    requestID: requestID,
+                    catalogID: staleCatalogID,
+                    routeEpoch: staleEpoch,
+                    offset: 0,
+                    totalCount: cues.count,
+                    cues: [cues[0]],
+                    isFinal: false
+                ),
+                expectedRequestID: requestID
+            )) { XCTAssertEqual($0 as? TchurchStudioLANError, .protocolViolation) }
+        }
+
+        let afterReconnect = try TchurchStudioLANCueCatalogAccumulator(manifest: manifest, routeEpoch: 5)
+        XCTAssertEqual(afterReconnect.nextOffset, 0)
+    }
+
+    func testCatalogWireWrappersAndUnavailableCodesAreCrossPlatformExact() throws {
+        let request = TchurchStudioLANCatalogRequest(
+            schemaVersion: 1,
+            requestID: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!,
+            catalogID: "sha256:f9288023c2d9aefdad7c477a6df4a42034c99d672f97c5ba26d08ea04a7830bd",
+            routeEpoch: 9,
+            offset: 0,
+            maximumEntries: 128
+        )
+        let requestJSON = String(
+            decoding: try TchurchStudioLANCoding.encoder().encode(TchurchStudioLANWireMessage.catalogRequest(request)),
+            as: UTF8.self
+        )
+        XCTAssertTrue(requestJSON.contains("\"kind\":\"catalogRequest\""))
+        XCTAssertTrue(requestJSON.contains("\"catalogRequest\""))
+
+        let canonicalCues = [
+            TchurchStudioLANRemoteCueDescriptor(cueID: "cue-1", title: "Bienvenida"),
+            TchurchStudioLANRemoteCueDescriptor(cueID: "cántico-α", title: "Gracia y paz — Jesús"),
+            TchurchStudioLANRemoteCueDescriptor(cueID: "emoji-🙏", title: "Oración 🙏"),
+        ]
+        let page = TchurchStudioLANCatalogPage(
+            schemaVersion: 1,
+            requestID: request.requestID,
+            catalogID: request.catalogID,
+            routeEpoch: request.routeEpoch,
+            offset: 0,
+            totalCount: 3,
+            cues: canonicalCues,
+            isFinal: true
+        )
+        let pageJSON = String(
+            decoding: try TchurchStudioLANCoding.encoder().encode(TchurchStudioLANWireMessage.catalogPage(page)),
+            as: UTF8.self
+        )
+        XCTAssertTrue(pageJSON.contains("\"kind\":\"catalogPage\""))
+        XCTAssertTrue(pageJSON.contains("\"catalogPage\""))
+        XCTAssertEqual(
+            try TchurchStudioLANCoding.decoder().decode(
+                TchurchStudioLANWireMessage.self,
+                from: Data(pageJSON.utf8)
+            ),
+            .catalogPage(page)
+        )
+
+        for code in [
+            TchurchStudioLANCatalogUnavailableCode.staleCatalog,
+            .invalidRange,
+            .overloaded,
+        ] {
+            let value = TchurchStudioLANCatalogUnavailable(
+                schemaVersion: 1,
+                requestID: request.requestID,
+                catalogID: request.catalogID,
+                code: code
+            )
+            let encoded = try TchurchStudioLANCoding.encoder().encode(
+                TchurchStudioLANWireMessage.catalogUnavailable(value)
+            )
+            XCTAssertEqual(
+                try TchurchStudioLANCoding.decoder().decode(TchurchStudioLANWireMessage.self, from: encoded),
+                .catalogUnavailable(value)
+            )
+            XCTAssertTrue(String(decoding: encoded, as: UTF8.self).contains("\"code\":\"\(code.rawValue)\""))
+        }
+    }
+
+    func testUpdatedDeviceTrustOffersV5WhileStillAcceptingExactV4Offer() throws {
+        XCTAssertEqual(TchurchStudioLANSubscriptionRequest.deviceTrustSupportedPayloadVersions, [5, 4, 3, 2, 1])
+        XCTAssertEqual(TchurchStudioLANSubscriptionRequest.v4SupportedPayloadVersions, [4, 3, 2, 1])
+        XCTAssertEqual(TchurchStudioLANPayloadNegotiation(protocolFloor: 4).supportedPayloadVersions, [5, 4, 3, 2, 1])
+    }
+}
+
 private struct TestStudioLANDevicePossessionProof: Codable {
     let schemaVersion: Int
     let domain: String

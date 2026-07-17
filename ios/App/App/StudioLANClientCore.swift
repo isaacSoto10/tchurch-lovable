@@ -228,6 +228,184 @@ struct TchurchStudioLANRemoteCueDescriptor: Codable, Equatable {
     let title: String
 }
 
+struct TchurchStudioLANRoutingProjection: Codable, Equatable {
+    static let schemaVersion = 1
+
+    let schemaVersion: Int
+    let localAudience: Bool
+    let localBroadcast: Bool
+    let stageAndMusicians: Bool
+    let lanRemoteControl: Bool
+    let lightingAndMIDI: Bool
+    let tchurchCloudProgram: Bool
+}
+
+struct TchurchStudioLANCueCatalogManifest: Codable, Equatable {
+    static let schemaVersion = 1
+    static let pageSize = 128
+    static let maximumTotalCount = 20_000
+
+    let schemaVersion: Int
+    let catalogID: String
+    let totalCount: Int
+    let pageSize: Int
+}
+
+struct TchurchStudioLANCatalogRequest: Codable, Equatable {
+    static let schemaVersion = 1
+
+    let schemaVersion: Int
+    let requestID: UUID
+    let catalogID: String
+    let routeEpoch: UInt64
+    let offset: Int
+    let maximumEntries: Int
+}
+
+struct TchurchStudioLANCatalogPage: Codable, Equatable {
+    static let schemaVersion = 1
+
+    let schemaVersion: Int
+    let requestID: UUID
+    let catalogID: String
+    let routeEpoch: UInt64
+    let offset: Int
+    let totalCount: Int
+    let cues: [TchurchStudioLANRemoteCueDescriptor]
+    let isFinal: Bool
+}
+
+enum TchurchStudioLANCatalogUnavailableCode: String, Codable, Equatable {
+    case staleCatalog = "stale_catalog"
+    case invalidRange = "invalid_range"
+    case overloaded
+}
+
+struct TchurchStudioLANCatalogUnavailable: Codable, Equatable {
+    static let schemaVersion = 1
+
+    let schemaVersion: Int
+    let requestID: UUID
+    let catalogID: String
+    let code: TchurchStudioLANCatalogUnavailableCode
+}
+
+enum TchurchStudioLANCueCatalogDigest {
+    private static let domain = Data("tchurch-lan-cue-catalog-v1".utf8)
+
+    static func catalogID(for cues: [TchurchStudioLANRemoteCueDescriptor]) throws -> String {
+        guard cues.count <= TchurchStudioLANCueCatalogManifest.maximumTotalCount else {
+            throw TchurchStudioLANError.invalidPayload
+        }
+        var bytes = Data()
+        bytes.reserveCapacity(domain.count + 5 + cues.reduce(0) { $0 + 8 + $1.cueID.utf8.count + $1.title.utf8.count })
+        bytes.append(domain)
+        bytes.append(0)
+        try appendUInt32(cues.count, to: &bytes)
+        for cue in cues {
+            let cueID = Data(cue.cueID.utf8)
+            let title = Data(cue.title.utf8)
+            try appendUInt32(cueID.count, to: &bytes)
+            bytes.append(cueID)
+            try appendUInt32(title.count, to: &bytes)
+            bytes.append(title)
+        }
+        return "sha256:\(TchurchStudioLANCrypto.sha256Hex(bytes))"
+    }
+
+    private static func appendUInt32(_ value: Int, to data: inout Data) throws {
+        guard value >= 0, value <= Int(UInt32.max) else {
+            throw TchurchStudioLANError.invalidPayload
+        }
+        let encoded = UInt32(value)
+        data.append(UInt8((encoded >> 24) & 0xff))
+        data.append(UInt8((encoded >> 16) & 0xff))
+        data.append(UInt8((encoded >> 8) & 0xff))
+        data.append(UInt8(encoded & 0xff))
+    }
+}
+
+/// A catalog is kept private until every page has arrived and the manifest
+/// digest matches. This is deliberately sequential: a duplicate, gap, stale
+/// page, or reordered page fails closed instead of exposing a partial list.
+struct TchurchStudioLANCueCatalogAccumulator: Equatable {
+    let catalogID: String
+    let routeEpoch: UInt64
+    let totalCount: Int
+    let pageSize: Int
+    private(set) var cues: [TchurchStudioLANRemoteCueDescriptor] = []
+
+    init(manifest: TchurchStudioLANCueCatalogManifest, routeEpoch: UInt64) throws {
+        guard manifest.schemaVersion == TchurchStudioLANCueCatalogManifest.schemaVersion,
+              Self.validCatalogID(manifest.catalogID),
+              (0 ... TchurchStudioLANCueCatalogManifest.maximumTotalCount).contains(manifest.totalCount),
+              manifest.pageSize == TchurchStudioLANCueCatalogManifest.pageSize,
+              routeEpoch > 0,
+              routeEpoch != UInt64.max else {
+            throw TchurchStudioLANError.invalidPayload
+        }
+        catalogID = manifest.catalogID
+        self.routeEpoch = routeEpoch
+        totalCount = manifest.totalCount
+        pageSize = manifest.pageSize
+        cues.reserveCapacity(manifest.totalCount)
+    }
+
+    var nextOffset: Int { cues.count }
+    var isEmptyAndComplete: Bool { totalCount == 0 && cues.isEmpty }
+
+    mutating func append(_ page: TchurchStudioLANCatalogPage, expectedRequestID: UUID) throws -> [TchurchStudioLANRemoteCueDescriptor]? {
+        let remaining = totalCount - cues.count
+        guard page.schemaVersion == TchurchStudioLANCatalogPage.schemaVersion,
+              page.requestID == expectedRequestID,
+              page.catalogID == catalogID,
+              page.routeEpoch == routeEpoch,
+              page.offset == cues.count,
+              page.totalCount == totalCount,
+              !page.cues.isEmpty,
+              page.cues.count <= pageSize,
+              page.cues.count <= remaining,
+              page.isFinal == (page.cues.count == remaining),
+              page.cues.allSatisfy(Self.validCue),
+              Set(page.cues.map(\.cueID)).count == page.cues.count,
+              Set(cues.map(\.cueID)).isDisjoint(with: page.cues.map(\.cueID)) else {
+            throw TchurchStudioLANError.protocolViolation
+        }
+        cues.append(contentsOf: page.cues)
+        guard page.isFinal else { return nil }
+        guard cues.count == totalCount,
+              try TchurchStudioLANCueCatalogDigest.catalogID(for: cues) == catalogID else {
+            throw TchurchStudioLANError.invalidChecksum
+        }
+        return cues
+    }
+
+    func verifiedEmptyCatalog() throws -> [TchurchStudioLANRemoteCueDescriptor] {
+        guard isEmptyAndComplete,
+              try TchurchStudioLANCueCatalogDigest.catalogID(for: []) == catalogID else {
+            throw TchurchStudioLANError.invalidChecksum
+        }
+        return []
+    }
+
+    private static func validCue(_ cue: TchurchStudioLANRemoteCueDescriptor) -> Bool {
+        let cueIDBytes = cue.cueID.utf8.count
+        let titleBytes = cue.title.utf8.count
+        return (1 ... 160).contains(cueIDBytes) &&
+            (1 ... 512).contains(titleBytes) &&
+            !cue.cueID.unicodeScalars.contains(where: { $0.properties.generalCategory == .control }) &&
+            !cue.title.unicodeScalars.contains(where: { $0.properties.generalCategory == .control })
+    }
+
+    static func validCatalogID(_ value: String) -> Bool {
+        guard value.hasPrefix("sha256:") else { return false }
+        let digest = value.dropFirst("sha256:".count)
+        return digest.utf8.count == 64 && digest.utf8.allSatisfy {
+            ($0 >= 48 && $0 <= 57) || ($0 >= 97 && $0 <= 102)
+        }
+    }
+}
+
 struct TchurchStudioLANControlSupplement: Codable, Equatable {
     let chordsVisible: Bool
     let lightingArmed: Bool
@@ -235,6 +413,28 @@ struct TchurchStudioLANControlSupplement: Codable, Equatable {
     let expectedOutputCount: Int
     let routeEpoch: UInt64?
     let cueCatalog: [TchurchStudioLANRemoteCueDescriptor]?
+    let routing: TchurchStudioLANRoutingProjection?
+    let cueCatalogManifest: TchurchStudioLANCueCatalogManifest?
+
+    init(
+        chordsVisible: Bool,
+        lightingArmed: Bool,
+        healthyOutputCount: Int,
+        expectedOutputCount: Int,
+        routeEpoch: UInt64?,
+        cueCatalog: [TchurchStudioLANRemoteCueDescriptor]?,
+        routing: TchurchStudioLANRoutingProjection? = nil,
+        cueCatalogManifest: TchurchStudioLANCueCatalogManifest? = nil
+    ) {
+        self.chordsVisible = chordsVisible
+        self.lightingArmed = lightingArmed
+        self.healthyOutputCount = healthyOutputCount
+        self.expectedOutputCount = expectedOutputCount
+        self.routeEpoch = routeEpoch
+        self.cueCatalog = cueCatalog
+        self.routing = routing
+        self.cueCatalogManifest = cueCatalogManifest
+    }
 }
 
 struct TchurchStudioLANControlPayload: Codable, Equatable {
@@ -355,6 +555,7 @@ struct TchurchStudioLANSubscriptionRequest: Codable, Equatable {
     static let deviceTrustSchemaVersion = 3
     static let supportedPayloadVersions = [3, 2, 1]
     static let v4SupportedPayloadVersions = [4, 3, 2, 1]
+    static let deviceTrustSupportedPayloadVersions = [5, 4, 3, 2, 1]
 
     let schemaVersion: Int
     let requestID: UUID
@@ -440,7 +641,7 @@ struct TchurchStudioLANSubscriptionGrant: Codable, Equatable {
 }
 
 struct TchurchStudioLANSignedEnvelope: Codable, Equatable {
-    static let supportedSchemaVersions = Set([1, 2, 3, 4])
+    static let supportedSchemaVersions = Set([1, 2, 3, 4, 5])
 
     let schemaVersion: Int
     let authority: TchurchStudioLANAuthority
@@ -743,7 +944,7 @@ struct TchurchStudioLANPayloadNegotiation: Equatable {
 
     var supportedPayloadVersions: [Int] {
         protocolFloor >= StudioLANDeviceTrustContract.protocolFloor
-            ? TchurchStudioLANSubscriptionRequest.v4SupportedPayloadVersions
+            ? TchurchStudioLANSubscriptionRequest.deviceTrustSupportedPayloadVersions
             : TchurchStudioLANSubscriptionRequest.supportedPayloadVersions
     }
 
@@ -816,21 +1017,23 @@ enum TchurchStudioLANSubscriptionAuthenticator {
             }
             supportedPayloadVersions = TchurchStudioLANSubscriptionRequest.supportedPayloadVersions
         case TchurchStudioLANSubscriptionRequest.deviceTrustSchemaVersion:
-            supportedPayloadVersions = offeredPayloadVersions ?? TchurchStudioLANSubscriptionRequest.v4SupportedPayloadVersions
+            supportedPayloadVersions = offeredPayloadVersions ?? TchurchStudioLANSubscriptionRequest.deviceTrustSupportedPayloadVersions
         default:
             supportedPayloadVersions = nil
         }
         guard supportedPayloadVersions == nil ||
                 supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.supportedPayloadVersions ||
                 (schemaVersion == TchurchStudioLANSubscriptionRequest.deviceTrustSchemaVersion &&
-                    supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.v4SupportedPayloadVersions) else {
+                    (supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.deviceTrustSupportedPayloadVersions ||
+                        supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.v4SupportedPayloadVersions)) else {
             throw TchurchStudioLANError.unsupportedPayloadVersion
         }
         let authenticationProof: String
         if schemaVersion == TchurchStudioLANSubscriptionRequest.deviceTrustSchemaVersion,
            let supportedPayloadVersions,
            let deviceAttestation {
-            guard supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.v4SupportedPayloadVersions,
+            guard supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.deviceTrustSupportedPayloadVersions ||
+                    supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.v4SupportedPayloadVersions,
                   deviceAttestation.deviceID == clientID,
                   deviceAttestation.requestedRole.channel == channel else {
                 throw TchurchStudioLANError.invalidAuthenticationProof
@@ -978,9 +1181,13 @@ enum TchurchStudioLANSubscriptionAuthenticator {
             guard challenge.deviceTrustVersion == StudioLANDeviceTrustContract.schemaVersion,
                   challenge.minimumPayloadVersion == StudioLANDeviceTrustContract.protocolFloor,
                   let studioID = challenge.studioID,
-                  request.supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.v4SupportedPayloadVersions,
+                  let offeredPayloadVersions = request.supportedPayloadVersions,
+                  offeredPayloadVersions == TchurchStudioLANSubscriptionRequest.deviceTrustSupportedPayloadVersions ||
+                    offeredPayloadVersions == TchurchStudioLANSubscriptionRequest.v4SupportedPayloadVersions,
                   let attestation = request.deviceAttestation,
-                  grant.selectedPayloadVersion == StudioLANDeviceTrustContract.protocolFloor,
+                  let selectedPayloadVersion = grant.selectedPayloadVersion,
+                  selectedPayloadVersion == 4 || selectedPayloadVersion == 5,
+                  offeredPayloadVersions.contains(selectedPayloadVersion),
                   let deviceGrant = grant.deviceGrant,
                   deviceGrant.deviceID == request.clientID,
                   deviceGrant.deviceID == attestation.deviceID,
@@ -1021,7 +1228,7 @@ enum TchurchStudioLANSubscriptionAuthenticator {
                     minimumSequence: grant.minimumSequence,
                     expiresAtMilliseconds: grant.expiresAtMilliseconds,
                     clientNonce: request.clientNonce,
-                    selectedPayloadVersion: StudioLANDeviceTrustContract.protocolFloor,
+                    selectedPayloadVersion: selectedPayloadVersion,
                     deviceGrantChecksum: deviceGrantChecksum
                 ),
                 secret: secret
@@ -1211,24 +1418,45 @@ struct TchurchStudioLANEnvelopeVerifier {
             throw TchurchStudioLANError.invalidPayload
         }
         if envelope.channel == .control {
-            guard envelope.schemaVersion == StudioLANDeviceTrustContract.protocolFloor,
+            guard envelope.schemaVersion == 4 || envelope.schemaVersion == 5,
                   let control = envelope.payload.control,
                   let routeEpoch = control.routeEpoch,
                   routeEpoch > 0,
                   routeEpoch != UInt64.max,
-                  let cueCatalog = control.cueCatalog,
-                  cueCatalog.count == snapshot.cueCount,
-                  cueCatalog.count <= 4_096,
-                  Set(cueCatalog.map(\.cueID)).count == cueCatalog.count,
-                  cueCatalog.allSatisfy({
-                      validText($0.cueID, maximumBytes: limits.maximumIdentifierBytes) &&
-                          validText($0.title, maximumBytes: limits.maximumTextBytes)
-                  }),
                   control.healthyOutputCount >= 0,
                   control.expectedOutputCount >= 0,
                   control.healthyOutputCount <= control.expectedOutputCount,
                   control.chordsVisible || envelope.payload.stage?.currentChordSlide == nil else {
                 throw TchurchStudioLANError.invalidPayload
+            }
+            if envelope.schemaVersion == 4 {
+                guard let cueCatalog = control.cueCatalog,
+                      cueCatalog.count <= snapshot.cueCount,
+                      cueCatalog.count <= 4_096,
+                      Set(cueCatalog.map(\.cueID)).count == cueCatalog.count,
+                      cueCatalog.allSatisfy({
+                          validText($0.cueID, maximumBytes: limits.maximumIdentifierBytes) &&
+                              validText($0.title, maximumBytes: limits.maximumTextBytes)
+                      }),
+                      control.routing == nil,
+                      control.cueCatalogManifest == nil else {
+                    throw TchurchStudioLANError.invalidPayload
+                }
+            } else {
+                guard control.cueCatalog == nil,
+                      let routing = control.routing,
+                      routing.schemaVersion == TchurchStudioLANRoutingProjection.schemaVersion,
+                      routing.lanRemoteControl,
+                      !routing.tchurchCloudProgram,
+                      routing.stageAndMusicians || !routing.tchurchCloudProgram,
+                      let manifest = control.cueCatalogManifest,
+                      manifest.schemaVersion == TchurchStudioLANCueCatalogManifest.schemaVersion,
+                      TchurchStudioLANCueCatalogAccumulator.validCatalogID(manifest.catalogID),
+                      manifest.totalCount == snapshot.cueCount,
+                      (0 ... TchurchStudioLANCueCatalogManifest.maximumTotalCount).contains(manifest.totalCount),
+                      manifest.pageSize == TchurchStudioLANCueCatalogManifest.pageSize else {
+                    throw TchurchStudioLANError.invalidPayload
+                }
             }
         } else if envelope.payload.control != nil {
             throw TchurchStudioLANError.invalidPayload
@@ -1245,7 +1473,7 @@ struct TchurchStudioLANEnvelopeVerifier {
             guard slide == nil else { throw TchurchStudioLANError.invalidPayload }
             return
         }
-        guard payloadVersion == 2 || payloadVersion == 3 || payloadVersion == 4 else {
+        guard payloadVersion == 2 || payloadVersion == 3 || payloadVersion == 4 || payloadVersion == 5 else {
             throw TchurchStudioLANError.unsupportedPayloadVersion
         }
         guard let slide else {
@@ -1344,7 +1572,7 @@ struct TchurchStudioLANEnvelopeVerifier {
         payloadVersion: Int
     ) -> Bool {
         guard let descriptor else { return true }
-        guard payloadVersion == 3 || payloadVersion == 4 else { return false }
+        guard payloadVersion == 3 || payloadVersion == 4 || payloadVersion == 5 else { return false }
         return descriptor.schemaVersion == TchurchStudioLANImageAssetDescriptor.schemaVersion &&
             descriptor.objectID == mediaAssetID &&
             validAssetID(descriptor.referenceID) &&
@@ -1463,17 +1691,22 @@ enum TchurchStudioLANWireMessage: Codable, Equatable {
     case assetUnavailable(TchurchStudioLANAssetUnavailable)
     case remoteCommand(TchurchStudioLANRemoteCommand)
     case remoteReceipt(TchurchStudioLANRemoteCommandReceipt)
+    case catalogRequest(TchurchStudioLANCatalogRequest)
+    case catalogPage(TchurchStudioLANCatalogPage)
+    case catalogUnavailable(TchurchStudioLANCatalogUnavailable)
     case error(TchurchStudioLANWireErrorCode)
 
     private enum Kind: String, Codable {
         case challenge, subscribe, grant, envelope, ping, pong
         case assetRequest, assetChunk, assetUnavailable
         case remoteCommand, remoteReceipt, error
+        case catalogRequest, catalogPage, catalogUnavailable
     }
     private enum CodingKeys: String, CodingKey {
         case kind, challenge, request, grant, envelope, nonce
         case assetRequest, assetChunk, assetUnavailable
         case remoteCommand, remoteReceipt, error
+        case catalogRequest, catalogPage, catalogUnavailable
     }
 
     init(from decoder: Decoder) throws {
@@ -1500,6 +1733,18 @@ enum TchurchStudioLANWireMessage: Codable, Equatable {
         case .remoteReceipt:
             self = .remoteReceipt(
                 try container.decode(TchurchStudioLANRemoteCommandReceipt.self, forKey: .remoteReceipt)
+            )
+        case .catalogRequest:
+            self = .catalogRequest(
+                try container.decode(TchurchStudioLANCatalogRequest.self, forKey: .catalogRequest)
+            )
+        case .catalogPage:
+            self = .catalogPage(
+                try container.decode(TchurchStudioLANCatalogPage.self, forKey: .catalogPage)
+            )
+        case .catalogUnavailable:
+            self = .catalogUnavailable(
+                try container.decode(TchurchStudioLANCatalogUnavailable.self, forKey: .catalogUnavailable)
             )
         case .error: self = .error(try container.decode(TchurchStudioLANWireErrorCode.self, forKey: .error))
         }
@@ -1541,6 +1786,15 @@ enum TchurchStudioLANWireMessage: Codable, Equatable {
         case .remoteReceipt(let value):
             try container.encode(Kind.remoteReceipt, forKey: .kind)
             try container.encode(value, forKey: .remoteReceipt)
+        case .catalogRequest(let value):
+            try container.encode(Kind.catalogRequest, forKey: .kind)
+            try container.encode(value, forKey: .catalogRequest)
+        case .catalogPage(let value):
+            try container.encode(Kind.catalogPage, forKey: .kind)
+            try container.encode(value, forKey: .catalogPage)
+        case .catalogUnavailable(let value):
+            try container.encode(Kind.catalogUnavailable, forKey: .kind)
+            try container.encode(value, forKey: .catalogUnavailable)
         case .error(let value):
             try container.encode(Kind.error, forKey: .kind)
             try container.encode(value, forKey: .error)

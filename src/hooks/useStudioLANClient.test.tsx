@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
+  StudioLANCueCatalogStatus,
   StudioLANImageAssetStatus,
   StudioLANStatus,
   StudioLANUpdate,
@@ -10,6 +11,7 @@ type BridgeCallbacks = {
   onStatus: (status: StudioLANStatus) => void;
   onUpdate: (update: StudioLANUpdate) => void;
   onImageAsset: (status: StudioLANImageAssetStatus) => void;
+  onCueCatalog?: (status: StudioLANCueCatalogStatus) => void;
 };
 
 const mocks = vi.hoisted(() => ({
@@ -114,7 +116,7 @@ describe("useStudioLANClient transport lifecycle", () => {
     });
   });
 
-  it("freezes the last verified frame while reconnecting and clears terminal failures", async () => {
+  it("clears private show state across reconnect, suspension, and terminal failures", async () => {
     const view = renderHook(() => useStudioLANClient());
     await waitFor(() => expect(mocks.callbacks).not.toBeNull());
 
@@ -134,23 +136,23 @@ describe("useStudioLANClient transport lifecycle", () => {
       phase: "reconnecting",
       message: "Se perdió la conexión LAN. Reintentando…",
     }));
-    expect(view.result.current.update).toEqual(update);
-    expect(view.result.current.imageAsset).toEqual(imageAsset);
+    expect(view.result.current.update).toBeNull();
+    expect(view.result.current.imageAsset).toBeNull();
 
     act(() => mocks.callbacks?.onStatus({
       ...connectedStatus,
       phase: "suspended",
       message: "En espera: abre Tchurch para volver a conectar.",
     }));
-    expect(view.result.current.update).toEqual(update);
-    expect(view.result.current.imageAsset).toEqual(imageAsset);
+    expect(view.result.current.update).toBeNull();
+    expect(view.result.current.imageAsset).toBeNull();
 
     act(() => {
       mocks.callbacks?.onUpdate(update);
       mocks.callbacks?.onImageAsset(imageAsset);
     });
-    expect(view.result.current.update).toEqual(update);
-    expect(view.result.current.imageAsset).toEqual(imageAsset);
+    expect(view.result.current.update).toBeNull();
+    expect(view.result.current.imageAsset).toBeNull();
 
     act(() => mocks.callbacks?.onStatus({
       ...connectedStatus,

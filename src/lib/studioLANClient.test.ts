@@ -17,6 +17,7 @@ vi.mock("@capacitor/core", () => ({
 }));
 
 import {
+  normalizeStudioLANCueCatalogStatus,
   normalizeStudioLANImageAssetStatus,
   normalizeStudioLANPairingQR,
   normalizeStudioLANRemoteFeedback,
@@ -164,6 +165,10 @@ describe("Studio LAN native bridge boundary", () => {
       payloadVersion: 4,
       control: { routeEpoch: "9", cueCatalog: [{ cueId: "cue-1" }, { cueId: "cue-2" }] },
     });
+    expect(normalizeStudioLANUpdate({
+      ...control,
+      control: { ...control.control, cueCatalog: [control.control.cueCatalog[0]] },
+    })).toMatchObject({ control: { cueCatalog: [{ cueId: "cue-1" }] } });
     expect(normalizeStudioLANUpdate({ ...control, payloadVersion: 3 })).toBeNull();
     expect(normalizeStudioLANUpdate({ ...control, control: { ...control.control, routeEpoch: "0" } })).toBeNull();
     expect(normalizeStudioLANUpdate({
@@ -184,6 +189,84 @@ describe("Studio LAN native bridge boundary", () => {
     expect(normalizeStudioLANRemoteFeedback(accepted)).toEqual(accepted);
     expect(normalizeStudioLANRemoteFeedback({ ...accepted, state: "rejected", rejection: "secretFailure" })).toBeNull();
     expect(normalizeStudioLANRemoteFeedback({ ...accepted, kind: "jump", cueId: null })).toBeNull();
+  });
+
+  it("accepts the exact v5 routing manifest and publishes only complete catalog events", () => {
+    const base = validUpdate();
+    const catalogId = `sha256:${"8".repeat(64)}`;
+    const v5 = {
+      ...base,
+      channel: "control",
+      payloadVersion: 5,
+      stage: { ...base.stage, chordLines: [] },
+      control: {
+        chordsVisible: true,
+        lightingArmed: false,
+        healthyOutputCount: 2,
+        expectedOutputCount: 3,
+        routeEpoch: "9",
+        cueCatalog: null,
+        routing: {
+          schemaVersion: 1,
+          localAudience: true,
+          localBroadcast: true,
+          stageAndMusicians: false,
+          lanRemoteControl: true,
+          lightingAndMIDI: false,
+          tchurchCloudProgram: false,
+        },
+        cueCatalogManifest: { schemaVersion: 1, catalogId, totalCount: 2, pageSize: 128 },
+      },
+    };
+    expect(normalizeStudioLANUpdate(v5)).toMatchObject({
+      payloadVersion: 5,
+      control: {
+        routeEpoch: "9",
+        cueCatalog: null,
+        routing: { stageAndMusicians: false, tchurchCloudProgram: false, localBroadcast: true },
+        cueCatalogManifest: { catalogId, totalCount: 2, pageSize: 128 },
+      },
+    });
+    expect(normalizeStudioLANUpdate({
+      ...v5,
+      control: { ...v5.control, routing: { ...v5.control.routing, tchurchCloudProgram: true } },
+    })).toBeNull();
+    expect(normalizeStudioLANUpdate({
+      ...v5,
+      control: { ...v5.control, cueCatalog: [{ cueId: "cue-1", title: "Verse" }] },
+    })).toBeNull();
+    expect(normalizeStudioLANUpdate({
+      ...v5,
+      control: { ...v5.control, cueCatalogManifest: { ...v5.control.cueCatalogManifest, totalCount: 1 } },
+    })).toBeNull();
+
+    const loading = {
+      phase: "loading",
+      catalogId,
+      routeEpoch: "9",
+      totalCount: 2,
+      receivedCount: 1,
+      cues: null,
+      message: "Cargando el catálogo local firmado…",
+    };
+    expect(normalizeStudioLANCueCatalogStatus(loading)).toEqual(loading);
+    expect(normalizeStudioLANCueCatalogStatus({
+      ...loading,
+      cues: [{ cueId: "cue-1", title: "Verse" }],
+    })).toBeNull();
+    const ready = {
+      ...loading,
+      phase: "ready",
+      receivedCount: 2,
+      message: null,
+      cues: [
+        { cueId: "cue-1", title: "Bienvenida" },
+        { cueId: "cántico-α", title: "Gracia y paz — Jesús" },
+      ],
+    };
+    expect(normalizeStudioLANCueCatalogStatus(ready)).toEqual(ready);
+    expect(normalizeStudioLANCueCatalogStatus({ ...ready, receivedCount: 1 })).toBeNull();
+    expect(normalizeStudioLANCueCatalogStatus({ ...ready, cues: [ready.cues[0], ready.cues[0]] })).toBeNull();
   });
 
   it("normalizes v4 device trust and fails closed on non-canonical permissions", () => {

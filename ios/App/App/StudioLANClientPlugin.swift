@@ -50,6 +50,9 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
         client?.remoteFeedbackHandler = { [weak self] feedback in
             DispatchQueue.main.async { self?.publish(feedback) }
         }
+        client?.cueCatalogHandler = { [weak self] status in
+            DispatchQueue.main.async { self?.publish(status) }
+        }
         installLifecycleObservers()
         client?.resumePendingPrivacyPurge()
     }
@@ -325,6 +328,20 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
         ])
     }
 
+    private func publish(_ status: TchurchStudioLANCueCatalogStatus) {
+        notifyListeners("studioLANCueCatalog", data: [
+            "phase": status.phase.rawValue,
+            "catalogId": status.catalogID ?? NSNull(),
+            "routeEpoch": status.routeEpoch.map(String.init) ?? NSNull(),
+            "totalCount": status.totalCount,
+            "receivedCount": status.receivedCount,
+            "cues": status.phase == .ready
+                ? (status.cues ?? []).map { ["cueId": $0.cueID, "title": $0.title] }
+                : NSNull(),
+            "message": status.message ?? NSNull(),
+        ])
+    }
+
     private func statusPayload(_ status: TchurchStudioLANClientStatus) -> [String: Any] {
         [
             "supported": true,
@@ -384,7 +401,7 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
             result["stage"] = NSNull()
         }
         if let control = envelope.payload.control {
-            result["control"] = [
+            var controlPayload: [String: Any] = [
                 "chordsVisible": control.chordsVisible,
                 "lightingArmed": control.lightingArmed,
                 "healthyOutputCount": control.healthyOutputCount,
@@ -393,7 +410,27 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
                 "cueCatalog": control.cueCatalog?.map {
                     ["cueId": $0.cueID, "title": $0.title]
                 } ?? NSNull(),
-            ] as [String: Any]
+            ]
+            controlPayload["routing"] = control.routing.map {
+                [
+                    "schemaVersion": $0.schemaVersion,
+                    "localAudience": $0.localAudience,
+                    "localBroadcast": $0.localBroadcast,
+                    "stageAndMusicians": $0.stageAndMusicians,
+                    "lanRemoteControl": $0.lanRemoteControl,
+                    "lightingAndMIDI": $0.lightingAndMIDI,
+                    "tchurchCloudProgram": $0.tchurchCloudProgram,
+                ] as [String: Any]
+            } ?? NSNull()
+            controlPayload["cueCatalogManifest"] = control.cueCatalogManifest.map {
+                [
+                    "schemaVersion": $0.schemaVersion,
+                    "catalogId": $0.catalogID,
+                    "totalCount": $0.totalCount,
+                    "pageSize": $0.pageSize,
+                ] as [String: Any]
+            } ?? NSNull()
+            result["control"] = controlPayload
         } else {
             result["control"] = NSNull()
         }

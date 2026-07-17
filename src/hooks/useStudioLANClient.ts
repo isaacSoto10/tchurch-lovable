@@ -9,6 +9,7 @@ import {
   requestStudioLANDeviceReapproval,
   sendStudioLANRemoteCommand,
   type StudioLANChannel,
+  type StudioLANCueCatalogStatus,
   type StudioLANDeviceRole,
   type StudioLANImageAssetStatus,
   type StudioLANRemoteAction,
@@ -41,7 +42,9 @@ export function useStudioLANClient() {
   const [update, setUpdate] = useState<StudioLANUpdate | null>(null);
   const [imageAsset, setImageAsset] = useState<StudioLANImageAssetStatus | null>(null);
   const [remoteFeedback, setRemoteFeedback] = useState<StudioLANRemoteFeedback | null>(null);
+  const [cueCatalog, setCueCatalog] = useState<StudioLANCueCatalogStatus | null>(null);
   const connectedRef = useRef(false);
+  const updateRef = useRef<StudioLANUpdate | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -52,13 +55,23 @@ export function useStudioLANClient() {
         connectedRef.current = next.phase === "connected"
           && (next.enrollmentState === "unenrolled" || next.enrollmentState === "approved");
         setStatus(next);
-        if (next.phase === "failed" || next.enrollmentState === "pending" || next.enrollmentState === "revoked") {
+        if (next.phase !== "connected" || next.enrollmentState === "pending" || next.enrollmentState === "revoked") {
+          updateRef.current = null;
           setUpdate(null);
           setImageAsset(null);
+          setCueCatalog(null);
         }
       },
       onUpdate(next) {
-        if (active && connectedRef.current) setUpdate(next);
+        if (active && connectedRef.current) {
+          updateRef.current = next;
+          setUpdate(next);
+          setCueCatalog((current) => {
+            const manifest = next.payloadVersion === 5 ? next.control?.cueCatalogManifest : null;
+            return manifest && current?.catalogId === manifest.catalogId
+              && current.routeEpoch === next.control?.routeEpoch ? current : null;
+          });
+        }
       },
       onImageAsset(next) {
         if (active && connectedRef.current) setImageAsset(next);
@@ -66,14 +79,23 @@ export function useStudioLANClient() {
       onRemoteFeedback(next) {
         if (active) setRemoteFeedback(next);
       },
+      onCueCatalog(next) {
+        const current = updateRef.current;
+        if (!active || !connectedRef.current || current?.payloadVersion !== 5
+          || current.control?.cueCatalogManifest?.catalogId !== next.catalogId
+          || current.control.routeEpoch !== next.routeEpoch) return;
+        setCueCatalog(next);
+      },
     }).then((session) => {
       if (!active) void session.disconnect();
       else cleanup = session.disconnect;
     }).catch(() => {
       if (active) {
         connectedRef.current = false;
+        updateRef.current = null;
         setUpdate(null);
         setImageAsset(null);
+        setCueCatalog(null);
         setStatus((current) => ({
           ...current,
           phase: "failed",
@@ -95,24 +117,30 @@ export function useStudioLANClient() {
     requestedRole?: StudioLANDeviceRole,
   ) => {
     connectedRef.current = false;
+    updateRef.current = null;
     setUpdate(null);
     setImageAsset(null);
+    setCueCatalog(null);
     setRemoteFeedback(null);
     await connectToStudioLAN(serviceId, channel, pairingCode, requestedRole);
   }, []);
 
   const disconnect = useCallback(async () => {
     connectedRef.current = false;
+    updateRef.current = null;
     setUpdate(null);
     setImageAsset(null);
+    setCueCatalog(null);
     setRemoteFeedback(null);
     await disconnectFromStudioLAN();
   }, []);
 
   const forget = useCallback(async (serviceId: string) => {
     connectedRef.current = false;
+    updateRef.current = null;
     setUpdate(null);
     setImageAsset(null);
+    setCueCatalog(null);
     await forgetStudioLANPairing(serviceId);
   }, []);
 
@@ -126,8 +154,10 @@ export function useStudioLANClient() {
 
   const requestReapproval = useCallback(async () => {
     connectedRef.current = false;
+    updateRef.current = null;
     setUpdate(null);
     setImageAsset(null);
+    setCueCatalog(null);
     setRemoteFeedback(null);
     await requestStudioLANDeviceReapproval();
   }, []);
@@ -137,6 +167,7 @@ export function useStudioLANClient() {
     update,
     imageAsset,
     remoteFeedback,
+    cueCatalog,
     connect,
     disconnect,
     forget,

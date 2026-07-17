@@ -69,6 +69,7 @@ export default function StudioLANProduction() {
     status,
     update,
     remoteFeedback,
+    cueCatalog: pagedCueCatalog,
     connect,
     disconnect,
     forget,
@@ -83,6 +84,8 @@ export default function StudioLANProduction() {
   const [scanning, setScanning] = useState(false);
   const [scanNotice, setScanNotice] = useState<string | null>(null);
   const [selectedCueId, setSelectedCueId] = useState("");
+  const [catalogSearch, setCatalogSearch] = useState("");
+  const [catalogPage, setCatalogPage] = useState(0);
   const [localCommandPending, setLocalCommandPending] = useState(false);
   const [commandError, setCommandError] = useState<string | null>(null);
   const [reapproving, setReapproving] = useState(false);
@@ -114,11 +117,39 @@ export default function StudioLANProduction() {
     [selectedServiceId, status.services],
   );
   const controlUpdate = update?.channel === "control" ? update : null;
-  const cueCatalog = controlUpdate?.control?.cueCatalog ?? [];
+  const isV5Catalog = controlUpdate?.payloadVersion === 5;
+  const cueCatalog = isV5Catalog
+    ? (pagedCueCatalog?.phase === "ready" ? pagedCueCatalog.cues ?? [] : [])
+    : controlUpdate?.control?.cueCatalog ?? [];
   const commandPending = localCommandPending || status.remoteCommandInFlight;
   const controlsEnabled = status.remoteControlAvailable && !commandPending && controlUpdate?.control != null;
+  const jumpEnabled = controlsEnabled && (!isV5Catalog || pagedCueCatalog?.phase === "ready") && cueCatalog.length > 0;
   const currentCue = controlUpdate?.audience.cue ?? null;
   const feedback = feedbackMessage(remoteFeedback);
+  const routing = controlUpdate?.control?.routing ?? null;
+  const filteredCueCatalog = useMemo(() => {
+    const query = catalogSearch.trim().toLocaleLowerCase();
+    return query
+      ? cueCatalog.filter((cue) => cue.title.toLocaleLowerCase().includes(query)
+        || cue.cueId.toLocaleLowerCase().includes(query))
+      : cueCatalog;
+  }, [catalogSearch, cueCatalog]);
+  const catalogPageSize = 48;
+  const catalogPageCount = Math.max(1, Math.ceil(filteredCueCatalog.length / catalogPageSize));
+  const visibleCueCatalog = filteredCueCatalog.slice(
+    catalogPage * catalogPageSize,
+    (catalogPage + 1) * catalogPageSize,
+  );
+
+  useEffect(() => {
+    setSelectedCueId("");
+    setCatalogSearch("");
+    setCatalogPage(0);
+  }, [controlUpdate?.control?.cueCatalogManifest?.catalogId, controlUpdate?.control?.routeEpoch]);
+
+  useEffect(() => {
+    if (catalogPage >= catalogPageCount) setCatalogPage(Math.max(0, catalogPageCount - 1));
+  }, [catalogPage, catalogPageCount]);
 
   async function submitConnection() {
     if (!selectedService || selectedService.protocolFloor < 4) return;
@@ -265,7 +296,7 @@ export default function StudioLANProduction() {
                 <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="text-xs font-black uppercase tracking-[0.18em] text-violet-200">1 · Studio v4 disponible</p>
+                      <p className="text-xs font-black uppercase tracking-[0.18em] text-violet-200">1 · Studio LAN disponible</p>
                       <p className="mt-1 text-xs text-slate-400">El iPhone/iPad y la Mac deben estar en la misma red.</p>
                     </div>
                     {(status.phase === "discovering" || status.phase === "connecting" || status.phase === "authenticating") && <LoaderCircle className="h-5 w-5 animate-spin text-violet-300" aria-label="Buscando Studio" />}
@@ -324,7 +355,32 @@ export default function StudioLANProduction() {
               <div className="mt-4 flex items-center justify-center gap-2 text-[10px] font-black uppercase tracking-wider text-slate-400">
                 <span>{controlUpdate.control?.healthyOutputCount ?? 0}/{controlUpdate.control?.expectedOutputCount ?? 0} salidas sanas</span>
                 <span>·</span>
-                <span>Stage separado</span>
+                <span>Ruta {controlUpdate.control?.routeEpoch}</span>
+              </div>
+            </div>
+
+            <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-5" data-testid="studio-lan-production-routing">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-[0.18em] text-violet-200">Routing firmado por la Mac</p>
+                  <p className="mt-1 text-xs text-slate-400">Solo lectura en este dispositivo. Ningún estado aquí es un interruptor.</p>
+                </div>
+                <ShieldCheck className="h-5 w-5 shrink-0 text-emerald-300" />
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {[
+                  ["Músicos", routing?.stageAndMusicians],
+                  ["Cloud", routing?.tchurchCloudProgram],
+                  ["OBS", routing?.localBroadcast],
+                  ["Luces", routing?.lightingAndMIDI],
+                ].map(([label, enabled]) => (
+                  <div key={String(label)} className="rounded-2xl border border-white/10 bg-black/20 px-3 py-3 text-center">
+                    <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">{label}</p>
+                    <p className={`mt-1 text-sm font-black ${enabled === true ? "text-emerald-300" : enabled === false ? "text-slate-300" : "text-amber-200"}`}>
+                      {enabled === true ? "Activo" : enabled === false ? "Apagado" : "Compat. v4"}
+                    </p>
+                  </div>
+                ))}
               </div>
             </div>
 
@@ -347,11 +403,51 @@ export default function StudioLANProduction() {
 
             <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
               <label htmlFor="studio-production-jump" className="text-xs font-black uppercase tracking-[0.18em] text-violet-200">Saltar a una diapositiva</label>
-              <select id="studio-production-jump" value={selectedCueId} onChange={(event) => setSelectedCueId(event.target.value)} className="mt-3 h-12 w-full rounded-2xl border border-white/15 bg-zinc-950 px-3 text-sm font-bold text-white" disabled={!controlsEnabled}>
-                <option value="">Selecciona del catálogo firmado…</option>
-                {cueCatalog.map((cue, index) => <option key={cue.cueId} value={cue.cueId}>{index + 1} · {cue.title}</option>)}
-              </select>
-              <Button type="button" variant="outline" className="mt-3 h-12 w-full rounded-2xl border-white/15 bg-transparent font-black text-white hover:bg-white/10 hover:text-white" disabled={!controlsEnabled || !selectedCueId} onClick={() => void runCommand({ kind: "jump", cueId: selectedCueId })}>Ir a selección</Button>
+              <p className="mt-1 text-xs text-slate-400">
+                {isV5Catalog ? `${pagedCueCatalog?.receivedCount ?? 0}/${controlUpdate.control?.cueCatalogManifest?.totalCount ?? 0} verificadas` : `${cueCatalog.length} disponibles en compatibilidad v4`}
+              </p>
+              {isV5Catalog && pagedCueCatalog?.phase !== "ready" ? (
+                <div className={`mt-3 rounded-2xl border px-4 py-4 text-sm font-semibold ${pagedCueCatalog?.phase === "unavailable" ? "border-amber-300/20 bg-amber-300/10 text-amber-100" : "border-violet-300/20 bg-violet-300/10 text-violet-100"}`} role="status" data-testid="studio-lan-production-catalog-status">
+                  {pagedCueCatalog?.phase === "loading" && <LoaderCircle className="mr-2 inline h-4 w-4 animate-spin" />}
+                  {pagedCueCatalog?.message ?? "Esperando el catálogo local firmado. Next, Previous y Blackout siguen disponibles."}
+                </div>
+              ) : (
+                <>
+                  <Input
+                    id="studio-production-jump"
+                    type="search"
+                    value={catalogSearch}
+                    onChange={(event) => { setCatalogSearch(event.target.value); setCatalogPage(0); }}
+                    placeholder="Buscar por título o ID…"
+                    className="mt-3 h-12 rounded-2xl border-white/15 bg-black/30 text-white placeholder:text-slate-600"
+                    disabled={!jumpEnabled}
+                  />
+                  <div className="mt-3 max-h-72 space-y-1 overflow-y-auto rounded-2xl border border-white/10 bg-black/20 p-2" aria-label="Catálogo completo de diapositivas" data-testid="studio-lan-production-catalog">
+                    {visibleCueCatalog.map((cue, index) => {
+                      const position = catalogPage * catalogPageSize + index + 1;
+                      return (
+                        <button
+                          key={cue.cueId}
+                          type="button"
+                          className={`flex min-h-11 w-full items-center gap-3 rounded-xl px-3 text-left text-sm ${selectedCueId === cue.cueId ? "bg-violet-300/15 text-violet-100" : "text-slate-200 hover:bg-white/[0.06]"}`}
+                          aria-pressed={selectedCueId === cue.cueId}
+                          onClick={() => setSelectedCueId(cue.cueId)}
+                        >
+                          <span className="w-10 shrink-0 text-right text-[10px] font-black text-slate-500">{position}</span>
+                          <span className="min-w-0 flex-1 truncate font-bold">{cue.title}</span>
+                        </button>
+                      );
+                    })}
+                    {visibleCueCatalog.length === 0 && <p className="px-3 py-6 text-center text-sm text-slate-500">No hay diapositivas que coincidan.</p>}
+                  </div>
+                  <div className="mt-3 flex items-center justify-between gap-2">
+                    <Button type="button" variant="ghost" className="h-10 rounded-xl text-xs font-black text-slate-200" disabled={catalogPage === 0} onClick={() => setCatalogPage((page) => Math.max(0, page - 1))}><ChevronLeft className="h-4 w-4" />Página anterior</Button>
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">{catalogPage + 1} / {catalogPageCount}</span>
+                    <Button type="button" variant="ghost" className="h-10 rounded-xl text-xs font-black text-slate-200" disabled={catalogPage + 1 >= catalogPageCount} onClick={() => setCatalogPage((page) => Math.min(catalogPageCount - 1, page + 1))}>Página siguiente<ChevronRight className="h-4 w-4" /></Button>
+                  </div>
+                </>
+              )}
+              <Button type="button" variant="outline" className="mt-3 h-12 w-full rounded-2xl border-white/15 bg-transparent font-black text-white hover:bg-white/10 hover:text-white" disabled={!jumpEnabled || !selectedCueId} onClick={() => void runCommand({ kind: "jump", cueId: selectedCueId })}>Ir a selección</Button>
             </div>
 
             <Button type="button" variant="outline" className={`h-16 w-full rounded-3xl border-red-300/30 font-black ${controlUpdate.audience.isBlackout ? "bg-red-300/20 text-red-100" : "bg-transparent text-red-200"}`} disabled={!controlsEnabled} onClick={() => void runCommand({ kind: "setBlackout", enabled: !controlUpdate.audience.isBlackout })}>
@@ -359,7 +455,7 @@ export default function StudioLANProduction() {
             </Button>
 
             {!status.remoteControlAvailable && !commandPending && (
-              <p className="rounded-2xl border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-center text-xs font-semibold text-amber-100" role="status">Esperando el siguiente estado control v4 firmado antes de habilitar otro comando.</p>
+              <p className="rounded-2xl border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-center text-xs font-semibold text-amber-100" role="status">Esperando el siguiente estado de control firmado antes de habilitar otro comando.</p>
             )}
           </div>
         </section>
