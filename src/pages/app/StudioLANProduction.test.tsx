@@ -1,18 +1,20 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { StudioLANCueCatalogStatus, StudioLANRemoteFeedback, StudioLANStatus, StudioLANUpdate } from "@/lib/studioLANClient";
+import type { StudioLANCueCatalogStatus, StudioLANOperatorTimerFeedback, StudioLANRemoteFeedback, StudioLANStatus, StudioLANUpdate } from "@/lib/studioLANClient";
 
 const mocks = vi.hoisted(() => ({
   status: null as StudioLANStatus | null,
   update: null as StudioLANUpdate | null,
   remoteFeedback: null as StudioLANRemoteFeedback | null,
+  operatorTimerFeedback: null as StudioLANOperatorTimerFeedback | null,
   cueCatalog: null as StudioLANCueCatalogStatus | null,
   connect: vi.fn(),
   disconnect: vi.fn(),
   forget: vi.fn(),
   refresh: vi.fn(),
   sendRemoteCommand: vi.fn(),
+  sendOperatorTimerCommand: vi.fn(),
   requestReapproval: vi.fn(),
   scanBarcode: vi.fn(),
 }));
@@ -30,12 +32,14 @@ vi.mock("@/hooks/useStudioLANClient", () => ({
     update: mocks.update,
     imageAsset: null,
     remoteFeedback: mocks.remoteFeedback,
+    operatorTimerFeedback: mocks.operatorTimerFeedback,
     cueCatalog: mocks.cueCatalog,
     connect: mocks.connect,
     disconnect: mocks.disconnect,
     forget: mocks.forget,
     refresh: mocks.refresh,
     sendRemoteCommand: mocks.sendRemoteCommand,
+    sendOperatorTimerCommand: mocks.sendOperatorTimerCommand,
     requestReapproval: mocks.requestReapproval,
   }),
 }));
@@ -60,6 +64,8 @@ const baseStatus: StudioLANStatus = {
   studioId: null,
   remoteControlAvailable: false,
   remoteCommandInFlight: false,
+  operatorTimerControlAvailable: false,
+  operatorTimerCommandInFlight: false,
 };
 
 const controlUpdate: StudioLANUpdate = {
@@ -67,6 +73,7 @@ const controlUpdate: StudioLANUpdate = {
   payloadVersion: 4,
   sequence: "12",
   revision: "8",
+  issuedAtMs: 1_800_000_004_000,
   receivedAtMs: Date.now(),
   authority: {
     runId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -98,6 +105,7 @@ const controlUpdate: StudioLANUpdate = {
     cueCatalog: [{ cueId: "cue-1", title: "Verso" }, { cueId: "cue-2", title: "Coro" }],
     routing: null,
     cueCatalogManifest: null,
+    operatorTimers: null,
   },
 };
 
@@ -122,12 +130,14 @@ describe("Studio LAN production route", () => {
     mocks.status = baseStatus;
     mocks.update = null;
     mocks.remoteFeedback = null;
+    mocks.operatorTimerFeedback = null;
     mocks.cueCatalog = null;
     mocks.connect.mockReset().mockResolvedValue(undefined);
     mocks.disconnect.mockReset().mockResolvedValue(undefined);
     mocks.forget.mockReset().mockResolvedValue(undefined);
     mocks.refresh.mockReset().mockResolvedValue(undefined);
     mocks.sendRemoteCommand.mockReset().mockResolvedValue(undefined);
+    mocks.sendOperatorTimerCommand.mockReset().mockResolvedValue(undefined);
     mocks.requestReapproval.mockReset().mockResolvedValue(undefined);
     mocks.scanBarcode.mockReset().mockResolvedValue({ ScanResult: "" });
   });
@@ -300,5 +310,120 @@ describe("Studio LAN production route", () => {
     fireEvent.click(screen.getByRole("button", { name: /Diapositiva 49/i }));
     fireEvent.click(screen.getByRole("button", { name: /Ir a selección/i }));
     await waitFor(() => expect(mocks.sendRemoteCommand).toHaveBeenCalledWith({ kind: "jump", cueId: "cue-49" }));
+  });
+
+  it("shows both signed v6 Production-local timers and sends only the closed timer action", async () => {
+    const catalogId = `sha256:${"7".repeat(64)}`;
+    mocks.status = {
+      ...connectedStatus,
+      operatorTimerControlAvailable: true,
+    };
+    mocks.update = {
+      ...controlUpdate,
+      payloadVersion: 6,
+      authority: { ...controlUpdate.authority, serviceVersion: "v6" },
+      control: {
+        ...controlUpdate.control!,
+        cueCatalog: null,
+        routing: {
+          schemaVersion: 1,
+          localAudience: true,
+          localBroadcast: false,
+          stageAndMusicians: false,
+          lanRemoteControl: true,
+          lightingAndMIDI: false,
+          tchurchCloudProgram: false,
+        },
+        cueCatalogManifest: { schemaVersion: 1, catalogId, totalCount: 2, pageSize: 128 },
+        operatorTimers: {
+          schemaVersion: 1,
+          revision: "12",
+          timers: [
+            {
+              scope: "service",
+              anchorTimestampMilliseconds: 1_800_000_004_000,
+              anchorValueMilliseconds: 90_000,
+              isRunning: false,
+            },
+            {
+              scope: "item",
+              anchorTimestampMilliseconds: 1_800_000_000_000,
+              anchorValueMilliseconds: 30_000,
+              isRunning: true,
+            },
+          ],
+        },
+      },
+    };
+    mocks.cueCatalog = {
+      phase: "ready",
+      catalogId,
+      routeEpoch: "5",
+      totalCount: 2,
+      receivedCount: 2,
+      cues: [{ cueId: "cue-1", title: "Verso" }, { cueId: "cue-2", title: "Coro" }],
+      message: null,
+    };
+    render(<MemoryRouter><StudioLANProduction /></MemoryRouter>);
+
+    const timers = await screen.findByTestId("studio-lan-operator-timers");
+    expect(timers).toHaveTextContent(/Producción local · no Stage · no Cloud/i);
+    expect(timers).toHaveTextContent(/Servicio.*0:01:30.*En pausa/i);
+    expect(timers).toHaveTextContent(/Elemento.*0:00:34.*En curso/i);
+    expect(screen.getByRole("button", { name: /Iniciar timer de servicio en Producción local/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /Pausar timer de elemento en Producción local/i })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: /Iniciar timer de servicio en Producción local/i }));
+    await waitFor(() => expect(mocks.sendOperatorTimerCommand).toHaveBeenCalledWith({
+      scope: "service",
+      operation: "start",
+    }));
+    expect(mocks.sendRemoteCommand).not.toHaveBeenCalled();
+  });
+
+  it("keeps v4/v5 free of timer mutation UI and leaves Program/catalog usable when v6 timers are unavailable", async () => {
+    mocks.status = connectedStatus;
+    mocks.update = controlUpdate;
+    const view = render(<MemoryRouter><StudioLANProduction /></MemoryRouter>);
+    await screen.findByTestId("studio-lan-production-controls");
+    expect(screen.queryByTestId("studio-lan-operator-timers")).not.toBeInTheDocument();
+
+    const catalogId = `sha256:${"6".repeat(64)}`;
+    mocks.update = {
+      ...controlUpdate,
+      payloadVersion: 6,
+      authority: { ...controlUpdate.authority, serviceVersion: "v6" },
+      control: {
+        ...controlUpdate.control!,
+        cueCatalog: null,
+        routing: {
+          schemaVersion: 1,
+          localAudience: true,
+          localBroadcast: false,
+          stageAndMusicians: false,
+          lanRemoteControl: true,
+          lightingAndMIDI: false,
+          tchurchCloudProgram: false,
+        },
+        cueCatalogManifest: { schemaVersion: 1, catalogId, totalCount: 2, pageSize: 128 },
+        operatorTimers: null,
+      },
+    };
+    mocks.cueCatalog = {
+      phase: "ready",
+      catalogId,
+      routeEpoch: "5",
+      totalCount: 2,
+      receivedCount: 2,
+      cues: [{ cueId: "cue-1", title: "Verso" }, { cueId: "cue-2", title: "Coro" }],
+      message: null,
+    };
+    view.rerender(<MemoryRouter><StudioLANProduction /></MemoryRouter>);
+    expect(await screen.findByTestId("studio-lan-operator-timers")).toHaveTextContent(
+      /Program y catálogo local siguen disponibles/i,
+    );
+    expect(screen.queryByRole("button", { name: /timer de (servicio|elemento)/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Siguiente$/i })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: /Coro/i }));
+    expect(screen.getByRole("button", { name: /Ir a selección/i })).toBeEnabled();
   });
 });

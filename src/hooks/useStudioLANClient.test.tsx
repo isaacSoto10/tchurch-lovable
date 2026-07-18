@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   StudioLANCueCatalogStatus,
   StudioLANImageAssetStatus,
+  StudioLANOperatorTimerFeedback,
+  StudioLANRemoteFeedback,
   StudioLANStatus,
   StudioLANUpdate,
 } from "@/lib/studioLANClient";
@@ -11,6 +13,8 @@ type BridgeCallbacks = {
   onStatus: (status: StudioLANStatus) => void;
   onUpdate: (update: StudioLANUpdate) => void;
   onImageAsset: (status: StudioLANImageAssetStatus) => void;
+  onRemoteFeedback?: (feedback: StudioLANRemoteFeedback) => void;
+  onOperatorTimerFeedback?: (feedback: StudioLANOperatorTimerFeedback) => void;
   onCueCatalog?: (status: StudioLANCueCatalogStatus) => void;
 };
 
@@ -36,6 +40,7 @@ vi.mock("@/lib/studioLANClient", () => ({
   refreshStudioLANDiscovery: mocks.refresh,
   requestStudioLANDeviceReapproval: mocks.reapproval,
   sendStudioLANRemoteCommand: vi.fn(),
+  sendStudioLANOperatorTimerCommand: vi.fn(),
 }));
 
 import { useStudioLANClient } from "./useStudioLANClient";
@@ -58,6 +63,8 @@ const connectedStatus: StudioLANStatus = {
   studioId: null,
   remoteControlAvailable: false,
   remoteCommandInFlight: false,
+  operatorTimerControlAvailable: false,
+  operatorTimerCommandInFlight: false,
 };
 
 const update: StudioLANUpdate = {
@@ -65,6 +72,7 @@ const update: StudioLANUpdate = {
   payloadVersion: 1,
   sequence: "12",
   revision: "8",
+  issuedAtMs: 1_753_000_000_000,
   receivedAtMs: 1_753_000_000_000,
   authority: {
     runId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -127,9 +135,20 @@ describe("useStudioLANClient transport lifecycle", () => {
       mocks.callbacks?.onStatus(connectedStatus);
       mocks.callbacks?.onUpdate(update);
       mocks.callbacks?.onImageAsset(imageAsset);
+      mocks.callbacks?.onOperatorTimerFeedback?.({
+        commandId: "abcdefab-cdef-4abc-8def-abcdefabcdef",
+        kind: "operatorTimer",
+        scope: "service",
+        operation: "start",
+        state: "queued",
+        rejection: null,
+        timerRevision: null,
+        wasIdempotentReplay: false,
+      });
     });
     expect(view.result.current.update).toEqual(update);
     expect(view.result.current.imageAsset).toEqual(imageAsset);
+    expect(view.result.current.operatorTimerFeedback?.state).toBe("queued");
 
     act(() => mocks.callbacks?.onStatus({
       ...connectedStatus,
@@ -138,6 +157,7 @@ describe("useStudioLANClient transport lifecycle", () => {
     }));
     expect(view.result.current.update).toBeNull();
     expect(view.result.current.imageAsset).toBeNull();
+    expect(view.result.current.operatorTimerFeedback).toBeNull();
 
     act(() => mocks.callbacks?.onStatus({
       ...connectedStatus,

@@ -55,6 +55,8 @@ const baseStatus: StudioLANStatus = {
   studioId: null,
   remoteControlAvailable: false,
   remoteCommandInFlight: false,
+  operatorTimerControlAvailable: false,
+  operatorTimerCommandInFlight: false,
 };
 
 const update: StudioLANUpdate = {
@@ -62,6 +64,7 @@ const update: StudioLANUpdate = {
   payloadVersion: 1,
   sequence: "12",
   revision: "8",
+  issuedAtMs: Date.now(),
   receivedAtMs: Date.now(),
   authority: { runId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", authorityEpoch: "7", packageId: "package", serviceVersion: "v1" },
   audience: {

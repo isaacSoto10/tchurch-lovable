@@ -6,11 +6,48 @@ struct TchurchStudioLANService: Equatable {
     let id: String
     let name: String
     let protocolFloor: Int
+    /// Bonjour is unauthenticated, so this is only a capability hint. The
+    /// authenticated subscription request still binds the exact offer into
+    /// both the device attestation and the transport proof.
+    let advertisedPayloadVersions: [Int]?
 
-    init(id: String, name: String, protocolFloor: Int = 1) {
+    init(
+        id: String,
+        name: String,
+        protocolFloor: Int = 1,
+        advertisedPayloadVersions: [Int]? = nil
+    ) {
         self.id = id
         self.name = name
         self.protocolFloor = protocolFloor
+        self.advertisedPayloadVersions = advertisedPayloadVersions
+    }
+
+    static func parseAdvertisedPayloadVersions(_ value: String?) -> [Int]? {
+        guard let value,
+              !value.isEmpty,
+              value.utf8.count <= 32 else { return nil }
+        let components = value.split(separator: ",", omittingEmptySubsequences: false)
+        guard !components.isEmpty,
+              components.count <= TchurchStudioLANSubscriptionRequest
+                .deviceTrustSupportedPayloadVersions.count else { return nil }
+        let versions = components.compactMap { component -> Int? in
+            guard let version = Int(component),
+                  String(version) == component,
+                  (1 ... TchurchStudioLANOperatorTimerContract.payloadVersion).contains(version) else {
+                return nil
+            }
+            return version
+        }
+        guard versions.count == components.count,
+              let maximum = versions.first,
+              versions == Array(stride(from: maximum, through: 1, by: -1)),
+              versions == TchurchStudioLANSubscriptionRequest.deviceTrustSupportedPayloadVersions ||
+                versions == TchurchStudioLANSubscriptionRequest.v5SupportedPayloadVersions ||
+                versions == TchurchStudioLANSubscriptionRequest.v4SupportedPayloadVersions else {
+            return nil
+        }
+        return versions
     }
 }
 
@@ -344,6 +381,8 @@ struct TchurchStudioLANClientStatus: Equatable {
     let studioID: UUID?
     let remoteControlAvailable: Bool
     let remoteCommandInFlight: Bool
+    let operatorTimerControlAvailable: Bool
+    let operatorTimerCommandInFlight: Bool
 
     init(
         phase: TchurchStudioLANConnectionPhase,
@@ -360,7 +399,9 @@ struct TchurchStudioLANClientStatus: Equatable {
         revocationGeneration: UInt64 = 0,
         studioID: UUID? = nil,
         remoteControlAvailable: Bool = false,
-        remoteCommandInFlight: Bool = false
+        remoteCommandInFlight: Bool = false,
+        operatorTimerControlAvailable: Bool = false,
+        operatorTimerCommandInFlight: Bool = false
     ) {
         self.phase = phase
         self.services = services
@@ -377,6 +418,8 @@ struct TchurchStudioLANClientStatus: Equatable {
         self.studioID = studioID
         self.remoteControlAvailable = remoteControlAvailable
         self.remoteCommandInFlight = remoteCommandInFlight
+        self.operatorTimerControlAvailable = operatorTimerControlAvailable
+        self.operatorTimerCommandInFlight = operatorTimerCommandInFlight
     }
 }
 
@@ -666,6 +709,7 @@ enum TchurchStudioLANBoundedRequestOperation: Equatable {
     case asset(UUID)
     case catalog(UUID)
     case remoteCommand(UUID)
+    case operatorTimerCommand(UUID)
 }
 
 enum TchurchStudioLANBoundedRequestKind: Equatable {
@@ -696,7 +740,7 @@ enum TchurchStudioLANBoundedRequestPriority {
     }
 }
 
-/// Studio processes asset, catalog, and Program command request/response pairs
+/// Studio processes asset, catalog, Program, and operator timer request/response pairs
 /// on one bounded lane. The client must never write a second operation until
 /// the authenticated response for the active operation has released the lane.
 struct TchurchStudioLANBoundedRequestLane: Equatable {
@@ -779,6 +823,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
     var envelopeHandler: ((TchurchStudioLANSignedEnvelope) -> Void)?
     var imageAssetHandler: ((TchurchStudioLANImageAssetStatus) -> Void)?
     var remoteFeedbackHandler: ((TchurchStudioLANRemoteFeedback) -> Void)?
+    var operatorTimerFeedbackHandler: ((TchurchStudioLANOperatorTimerFeedback) -> Void)?
     var cueCatalogHandler: ((TchurchStudioLANCueCatalogStatus) -> Void)?
 
     private struct DesiredConnection {
@@ -852,6 +897,12 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         var isAwaitingReceipt: Bool
     }
 
+    private struct InFlightOperatorTimerCommand: Equatable {
+        var command: TchurchStudioLANOperatorTimerCommand
+        var recovery: TchurchStudioLANOperatorTimerCommandRecoveryState
+        var isAwaitingReceipt: Bool
+    }
+
     private struct CueCatalogKey: Equatable {
         let authority: TchurchStudioLANAuthority
         let routeEpoch: UInt64
@@ -893,6 +944,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
     private var activeSubscription: TchurchStudioLANVerifiedSubscription?
     private var latestControlEnvelope: TchurchStudioLANSignedEnvelope?
     private var minimumControlEnvelopeRevision: UInt64?
+    private var minimumOperatorTimerRevision: UInt64?
     private var cueCatalogKey: CueCatalogKey?
     private var cueCatalogAccumulator: TchurchStudioLANCueCatalogAccumulator?
     private var inFlightCatalogRequest: TchurchStudioLANCatalogRequest?
@@ -904,9 +956,12 @@ final class TchurchStudioLANClient: @unchecked Sendable {
     private var catalogGeneration: UInt64 = 0
     private var discardedCatalogRequestIDs = TchurchStudioLANDiscardedRequestIDs()
     private var inFlightRemoteCommand: InFlightRemoteCommand?
+    private var inFlightOperatorTimerCommand: InFlightOperatorTimerCommand?
     private var boundedRequestLane = TchurchStudioLANBoundedRequestLane()
     private var remoteCommandTimeoutWork: DispatchWorkItem?
     private var remoteCommandRecoveryDeadlineWork: DispatchWorkItem?
+    private var operatorTimerCommandTimeoutWork: DispatchWorkItem?
+    private var operatorTimerCommandRecoveryDeadlineWork: DispatchWorkItem?
     private var payloadNegotiation = TchurchStudioLANPayloadNegotiation()
     private var replayGuards: [String: TchurchStudioLANReplayGuard] = [:]
     private var exactReplayAssetRehydration = TchurchStudioLANExactReplayAssetRehydrationGate()
@@ -1134,6 +1189,52 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                     state: .queued,
                     rejection: nil,
                     revision: nil,
+                    wasIdempotentReplay: false
+                ))
+                self.emitStatus()
+                completion(.success(command.commandID))
+            } catch {
+                completion(.failure(error))
+            }
+        }
+    }
+
+    func sendOperatorTimerCommand(
+        action: TchurchStudioLANOperatorTimerAction,
+        completion: @escaping (Result<UUID, Error>) -> Void
+    ) {
+        queue.async { [weak self] in
+            guard let self else {
+                completion(.failure(TchurchStudioLANRemoteControlError.unavailable))
+                return
+            }
+            do {
+                let command = try self.makeOperatorTimerCommand(action: action)
+                guard let connection = self.connection else {
+                    throw TchurchStudioLANRemoteControlError.unavailable
+                }
+                self.inFlightOperatorTimerCommand = InFlightOperatorTimerCommand(
+                    command: command,
+                    recovery: TchurchStudioLANOperatorTimerCommandRecoveryState(command: command),
+                    isAwaitingReceipt: false
+                )
+                do {
+                    _ = try self.deliverQueuedOperatorTimerCommandIfPossible(
+                        connection: connection
+                    )
+                } catch {
+                    self.cancelOperatorTimerCommand(
+                        state: .interrupted,
+                        expectedCommandID: command.commandID
+                    )
+                    throw error
+                }
+                self.operatorTimerFeedbackHandler?(TchurchStudioLANOperatorTimerFeedback(
+                    commandID: command.commandID,
+                    action: command.action,
+                    state: .queued,
+                    rejection: nil,
+                    timerRevision: nil,
                     wasIdempotentReplay: false
                 ))
                 self.emitStatus()
@@ -1614,17 +1715,24 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             let identity = "\(name)|\(type)|\(domain)".lowercased()
             let id = String(TchurchStudioLANCrypto.sha256Hex(Data(identity.utf8)).prefix(32))
             let advertisedProtocolFloor: Int
-            if case .bonjour(let txtRecord) = result.metadata,
-               txtRecord["trust"] == String(StudioLANDeviceTrustContract.protocolFloor) {
-                advertisedProtocolFloor = StudioLANDeviceTrustContract.protocolFloor
+            let advertisedPayloadVersions: [Int]?
+            if case .bonjour(let txtRecord) = result.metadata {
+                advertisedProtocolFloor = txtRecord["trust"] ==
+                    String(StudioLANDeviceTrustContract.protocolFloor)
+                    ? StudioLANDeviceTrustContract.protocolFloor
+                    : 1
+                advertisedPayloadVersions = TchurchStudioLANService
+                    .parseAdvertisedPayloadVersions(txtRecord["payloads"])
             } else {
                 advertisedProtocolFloor = 1
+                advertisedPayloadVersions = nil
             }
             endpoints[id] = result.endpoint
             services[id] = TchurchStudioLANService(
                 id: id,
                 name: String(name.prefix(120)),
-                protocolFloor: advertisedProtocolFloor
+                protocolFloor: advertisedProtocolFloor,
+                advertisedPayloadVersions: advertisedPayloadVersions
             )
         }
         discoveredEndpoints = endpoints
@@ -1718,7 +1826,8 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         request = nil
         verifier = nil
         let preserveAmbiguousCommand = reconnecting &&
-            (inFlightRemoteCommand?.recovery.isAwaitingAuthenticatedContext == true)
+            (inFlightRemoteCommand?.recovery.isAwaitingAuthenticatedContext == true ||
+             inFlightOperatorTimerCommand?.recovery.isAwaitingAuthenticatedContext == true)
         clearRemoteControlSession(
             interruptCommand: !preserveAmbiguousCommand,
             preserveAmbiguousCommand: preserveAmbiguousCommand
@@ -1839,7 +1948,10 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         let message = try TchurchStudioLANWireCodec.decode(frame)
         if verifier == nil {
             if challenge == nil {
-                guard case .challenge(let challenge) = message else {
+                guard case .challenge(
+                    let challenge,
+                    let challengeSupportedPayloadVersions
+                ) = message else {
                     throw TchurchStudioLANError.protocolViolation
                 }
                 guard challenge.expiresAtMilliseconds >= TchurchStudioLANTime.nowMilliseconds(),
@@ -1864,6 +1976,11 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                     }
                     let requestID = UUID()
                     let requestNonce = try TchurchStudioLANCrypto.randomBytes(count: 24)
+                    let offeredPayloadVersions = payloadNegotiation.supportedPayloadVersions(
+                        for: desired.channel,
+                        advertisedPayloadVersions: challengeSupportedPayloadVersions ??
+                            discoveredServices[desired.serviceID]?.advertisedPayloadVersions
+                    )
                     let stableClientID: UUID
                     let attestation: StudioLANDeviceAttestation?
                     if challengeRequiresV4 {
@@ -1876,7 +1993,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                             clientName: "Tchurch iOS",
                             channel: desired.channel,
                             clientNonce: requestNonce.base64EncodedString(),
-                            supportedPayloadVersions: payloadNegotiation.supportedPayloadVersions,
+                            supportedPayloadVersions: offeredPayloadVersions,
                             requestedRole: requestedRole
                         )
                     } else {
@@ -1892,7 +2009,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                         requestID: requestID,
                         clientNonce: requestNonce,
                         schemaVersion: payloadNegotiation.requestSchemaVersion,
-                        offeredPayloadVersions: payloadNegotiation.supportedPayloadVersions,
+                        offeredPayloadVersions: offeredPayloadVersions,
                         deviceAttestation: attestation
                     )
                 } catch TchurchStudioLANError.entropyUnavailable {
@@ -2056,6 +2173,9 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         case .remoteReceipt(let receipt):
             try handleRemoteReceipt(receipt)
             recordAuthenticatedInboundActivity(connection)
+        case .operatorTimerReceipt(let receipt):
+            try handleOperatorTimerReceipt(receipt)
+            recordAuthenticatedInboundActivity(connection)
         case .catalogPage(let page):
             try handleCatalogPage(page, connection: connection)
             recordAuthenticatedInboundActivity(connection)
@@ -2089,7 +2209,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         let key = replayKey(serviceID: desired.serviceID, channel: envelope.channel)
         imageAssetIntents = imageAssetCandidates(from: envelope).compactMap { candidate in
             guard envelope.schemaVersion == 3 || envelope.schemaVersion == 4 ||
-                    envelope.schemaVersion == 5,
+                    envelope.schemaVersion == 5 || envelope.schemaVersion == 6,
                   let descriptor = candidate.cue.imageAsset,
                   mode.includes(objectID: descriptor.objectID) else { return nil }
             return ImageAssetIntent(
@@ -2124,7 +2244,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         from envelope: TchurchStudioLANSignedEnvelope
     ) -> [ImageAssetCandidate] {
         guard envelope.schemaVersion == 3 || envelope.schemaVersion == 4 ||
-                envelope.schemaVersion == 5 else { return [] }
+                envelope.schemaVersion == 5 || envelope.schemaVersion == 6 else { return [] }
         var candidates: [ImageAssetCandidate] = []
         if let cue = envelope.payload.audience.cue, cue.imageAsset != nil {
             candidates.append(.init(cue: cue, isCurrent: true))
@@ -2151,6 +2271,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
               inFlightAssetRequest == nil,
               inFlightCatalogRequest == nil,
               inFlightRemoteCommand == nil,
+              inFlightOperatorTimerCommand == nil,
               boundedRequestLane.isIdle,
               assetRetryWork == nil,
               assetPreparationIntent == nil else { return }
@@ -2240,6 +2361,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
               inFlightAssetRequest == nil,
               inFlightCatalogRequest == nil,
               inFlightRemoteCommand == nil,
+              inFlightOperatorTimerCommand == nil,
               boundedRequestLane.isIdle,
               isAuthorized(intent),
               offset >= 0,
@@ -2549,7 +2671,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
     ) throws {
         guard self.connection === connection,
               envelope.channel == .control else { return }
-        guard envelope.schemaVersion == 5 else {
+        guard envelope.schemaVersion == 5 || envelope.schemaVersion == 6 else {
             if cueCatalogKey != nil || verifiedCueCatalog != nil || cueCatalogAccumulator != nil {
                 resetCueCatalog(
                     publishUnavailable: true,
@@ -2562,7 +2684,8 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         let trust = deviceTrust.snapshot
         guard let subscription = activeSubscription,
               subscription.channel == .control,
-              subscription.payloadVersion == 5,
+              subscription.payloadVersion == envelope.schemaVersion,
+              subscription.payloadVersion == 5 || subscription.payloadVersion == 6,
               subscription.authority == envelope.authority,
               subscription.deviceGrant?.role == .production,
               subscription.deviceGrant?.permissions.contains(.observe) == true,
@@ -2663,6 +2786,14 @@ final class TchurchStudioLANClient: @unchecked Sendable {
            ) {
             return
         }
+        if let inFlightOperatorTimerCommand,
+           TchurchStudioLANBoundedRequestPriority.remoteCommandBlocksCatalogRequest(
+                isAwaitingReceipt: inFlightOperatorTimerCommand.isAwaitingReceipt,
+                isAwaitingAuthenticatedContext:
+                    inFlightOperatorTimerCommand.recovery.isAwaitingAuthenticatedContext
+           ) {
+            return
+        }
         if let backoffUntil = catalogBackoffUntil {
             let now = DispatchTime.now()
             if now < backoffUntil {
@@ -2755,13 +2886,16 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             $0.nextOffset < $0.totalCount
         } ?? false
         let catalogBackingOff = catalogBackoffUntil.map { DispatchTime.now() < $0 } ?? false
-        let remoteCommandQueued = inFlightRemoteCommand.map {
+        let programCommandQueued = inFlightRemoteCommand.map {
+            !$0.isAwaitingReceipt && !$0.recovery.isAwaitingAuthenticatedContext
+        } ?? false
+        let operatorTimerCommandQueued = inFlightOperatorTimerCommand.map {
             !$0.isAwaitingReceipt && !$0.recovery.isAwaitingAuthenticatedContext
         } ?? false
         let assetReady = assetPreparationIntent == nil && assetRetryWork == nil &&
             (pendingAssetContinuation != nil || !imageAssetIntents.isEmpty)
         let next = TchurchStudioLANBoundedRequestPriority.next(
-            remoteCommandQueued: remoteCommandQueued,
+            remoteCommandQueued: programCommandQueued || operatorTimerCommandQueued,
             catalogReady: catalogNeedsPage && !catalogBackingOff,
             catalogHasPriority: catalogPriority,
             assetReady: assetReady
@@ -3004,7 +3138,8 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         guard recovery.map({ $0.action == action }) ?? true else {
             throw TchurchStudioLANRemoteControlError.invalidAction
         }
-        guard recovery != nil || inFlightRemoteCommand == nil else {
+        guard recovery != nil ||
+                (inFlightRemoteCommand == nil && inFlightOperatorTimerCommand == nil) else {
             throw TchurchStudioLANRemoteControlError.commandInFlight
         }
         let trust = deviceTrust.snapshot
@@ -3017,7 +3152,8 @@ final class TchurchStudioLANClient: @unchecked Sendable {
               trust.permissions.contains(.controlProgram),
               let subscription = activeSubscription,
               subscription.channel == .control,
-              subscription.payloadVersion == 4 || subscription.payloadVersion == 5,
+              subscription.payloadVersion == 4 || subscription.payloadVersion == 5 ||
+                subscription.payloadVersion == 6,
               let deviceGrant = subscription.deviceGrant,
               deviceGrant.role == .production,
               deviceGrant.permissions.contains(.observe),
@@ -3095,6 +3231,99 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         return command
     }
 
+    private func makeOperatorTimerCommand(
+        action: TchurchStudioLANOperatorTimerAction,
+        preserving recovery: TchurchStudioLANOperatorTimerCommandRecoveryState? = nil
+    ) throws -> TchurchStudioLANOperatorTimerCommand {
+        guard action.isValid else {
+            throw TchurchStudioLANRemoteControlError.invalidAction
+        }
+        guard recovery.map({ $0.action == action }) ?? true else {
+            throw TchurchStudioLANRemoteControlError.invalidAction
+        }
+        guard recovery != nil ||
+                (inFlightRemoteCommand == nil && inFlightOperatorTimerCommand == nil) else {
+            throw TchurchStudioLANRemoteControlError.commandInFlight
+        }
+        let trust = deviceTrust.snapshot
+        guard didAuthenticate,
+              currentPhase == .connected,
+              desired?.channel == .control,
+              trust.enrollmentState == .approved,
+              trust.role == .production,
+              trust.permissions.contains(.observe),
+              trust.permissions.contains(.controlProgram),
+              let subscription = activeSubscription,
+              subscription.channel == .control,
+              subscription.payloadVersion == TchurchStudioLANOperatorTimerContract.payloadVersion,
+              let deviceGrant = subscription.deviceGrant,
+              deviceGrant.role == .production,
+              deviceGrant.permissions.contains(.observe),
+              deviceGrant.permissions.contains(.controlProgram),
+              let deviceGrantChecksum = subscription.deviceGrantChecksum,
+              let envelope = latestControlEnvelope,
+              envelope.authority == subscription.authority,
+              envelope.channel == .control,
+              envelope.schemaVersion == TchurchStudioLANOperatorTimerContract.payloadVersion,
+              let control = envelope.payload.control,
+              let routeEpoch = control.routeEpoch,
+              routeEpoch > 0,
+              control.routing?.lanRemoteControl == true,
+              control.routing?.tchurchCloudProgram == false,
+              let operatorTimers = control.operatorTimers,
+              operatorTimers.isCanonical,
+              minimumOperatorTimerRevision.map({ operatorTimers.revision >= $0 }) ?? true else {
+            throw TchurchStudioLANRemoteControlError.unauthorized
+        }
+        let now = TchurchStudioLANTime.nowMilliseconds()
+        let expiresAt = now +
+            TchurchStudioLANRemoteControlContract.maximumCommandLifetimeMilliseconds
+        let unsigned = TchurchStudioLANOperatorTimerCommand(
+            schemaVersion: TchurchStudioLANOperatorTimerCommand.schemaVersion,
+            payloadVersion: TchurchStudioLANOperatorTimerCommand.payloadVersion,
+            commandID: recovery?.commandID ?? UUID(),
+            sessionID: subscription.sessionID,
+            deviceID: deviceGrant.deviceID,
+            grantID: deviceGrant.grantID,
+            deviceGrantChecksum: deviceGrantChecksum,
+            permissionRevision: deviceGrant.permissionRevision,
+            revocationGeneration: deviceGrant.revocationGeneration,
+            authority: subscription.authority,
+            routeEpoch: routeEpoch,
+            expectedTimerRevision: recovery?.expectedTimerRevision ?? operatorTimers.revision,
+            issuedAtMilliseconds: now,
+            expiresAtMilliseconds: expiresAt,
+            action: action,
+            signature: ""
+        )
+        let signature = try deviceTrust.signPossessionProof(
+            TchurchStudioLANOperatorTimerCommandCrypto.signingData(for: unsigned)
+        )
+        let command = TchurchStudioLANOperatorTimerCommand(
+            schemaVersion: unsigned.schemaVersion,
+            payloadVersion: unsigned.payloadVersion,
+            commandID: unsigned.commandID,
+            sessionID: unsigned.sessionID,
+            deviceID: unsigned.deviceID,
+            grantID: unsigned.grantID,
+            deviceGrantChecksum: unsigned.deviceGrantChecksum,
+            permissionRevision: unsigned.permissionRevision,
+            revocationGeneration: unsigned.revocationGeneration,
+            authority: unsigned.authority,
+            routeEpoch: unsigned.routeEpoch,
+            expectedTimerRevision: unsigned.expectedTimerRevision,
+            issuedAtMilliseconds: unsigned.issuedAtMilliseconds,
+            expiresAtMilliseconds: unsigned.expiresAtMilliseconds,
+            action: unsigned.action,
+            signature: signature
+        )
+        try TchurchStudioLANOperatorTimerCommandCrypto.verify(
+            command,
+            deviceGrant: deviceGrant
+        )
+        return command
+    }
+
     /// Program control always wins the next free bounded request slot. A
     /// command may be accepted by the UI while an authenticated asset/catalog
     /// response is still outstanding, but it is not written until that one
@@ -3135,13 +3364,63 @@ final class TchurchStudioLANClient: @unchecked Sendable {
     }
 
     @discardableResult
+    private func deliverQueuedOperatorTimerCommandIfPossible(
+        connection: NWConnection
+    ) throws -> Bool {
+        guard self.connection === connection,
+              didAuthenticate,
+              currentPhase == .connected,
+              boundedRequestLane.isIdle,
+              var inFlight = inFlightOperatorTimerCommand,
+              !inFlight.isAwaitingReceipt,
+              !inFlight.recovery.isAwaitingAuthenticatedContext else { return false }
+        let command = try makeOperatorTimerCommand(
+            action: inFlight.recovery.action,
+            preserving: inFlight.recovery
+        )
+        let operation = TchurchStudioLANBoundedRequestOperation.operatorTimerCommand(
+            command.commandID
+        )
+        guard boundedRequestLane.begin(operation) else { return false }
+        inFlight.command = command
+        inFlight.isAwaitingReceipt = true
+        inFlightOperatorTimerCommand = inFlight
+        do {
+            try send(.operatorTimerCommand(command), connection: connection)
+            armOperatorTimerCommandTimeout(
+                commandID: command.commandID,
+                connection: connection
+            )
+            return true
+        } catch {
+            boundedRequestLane.cancel(operation)
+            if var retained = inFlightOperatorTimerCommand,
+               retained.command.commandID == command.commandID {
+                retained.isAwaitingReceipt = false
+                inFlightOperatorTimerCommand = retained
+            }
+            throw error
+        }
+    }
+
+    @discardableResult
     private func deliverQueuedRemoteCommandOrCancel(
         connection: NWConnection
     ) -> Bool {
         do {
-            return try deliverQueuedRemoteCommandIfPossible(connection: connection)
+            if inFlightRemoteCommand != nil {
+                return try deliverQueuedRemoteCommandIfPossible(connection: connection)
+            }
+            if inFlightOperatorTimerCommand != nil {
+                return try deliverQueuedOperatorTimerCommandIfPossible(connection: connection)
+            }
+            return false
         } catch {
-            cancelRemoteCommand(state: .interrupted)
+            if inFlightRemoteCommand != nil {
+                cancelRemoteCommand(state: .interrupted)
+            } else {
+                cancelOperatorTimerCommand(state: .interrupted)
+            }
             return false
         }
     }
@@ -3209,24 +3488,106 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         }
     }
 
+    private func handleOperatorTimerReceipt(
+        _ receipt: TchurchStudioLANOperatorTimerReceipt
+    ) throws {
+        guard let inFlight = inFlightOperatorTimerCommand,
+              inFlight.isAwaitingReceipt,
+              let subscription = activeSubscription,
+              subscription.payloadVersion ==
+                TchurchStudioLANOperatorTimerContract.payloadVersion else {
+            throw TchurchStudioLANRemoteControlError.invalidReceipt
+        }
+        let command = inFlight.command
+        guard receipt.commandID == command.commandID,
+              receipt.deviceID == command.deviceID,
+              receipt.authority == command.authority,
+              receipt.routeEpoch == command.routeEpoch,
+              receipt.permissionRevision == command.permissionRevision,
+              receipt.issuedAtMilliseconds >= command.issuedAtMilliseconds -
+                TchurchStudioLANRemoteControlContract.maximumFutureClockSkewMilliseconds,
+              receipt.issuedAtMilliseconds <= TchurchStudioLANTime.nowMilliseconds() +
+                TchurchStudioLANRemoteControlContract.maximumFutureClockSkewMilliseconds else {
+            throw TchurchStudioLANRemoteControlError.invalidReceipt
+        }
+        try TchurchStudioLANOperatorTimerReceiptCrypto.verify(
+            receipt,
+            studioSigningPublicKey: subscription.signingPublicKey
+        )
+        guard boundedRequestLane.finish(.operatorTimerCommand(command.commandID)) else {
+            throw TchurchStudioLANRemoteControlError.invalidReceipt
+        }
+        operatorTimerCommandTimeoutWork?.cancel()
+        operatorTimerCommandTimeoutWork = nil
+        operatorTimerCommandRecoveryDeadlineWork?.cancel()
+        operatorTimerCommandRecoveryDeadlineWork = nil
+        inFlightOperatorTimerCommand = nil
+        let signedTimerRevision = latestControlEnvelope?.payload.control?
+            .operatorTimers?.revision
+        if receipt.status == .accepted {
+            if let signedTimerRevision, signedTimerRevision >= receipt.timerRevision {
+                minimumOperatorTimerRevision = nil
+            } else {
+                minimumOperatorTimerRevision = receipt.timerRevision
+            }
+        } else if receipt.rejection == .staleRoute ||
+                    receipt.rejection == .routeDisabled ||
+                    receipt.rejection == .authorityMismatch {
+            latestControlEnvelope = nil
+            minimumOperatorTimerRevision = nil
+            resetCueCatalog(
+                publishUnavailable: true,
+                message: "La ruta local cambió en Studio. Esperando el estado firmado nuevo…"
+            )
+        } else if signedTimerRevision.map({ $0 < receipt.timerRevision }) ?? true {
+            minimumOperatorTimerRevision = receipt.timerRevision
+        }
+        operatorTimerFeedbackHandler?(TchurchStudioLANOperatorTimerFeedback(
+            commandID: command.commandID,
+            action: command.action,
+            state: receipt.status == .accepted ? .accepted : .rejected,
+            rejection: receipt.rejection,
+            timerRevision: receipt.timerRevision,
+            wasIdempotentReplay: receipt.wasIdempotentReplay
+        ))
+        emitStatus()
+        if let connection {
+            resumeBoundedRequestLane(connection: connection, catalogPriority: true)
+        }
+    }
+
     private func recordVerifiedControlEnvelope(
         _ envelope: TchurchStudioLANSignedEnvelope
     ) {
         guard envelope.channel == .control,
-              envelope.schemaVersion == 4 || envelope.schemaVersion == 5,
+              envelope.schemaVersion == 4 || envelope.schemaVersion == 5 ||
+                envelope.schemaVersion == 6,
               envelope.payload.control?.routeEpoch != nil else { return }
         if envelope.schemaVersion == 4 {
             guard envelope.payload.control?.cueCatalog != nil else { return }
         } else {
             guard envelope.payload.control?.routing?.lanRemoteControl == true,
                   envelope.payload.control?.cueCatalogManifest != nil else { return }
+            if envelope.schemaVersion == 6 {
+                guard envelope.payload.control?.operatorTimers?.isCanonical ?? true else {
+                    return
+                }
+            } else {
+                guard envelope.payload.control?.operatorTimers == nil else { return }
+            }
         }
         latestControlEnvelope = envelope
         if let minimum = minimumControlEnvelopeRevision,
            envelope.revision >= minimum {
             minimumControlEnvelopeRevision = nil
         }
+        if let minimum = minimumOperatorTimerRevision,
+           let revision = envelope.payload.control?.operatorTimers?.revision,
+           revision >= minimum {
+            minimumOperatorTimerRevision = nil
+        }
         replayAmbiguousRemoteCommandIfReady()
+        replayAmbiguousOperatorTimerCommandIfReady()
         emitStatus()
     }
 
@@ -3238,7 +3599,8 @@ final class TchurchStudioLANClient: @unchecked Sendable {
               currentPhase == .connected,
               boundedRequestLane.isIdle else { return }
         if inFlight.recovery.action.kind == .jump,
-           activeSubscription?.payloadVersion == 5 {
+           (activeSubscription?.payloadVersion == 5 ||
+            activeSubscription?.payloadVersion == 6) {
             guard let envelope = latestControlEnvelope,
                   let control = envelope.payload.control,
                   let routeEpoch = control.routeEpoch,
@@ -3295,6 +3657,64 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         }
     }
 
+    private func replayAmbiguousOperatorTimerCommandIfReady() {
+        guard var inFlight = inFlightOperatorTimerCommand,
+              inFlight.recovery.isAwaitingAuthenticatedContext,
+              let connection,
+              didAuthenticate,
+              currentPhase == .connected,
+              boundedRequestLane.isIdle,
+              activeSubscription?.payloadVersion ==
+                TchurchStudioLANOperatorTimerContract.payloadVersion,
+              latestControlEnvelope?.payload.control?.operatorTimers?.isCanonical == true else {
+            return
+        }
+        let now = TchurchStudioLANTime.nowMilliseconds()
+        do {
+            let command = try makeOperatorTimerCommand(
+                action: inFlight.recovery.action,
+                preserving: inFlight.recovery
+            )
+            try inFlight.recovery.recordResignedAttempt(
+                command,
+                nowMilliseconds: now
+            )
+            inFlight.command = command
+            inFlight.isAwaitingReceipt = true
+            let operation = TchurchStudioLANBoundedRequestOperation.operatorTimerCommand(
+                command.commandID
+            )
+            guard boundedRequestLane.begin(operation) else { return }
+            inFlightOperatorTimerCommand = inFlight
+            armOperatorTimerCommandTimeout(
+                commandID: command.commandID,
+                connection: connection
+            )
+            do {
+                try send(.operatorTimerCommand(command), connection: connection)
+            } catch {
+                boundedRequestLane.cancel(operation)
+                _ = prepareAmbiguousOperatorTimerCommandRecovery()
+                handleConnectionEnded(
+                    connection,
+                    cause: .heartbeatProtocolViolation,
+                    recoveryMessage: "Studio no confirmó el timer local. Reconectando…"
+                )
+                return
+            }
+            operatorTimerFeedbackHandler?(TchurchStudioLANOperatorTimerFeedback(
+                commandID: command.commandID,
+                action: command.action,
+                state: .queued,
+                rejection: nil,
+                timerRevision: nil,
+                wasIdempotentReplay: false
+            ))
+        } catch {
+            cancelOperatorTimerCommand(state: .timedOut)
+        }
+    }
+
     @discardableResult
     private func prepareAmbiguousRemoteCommandRecovery() -> Bool {
         guard var inFlight = inFlightRemoteCommand else { return false }
@@ -3313,6 +3733,31 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         }
         inFlightRemoteCommand = inFlight
         armRemoteCommandRecoveryDeadline(
+            commandID: inFlight.command.commandID,
+            deadlineMilliseconds: inFlight.recovery.recoverUntilMilliseconds
+        )
+        emitStatus()
+        return true
+    }
+
+    @discardableResult
+    private func prepareAmbiguousOperatorTimerCommandRecovery() -> Bool {
+        guard var inFlight = inFlightOperatorTimerCommand else { return false }
+        operatorTimerCommandTimeoutWork?.cancel()
+        operatorTimerCommandTimeoutWork = nil
+        boundedRequestLane.cancel(.operatorTimerCommand(inFlight.command.commandID))
+        inFlight.isAwaitingReceipt = false
+        if inFlight.recovery.isAwaitingAuthenticatedContext {
+            inFlightOperatorTimerCommand = inFlight
+            return true
+        }
+        let now = TchurchStudioLANTime.nowMilliseconds()
+        guard inFlight.recovery.markAmbiguous(nowMilliseconds: now) else {
+            cancelOperatorTimerCommand(state: .timedOut)
+            return false
+        }
+        inFlightOperatorTimerCommand = inFlight
+        armOperatorTimerCommandRecoveryDeadline(
             commandID: inFlight.command.commandID,
             deadlineMilliseconds: inFlight.recovery.recoverUntilMilliseconds
         )
@@ -3347,6 +3792,38 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         )
     }
 
+    private func armOperatorTimerCommandRecoveryDeadline(
+        commandID: UUID,
+        deadlineMilliseconds: Int64
+    ) {
+        operatorTimerCommandRecoveryDeadlineWork?.cancel()
+        let now = TchurchStudioLANTime.nowMilliseconds()
+        let delay = max(0, deadlineMilliseconds - now)
+        let work = DispatchWorkItem { [weak self] in
+            guard let self,
+                  self.inFlightOperatorTimerCommand?.command.commandID == commandID else {
+                return
+            }
+            self.operatorTimerCommandRecoveryDeadlineWork = nil
+            self.cancelOperatorTimerCommand(
+                state: .timedOut,
+                expectedCommandID: commandID
+            )
+            if let connection = self.connection {
+                self.handleConnectionEnded(
+                    connection,
+                    cause: .heartbeatTimeout,
+                    recoveryMessage: "Studio no confirmó el timer local. Reconectando…"
+                )
+            }
+        }
+        operatorTimerCommandRecoveryDeadlineWork = work
+        queue.asyncAfter(
+            deadline: .now() + .milliseconds(Int(min(delay, Int64(Int.max)))),
+            execute: work
+        )
+    }
+
     private func armRemoteCommandTimeout(commandID: UUID, connection: NWConnection) {
         remoteCommandTimeoutWork?.cancel()
         let work = DispatchWorkItem { [weak self, weak connection] in
@@ -3362,6 +3839,34 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             )
         }
         remoteCommandTimeoutWork = work
+        queue.asyncAfter(
+            deadline: .now() + .milliseconds(
+                Int(TchurchStudioLANRemoteControlContract.maximumCommandLifetimeMilliseconds + 3_000)
+            ),
+            execute: work
+        )
+    }
+
+    private func armOperatorTimerCommandTimeout(
+        commandID: UUID,
+        connection: NWConnection
+    ) {
+        operatorTimerCommandTimeoutWork?.cancel()
+        let work = DispatchWorkItem { [weak self, weak connection] in
+            guard let self,
+                  let connection,
+                  self.connection === connection,
+                  self.inFlightOperatorTimerCommand?.command.commandID == commandID else {
+                return
+            }
+            self.operatorTimerCommandTimeoutWork = nil
+            self.handleConnectionEnded(
+                connection,
+                cause: .heartbeatTimeout,
+                recoveryMessage: "Studio no confirmó el timer local. Reconectando…"
+            )
+        }
+        operatorTimerCommandTimeoutWork = work
         queue.asyncAfter(
             deadline: .now() + .milliseconds(
                 Int(TchurchStudioLANRemoteControlContract.maximumCommandLifetimeMilliseconds + 3_000)
@@ -3388,6 +3893,34 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             state: state,
             rejection: nil,
             revision: nil,
+            wasIdempotentReplay: false
+        ))
+        emitStatus()
+        if let connection {
+            resumeBoundedRequestLane(connection: connection, catalogPriority: true)
+        }
+    }
+
+    private func cancelOperatorTimerCommand(
+        state: TchurchStudioLANRemoteFeedbackState,
+        expectedCommandID: UUID? = nil
+    ) {
+        guard let inFlight = inFlightOperatorTimerCommand,
+              expectedCommandID.map({ $0 == inFlight.command.commandID }) ?? true else {
+            return
+        }
+        operatorTimerCommandTimeoutWork?.cancel()
+        operatorTimerCommandTimeoutWork = nil
+        operatorTimerCommandRecoveryDeadlineWork?.cancel()
+        operatorTimerCommandRecoveryDeadlineWork = nil
+        inFlightOperatorTimerCommand = nil
+        boundedRequestLane.cancel(.operatorTimerCommand(inFlight.command.commandID))
+        operatorTimerFeedbackHandler?(TchurchStudioLANOperatorTimerFeedback(
+            commandID: inFlight.command.commandID,
+            action: inFlight.command.action,
+            state: state,
+            rejection: nil,
+            timerRevision: nil,
             wasIdempotentReplay: false
         ))
         emitStatus()
@@ -3491,8 +4024,11 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         if preserveAmbiguousCommand {
             remoteCommandTimeoutWork?.cancel()
             remoteCommandTimeoutWork = nil
+            operatorTimerCommandTimeoutWork?.cancel()
+            operatorTimerCommandTimeoutWork = nil
         } else if interruptCommand {
             cancelRemoteCommand(state: .interrupted)
+            cancelOperatorTimerCommand(state: .interrupted)
         } else {
             remoteCommandTimeoutWork?.cancel()
             remoteCommandTimeoutWork = nil
@@ -3502,10 +4038,21 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                 boundedRequestLane.cancel(.remoteCommand(inFlightRemoteCommand.command.commandID))
             }
             inFlightRemoteCommand = nil
+            operatorTimerCommandTimeoutWork?.cancel()
+            operatorTimerCommandTimeoutWork = nil
+            operatorTimerCommandRecoveryDeadlineWork?.cancel()
+            operatorTimerCommandRecoveryDeadlineWork = nil
+            if let inFlightOperatorTimerCommand {
+                boundedRequestLane.cancel(
+                    .operatorTimerCommand(inFlightOperatorTimerCommand.command.commandID)
+                )
+            }
+            inFlightOperatorTimerCommand = nil
         }
         activeSubscription = nil
         latestControlEnvelope = nil
         minimumControlEnvelopeRevision = nil
+        minimumOperatorTimerRevision = nil
         resetCueCatalog(publishUnavailable: true)
     }
 
@@ -3534,7 +4081,8 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         verifier = nil
         let preserveAmbiguousCommand = !intentionalDisconnect &&
             !suspended &&
-            prepareAmbiguousRemoteCommandRecovery()
+            (prepareAmbiguousRemoteCommandRecovery() ||
+             prepareAmbiguousOperatorTimerCommandRecovery())
         clearRemoteControlSession(
             interruptCommand: !preserveAmbiguousCommand,
             preserveAmbiguousCommand: preserveAmbiguousCommand
@@ -3780,7 +4328,8 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             selectedServiceID.flatMap { try? secretStore.read(serviceID: $0) } != nil
         let controlEnvelopeReady = latestControlEnvelope.map { envelope in
             envelope.channel == .control &&
-                (envelope.schemaVersion == 4 || envelope.schemaVersion == 5) &&
+                (envelope.schemaVersion == 4 || envelope.schemaVersion == 5 ||
+                    envelope.schemaVersion == 6) &&
                 envelope.payload.control?.routeEpoch != nil &&
                 (envelope.schemaVersion == 4
                     ? envelope.payload.control?.cueCatalog != nil
@@ -3797,9 +4346,37 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             trust.permissions.contains(.observe) &&
             trust.permissions.contains(.controlProgram) &&
             activeSubscription?.channel == .control &&
-            (activeSubscription?.payloadVersion == 4 || activeSubscription?.payloadVersion == 5) &&
+            (activeSubscription?.payloadVersion == 4 ||
+                activeSubscription?.payloadVersion == 5 ||
+                activeSubscription?.payloadVersion == 6) &&
             controlEnvelopeReady &&
-            inFlightRemoteCommand == nil
+            inFlightRemoteCommand == nil &&
+            inFlightOperatorTimerCommand == nil
+        let operatorTimerEnvelopeReady = latestControlEnvelope.map { envelope in
+            envelope.channel == .control &&
+                envelope.schemaVersion == TchurchStudioLANOperatorTimerContract.payloadVersion &&
+                envelope.payload.control?.routeEpoch != nil &&
+                envelope.payload.control?.routing?.lanRemoteControl == true &&
+                envelope.payload.control?.routing?.tchurchCloudProgram == false &&
+                envelope.payload.control?.operatorTimers?.isCanonical == true &&
+                (minimumOperatorTimerRevision.map {
+                    (envelope.payload.control?.operatorTimers?.revision ?? 0) >= $0
+                } ?? true)
+        } ?? false
+        let operatorTimerControlAvailable = !privateStateBlocked && !revoked &&
+            currentPhase == .connected &&
+            didAuthenticate &&
+            desired?.channel == .control &&
+            trust.enrollmentState == .approved &&
+            trust.role == .production &&
+            trust.permissions.contains(.observe) &&
+            trust.permissions.contains(.controlProgram) &&
+            activeSubscription?.channel == .control &&
+            activeSubscription?.payloadVersion ==
+                TchurchStudioLANOperatorTimerContract.payloadVersion &&
+            operatorTimerEnvelopeReady &&
+            inFlightRemoteCommand == nil &&
+            inFlightOperatorTimerCommand == nil
         return TchurchStudioLANClientStatus(
             phase: privateStateBlocked || revoked ? .failed : currentPhase,
             services: services,
@@ -3821,7 +4398,9 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             revocationGeneration: trust.revocationGeneration,
             studioID: trust.studioID,
             remoteControlAvailable: remoteControlAvailable,
-            remoteCommandInFlight: inFlightRemoteCommand != nil
+            remoteCommandInFlight: inFlightRemoteCommand != nil,
+            operatorTimerControlAvailable: operatorTimerControlAvailable,
+            operatorTimerCommandInFlight: inFlightOperatorTimerCommand != nil
         )
     }
 }

@@ -15,10 +15,13 @@ import {
   ChevronRight,
   LoaderCircle,
   MonitorUp,
+  Pause,
+  Play,
   Radio,
   RefreshCw,
   ScanLine,
   ShieldCheck,
+  Timer,
   Unplug,
   Wifi,
 } from "lucide-react";
@@ -28,7 +31,10 @@ import { useStudioLANClient } from "@/hooks/useStudioLANClient";
 import { scannerErrorNotice } from "@/lib/barcodeScannerErrors";
 import {
   normalizeStudioLANPairingQR,
+  projectStudioLANOperatorTimerMilliseconds,
   type StudioLANRemoteFeedback,
+  type StudioLANOperatorTimerFeedback,
+  type StudioLANOperatorTimerState,
 } from "@/lib/studioLANClient";
 
 function goBack(navigate: ReturnType<typeof useNavigate>) {
@@ -63,18 +69,46 @@ function feedbackMessage(feedback: StudioLANRemoteFeedback | null) {
   return "El comando se interrumpió antes de ser confirmado.";
 }
 
+function operatorTimerFeedbackMessage(feedback: StudioLANOperatorTimerFeedback | null) {
+  if (!feedback) return null;
+  if (feedback.state === "queued") return "Timer enviado por LAN; esperando confirmación firmada…";
+  if (feedback.state === "accepted") {
+    return feedback.wasIdempotentReplay
+      ? "Studio confirmó el timer anterior sin ejecutarlo dos veces."
+      : "Studio confirmó el timer local de Producción.";
+  }
+  if (feedback.state === "rejected" && feedback.rejection) {
+    if (feedback.rejection === "revisionConflict") {
+      return "El timer cambió antes del comando. Esperando la revisión firmada nueva.";
+    }
+    return REJECTION_MESSAGES[feedback.rejection];
+  }
+  if (feedback.state === "timedOut") return "Studio no confirmó el timer. Reconectando sin repetirlo.";
+  return "El timer se interrumpió antes de ser confirmado.";
+}
+
+function formatOperatorTimer(milliseconds: number) {
+  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1_000));
+  const hours = Math.floor(totalSeconds / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const seconds = totalSeconds % 60;
+  return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
 export default function StudioLANProduction() {
   const navigate = useNavigate();
   const {
     status,
     update,
     remoteFeedback,
+    operatorTimerFeedback,
     cueCatalog: pagedCueCatalog,
     connect,
     disconnect,
     forget,
     refresh,
     sendRemoteCommand,
+    sendOperatorTimerCommand,
     requestReapproval,
   } = useStudioLANClient();
   const [selectedServiceId, setSelectedServiceId] = useState("");
@@ -88,6 +122,9 @@ export default function StudioLANProduction() {
   const [catalogPage, setCatalogPage] = useState(0);
   const [localCommandPending, setLocalCommandPending] = useState(false);
   const [commandError, setCommandError] = useState<string | null>(null);
+  const [localTimerCommandPending, setLocalTimerCommandPending] = useState(false);
+  const [timerCommandError, setTimerCommandError] = useState<string | null>(null);
+  const [timerMonotonicNow, setTimerMonotonicNow] = useState(() => performance.now());
   const [reapproving, setReapproving] = useState(false);
   const [reapprovalError, setReapprovalError] = useState<string | null>(null);
 
@@ -112,21 +149,59 @@ export default function StudioLANProduction() {
     if (remoteFeedback?.state && remoteFeedback.state !== "queued") setLocalCommandPending(false);
   }, [remoteFeedback]);
 
+  useEffect(() => {
+    if (operatorTimerFeedback?.state && operatorTimerFeedback.state !== "queued") {
+      setLocalTimerCommandPending(false);
+    }
+  }, [operatorTimerFeedback]);
+
   const selectedService = useMemo(
     () => status.services.find((service) => service.id === selectedServiceId) ?? null,
     [selectedServiceId, status.services],
   );
   const controlUpdate = update?.channel === "control" ? update : null;
-  const isV5Catalog = controlUpdate?.payloadVersion === 5;
-  const cueCatalog = isV5Catalog
-    ? (pagedCueCatalog?.phase === "ready" ? pagedCueCatalog.cues ?? [] : [])
-    : controlUpdate?.control?.cueCatalog ?? [];
-  const commandPending = localCommandPending || status.remoteCommandInFlight;
+  const usesPagedCatalog = controlUpdate?.payloadVersion === 5 || controlUpdate?.payloadVersion === 6;
+  const cueCatalog = useMemo(() => (
+    usesPagedCatalog
+      ? (pagedCueCatalog?.phase === "ready" ? pagedCueCatalog.cues ?? [] : [])
+      : controlUpdate?.control?.cueCatalog ?? []
+  ), [controlUpdate?.control?.cueCatalog, pagedCueCatalog, usesPagedCatalog]);
+  const commandPending = localCommandPending || localTimerCommandPending
+    || status.remoteCommandInFlight || status.operatorTimerCommandInFlight;
   const controlsEnabled = status.remoteControlAvailable && !commandPending && controlUpdate?.control != null;
-  const jumpEnabled = controlsEnabled && (!isV5Catalog || pagedCueCatalog?.phase === "ready") && cueCatalog.length > 0;
+  const jumpEnabled = controlsEnabled && (!usesPagedCatalog || pagedCueCatalog?.phase === "ready") && cueCatalog.length > 0;
   const currentCue = controlUpdate?.audience.cue ?? null;
   const feedback = feedbackMessage(remoteFeedback);
+  const timerFeedback = operatorTimerFeedbackMessage(operatorTimerFeedback);
   const routing = controlUpdate?.control?.routing ?? null;
+  const operatorTimers = controlUpdate?.payloadVersion === 6
+    ? controlUpdate.control?.operatorTimers ?? null : null;
+  const timerClockOrigin = useMemo(() => ({
+    sequence: controlUpdate?.sequence ?? "0",
+    timerRevision: operatorTimers?.revision ?? null,
+    monotonicMilliseconds: performance.now(),
+  }), [controlUpdate?.sequence, operatorTimers?.revision]);
+  const timerControlsEnabled = status.operatorTimerControlAvailable
+    && controlUpdate?.payloadVersion === 6
+    && operatorTimers != null
+    && !commandPending;
+
+  useEffect(() => {
+    setTimerMonotonicNow(timerClockOrigin.monotonicMilliseconds);
+    if (!operatorTimers?.timers.some((timer) => timer.isRunning)) return undefined;
+    const interval = window.setInterval(() => setTimerMonotonicNow(performance.now()), 250);
+    return () => window.clearInterval(interval);
+  }, [operatorTimers, timerClockOrigin]);
+
+  function projectedOperatorTimerMilliseconds(timer: StudioLANOperatorTimerState) {
+    if (!controlUpdate) return timer.anchorValueMilliseconds;
+    return projectStudioLANOperatorTimerMilliseconds(
+      timer,
+      controlUpdate.issuedAtMs,
+      timerClockOrigin.monotonicMilliseconds,
+      timerMonotonicNow,
+    );
+  }
   const filteredCueCatalog = useMemo(() => {
     const query = catalogSearch.trim().toLocaleLowerCase();
     return query
@@ -196,6 +271,21 @@ export default function StudioLANProduction() {
     } catch {
       setLocalCommandPending(false);
       setCommandError("Studio todavía no está listo para aceptar ese control.");
+    }
+  }
+
+  async function runOperatorTimerCommand(timer: StudioLANOperatorTimerState) {
+    if (!timerControlsEnabled) return;
+    setLocalTimerCommandPending(true);
+    setTimerCommandError(null);
+    try {
+      await sendOperatorTimerCommand({
+        scope: timer.scope,
+        operation: timer.isRunning ? "pause" : "start",
+      });
+    } catch {
+      setLocalTimerCommandPending(false);
+      setTimerCommandError("Studio todavía no está listo para aceptar ese timer local.");
     }
   }
 
@@ -384,6 +474,61 @@ export default function StudioLANProduction() {
               </div>
             </div>
 
+            {controlUpdate.payloadVersion === 6 && (
+              <div className="rounded-3xl border border-cyan-300/15 bg-cyan-300/[0.05] p-5" data-testid="studio-lan-operator-timers">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-black uppercase tracking-[0.18em] text-cyan-200">Timers de operador</p>
+                    <p className="mt-1 text-xs font-semibold text-slate-300">Producción local · no Stage · no Cloud</p>
+                    <p className="mt-1 text-[11px] leading-5 text-slate-500">Estos relojes firmados no son los timers que ven músicos o pantallas Stage.</p>
+                  </div>
+                  <Timer className="h-5 w-5 shrink-0 text-cyan-200" aria-hidden="true" />
+                </div>
+                {operatorTimers ? (
+                  <>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      {operatorTimers.timers.map((timer) => (
+                        <div key={timer.scope} className="rounded-2xl border border-white/10 bg-black/25 p-4" data-testid={`studio-lan-operator-timer-${timer.scope}`}>
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">{timer.scope === "service" ? "Servicio" : "Elemento"}</p>
+                              <p className="mt-1 font-mono text-2xl font-black tabular-nums text-white">{formatOperatorTimer(projectedOperatorTimerMilliseconds(timer))}</p>
+                            </div>
+                            <span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-wider ${timer.isRunning ? "bg-emerald-300/15 text-emerald-200" : "bg-white/10 text-slate-300"}`}>
+                              {timer.isRunning ? "En curso" : "En pausa"}
+                            </span>
+                          </div>
+                          <Button
+                            type="button"
+                            variant={timer.isRunning ? "outline" : "default"}
+                            className="mt-4 h-12 w-full rounded-2xl border-white/15 font-black"
+                            disabled={!timerControlsEnabled}
+                            aria-label={`${timer.isRunning ? "Pausar" : "Iniciar"} timer de ${timer.scope === "service" ? "servicio" : "elemento"} en Producción local`}
+                            onClick={() => void runOperatorTimerCommand(timer)}
+                          >
+                            {timer.isRunning ? <><Pause className="h-4 w-4" />Pausar</> : <><Play className="h-4 w-4" />Iniciar</>}
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="mt-3 text-center text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">Estado firmado · revisión timer {operatorTimers.revision}</p>
+                  </>
+                ) : (
+                  <p className="mt-4 rounded-2xl border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-sm font-semibold text-amber-100" role="status">
+                    Studio no publicó el estado firmado de timers. Program y catálogo local siguen disponibles.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {(timerFeedback || timerCommandError) && (
+              <div className={`rounded-2xl border px-4 py-3 text-sm font-semibold ${operatorTimerFeedback?.state === "accepted" ? "border-emerald-300/20 bg-emerald-300/10 text-emerald-100" : operatorTimerFeedback?.state === "rejected" || operatorTimerFeedback?.state === "timedOut" || timerCommandError ? "border-red-300/20 bg-red-300/10 text-red-100" : "border-cyan-300/20 bg-cyan-300/10 text-cyan-100"}`} role="status" data-testid="studio-lan-operator-timer-feedback">
+                {operatorTimerFeedback?.state === "accepted" && <CheckCircle2 className="mr-2 inline h-4 w-4" />}
+                {localTimerCommandPending && <LoaderCircle className="mr-2 inline h-4 w-4 animate-spin" />}
+                {timerCommandError || timerFeedback}
+              </div>
+            )}
+
             {(feedback || commandError) && (
               <div className={`rounded-2xl border px-4 py-3 text-sm font-semibold ${remoteFeedback?.state === "accepted" ? "border-emerald-300/20 bg-emerald-300/10 text-emerald-100" : remoteFeedback?.state === "rejected" || remoteFeedback?.state === "timedOut" || commandError ? "border-red-300/20 bg-red-300/10 text-red-100" : "border-violet-300/20 bg-violet-300/10 text-violet-100"}`} role="status" data-testid="studio-lan-production-feedback">
                 {remoteFeedback?.state === "accepted" && <CheckCircle2 className="mr-2 inline h-4 w-4" />}
@@ -404,9 +549,9 @@ export default function StudioLANProduction() {
             <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
               <label htmlFor="studio-production-jump" className="text-xs font-black uppercase tracking-[0.18em] text-violet-200">Saltar a una diapositiva</label>
               <p className="mt-1 text-xs text-slate-400">
-                {isV5Catalog ? `${pagedCueCatalog?.receivedCount ?? 0}/${controlUpdate.control?.cueCatalogManifest?.totalCount ?? 0} verificadas` : `${cueCatalog.length} disponibles en compatibilidad v4`}
+                {usesPagedCatalog ? `${pagedCueCatalog?.receivedCount ?? 0}/${controlUpdate.control?.cueCatalogManifest?.totalCount ?? 0} verificadas` : `${cueCatalog.length} disponibles en compatibilidad v4`}
               </p>
-              {isV5Catalog && pagedCueCatalog?.phase !== "ready" ? (
+              {usesPagedCatalog && pagedCueCatalog?.phase !== "ready" ? (
                 <div className={`mt-3 rounded-2xl border px-4 py-4 text-sm font-semibold ${pagedCueCatalog?.phase === "unavailable" ? "border-amber-300/20 bg-amber-300/10 text-amber-100" : "border-violet-300/20 bg-violet-300/10 text-violet-100"}`} role="status" data-testid="studio-lan-production-catalog-status">
                   {pagedCueCatalog?.phase === "loading" && <LoaderCircle className="mr-2 inline h-4 w-4 animate-spin" />}
                   {pagedCueCatalog?.message ?? "Esperando el catálogo local firmado. Next, Previous y Blackout siguen disponibles."}

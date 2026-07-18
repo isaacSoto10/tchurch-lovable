@@ -20,9 +20,11 @@ import {
   normalizeStudioLANCueCatalogStatus,
   normalizeStudioLANImageAssetStatus,
   normalizeStudioLANPairingQR,
+  normalizeStudioLANOperatorTimerFeedback,
   normalizeStudioLANRemoteFeedback,
   normalizeStudioLANStatus,
   normalizeStudioLANUpdate,
+  projectStudioLANOperatorTimerMilliseconds,
   requestStudioLANDeviceReapproval,
   synchronizeStudioLANPrivacyContext,
 } from "./studioLANClient";
@@ -33,6 +35,7 @@ function validUpdate() {
     payloadVersion: 1,
     sequence: "12",
     revision: "8",
+    issuedAtMs: 1_700_000_000_500,
     receivedAtMs: 1_700_000_000_000,
     authority: {
       runId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -92,6 +95,8 @@ describe("Studio LAN native bridge boundary", () => {
       studioId: null,
       remoteControlAvailable: false,
       remoteCommandInFlight: false,
+      operatorTimerControlAvailable: false,
+      operatorTimerCommandInFlight: false,
     });
 
     const unsafe = normalizeStudioLANStatus({
@@ -267,6 +272,126 @@ describe("Studio LAN native bridge boundary", () => {
     expect(normalizeStudioLANCueCatalogStatus(ready)).toEqual(ready);
     expect(normalizeStudioLANCueCatalogStatus({ ...ready, receivedCount: 1 })).toBeNull();
     expect(normalizeStudioLANCueCatalogStatus({ ...ready, cues: [ready.cues[0], ready.cues[0]] })).toBeNull();
+  });
+
+  it("accepts only canonical v6 operator timers and keeps v1-v5 free of that field", () => {
+    const base = validUpdate();
+    const catalogId = `sha256:${"8".repeat(64)}`;
+    const v6 = {
+      ...base,
+      channel: "control",
+      payloadVersion: 6,
+      stage: { ...base.stage, chordLines: [] },
+      control: {
+        chordsVisible: true,
+        lightingArmed: false,
+        healthyOutputCount: 2,
+        expectedOutputCount: 3,
+        routeEpoch: "9",
+        cueCatalog: null,
+        routing: {
+          schemaVersion: 1,
+          localAudience: true,
+          localBroadcast: true,
+          stageAndMusicians: false,
+          lanRemoteControl: true,
+          lightingAndMIDI: false,
+          tchurchCloudProgram: false,
+        },
+        cueCatalogManifest: { schemaVersion: 1, catalogId, totalCount: 2, pageSize: 128 },
+        operatorTimers: {
+          schemaVersion: 1,
+          revision: "0",
+          timers: [
+            { scope: "service", anchorTimestampMilliseconds: 0, anchorValueMilliseconds: 0, isRunning: false },
+            { scope: "item", anchorTimestampMilliseconds: 0, anchorValueMilliseconds: 0, isRunning: false },
+          ],
+        },
+      },
+    };
+    expect(normalizeStudioLANUpdate(v6)).toMatchObject({
+      payloadVersion: 6,
+      control: { operatorTimers: { revision: "0", timers: [{ scope: "service" }, { scope: "item" }] } },
+    });
+    expect(normalizeStudioLANUpdate({
+      ...v6,
+      control: { ...v6.control, operatorTimers: null },
+    })).toMatchObject({ payloadVersion: 6, control: { operatorTimers: null } });
+    expect(normalizeStudioLANUpdate({
+      ...v6,
+      control: {
+        ...v6.control,
+        operatorTimers: { ...v6.control.operatorTimers, timers: [...v6.control.operatorTimers.timers].reverse() },
+      },
+    })).toBeNull();
+    expect(normalizeStudioLANUpdate({
+      ...v6,
+      control: {
+        ...v6.control,
+        operatorTimers: { ...v6.control.operatorTimers, revision: "9007199254740992" },
+      },
+    })).toBeNull();
+    expect(normalizeStudioLANUpdate({ ...v6, channel: "stage", control: null })).toBeNull();
+    expect(normalizeStudioLANUpdate({ ...v6, payloadVersion: 5 })).toBeNull();
+  });
+
+  it("projects signed operator timers from envelope time plus monotonic time despite wall-clock skew", () => {
+    const timer = {
+      scope: "service" as const,
+      anchorTimestampMilliseconds: 1_800_000_000_000,
+      anchorValueMilliseconds: 90_000,
+      isRunning: true,
+    };
+    const expected = 90_000 + 4_000 + 375;
+    const dateNow = vi.spyOn(Date, "now");
+    dateNow.mockReturnValue(timer.anchorTimestampMilliseconds + 6 * 60 * 60 * 1_000);
+    expect(projectStudioLANOperatorTimerMilliseconds(timer, 1_800_000_004_000, 100, 475)).toBe(expected);
+    dateNow.mockReturnValue(timer.anchorTimestampMilliseconds - 6 * 60 * 60 * 1_000);
+    expect(projectStudioLANOperatorTimerMilliseconds(timer, 1_800_000_004_000, 100, 475)).toBe(expected);
+    expect(projectStudioLANOperatorTimerMilliseconds(
+      { ...timer, isRunning: false },
+      1_800_000_004_000,
+      100,
+      9_999,
+    )).toBe(90_000);
+    expect(projectStudioLANOperatorTimerMilliseconds(
+      { ...timer, anchorValueMilliseconds: 604_800_000 },
+      1_800_000_004_000,
+      100,
+      Number.MAX_SAFE_INTEGER,
+    )).toBe(604_800_000);
+    expect(projectStudioLANOperatorTimerMilliseconds(
+      { ...timer, anchorValueMilliseconds: -1, isRunning: false },
+      1_800_000_004_000,
+      100,
+      475,
+    )).toBe(0);
+    dateNow.mockRestore();
+  });
+
+  it("normalizes only closed v6 timer feedback and the shared rejection enum", () => {
+    const accepted = {
+      commandId: "abcdefab-cdef-4abc-8def-abcdefabcdef",
+      kind: "operatorTimer",
+      scope: "service",
+      operation: "start",
+      state: "accepted",
+      rejection: null,
+      timerRevision: "1",
+      wasIdempotentReplay: false,
+    };
+    expect(normalizeStudioLANOperatorTimerFeedback(accepted)).toEqual(accepted);
+    expect(normalizeStudioLANOperatorTimerFeedback({
+      ...accepted,
+      state: "rejected",
+      rejection: "revisionConflict",
+    })).toMatchObject({ state: "rejected", rejection: "revisionConflict" });
+    expect(normalizeStudioLANOperatorTimerFeedback({ ...accepted, scope: "stage" })).toBeNull();
+    expect(normalizeStudioLANOperatorTimerFeedback({
+      ...accepted,
+      state: "rejected",
+      rejection: "secretFailure",
+    })).toBeNull();
   });
 
   it("normalizes v4 device trust and fails closed on non-canonical permissions", () => {

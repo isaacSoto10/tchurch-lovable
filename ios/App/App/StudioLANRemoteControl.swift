@@ -321,3 +321,370 @@ struct TchurchStudioLANRemoteFeedback: Equatable {
     let revision: UInt64?
     let wasIdempotentReplay: Bool
 }
+
+enum TchurchStudioLANOperatorTimerContract {
+    static let schemaVersion = 1
+    static let payloadVersion = 6
+    static let signatureDomain = "tchurch-studio-lan-operator-timer-command-v1"
+    static let receiptSignatureDomain = "tchurch-studio-lan-operator-timer-receipt-v1"
+}
+
+enum TchurchStudioLANOperatorTimerActionKind: String, Codable, Equatable {
+    case operatorTimer
+}
+
+enum TchurchStudioLANOperatorTimerOperation: String, Codable, CaseIterable, Equatable {
+    case start
+    case pause
+}
+
+/// This closed action cannot address Stage timers, countdowns, reset, routing,
+/// OBS, Cloud, or any arbitrary command payload.
+struct TchurchStudioLANOperatorTimerAction: Codable, Equatable {
+    let kind: TchurchStudioLANOperatorTimerActionKind
+    let scope: TchurchStudioLANOperatorTimerScope
+    let operation: TchurchStudioLANOperatorTimerOperation
+
+    static func set(
+        scope: TchurchStudioLANOperatorTimerScope,
+        operation: TchurchStudioLANOperatorTimerOperation
+    ) -> Self {
+        Self(kind: .operatorTimer, scope: scope, operation: operation)
+    }
+
+    var isValid: Bool { kind == .operatorTimer }
+}
+
+extension TchurchStudioLANOperatorTimerAction {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case kind, scope, operation
+    }
+
+    init(from decoder: Decoder) throws {
+        try TchurchStudioLANExactObject.requireKeys(
+            Set(CodingKeys.allCases.map(\.rawValue)),
+            from: decoder
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try container.decode(TchurchStudioLANOperatorTimerActionKind.self, forKey: .kind)
+        scope = try container.decode(TchurchStudioLANOperatorTimerScope.self, forKey: .scope)
+        operation = try container.decode(TchurchStudioLANOperatorTimerOperation.self, forKey: .operation)
+        guard isValid else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath,
+                debugDescription: "Invalid operator timer action"
+            ))
+        }
+    }
+}
+
+struct TchurchStudioLANOperatorTimerCommand: Codable, Equatable {
+    static let schemaVersion = TchurchStudioLANOperatorTimerContract.schemaVersion
+    static let payloadVersion = TchurchStudioLANOperatorTimerContract.payloadVersion
+
+    let schemaVersion: Int
+    let payloadVersion: Int
+    let commandID: UUID
+    let sessionID: UUID
+    let deviceID: UUID
+    let grantID: UUID
+    let deviceGrantChecksum: String
+    let permissionRevision: UInt64
+    let revocationGeneration: UInt64
+    let authority: TchurchStudioLANAuthority
+    let routeEpoch: UInt64
+    let expectedTimerRevision: UInt64
+    let issuedAtMilliseconds: Int64
+    let expiresAtMilliseconds: Int64
+    let action: TchurchStudioLANOperatorTimerAction
+    /// ASN.1 DER P-256 ECDSA signature encoded as canonical Base64.
+    let signature: String
+}
+
+extension TchurchStudioLANOperatorTimerCommand {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case schemaVersion, payloadVersion, commandID, sessionID, deviceID, grantID
+        case deviceGrantChecksum, permissionRevision, revocationGeneration, authority
+        case routeEpoch, expectedTimerRevision, issuedAtMilliseconds, expiresAtMilliseconds
+        case action, signature
+    }
+
+    init(from decoder: Decoder) throws {
+        try TchurchStudioLANExactObject.requireKeys(
+            Set(CodingKeys.allCases.map(\.rawValue)),
+            from: decoder
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        payloadVersion = try container.decode(Int.self, forKey: .payloadVersion)
+        commandID = try container.decode(UUID.self, forKey: .commandID)
+        sessionID = try container.decode(UUID.self, forKey: .sessionID)
+        deviceID = try container.decode(UUID.self, forKey: .deviceID)
+        grantID = try container.decode(UUID.self, forKey: .grantID)
+        deviceGrantChecksum = try container.decode(String.self, forKey: .deviceGrantChecksum)
+        permissionRevision = try container.decode(UInt64.self, forKey: .permissionRevision)
+        revocationGeneration = try container.decode(UInt64.self, forKey: .revocationGeneration)
+        authority = try container.decode(TchurchStudioLANAuthority.self, forKey: .authority)
+        routeEpoch = try container.decode(UInt64.self, forKey: .routeEpoch)
+        expectedTimerRevision = try container.decode(UInt64.self, forKey: .expectedTimerRevision)
+        issuedAtMilliseconds = try container.decode(Int64.self, forKey: .issuedAtMilliseconds)
+        expiresAtMilliseconds = try container.decode(Int64.self, forKey: .expiresAtMilliseconds)
+        action = try container.decode(TchurchStudioLANOperatorTimerAction.self, forKey: .action)
+        signature = try container.decode(String.self, forKey: .signature)
+    }
+}
+
+struct TchurchStudioLANOperatorTimerCommandRecoveryState: Equatable {
+    let commandID: UUID
+    let action: TchurchStudioLANOperatorTimerAction
+    let expectedTimerRevision: UInt64
+    let recoverUntilMilliseconds: Int64
+    private(set) var recoveryAttempts: Int
+    private(set) var isAwaitingAuthenticatedContext: Bool
+
+    init(command: TchurchStudioLANOperatorTimerCommand) {
+        commandID = command.commandID
+        action = command.action
+        expectedTimerRevision = command.expectedTimerRevision
+        recoverUntilMilliseconds = command.issuedAtMilliseconds +
+            TchurchStudioLANRemoteControlContract.maximumAmbiguousRecoveryWindowMilliseconds
+        recoveryAttempts = 0
+        isAwaitingAuthenticatedContext = false
+    }
+
+    mutating func markAmbiguous(nowMilliseconds: Int64) -> Bool {
+        guard nowMilliseconds <= recoverUntilMilliseconds,
+              recoveryAttempts < TchurchStudioLANRemoteControlContract.maximumAmbiguousRecoveryAttempts else {
+            return false
+        }
+        isAwaitingAuthenticatedContext = true
+        return true
+    }
+
+    mutating func recordResignedAttempt(
+        _ command: TchurchStudioLANOperatorTimerCommand,
+        nowMilliseconds: Int64
+    ) throws {
+        guard isAwaitingAuthenticatedContext,
+              nowMilliseconds <= recoverUntilMilliseconds,
+              recoveryAttempts < TchurchStudioLANRemoteControlContract.maximumAmbiguousRecoveryAttempts,
+              command.commandID == commandID,
+              command.action == action,
+              command.expectedTimerRevision == expectedTimerRevision else {
+            throw TchurchStudioLANRemoteControlError.invalidCommand
+        }
+        recoveryAttempts += 1
+        isAwaitingAuthenticatedContext = false
+    }
+}
+
+private struct TchurchStudioLANOperatorTimerCommandSigningMaterial: Codable {
+    let schemaVersion: Int
+    let domain: String
+    let payloadVersion: Int
+    let commandID: UUID
+    let sessionID: UUID
+    let deviceID: UUID
+    let grantID: UUID
+    let deviceGrantChecksum: String
+    let permissionRevision: UInt64
+    let revocationGeneration: UInt64
+    let authority: TchurchStudioLANAuthority
+    let routeEpoch: UInt64
+    let expectedTimerRevision: UInt64
+    let issuedAtMilliseconds: Int64
+    let expiresAtMilliseconds: Int64
+    let action: TchurchStudioLANOperatorTimerAction
+}
+
+enum TchurchStudioLANOperatorTimerCommandCrypto {
+    static func signingData(for command: TchurchStudioLANOperatorTimerCommand) throws -> Data {
+        try TchurchStudioLANCoding.encoder().encode(
+            TchurchStudioLANOperatorTimerCommandSigningMaterial(
+                schemaVersion: command.schemaVersion,
+                domain: TchurchStudioLANOperatorTimerContract.signatureDomain,
+                payloadVersion: command.payloadVersion,
+                commandID: command.commandID,
+                sessionID: command.sessionID,
+                deviceID: command.deviceID,
+                grantID: command.grantID,
+                deviceGrantChecksum: command.deviceGrantChecksum,
+                permissionRevision: command.permissionRevision,
+                revocationGeneration: command.revocationGeneration,
+                authority: command.authority,
+                routeEpoch: command.routeEpoch,
+                expectedTimerRevision: command.expectedTimerRevision,
+                issuedAtMilliseconds: command.issuedAtMilliseconds,
+                expiresAtMilliseconds: command.expiresAtMilliseconds,
+                action: command.action
+            )
+        )
+    }
+
+    static func verify(
+        _ command: TchurchStudioLANOperatorTimerCommand,
+        deviceGrant: StudioLANDeviceGrant
+    ) throws {
+        guard command.schemaVersion == TchurchStudioLANOperatorTimerCommand.schemaVersion,
+              command.payloadVersion == TchurchStudioLANOperatorTimerCommand.payloadVersion,
+              command.deviceID == deviceGrant.deviceID,
+              command.grantID == deviceGrant.grantID,
+              command.permissionRevision == deviceGrant.permissionRevision,
+              command.revocationGeneration == deviceGrant.revocationGeneration,
+              command.routeEpoch > 0,
+              command.expectedTimerRevision <=
+                TchurchStudioLANOperatorTimersProjection.maximumRevision,
+              command.action.isValid,
+              let publicKeyData = Data(base64Encoded: deviceGrant.devicePublicKey),
+              publicKeyData.count == 65,
+              let publicKey = try? P256.Signing.PublicKey(x963Representation: publicKeyData),
+              let signatureData = Data(base64Encoded: command.signature),
+              (64 ... 80).contains(signatureData.count),
+              let signature = try? P256.Signing.ECDSASignature(derRepresentation: signatureData),
+              publicKey.isValidSignature(signature, for: try signingData(for: command)) else {
+            throw TchurchStudioLANRemoteControlError.invalidCommand
+        }
+    }
+}
+
+struct TchurchStudioLANOperatorTimerReceipt: Codable, Equatable {
+    static let schemaVersion = TchurchStudioLANOperatorTimerContract.schemaVersion
+    static let payloadVersion = TchurchStudioLANOperatorTimerContract.payloadVersion
+
+    let schemaVersion: Int
+    let payloadVersion: Int
+    let commandID: UUID
+    let deviceID: UUID
+    let authority: TchurchStudioLANAuthority
+    let routeEpoch: UInt64
+    let permissionRevision: UInt64
+    let status: TchurchStudioLANRemoteReceiptStatus
+    let rejection: TchurchStudioLANRemoteRejection?
+    let timerRevision: UInt64
+    let wasIdempotentReplay: Bool
+    let issuedAtMilliseconds: Int64
+    let studioSigningKeyID: String
+    let signature: String
+}
+
+extension TchurchStudioLANOperatorTimerReceipt {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case schemaVersion, payloadVersion, commandID, deviceID, authority, routeEpoch
+        case permissionRevision, status, rejection, timerRevision, wasIdempotentReplay
+        case issuedAtMilliseconds, studioSigningKeyID, signature
+    }
+
+    init(from decoder: Decoder) throws {
+        let dynamic = try decoder.container(keyedBy: TchurchStudioLANAnyCodingKey.self)
+        let statusKey = TchurchStudioLANAnyCodingKey(
+            stringValue: CodingKeys.status.rawValue
+        )!
+        let decodedStatus = try dynamic.decode(
+            TchurchStudioLANRemoteReceiptStatus.self,
+            forKey: statusKey
+        )
+        var expected = Set(CodingKeys.allCases.map(\.rawValue))
+        if decodedStatus == .accepted {
+            expected.remove(CodingKeys.rejection.rawValue)
+        }
+        try TchurchStudioLANExactObject.requireKeys(expected, from: decoder)
+
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        payloadVersion = try container.decode(Int.self, forKey: .payloadVersion)
+        commandID = try container.decode(UUID.self, forKey: .commandID)
+        deviceID = try container.decode(UUID.self, forKey: .deviceID)
+        authority = try container.decode(TchurchStudioLANAuthority.self, forKey: .authority)
+        routeEpoch = try container.decode(UInt64.self, forKey: .routeEpoch)
+        permissionRevision = try container.decode(UInt64.self, forKey: .permissionRevision)
+        status = decodedStatus
+        rejection = try container.decodeIfPresent(
+            TchurchStudioLANRemoteRejection.self,
+            forKey: .rejection
+        )
+        timerRevision = try container.decode(UInt64.self, forKey: .timerRevision)
+        wasIdempotentReplay = try container.decode(Bool.self, forKey: .wasIdempotentReplay)
+        issuedAtMilliseconds = try container.decode(Int64.self, forKey: .issuedAtMilliseconds)
+        studioSigningKeyID = try container.decode(String.self, forKey: .studioSigningKeyID)
+        signature = try container.decode(String.self, forKey: .signature)
+        guard (status == .accepted) == (rejection == nil) else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath,
+                debugDescription: "Receipt status and rejection disagree"
+            ))
+        }
+    }
+}
+
+private struct TchurchStudioLANOperatorTimerReceiptSigningMaterial: Codable {
+    let schemaVersion: Int
+    let domain: String
+    let payloadVersion: Int
+    let commandID: UUID
+    let deviceID: UUID
+    let authority: TchurchStudioLANAuthority
+    let routeEpoch: UInt64
+    let permissionRevision: UInt64
+    let status: TchurchStudioLANRemoteReceiptStatus
+    let rejection: TchurchStudioLANRemoteRejection?
+    let timerRevision: UInt64
+    let wasIdempotentReplay: Bool
+    let issuedAtMilliseconds: Int64
+    let studioSigningKeyID: String
+}
+
+enum TchurchStudioLANOperatorTimerReceiptCrypto {
+    static func signingData(for receipt: TchurchStudioLANOperatorTimerReceipt) throws -> Data {
+        try TchurchStudioLANCoding.encoder().encode(
+            TchurchStudioLANOperatorTimerReceiptSigningMaterial(
+                schemaVersion: receipt.schemaVersion,
+                domain: TchurchStudioLANOperatorTimerContract.receiptSignatureDomain,
+                payloadVersion: receipt.payloadVersion,
+                commandID: receipt.commandID,
+                deviceID: receipt.deviceID,
+                authority: receipt.authority,
+                routeEpoch: receipt.routeEpoch,
+                permissionRevision: receipt.permissionRevision,
+                status: receipt.status,
+                rejection: receipt.rejection,
+                timerRevision: receipt.timerRevision,
+                wasIdempotentReplay: receipt.wasIdempotentReplay,
+                issuedAtMilliseconds: receipt.issuedAtMilliseconds,
+                studioSigningKeyID: receipt.studioSigningKeyID
+            )
+        )
+    }
+
+    static func verify(
+        _ receipt: TchurchStudioLANOperatorTimerReceipt,
+        studioSigningPublicKey: String
+    ) throws {
+        guard receipt.schemaVersion == TchurchStudioLANOperatorTimerReceipt.schemaVersion,
+              receipt.payloadVersion == TchurchStudioLANOperatorTimerReceipt.payloadVersion,
+              receipt.routeEpoch > 0,
+              receipt.timerRevision <=
+                TchurchStudioLANOperatorTimersProjection.maximumRevision,
+              (receipt.status == .accepted) == (receipt.rejection == nil),
+              let publicKeyData = Data(base64Encoded: studioSigningPublicKey),
+              publicKeyData.count == 32,
+              publicKeyData.base64EncodedString() == studioSigningPublicKey,
+              String(TchurchStudioLANCrypto.sha256Hex(publicKeyData).prefix(24)) ==
+                receipt.studioSigningKeyID,
+              let signature = Data(base64Encoded: receipt.signature),
+              signature.count == 64,
+              signature.base64EncodedString() == receipt.signature,
+              let key = try? Curve25519.Signing.PublicKey(rawRepresentation: publicKeyData),
+              key.isValidSignature(signature, for: try signingData(for: receipt)) else {
+            throw TchurchStudioLANRemoteControlError.invalidReceipt
+        }
+    }
+}
+
+struct TchurchStudioLANOperatorTimerFeedback: Equatable {
+    let commandID: UUID
+    let action: TchurchStudioLANOperatorTimerAction
+    let state: TchurchStudioLANRemoteFeedbackState
+    let rejection: TchurchStudioLANRemoteRejection?
+    let timerRevision: UInt64?
+    let wasIdempotentReplay: Bool
+}

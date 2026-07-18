@@ -188,9 +188,10 @@ final class StudioLANClientCoreTests: XCTestCase {
 
         let challengeWire = try fixtureData(fixture.challengeWire)
         let challengeMessage = try TchurchStudioLANWireCodec.decode(challengeWire)
-        guard case .challenge(let challenge) = challengeMessage else {
+        guard case .challenge(let challenge, let supportedPayloadVersions) = challengeMessage else {
             return XCTFail("Expected challenge fixture")
         }
+        XCTAssertNil(supportedPayloadVersions)
         XCTAssertEqual(try TchurchStudioLANCoding.encoder().encode(challengeMessage), challengeWire)
 
         let subscribeWire = try fixtureData(fixture.subscribeWire)
@@ -275,9 +276,10 @@ final class StudioLANClientCoreTests: XCTestCase {
         )
         let challengeWire = try fixtureData(fixture.challengeWire)
         let challengeMessage = try TchurchStudioLANWireCodec.decode(challengeWire)
-        guard case .challenge(let challenge) = challengeMessage else {
+        guard case .challenge(let challenge, let supportedPayloadVersions) = challengeMessage else {
             return XCTFail("Expected v1 challenge fixture")
         }
+        XCTAssertNil(supportedPayloadVersions)
         XCTAssertEqual(try TchurchStudioLANCoding.encoder().encode(challengeMessage), challengeWire)
 
         let expectedSubscribeWire = try fixtureData(fixture.expectedSubscribeWire)
@@ -2718,6 +2720,28 @@ private struct StudioLANV1Fixture: Decodable {
     let nextEnvelopeWire: String
 }
 
+private struct StudioLANV6OperatorTimerFixture: Decodable {
+    let schemaVersion: Int
+    let fixtureID: String
+    let devicePrivateKeyRawHex: String
+    let devicePublicKey: String
+    let studioPrivateKeyRawHex: String
+    let studioSigningPublicKey: String
+    let studioSigningKeyID: String
+    let initialOperatorTimers: TchurchStudioLANOperatorTimersProjection
+    let initialOperatorTimersCanonicalHex: String
+    let operatorTimers: TchurchStudioLANOperatorTimersProjection
+    let operatorTimersCanonicalHex: String
+    let commandSigningMaterialCanonicalHex: String
+    let commandWire: TchurchStudioLANWireMessage
+    let receiptSigningMaterialCanonicalHex: String
+    let receiptWire: TchurchStudioLANWireMessage
+}
+
+private extension Data {
+    var hex: String { map { String(format: "%02x", $0) }.joined() }
+}
+
 private func loadStudioLANFixture<Value: Decodable>(named name: String) throws -> Value {
     let sourceDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
     let url = sourceDirectory
@@ -4810,10 +4834,760 @@ final class StudioLANCueCatalogV5Tests: XCTestCase {
         }
     }
 
-    func testUpdatedDeviceTrustOffersV5WhileStillAcceptingExactV4Offer() throws {
-        XCTAssertEqual(TchurchStudioLANSubscriptionRequest.deviceTrustSupportedPayloadVersions, [5, 4, 3, 2, 1])
+    func testUpdatedDeviceTrustUsesBonjourHintAndPreservesExactLegacyOffers() throws {
+        XCTAssertEqual(TchurchStudioLANSubscriptionRequest.deviceTrustSupportedPayloadVersions, [6, 5, 4, 3, 2, 1])
+        XCTAssertEqual(TchurchStudioLANSubscriptionRequest.v5SupportedPayloadVersions, [5, 4, 3, 2, 1])
         XCTAssertEqual(TchurchStudioLANSubscriptionRequest.v4SupportedPayloadVersions, [4, 3, 2, 1])
-        XCTAssertEqual(TchurchStudioLANPayloadNegotiation(protocolFloor: 4).supportedPayloadVersions, [5, 4, 3, 2, 1])
+        let negotiation = TchurchStudioLANPayloadNegotiation(protocolFloor: 4)
+        XCTAssertEqual(negotiation.supportedPayloadVersions, [6, 5, 4, 3, 2, 1])
+        XCTAssertEqual(negotiation.supportedPayloadVersions(for: .control), [4, 3, 2, 1])
+        XCTAssertEqual(negotiation.supportedPayloadVersions(for: .stage), [4, 3, 2, 1])
+        XCTAssertEqual(negotiation.supportedPayloadVersions(for: .audience), [4, 3, 2, 1])
+
+        let advertisedV6 = TchurchStudioLANService.parseAdvertisedPayloadVersions("6,5,4,3,2,1")
+        let advertisedV5 = TchurchStudioLANService.parseAdvertisedPayloadVersions("5,4,3,2,1")
+        XCTAssertEqual(advertisedV6, [6, 5, 4, 3, 2, 1])
+        XCTAssertEqual(advertisedV5, [5, 4, 3, 2, 1])
+        XCTAssertEqual(TchurchStudioLANService(
+            id: "studio-v6",
+            name: "Tchurch Studio",
+            protocolFloor: 4,
+            advertisedPayloadVersions: advertisedV6
+        ).advertisedPayloadVersions, advertisedV6)
+        XCTAssertEqual(negotiation.supportedPayloadVersions(
+            for: .control,
+            advertisedPayloadVersions: advertisedV6
+        ), [6, 5, 4, 3, 2, 1])
+        XCTAssertEqual(negotiation.supportedPayloadVersions(
+            for: .control,
+            advertisedPayloadVersions: advertisedV5
+        ), [5, 4, 3, 2, 1])
+        XCTAssertEqual(negotiation.supportedPayloadVersions(
+            for: .stage,
+            advertisedPayloadVersions: advertisedV6
+        ), [5, 4, 3, 2, 1])
+        XCTAssertEqual(negotiation.supportedPayloadVersions(
+            for: .audience,
+            advertisedPayloadVersions: advertisedV6
+        ), [5, 4, 3, 2, 1])
+
+        for malformed in [
+            nil,
+            "",
+            "3,2,1",
+            "6,5,4",
+            "6,5,5,4,3,2,1",
+            " 6,5,4,3,2,1",
+            "7,6,5,4,3,2,1",
+        ] as [String?] {
+            let parsed = TchurchStudioLANService.parseAdvertisedPayloadVersions(malformed)
+            XCTAssertNil(parsed)
+            XCTAssertEqual(negotiation.supportedPayloadVersions(
+                for: .control,
+                advertisedPayloadVersions: parsed
+            ), [4, 3, 2, 1])
+        }
+    }
+}
+
+final class StudioLANOperatorTimerV6Tests: XCTestCase {
+    func testProductionNegotiatesTheExactAdvertisedV5MacOffer() throws {
+        let advertised = try XCTUnwrap(
+            TchurchStudioLANService.parseAdvertisedPayloadVersions("5,4,3,2,1")
+        )
+        let offered = TchurchStudioLANPayloadNegotiation(protocolFloor: 4)
+            .supportedPayloadVersions(
+                for: .control,
+                advertisedPayloadVersions: advertised
+            )
+        XCTAssertEqual(offered, [5, 4, 3, 2, 1])
+        let fixture = try makeDeviceTrustV6SubscriptionFixture(
+            selectedPayloadVersion: 5,
+            channel: .control,
+            offeredPayloadVersions: offered
+        )
+        XCTAssertEqual(fixture.subscription.payloadVersion, 5)
+        XCTAssertEqual(fixture.subscription.channel, .control)
+    }
+
+    func testProductionNegotiatesV6OnlyFromTheExactAdvertisedV6MacOffer() throws {
+        let advertised = try XCTUnwrap(
+            TchurchStudioLANService.parseAdvertisedPayloadVersions("6,5,4,3,2,1")
+        )
+        let offered = TchurchStudioLANPayloadNegotiation(protocolFloor: 4)
+            .supportedPayloadVersions(
+                for: .control,
+                advertisedPayloadVersions: advertised
+            )
+        XCTAssertEqual(offered, [6, 5, 4, 3, 2, 1])
+        let fixture = try makeDeviceTrustV6SubscriptionFixture(
+            selectedPayloadVersion: 6,
+            channel: .control,
+            offeredPayloadVersions: offered
+        )
+        XCTAssertEqual(fixture.subscription.payloadVersion, 6)
+        XCTAssertEqual(fixture.subscription.channel, .control)
+    }
+
+    func testOuterChallengeV6HintOverridesV5BonjourOnlyForProduction() throws {
+        let signer = try Curve25519.Signing.PrivateKey(
+            rawRepresentation: Data(repeating: 0x68, count: 32)
+        )
+        let challenge = makeChallenge(identity: signer)
+        let encoder = TchurchStudioLANCoding.encoder()
+        let legacyWire = try encoder.encode(
+            TchurchStudioLANWireMessage.challenge(challenge)
+        )
+        let hintedWire = try encoder.encode(TchurchStudioLANWireMessage.challenge(
+            challenge,
+            supportedPayloadVersions:
+                TchurchStudioLANSubscriptionRequest.deviceTrustSupportedPayloadVersions
+        ))
+        let legacyObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: legacyWire) as? [String: Any]
+        )
+        let hintedObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: hintedWire) as? [String: Any]
+        )
+        XCTAssertNil(legacyObject["supportedPayloadVersions"])
+        XCTAssertEqual(
+            hintedObject["supportedPayloadVersions"] as? [Int],
+            [6, 5, 4, 3, 2, 1]
+        )
+        XCTAssertEqual(
+            try JSONSerialization.data(
+                withJSONObject: try XCTUnwrap(legacyObject["challenge"]),
+                options: [.sortedKeys]
+            ),
+            try JSONSerialization.data(
+                withJSONObject: try XCTUnwrap(hintedObject["challenge"]),
+                options: [.sortedKeys]
+            ),
+            "the optional outer hint must not change the signed inner challenge"
+        )
+
+        guard case .challenge(let decodedChallenge, let outerHint) =
+                try TchurchStudioLANWireCodec.decode(hintedWire) else {
+            return XCTFail("Expected hinted challenge")
+        }
+        XCTAssertEqual(decodedChallenge, challenge)
+        XCTAssertEqual(outerHint, [6, 5, 4, 3, 2, 1])
+        let v5BonjourHint = try XCTUnwrap(
+            TchurchStudioLANService.parseAdvertisedPayloadVersions("5,4,3,2,1")
+        )
+        let negotiation = TchurchStudioLANPayloadNegotiation(protocolFloor: 4)
+        XCTAssertEqual(negotiation.supportedPayloadVersions(
+            for: .control,
+            advertisedPayloadVersions: outerHint ?? v5BonjourHint
+        ), [6, 5, 4, 3, 2, 1])
+        XCTAssertEqual(negotiation.supportedPayloadVersions(
+            for: .stage,
+            advertisedPayloadVersions: outerHint ?? v5BonjourHint
+        ), [5, 4, 3, 2, 1])
+        XCTAssertEqual(negotiation.supportedPayloadVersions(
+            for: .audience,
+            advertisedPayloadVersions: outerHint ?? v5BonjourHint
+        ), [5, 4, 3, 2, 1])
+    }
+
+    func testAbsentOuterChallengeHintPreservesV5MacAndMalformedHintsAreRejected() throws {
+        let signer = try Curve25519.Signing.PrivateKey(
+            rawRepresentation: Data(repeating: 0x69, count: 32)
+        )
+        let challenge = makeChallenge(identity: signer)
+        let legacyWire = try TchurchStudioLANCoding.encoder().encode(
+            TchurchStudioLANWireMessage.challenge(challenge)
+        )
+        guard case .challenge(let decodedChallenge, let outerHint) =
+                try TchurchStudioLANWireCodec.decode(legacyWire) else {
+            return XCTFail("Expected legacy challenge")
+        }
+        XCTAssertEqual(decodedChallenge, challenge)
+        XCTAssertNil(outerHint)
+        let v5BonjourHint = try XCTUnwrap(
+            TchurchStudioLANService.parseAdvertisedPayloadVersions("5,4,3,2,1")
+        )
+        XCTAssertEqual(TchurchStudioLANPayloadNegotiation(protocolFloor: 4)
+            .supportedPayloadVersions(
+                for: .control,
+                advertisedPayloadVersions: outerHint ?? v5BonjourHint
+            ), [5, 4, 3, 2, 1])
+
+        let legacyObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: legacyWire) as? [String: Any]
+        )
+        let malformedHints: [Any] = [
+            [6, 5, 4],
+            [7, 6, 5, 4, 3, 2, 1],
+            "6,5,4,3,2,1",
+            NSNull(),
+        ]
+        for malformedHint in malformedHints {
+            var malformedObject = legacyObject
+            malformedObject["supportedPayloadVersions"] = malformedHint
+            let malformedWire = try JSONSerialization.data(
+                withJSONObject: malformedObject,
+                options: [.sortedKeys]
+            )
+            XCTAssertThrowsError(try TchurchStudioLANWireCodec.decode(malformedWire))
+        }
+        XCTAssertThrowsError(try TchurchStudioLANCoding.encoder().encode(
+            TchurchStudioLANWireMessage.challenge(
+                challenge,
+                supportedPayloadVersions:
+                    TchurchStudioLANSubscriptionRequest.v5SupportedPayloadVersions
+            )
+        )) { XCTAssertEqual($0 as? TchurchStudioLANError, .unsupportedPayloadVersion) }
+    }
+
+    func testV6NegotiationIsControlOnlyAndStageRemainsV5Compatible() throws {
+        XCTAssertNoThrow(try makeDeviceTrustV6SubscriptionFixture(
+            selectedPayloadVersion: 5,
+            channel: .stage
+        ))
+        XCTAssertThrowsError(try makeDeviceTrustV6SubscriptionFixture(
+            selectedPayloadVersion: 6,
+            channel: .stage,
+            offeredPayloadVersions:
+                TchurchStudioLANSubscriptionRequest.deviceTrustSupportedPayloadVersions
+        )) { XCTAssertEqual($0 as? TchurchStudioLANError, .invalidSubscription) }
+    }
+
+    func testCrossPlatformFixtureMatchesCanonicalBytesWireAndRealSignatures() throws {
+        let fixture: StudioLANV6OperatorTimerFixture = try loadStudioLANFixture(
+            named: "studio_lan_v6_operator_timers_fixture"
+        )
+        XCTAssertEqual(fixture.schemaVersion, 1)
+        XCTAssertEqual(
+            fixture.fixtureID,
+            "studio-lan-v6-operator-timers-cross-platform-1"
+        )
+        XCTAssertEqual(
+            try TchurchStudioLANCoding.encoder().encode(fixture.initialOperatorTimers).hex,
+            fixture.initialOperatorTimersCanonicalHex
+        )
+        XCTAssertTrue(fixture.initialOperatorTimers.isCanonical)
+        XCTAssertEqual(fixture.initialOperatorTimers.revision, 0)
+        XCTAssertTrue(fixture.initialOperatorTimers.timers.allSatisfy {
+            $0.anchorTimestampMilliseconds == 0
+                && $0.anchorValueMilliseconds == 0
+                && !$0.isRunning
+        })
+        XCTAssertEqual(
+            try TchurchStudioLANCoding.encoder().encode(fixture.operatorTimers).hex,
+            fixture.operatorTimersCanonicalHex
+        )
+        XCTAssertTrue(fixture.operatorTimers.isCanonical)
+
+        guard case .operatorTimerCommand(let command) = fixture.commandWire else {
+            return XCTFail("Expected operatorTimerCommand fixture")
+        }
+        XCTAssertEqual(
+            try TchurchStudioLANOperatorTimerCommandCrypto.signingData(for: command).hex,
+            fixture.commandSigningMaterialCanonicalHex
+        )
+        let devicePublicKey = try XCTUnwrap(Data(base64Encoded: fixture.devicePublicKey))
+        let deviceGrant = StudioLANDeviceGrant(
+            schemaVersion: 4,
+            protocolFloor: 4,
+            grantID: command.grantID,
+            deviceID: command.deviceID,
+            deviceName: "Tchurch iOS",
+            role: .production,
+            permissions: [.observe, .controlProgram],
+            keyAlgorithm: .p256Signing,
+            devicePublicKey: fixture.devicePublicKey,
+            devicePublicKeyFingerprint: StudioLANDeviceGrant.fingerprint(
+                forPublicKeyData: devicePublicKey
+            ),
+            studioID: UUID(uuidString: "55555555-5555-4555-8555-555555555555")!,
+            studioSigningKeyID: fixture.studioSigningKeyID,
+            studioSigningPublicKey: fixture.studioSigningPublicKey,
+            permissionRevision: command.permissionRevision,
+            revocationGeneration: command.revocationGeneration,
+            issuedAtMilliseconds: command.issuedAtMilliseconds - 1_000,
+            expiresAtMilliseconds: command.expiresAtMilliseconds + 1_000,
+            signature: ""
+        )
+        XCTAssertNoThrow(try TchurchStudioLANOperatorTimerCommandCrypto.verify(
+            command,
+            deviceGrant: deviceGrant
+        ))
+        let encodedCommandWire = try TchurchStudioLANCoding.encoder().encode(
+            fixture.commandWire
+        )
+        XCTAssertEqual(
+            try TchurchStudioLANCoding.decoder().decode(
+                TchurchStudioLANWireMessage.self,
+                from: encodedCommandWire
+            ),
+            fixture.commandWire
+        )
+        XCTAssertTrue(String(decoding: encodedCommandWire, as: UTF8.self).contains(
+            "\"kind\":\"operatorTimerCommand\",\"operatorTimerCommand\""
+        ))
+
+        guard case .operatorTimerReceipt(let receipt) = fixture.receiptWire else {
+            return XCTFail("Expected operatorTimerReceipt fixture")
+        }
+        XCTAssertEqual(
+            try TchurchStudioLANOperatorTimerReceiptCrypto.signingData(for: receipt).hex,
+            fixture.receiptSigningMaterialCanonicalHex
+        )
+        XCTAssertNoThrow(try TchurchStudioLANOperatorTimerReceiptCrypto.verify(
+            receipt,
+            studioSigningPublicKey: fixture.studioSigningPublicKey
+        ))
+        let encodedReceiptWire = try TchurchStudioLANCoding.encoder().encode(
+            fixture.receiptWire
+        )
+        XCTAssertEqual(
+            try TchurchStudioLANCoding.decoder().decode(
+                TchurchStudioLANWireMessage.self,
+                from: encodedReceiptWire
+            ),
+            fixture.receiptWire
+        )
+        XCTAssertTrue(String(decoding: encodedReceiptWire, as: UTF8.self).contains(
+            "\"kind\":\"operatorTimerReceipt\",\"operatorTimerReceipt\""
+        ))
+    }
+
+    func testV6DecodingRejectsUnknownKeysAtEverySignedTimerBoundary() throws {
+        let fixture: StudioLANV6OperatorTimerFixture = try loadStudioLANFixture(
+            named: "studio_lan_v6_operator_timers_fixture"
+        )
+        let encoder = TchurchStudioLANCoding.encoder()
+        let decoder = TchurchStudioLANCoding.decoder()
+
+        var projection = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: encoder.encode(fixture.operatorTimers)
+            ) as? [String: Any]
+        )
+        projection["unexpected"] = true
+        XCTAssertThrowsError(try decoder.decode(
+            TchurchStudioLANOperatorTimersProjection.self,
+            from: JSONSerialization.data(withJSONObject: projection)
+        ))
+
+        projection = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: encoder.encode(fixture.operatorTimers)
+            ) as? [String: Any]
+        )
+        var timers = try XCTUnwrap(projection["timers"] as? [[String: Any]])
+        timers[0]["unexpected"] = true
+        projection["timers"] = timers
+        XCTAssertThrowsError(try decoder.decode(
+            TchurchStudioLANOperatorTimersProjection.self,
+            from: JSONSerialization.data(withJSONObject: projection)
+        ))
+
+        var commandWire = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: encoder.encode(fixture.commandWire)
+            ) as? [String: Any]
+        )
+        commandWire["unexpected"] = true
+        XCTAssertThrowsError(try decoder.decode(
+            TchurchStudioLANWireMessage.self,
+            from: JSONSerialization.data(withJSONObject: commandWire)
+        ))
+
+        commandWire = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: encoder.encode(fixture.commandWire)
+            ) as? [String: Any]
+        )
+        var command = try XCTUnwrap(
+            commandWire["operatorTimerCommand"] as? [String: Any]
+        )
+        command["unexpected"] = true
+        commandWire["operatorTimerCommand"] = command
+        XCTAssertThrowsError(try decoder.decode(
+            TchurchStudioLANWireMessage.self,
+            from: JSONSerialization.data(withJSONObject: commandWire)
+        ))
+
+        commandWire = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: encoder.encode(fixture.commandWire)
+            ) as? [String: Any]
+        )
+        command = try XCTUnwrap(
+            commandWire["operatorTimerCommand"] as? [String: Any]
+        )
+        var action = try XCTUnwrap(command["action"] as? [String: Any])
+        action["unexpected"] = true
+        command["action"] = action
+        commandWire["operatorTimerCommand"] = command
+        XCTAssertThrowsError(try decoder.decode(
+            TchurchStudioLANWireMessage.self,
+            from: JSONSerialization.data(withJSONObject: commandWire)
+        ))
+
+        var receiptWire = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: encoder.encode(fixture.receiptWire)
+            ) as? [String: Any]
+        )
+        var receipt = try XCTUnwrap(
+            receiptWire["operatorTimerReceipt"] as? [String: Any]
+        )
+        receipt["unexpected"] = true
+        receiptWire["operatorTimerReceipt"] = receipt
+        XCTAssertThrowsError(try decoder.decode(
+            TchurchStudioLANWireMessage.self,
+            from: JSONSerialization.data(withJSONObject: receiptWire)
+        ))
+
+        receiptWire = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: encoder.encode(fixture.receiptWire)
+            ) as? [String: Any]
+        )
+        receipt = try XCTUnwrap(
+            receiptWire["operatorTimerReceipt"] as? [String: Any]
+        )
+        receipt["rejection"] = NSNull()
+        receiptWire["operatorTimerReceipt"] = receipt
+        XCTAssertThrowsError(try decoder.decode(
+            TchurchStudioLANWireMessage.self,
+            from: JSONSerialization.data(withJSONObject: receiptWire)
+        ))
+    }
+
+    func testCommandAndReceiptTamperingFailClosed() throws {
+        let fixture: StudioLANV6OperatorTimerFixture = try loadStudioLANFixture(
+            named: "studio_lan_v6_operator_timers_fixture"
+        )
+        guard case .operatorTimerCommand(let command) = fixture.commandWire,
+              case .operatorTimerReceipt(let receipt) = fixture.receiptWire else {
+            return XCTFail("Missing v6 fixture messages")
+        }
+        let publicKeyData = try XCTUnwrap(Data(base64Encoded: fixture.devicePublicKey))
+        let grant = StudioLANDeviceGrant(
+            schemaVersion: 4,
+            protocolFloor: 4,
+            grantID: command.grantID,
+            deviceID: command.deviceID,
+            deviceName: "Tchurch iOS",
+            role: .production,
+            permissions: [.observe, .controlProgram],
+            keyAlgorithm: .p256Signing,
+            devicePublicKey: fixture.devicePublicKey,
+            devicePublicKeyFingerprint: StudioLANDeviceGrant.fingerprint(
+                forPublicKeyData: publicKeyData
+            ),
+            studioID: UUID(),
+            studioSigningKeyID: fixture.studioSigningKeyID,
+            studioSigningPublicKey: fixture.studioSigningPublicKey,
+            permissionRevision: command.permissionRevision,
+            revocationGeneration: command.revocationGeneration,
+            issuedAtMilliseconds: 1,
+            expiresAtMilliseconds: command.expiresAtMilliseconds + 1,
+            signature: ""
+        )
+        let tamperedCommand = replacingOperatorTimerCommand(
+            command,
+            action: .set(scope: .item, operation: .pause)
+        )
+        XCTAssertThrowsError(try TchurchStudioLANOperatorTimerCommandCrypto.verify(
+            tamperedCommand,
+            deviceGrant: grant
+        )) { XCTAssertEqual($0 as? TchurchStudioLANRemoteControlError, .invalidCommand) }
+
+        let tamperedReceipt = replacingOperatorTimerReceipt(
+            receipt,
+            timerRevision: receipt.timerRevision + 1
+        )
+        XCTAssertThrowsError(try TchurchStudioLANOperatorTimerReceiptCrypto.verify(
+            tamperedReceipt,
+            studioSigningPublicKey: fixture.studioSigningPublicKey
+        )) { XCTAssertEqual($0 as? TchurchStudioLANRemoteControlError, .invalidReceipt) }
+    }
+
+    func testProjectionAcceptsFreshZeroAndExactBoundsButRejectsOverflowAndOrder() {
+        let initial = makeOperatorTimers(
+            revision: 0,
+            serviceAnchor: 0,
+            serviceValue: 0,
+            serviceRunning: false,
+            itemAnchor: 0,
+            itemValue: 0,
+            itemRunning: false
+        )
+        XCTAssertTrue(initial.isCanonical)
+        XCTAssertTrue(makeOperatorTimers(
+            revision: TchurchStudioLANOperatorTimersProjection.maximumRevision,
+            serviceAnchor: TchurchStudioLANOperatorTimersProjection.maximumAnchorTimestampMilliseconds,
+            serviceValue: TchurchStudioLANOperatorTimersProjection.maximumAnchorValueMilliseconds
+        ).isCanonical)
+        XCTAssertFalse(TchurchStudioLANOperatorTimersProjection(
+            schemaVersion: 1,
+            revision: 1,
+            timers: Array(initial.timers.reversed())
+        ).isCanonical)
+        XCTAssertFalse(makeOperatorTimers(
+            revision: TchurchStudioLANOperatorTimersProjection.maximumRevision + 1
+        ).isCanonical)
+        XCTAssertFalse(makeOperatorTimers(
+            revision: 1,
+            serviceValue: TchurchStudioLANOperatorTimersProjection.maximumAnchorValueMilliseconds + 1
+        ).isCanonical)
+    }
+
+    func testV6VerifierAcceptsInitialAndUnavailableTimerStateButRejectsMalformedState() throws {
+        let fixture = try makeDeviceTrustV6SubscriptionFixture(selectedPayloadVersion: 6)
+        let verifier = try TchurchStudioLANEnvelopeVerifier(
+            subscription: fixture.subscription
+        )
+        let initial = makeOperatorTimers(
+            revision: 0,
+            serviceAnchor: 0,
+            serviceValue: 0,
+            serviceRunning: false,
+            itemAnchor: 0,
+            itemValue: 0,
+            itemRunning: false
+        )
+        for (sequence, timers) in [(UInt64(12), initial as TchurchStudioLANOperatorTimersProjection?), (13, nil)] {
+            let envelope = try signEnvelope(
+                payload: makeV6ControlPayload(
+                    authority: fixture.authority,
+                    programRevision: 4,
+                    operatorTimers: timers
+                ),
+                authority: fixture.authority,
+                identity: fixture.signer,
+                sequence: sequence,
+                revision: 4,
+                schemaVersion: 6
+            )
+            XCTAssertNoThrow(try verifier.verify(
+                TchurchStudioLANCoding.encoder().encode(envelope)
+            ))
+        }
+
+        let malformed = TchurchStudioLANOperatorTimersProjection(
+            schemaVersion: 1,
+            revision: 1,
+            timers: Array(initial.timers.reversed())
+        )
+        let badEnvelope = try signEnvelope(
+            payload: makeV6ControlPayload(
+                authority: fixture.authority,
+                programRevision: 4,
+                operatorTimers: malformed
+            ),
+            authority: fixture.authority,
+            identity: fixture.signer,
+            sequence: 14,
+            revision: 4,
+            schemaVersion: 6
+        )
+        XCTAssertThrowsError(try verifier.verify(
+            TchurchStudioLANCoding.encoder().encode(badEnvelope)
+        )) { XCTAssertEqual($0 as? TchurchStudioLANError, .invalidEnvelope) }
+    }
+
+    func testReplayGuardTracksIndependentProgramAndTimerRevisions() throws {
+        let fixture = try makeDeviceTrustV6SubscriptionFixture(selectedPayloadVersion: 6)
+        var guardState = TchurchStudioLANReplayGuard()
+        try guardState.begin(fixture.subscription)
+        let timers12 = makeOperatorTimers(revision: 12)
+        let first = try makeV6Envelope(
+            fixture: fixture,
+            sequence: 12,
+            programRevision: 8,
+            operatorTimers: timers12
+        )
+        try guardState.accept(first)
+        let timers13 = makeOperatorTimers(
+            revision: 13,
+            serviceAnchor: 1_800_000_001_000,
+            serviceValue: 91_000
+        )
+        let timerOnly = try makeV6Envelope(
+            fixture: fixture,
+            sequence: 13,
+            programRevision: 8,
+            operatorTimers: timers13
+        )
+        XCTAssertNoThrow(try guardState.accept(timerOnly))
+
+        let programOnly = try makeV6Envelope(
+            fixture: fixture,
+            sequence: 14,
+            programRevision: 9,
+            operatorTimers: timers13,
+            isBlackout: true
+        )
+        XCTAssertNoThrow(try guardState.accept(programOnly))
+
+        let changedAtSameTimerRevision = try makeV6Envelope(
+            fixture: fixture,
+            sequence: 15,
+            programRevision: 10,
+            operatorTimers: makeOperatorTimers(
+                revision: 13,
+                serviceAnchor: 1_800_000_002_000,
+                serviceValue: 92_000
+            )
+        )
+        XCTAssertThrowsError(try guardState.accept(changedAtSameTimerRevision)) {
+            XCTAssertEqual($0 as? TchurchStudioLANError, .equivocatedRevision)
+        }
+    }
+
+    func testReplayGuardRetainsTimerIdentityAcrossSignedUnavailableState() throws {
+        let fixture = try makeDeviceTrustV6SubscriptionFixture(selectedPayloadVersion: 6)
+        let timers = makeOperatorTimers(revision: 7)
+        var valid = TchurchStudioLANReplayGuard()
+        try valid.begin(fixture.subscription)
+        try valid.accept(makeV6Envelope(
+            fixture: fixture,
+            sequence: 12,
+            programRevision: 3,
+            operatorTimers: timers
+        ))
+        try valid.accept(makeV6Envelope(
+            fixture: fixture,
+            sequence: 13,
+            programRevision: 3,
+            operatorTimers: nil
+        ))
+        XCTAssertNoThrow(try valid.accept(makeV6Envelope(
+            fixture: fixture,
+            sequence: 14,
+            programRevision: 3,
+            operatorTimers: timers
+        )))
+
+        var tampered = TchurchStudioLANReplayGuard()
+        try tampered.begin(fixture.subscription)
+        try tampered.accept(makeV6Envelope(
+            fixture: fixture,
+            sequence: 12,
+            programRevision: 3,
+            operatorTimers: timers
+        ))
+        try tampered.accept(makeV6Envelope(
+            fixture: fixture,
+            sequence: 13,
+            programRevision: 3,
+            operatorTimers: nil
+        ))
+        XCTAssertThrowsError(try tampered.accept(makeV6Envelope(
+            fixture: fixture,
+            sequence: 14,
+            programRevision: 3,
+            operatorTimers: makeOperatorTimers(
+                revision: 7,
+                serviceAnchor: 1_800_000_100_000
+            )
+        ))) { XCTAssertEqual($0 as? TchurchStudioLANError, .equivocatedRevision) }
+    }
+
+    func testNegotiatedVersionTransitionResetsOnlyTheAuthenticatedReplayEpoch() throws {
+        let v5 = try makeDeviceTrustV6SubscriptionFixture(selectedPayloadVersion: 5)
+        let v6 = try makeDeviceTrustV6SubscriptionFixture(
+            selectedPayloadVersion: 6,
+            signer: v5.signer
+        )
+        var guardState = TchurchStudioLANReplayGuard()
+        try guardState.begin(v5.subscription)
+        let v5Payload = try makeV6ControlPayload(
+            authority: v5.authority,
+            programRevision: 20,
+            operatorTimers: nil
+        )
+        let v5Envelope = try signEnvelope(
+            payload: v5Payload,
+            authority: v5.authority,
+            identity: v5.signer,
+            sequence: 50,
+            revision: 20,
+            schemaVersion: 5
+        )
+        try guardState.accept(v5Envelope)
+        try guardState.begin(v6.subscription)
+        XCTAssertNoThrow(try guardState.accept(makeV6Envelope(
+            fixture: v6,
+            sequence: 12,
+            programRevision: 1,
+            operatorTimers: makeOperatorTimers(revision: 0)
+        )))
+    }
+
+    func testRejectedStaleVersionTransitionDoesNotEraseTheAuthenticatedReplayEpoch() throws {
+        let current = try makeDeviceTrustV6SubscriptionFixture(selectedPayloadVersion: 6)
+        let stale = try makeDeviceTrustV6SubscriptionFixture(
+            selectedPayloadVersion: 5,
+            signer: current.signer,
+            authorityEpoch: 6
+        )
+        let envelope = try makeV6Envelope(
+            fixture: current,
+            sequence: 12,
+            programRevision: 3,
+            operatorTimers: makeOperatorTimers(revision: 7)
+        )
+        var guardState = TchurchStudioLANReplayGuard()
+        try guardState.begin(current.subscription)
+        try guardState.accept(envelope)
+        XCTAssertThrowsError(try guardState.begin(stale.subscription)) {
+            XCTAssertEqual($0 as? TchurchStudioLANError, .staleAuthorityEpoch)
+        }
+        XCTAssertThrowsError(try guardState.accept(envelope)) {
+            XCTAssertEqual($0 as? TchurchStudioLANError, .replayedEnvelope)
+        }
+    }
+
+    func testLostReceiptRecoveryPreservesClosedActionRevisionAndCommandID() throws {
+        let fixture: StudioLANV6OperatorTimerFixture = try loadStudioLANFixture(
+            named: "studio_lan_v6_operator_timers_fixture"
+        )
+        guard case .operatorTimerCommand(let command) = fixture.commandWire else {
+            return XCTFail("Missing command")
+        }
+        var recovery = TchurchStudioLANOperatorTimerCommandRecoveryState(
+            command: command
+        )
+        XCTAssertTrue(recovery.markAmbiguous(
+            nowMilliseconds: command.issuedAtMilliseconds + 1
+        ))
+        let replay = replacingOperatorTimerCommand(
+            command,
+            issuedAtMilliseconds: command.issuedAtMilliseconds + 2_000,
+            expiresAtMilliseconds: command.expiresAtMilliseconds + 2_000,
+            signature: "resigned"
+        )
+        XCTAssertNoThrow(try recovery.recordResignedAttempt(
+            replay,
+            nowMilliseconds: replay.issuedAtMilliseconds
+        ))
+        XCTAssertEqual(recovery.commandID, command.commandID)
+        XCTAssertEqual(recovery.action, command.action)
+        XCTAssertEqual(recovery.expectedTimerRevision, command.expectedTimerRevision)
+    }
+
+    func testOperatorTimerUsesTheSameBoundedCommandPriorityLane() {
+        var lane = TchurchStudioLANBoundedRequestLane()
+        let assetID = UUID()
+        let timerID = UUID()
+        XCTAssertTrue(lane.begin(.asset(assetID)))
+        XCTAssertFalse(lane.begin(.operatorTimerCommand(timerID)))
+        XCTAssertTrue(lane.finish(.asset(assetID)))
+        XCTAssertEqual(TchurchStudioLANBoundedRequestPriority.next(
+            remoteCommandQueued: true,
+            catalogReady: true,
+            catalogHasPriority: true,
+            assetReady: true
+        ), .remoteCommand)
+        XCTAssertTrue(lane.begin(.operatorTimerCommand(timerID)))
+        XCTAssertTrue(lane.finish(.operatorTimerCommand(timerID)))
     }
 }
 
@@ -4969,5 +5743,310 @@ private func makeStudioLANDeviceGrant(
         issuedAtMilliseconds: unsigned.issuedAtMilliseconds,
         expiresAtMilliseconds: unsigned.expiresAtMilliseconds,
         signature: signature
+    )
+}
+
+private struct DeviceTrustV6SubscriptionFixture {
+    let authority: TchurchStudioLANAuthority
+    let signer: Curve25519.Signing.PrivateKey
+    let subscription: TchurchStudioLANVerifiedSubscription
+}
+
+private struct TestStudioLANSubscriptionGrantProofV4: Codable {
+    let challengeID: UUID
+    let sessionID: UUID
+    let requestID: UUID
+    let channel: TchurchStudioLANChannel
+    let authority: TchurchStudioLANAuthority
+    let signingKeyID: String
+    let signingPublicKey: String
+    let minimumSequence: UInt64
+    let expiresAtMilliseconds: Int64
+    let clientNonce: String
+    let selectedPayloadVersion: Int
+    let deviceGrantChecksum: String
+}
+
+private func makeDeviceTrustV6SubscriptionFixture(
+    selectedPayloadVersion: Int,
+    signer suppliedSigner: Curve25519.Signing.PrivateKey? = nil,
+    authorityEpoch: UInt64 = 7,
+    channel: TchurchStudioLANChannel = .control,
+    offeredPayloadVersions suppliedOfferedPayloadVersions: [Int]? = nil
+) throws -> DeviceTrustV6SubscriptionFixture {
+    let signer = try suppliedSigner ?? Curve25519.Signing.PrivateKey(
+        rawRepresentation: Data(repeating: 0x67, count: 32)
+    )
+    let identityProvider = TestStudioLANDeviceIdentityProvider()
+    let stateStore = TestStudioLANDeviceTrustStateStore()
+    let controller = try StudioLANDeviceTrustController(
+        identityProvider: identityProvider,
+        stateStore: stateStore
+    )
+    let studioID = UUID(uuidString: "55555555-5555-4555-8555-555555555555")!
+    let authority = makeAuthority(epoch: authorityEpoch)
+    let signingPublicKeyData = signer.publicKey.rawRepresentation
+    let signingPublicKey = signingPublicKeyData.base64EncodedString()
+    let signingKeyID = String(
+        TchurchStudioLANCrypto.sha256Hex(signingPublicKeyData).prefix(24)
+    )
+    let challenge = TchurchStudioLANServerChallenge(
+        schemaVersion: 1,
+        challengeID: UUID(uuidString: "abababab-abab-4bab-8bab-abababababab")!,
+        serverNonce: Data(repeating: 0x11, count: 32).base64EncodedString(),
+        authority: authority,
+        signingKeyID: signingKeyID,
+        issuedAtMilliseconds: 1_000_000,
+        expiresAtMilliseconds: 2_000_000,
+        deviceTrustVersion: 4,
+        minimumPayloadVersion: 4,
+        studioID: studioID
+    )
+    let identity = try controller.beginEnrollment(studioID: studioID)
+    let requestID = UUID(uuidString: "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd")!
+    let nonce = Data(repeating: 0x22, count: 24)
+    let offeredPayloadVersions = suppliedOfferedPayloadVersions ??
+        TchurchStudioLANPayloadNegotiation(protocolFloor: 4)
+            .supportedPayloadVersions(
+                for: channel,
+                advertisedPayloadVersions:
+                    TchurchStudioLANSubscriptionRequest.deviceTrustSupportedPayloadVersions
+            )
+    let requestedRole: StudioLANDeviceRole = channel == .control ? .production : .musicians
+    let attestation = try controller.makeAttestation(
+        challenge: challenge,
+        requestID: requestID,
+        clientName: "Tchurch iOS",
+        channel: channel,
+        clientNonce: nonce.base64EncodedString(),
+        supportedPayloadVersions: offeredPayloadVersions,
+        requestedRole: requestedRole
+    )
+    let secret = try fixedSecret(0x55)
+    let request = try TchurchStudioLANSubscriptionAuthenticator.makeRequest(
+        challenge: challenge,
+        clientID: identity.deviceID,
+        clientName: "Tchurch iOS",
+        channel: channel,
+        secret: secret,
+        requestID: requestID,
+        clientNonce: nonce,
+        schemaVersion: TchurchStudioLANSubscriptionRequest.deviceTrustSchemaVersion,
+        offeredPayloadVersions: offeredPayloadVersions,
+        deviceAttestation: attestation
+    )
+    let deviceGrant = try makeStudioLANDeviceGrant(
+        identity: identity,
+        signer: signer,
+        studioID: studioID,
+        permissions: channel == .control ? [.observe, .controlProgram] : [.observe],
+        role: requestedRole
+    )
+    let encodedDeviceGrant = try TchurchStudioLANCoding.encoder().encode(deviceGrant)
+    let deviceGrantChecksum = "sha256:\(TchurchStudioLANCrypto.sha256Hex(encodedDeviceGrant))"
+    let sessionID = UUID(uuidString: "efefefef-efef-4fef-8fef-efefefefefef")!
+    let expiresAtMilliseconds: Int64 = 1_500_000
+    let serverProof = try TchurchStudioLANCrypto.authenticationCode(
+        for: TestStudioLANSubscriptionGrantProofV4(
+            challengeID: challenge.challengeID,
+            sessionID: sessionID,
+            requestID: request.requestID,
+            channel: request.channel,
+            authority: authority,
+            signingKeyID: signingKeyID,
+            signingPublicKey: signingPublicKey,
+            minimumSequence: 12,
+            expiresAtMilliseconds: expiresAtMilliseconds,
+            clientNonce: request.clientNonce,
+            selectedPayloadVersion: selectedPayloadVersion,
+            deviceGrantChecksum: deviceGrantChecksum
+        ),
+        secret: secret
+    )
+    let grant = TchurchStudioLANSubscriptionGrant(
+        schemaVersion: request.schemaVersion,
+        sessionID: sessionID,
+        requestID: request.requestID,
+        channel: request.channel,
+        authority: authority,
+        signingKeyID: signingKeyID,
+        signingPublicKey: signingPublicKey,
+        minimumSequence: 12,
+        expiresAtMilliseconds: expiresAtMilliseconds,
+        selectedPayloadVersion: selectedPayloadVersion,
+        deviceGrant: deviceGrant,
+        serverProof: serverProof
+    )
+    return DeviceTrustV6SubscriptionFixture(
+        authority: authority,
+        signer: signer,
+        subscription: try TchurchStudioLANSubscriptionAuthenticator.verifyGrant(
+            grant,
+            request: request,
+            challenge: challenge,
+            secret: secret,
+            nowMilliseconds: 1_100_000
+        )
+    )
+}
+
+private func makeOperatorTimers(
+    revision: UInt64,
+    serviceAnchor: Int64 = 1_800_000_000_000,
+    serviceValue: Int64 = 90_000,
+    serviceRunning: Bool = true,
+    itemAnchor: Int64 = 1_799_999_990_000,
+    itemValue: Int64 = 30_000,
+    itemRunning: Bool = false
+) -> TchurchStudioLANOperatorTimersProjection {
+    TchurchStudioLANOperatorTimersProjection(
+        schemaVersion: 1,
+        revision: revision,
+        timers: [
+            TchurchStudioLANOperatorTimerState(
+                scope: .service,
+                anchorTimestampMilliseconds: serviceAnchor,
+                anchorValueMilliseconds: serviceValue,
+                isRunning: serviceRunning
+            ),
+            TchurchStudioLANOperatorTimerState(
+                scope: .item,
+                anchorTimestampMilliseconds: itemAnchor,
+                anchorValueMilliseconds: itemValue,
+                isRunning: itemRunning
+            ),
+        ]
+    )
+}
+
+private func makeV6ControlPayload(
+    authority: TchurchStudioLANAuthority,
+    programRevision: UInt64,
+    operatorTimers: TchurchStudioLANOperatorTimersProjection?,
+    isBlackout: Bool = false
+) throws -> TchurchStudioLANChannelPayload {
+    let audience = TchurchStudioLANAudiencePayload(
+        snapshot: TchurchStudioLANAudienceSnapshot(
+            schemaVersion: 1,
+            runID: authority.runID,
+            authorityEpoch: authority.authorityEpoch,
+            packageID: authority.packageID,
+            serviceVersion: authority.serviceVersion,
+            revision: programRevision,
+            currentCueID: nil,
+            currentCueIndex: nil,
+            cueCount: 0,
+            isBlackout: isBlackout,
+            countdown: nil
+        ),
+        cue: nil
+    )
+    let stage = TchurchStudioLANStageSupplement(
+        nextCue: nil,
+        chordLines: [],
+        currentChordSlide: nil,
+        timers: [],
+        message: nil
+    )
+    let manifest = TchurchStudioLANCueCatalogManifest(
+        schemaVersion: 1,
+        catalogID: try TchurchStudioLANCueCatalogDigest.catalogID(for: []),
+        totalCount: 0,
+        pageSize: 128
+    )
+    let control = TchurchStudioLANControlSupplement(
+        chordsVisible: false,
+        lightingArmed: false,
+        healthyOutputCount: 2,
+        expectedOutputCount: 2,
+        routeEpoch: 9,
+        cueCatalog: nil,
+        routing: TchurchStudioLANRoutingProjection(
+            schemaVersion: 1,
+            localAudience: true,
+            localBroadcast: true,
+            stageAndMusicians: false,
+            lanRemoteControl: true,
+            lightingAndMIDI: false,
+            tchurchCloudProgram: false
+        ),
+        cueCatalogManifest: manifest,
+        operatorTimers: operatorTimers
+    )
+    return .control(TchurchStudioLANControlPayload(
+        audience: audience,
+        stage: stage,
+        control: control
+    ))
+}
+
+private func makeV6Envelope(
+    fixture: DeviceTrustV6SubscriptionFixture,
+    sequence: UInt64,
+    programRevision: UInt64,
+    operatorTimers: TchurchStudioLANOperatorTimersProjection?,
+    isBlackout: Bool = false
+) throws -> TchurchStudioLANSignedEnvelope {
+    try signEnvelope(
+        payload: makeV6ControlPayload(
+            authority: fixture.authority,
+            programRevision: programRevision,
+            operatorTimers: operatorTimers,
+            isBlackout: isBlackout
+        ),
+        authority: fixture.authority,
+        identity: fixture.signer,
+        sequence: sequence,
+        revision: programRevision,
+        schemaVersion: 6
+    )
+}
+
+private func replacingOperatorTimerCommand(
+    _ value: TchurchStudioLANOperatorTimerCommand,
+    action: TchurchStudioLANOperatorTimerAction? = nil,
+    issuedAtMilliseconds: Int64? = nil,
+    expiresAtMilliseconds: Int64? = nil,
+    signature: String? = nil
+) -> TchurchStudioLANOperatorTimerCommand {
+    TchurchStudioLANOperatorTimerCommand(
+        schemaVersion: value.schemaVersion,
+        payloadVersion: value.payloadVersion,
+        commandID: value.commandID,
+        sessionID: value.sessionID,
+        deviceID: value.deviceID,
+        grantID: value.grantID,
+        deviceGrantChecksum: value.deviceGrantChecksum,
+        permissionRevision: value.permissionRevision,
+        revocationGeneration: value.revocationGeneration,
+        authority: value.authority,
+        routeEpoch: value.routeEpoch,
+        expectedTimerRevision: value.expectedTimerRevision,
+        issuedAtMilliseconds: issuedAtMilliseconds ?? value.issuedAtMilliseconds,
+        expiresAtMilliseconds: expiresAtMilliseconds ?? value.expiresAtMilliseconds,
+        action: action ?? value.action,
+        signature: signature ?? value.signature
+    )
+}
+
+private func replacingOperatorTimerReceipt(
+    _ value: TchurchStudioLANOperatorTimerReceipt,
+    timerRevision: UInt64
+) -> TchurchStudioLANOperatorTimerReceipt {
+    TchurchStudioLANOperatorTimerReceipt(
+        schemaVersion: value.schemaVersion,
+        payloadVersion: value.payloadVersion,
+        commandID: value.commandID,
+        deviceID: value.deviceID,
+        authority: value.authority,
+        routeEpoch: value.routeEpoch,
+        permissionRevision: value.permissionRevision,
+        status: value.status,
+        rejection: value.rejection,
+        timerRevision: timerRevision,
+        wasIdempotentReplay: value.wasIdempotentReplay,
+        issuedAtMilliseconds: value.issuedAtMilliseconds,
+        studioSigningKeyID: value.studioSigningKeyID,
+        signature: value.signature
     )
 }

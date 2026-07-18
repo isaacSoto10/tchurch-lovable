@@ -240,6 +240,130 @@ struct TchurchStudioLANRoutingProjection: Codable, Equatable {
     let tchurchCloudProgram: Bool
 }
 
+enum TchurchStudioLANOperatorTimerScope: String, Codable, CaseIterable, Equatable {
+    case service
+    case item
+}
+
+struct TchurchStudioLANAnyCodingKey: CodingKey {
+    let stringValue: String
+    let intValue: Int?
+
+    init?(stringValue: String) {
+        self.stringValue = stringValue
+        intValue = nil
+    }
+
+    init?(intValue: Int) {
+        stringValue = String(intValue)
+        self.intValue = intValue
+    }
+}
+
+enum TchurchStudioLANExactObject {
+    static func requireKeys(_ expected: Set<String>, from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: TchurchStudioLANAnyCodingKey.self)
+        let actual = Set(container.allKeys.map(\.stringValue))
+        guard actual == expected else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath,
+                debugDescription: "Object keys do not match the signed contract"
+            ))
+        }
+    }
+}
+
+/// V6 exposes only the two operator clocks owned by local Production. This
+/// signed control projection is intentionally separate from Stage timers.
+struct TchurchStudioLANOperatorTimerState: Codable, Equatable {
+    let scope: TchurchStudioLANOperatorTimerScope
+    let anchorTimestampMilliseconds: Int64
+    let anchorValueMilliseconds: Int64
+    let isRunning: Bool
+}
+
+extension TchurchStudioLANOperatorTimerState {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case scope, anchorTimestampMilliseconds, anchorValueMilliseconds, isRunning
+    }
+
+    init(from decoder: Decoder) throws {
+        try TchurchStudioLANExactObject.requireKeys(
+            Set(CodingKeys.allCases.map(\.rawValue)),
+            from: decoder
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        scope = try container.decode(TchurchStudioLANOperatorTimerScope.self, forKey: .scope)
+        anchorTimestampMilliseconds = try container.decode(
+            Int64.self,
+            forKey: .anchorTimestampMilliseconds
+        )
+        anchorValueMilliseconds = try container.decode(
+            Int64.self,
+            forKey: .anchorValueMilliseconds
+        )
+        isRunning = try container.decode(Bool.self, forKey: .isRunning)
+        guard anchorTimestampMilliseconds >= 0,
+              anchorTimestampMilliseconds <=
+                TchurchStudioLANOperatorTimersProjection.maximumAnchorTimestampMilliseconds,
+              anchorValueMilliseconds >= 0,
+              anchorValueMilliseconds <=
+                TchurchStudioLANOperatorTimersProjection.maximumAnchorValueMilliseconds else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath,
+                debugDescription: "Invalid operator timer anchor"
+            ))
+        }
+    }
+}
+
+struct TchurchStudioLANOperatorTimersProjection: Codable, Equatable {
+    static let schemaVersion = 1
+    static let maximumRevision: UInt64 = 9_007_199_254_740_991
+    static let maximumAnchorTimestampMilliseconds: Int64 = 9_007_199_254_740_991
+    static let maximumAnchorValueMilliseconds: Int64 = 604_800_000
+
+    let schemaVersion: Int
+    let revision: UInt64
+    let timers: [TchurchStudioLANOperatorTimerState]
+
+    var isCanonical: Bool {
+        schemaVersion == Self.schemaVersion &&
+            revision <= Self.maximumRevision &&
+            timers.map(\.scope) == TchurchStudioLANOperatorTimerScope.allCases &&
+            timers.allSatisfy {
+                $0.anchorTimestampMilliseconds >= 0 &&
+                    $0.anchorTimestampMilliseconds <=
+                        Self.maximumAnchorTimestampMilliseconds &&
+                    $0.anchorValueMilliseconds >= 0 &&
+                    $0.anchorValueMilliseconds <= Self.maximumAnchorValueMilliseconds
+            }
+    }
+}
+
+extension TchurchStudioLANOperatorTimersProjection {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case schemaVersion, revision, timers
+    }
+
+    init(from decoder: Decoder) throws {
+        try TchurchStudioLANExactObject.requireKeys(
+            Set(CodingKeys.allCases.map(\.rawValue)),
+            from: decoder
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        revision = try container.decode(UInt64.self, forKey: .revision)
+        timers = try container.decode([TchurchStudioLANOperatorTimerState].self, forKey: .timers)
+        guard isCanonical else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath,
+                debugDescription: "Invalid operator timer state"
+            ))
+        }
+    }
+}
+
 struct TchurchStudioLANCueCatalogManifest: Codable, Equatable {
     static let schemaVersion = 1
     static let pageSize = 128
@@ -415,6 +539,7 @@ struct TchurchStudioLANControlSupplement: Codable, Equatable {
     let cueCatalog: [TchurchStudioLANRemoteCueDescriptor]?
     let routing: TchurchStudioLANRoutingProjection?
     let cueCatalogManifest: TchurchStudioLANCueCatalogManifest?
+    let operatorTimers: TchurchStudioLANOperatorTimersProjection?
 
     init(
         chordsVisible: Bool,
@@ -424,7 +549,8 @@ struct TchurchStudioLANControlSupplement: Codable, Equatable {
         routeEpoch: UInt64?,
         cueCatalog: [TchurchStudioLANRemoteCueDescriptor]?,
         routing: TchurchStudioLANRoutingProjection? = nil,
-        cueCatalogManifest: TchurchStudioLANCueCatalogManifest? = nil
+        cueCatalogManifest: TchurchStudioLANCueCatalogManifest? = nil,
+        operatorTimers: TchurchStudioLANOperatorTimersProjection? = nil
     ) {
         self.chordsVisible = chordsVisible
         self.lightingArmed = lightingArmed
@@ -434,6 +560,7 @@ struct TchurchStudioLANControlSupplement: Codable, Equatable {
         self.cueCatalog = cueCatalog
         self.routing = routing
         self.cueCatalogManifest = cueCatalogManifest
+        self.operatorTimers = operatorTimers
     }
 }
 
@@ -555,7 +682,8 @@ struct TchurchStudioLANSubscriptionRequest: Codable, Equatable {
     static let deviceTrustSchemaVersion = 3
     static let supportedPayloadVersions = [3, 2, 1]
     static let v4SupportedPayloadVersions = [4, 3, 2, 1]
-    static let deviceTrustSupportedPayloadVersions = [5, 4, 3, 2, 1]
+    static let v5SupportedPayloadVersions = [5, 4, 3, 2, 1]
+    static let deviceTrustSupportedPayloadVersions = [6, 5, 4, 3, 2, 1]
 
     let schemaVersion: Int
     let requestID: UUID
@@ -641,7 +769,7 @@ struct TchurchStudioLANSubscriptionGrant: Codable, Equatable {
 }
 
 struct TchurchStudioLANSignedEnvelope: Codable, Equatable {
-    static let supportedSchemaVersions = Set([1, 2, 3, 4, 5])
+    static let supportedSchemaVersions = Set([1, 2, 3, 4, 5, 6])
 
     let schemaVersion: Int
     let authority: TchurchStudioLANAuthority
@@ -948,6 +1076,28 @@ struct TchurchStudioLANPayloadNegotiation: Equatable {
             : TchurchStudioLANSubscriptionRequest.supportedPayloadVersions
     }
 
+    func supportedPayloadVersions(
+        for channel: TchurchStudioLANChannel,
+        advertisedPayloadVersions: [Int]? = nil
+    ) -> [Int] {
+        guard protocolFloor >= StudioLANDeviceTrustContract.protocolFloor else {
+            return supportedPayloadVersions
+        }
+        switch advertisedPayloadVersions {
+        case TchurchStudioLANSubscriptionRequest.deviceTrustSupportedPayloadVersions:
+            return channel == .control
+                ? TchurchStudioLANSubscriptionRequest.deviceTrustSupportedPayloadVersions
+                : TchurchStudioLANSubscriptionRequest.v5SupportedPayloadVersions
+        case TchurchStudioLANSubscriptionRequest.v5SupportedPayloadVersions:
+            return TchurchStudioLANSubscriptionRequest.v5SupportedPayloadVersions
+        default:
+            // A missing, malformed, legacy, or future Bonjour capability must
+            // never silently opt this client into v5/v6. The authenticated
+            // challenge can still complete against the common v4 floor.
+            return TchurchStudioLANSubscriptionRequest.v4SupportedPayloadVersions
+        }
+    }
+
     mutating func attemptLegacyFallback(
         afterSentRequest request: TchurchStudioLANSubscriptionRequest?,
         signal: TchurchStudioLANFallbackSignal
@@ -967,6 +1117,7 @@ struct TchurchStudioLANPayloadNegotiation: Equatable {
     mutating func recordAuthenticatedGrant(_ subscription: TchurchStudioLANVerifiedSubscription) throws {
         let selected = subscription.payloadVersion
         guard supportedPayloadVersions.contains(selected),
+              (selected != 6 || subscription.channel == .control),
               selected >= protocolFloor,
               negotiatedPayloadVersion.map({ $0 == selected }) ?? true else {
             throw TchurchStudioLANError.unsupportedPayloadVersion
@@ -1025,6 +1176,7 @@ enum TchurchStudioLANSubscriptionAuthenticator {
                 supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.supportedPayloadVersions ||
                 (schemaVersion == TchurchStudioLANSubscriptionRequest.deviceTrustSchemaVersion &&
                     (supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.deviceTrustSupportedPayloadVersions ||
+                        supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.v5SupportedPayloadVersions ||
                         supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.v4SupportedPayloadVersions)) else {
             throw TchurchStudioLANError.unsupportedPayloadVersion
         }
@@ -1033,6 +1185,7 @@ enum TchurchStudioLANSubscriptionAuthenticator {
            let supportedPayloadVersions,
            let deviceAttestation {
             guard supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.deviceTrustSupportedPayloadVersions ||
+                    supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.v5SupportedPayloadVersions ||
                     supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.v4SupportedPayloadVersions,
                   deviceAttestation.deviceID == clientID,
                   deviceAttestation.requestedRole.channel == channel else {
@@ -1183,10 +1336,12 @@ enum TchurchStudioLANSubscriptionAuthenticator {
                   let studioID = challenge.studioID,
                   let offeredPayloadVersions = request.supportedPayloadVersions,
                   offeredPayloadVersions == TchurchStudioLANSubscriptionRequest.deviceTrustSupportedPayloadVersions ||
+                    offeredPayloadVersions == TchurchStudioLANSubscriptionRequest.v5SupportedPayloadVersions ||
                     offeredPayloadVersions == TchurchStudioLANSubscriptionRequest.v4SupportedPayloadVersions,
                   let attestation = request.deviceAttestation,
                   let selectedPayloadVersion = grant.selectedPayloadVersion,
-                  selectedPayloadVersion == 4 || selectedPayloadVersion == 5,
+                  selectedPayloadVersion == 4 || selectedPayloadVersion == 5 || selectedPayloadVersion == 6,
+                  selectedPayloadVersion != 6 || request.channel == .control,
                   offeredPayloadVersions.contains(selectedPayloadVersion),
                   let deviceGrant = grant.deviceGrant,
                   deviceGrant.deviceID == request.clientID,
@@ -1249,8 +1404,16 @@ struct TchurchStudioLANReplayGuard: Equatable {
     private(set) var lastSequence: UInt64?
     private(set) var lastRevision: UInt64?
     private(set) var lastPayloadChecksum: String?
+    private(set) var lastOperatorTimerRevision: UInt64?
+    private(set) var lastOperatorTimersChecksum: String?
+    private(set) var lastV6ProgramPayloadChecksum: String?
+    private(set) var lastV6OperatorTimersAvailable: Bool?
+    private(set) var negotiatedPayloadVersion: Int?
 
     mutating func begin(_ subscription: TchurchStudioLANVerifiedSubscription) throws {
+        var shouldResetReplayEpoch = negotiatedPayloadVersion.map {
+            $0 != subscription.payloadVersion
+        } ?? false
         if let current = authority, current.runID == subscription.authority.runID {
             guard subscription.authority.authorityEpoch >= current.authorityEpoch else {
                 throw TchurchStudioLANError.staleAuthorityEpoch
@@ -1265,23 +1428,31 @@ struct TchurchStudioLANReplayGuard: Equatable {
                     // challenge/request/grant was authenticated with the PSK,
                     // so a new key under the exact authority is an explicit
                     // server restart, not an unauthenticated rollback.
-                    lastSequence = nil
-                    lastRevision = nil
-                    lastPayloadChecksum = nil
+                    shouldResetReplayEpoch = true
                 }
             } else {
-                lastSequence = nil
-                lastRevision = nil
-                lastPayloadChecksum = nil
+                shouldResetReplayEpoch = true
             }
         } else if authority != nil {
             // A PSK-authenticated new run is a deliberate authority reset.
-            lastSequence = nil
-            lastRevision = nil
-            lastPayloadChecksum = nil
+            shouldResetReplayEpoch = true
+        }
+        if shouldResetReplayEpoch {
+            resetReplayEpoch()
         }
         authority = subscription.authority
         signingKeyID = subscription.signingKeyID
+        negotiatedPayloadVersion = subscription.payloadVersion
+    }
+
+    private mutating func resetReplayEpoch() {
+        lastSequence = nil
+        lastRevision = nil
+        lastPayloadChecksum = nil
+        lastOperatorTimerRevision = nil
+        lastOperatorTimersChecksum = nil
+        lastV6ProgramPayloadChecksum = nil
+        lastV6OperatorTimersAvailable = nil
     }
 
     mutating func accept(_ envelope: TchurchStudioLANSignedEnvelope) throws {
@@ -1294,13 +1465,107 @@ struct TchurchStudioLANReplayGuard: Equatable {
         guard lastRevision.map({ envelope.revision >= $0 }) ?? true else {
             throw TchurchStudioLANError.staleRevision
         }
-        if envelope.revision == lastRevision,
-           envelope.payloadChecksum != lastPayloadChecksum {
-            throw TchurchStudioLANError.equivocatedRevision
+        if envelope.schemaVersion == 6 {
+            let operatorTimers = envelope.payload.control?.operatorTimers
+            let timerRevision = operatorTimers?.revision
+            let timersAvailable = timerRevision != nil
+            let programChecksum = try Self.v6ProgramPayloadChecksum(envelope.payload)
+            let operatorTimersChecksum = try operatorTimers.map {
+                TchurchStudioLANCrypto.sha256Hex(
+                    try TchurchStudioLANCoding.encoder().encode($0)
+                )
+            }
+            if let timerRevision {
+                if let previousTimerRevision = lastOperatorTimerRevision {
+                    guard timerRevision >= previousTimerRevision else {
+                        throw TchurchStudioLANError.staleRevision
+                    }
+                    if timerRevision == previousTimerRevision {
+                        guard operatorTimersChecksum == lastOperatorTimersChecksum else {
+                            throw TchurchStudioLANError.equivocatedRevision
+                        }
+                    }
+                }
+            }
+            if envelope.revision == lastRevision {
+                if envelope.payloadChecksum == lastPayloadChecksum {
+                    guard timersAvailable == lastV6OperatorTimersAvailable,
+                          timerRevision == (timersAvailable
+                            ? lastOperatorTimerRevision
+                            : nil) else {
+                        throw TchurchStudioLANError.equivocatedRevision
+                    }
+                } else {
+                    guard programChecksum == lastV6ProgramPayloadChecksum else {
+                        throw TchurchStudioLANError.equivocatedRevision
+                    }
+                    switch (lastV6OperatorTimersAvailable, timerRevision) {
+                    case (true, .some(let revision)):
+                        guard let previous = lastOperatorTimerRevision,
+                              revision > previous else {
+                            throw TchurchStudioLANError.equivocatedRevision
+                        }
+                    case (false, .some(let revision)):
+                        guard lastOperatorTimerRevision.map({ revision >= $0 }) ?? true else {
+                            throw TchurchStudioLANError.staleRevision
+                        }
+                    case (true, .none):
+                        break
+                    default:
+                        throw TchurchStudioLANError.equivocatedRevision
+                    }
+                }
+            }
+            if let timerRevision {
+                if lastOperatorTimerRevision.map({ timerRevision > $0 }) ?? true {
+                    lastOperatorTimerRevision = timerRevision
+                    lastOperatorTimersChecksum = operatorTimersChecksum
+                }
+            }
+            lastV6ProgramPayloadChecksum = programChecksum
+            lastV6OperatorTimersAvailable = timersAvailable
+        } else {
+            if envelope.revision == lastRevision,
+               envelope.payloadChecksum != lastPayloadChecksum {
+                throw TchurchStudioLANError.equivocatedRevision
+            }
+            lastOperatorTimerRevision = nil
+            lastOperatorTimersChecksum = nil
+            lastV6ProgramPayloadChecksum = nil
+            lastV6OperatorTimersAvailable = nil
         }
         lastSequence = envelope.sequence
         lastRevision = envelope.revision
         lastPayloadChecksum = envelope.payloadChecksum
+    }
+
+    private static func v6ProgramPayloadChecksum(
+        _ payload: TchurchStudioLANChannelPayload
+    ) throws -> String {
+        guard case .control(let value) = payload else {
+            throw TchurchStudioLANError.invalidPayload
+        }
+        let control = value.control
+        let programOnly = TchurchStudioLANChannelPayload.control(
+            TchurchStudioLANControlPayload(
+                audience: value.audience,
+                stage: value.stage,
+                control: TchurchStudioLANControlSupplement(
+                    chordsVisible: control.chordsVisible,
+                    lightingArmed: control.lightingArmed,
+                    healthyOutputCount: control.healthyOutputCount,
+                    expectedOutputCount: control.expectedOutputCount,
+                    routeEpoch: control.routeEpoch,
+                    cueCatalog: control.cueCatalog,
+                    routing: control.routing,
+                    cueCatalogManifest: control.cueCatalogManifest,
+                    operatorTimers: nil
+                )
+            )
+        )
+        return TchurchStudioLANCrypto.sha256Hex(
+            try TchurchStudioLANCoding.encoder().encode(programOnly)
+        )
     }
 }
 
@@ -1417,8 +1682,12 @@ struct TchurchStudioLANEnvelopeVerifier {
                   envelope.channel == .stage || envelope.channel == .control {
             throw TchurchStudioLANError.invalidPayload
         }
+        if envelope.schemaVersion == 6, envelope.channel != .control {
+            throw TchurchStudioLANError.invalidPayload
+        }
         if envelope.channel == .control {
-            guard envelope.schemaVersion == 4 || envelope.schemaVersion == 5,
+            guard envelope.schemaVersion == 4 || envelope.schemaVersion == 5 ||
+                    envelope.schemaVersion == 6,
                   let control = envelope.payload.control,
                   let routeEpoch = control.routeEpoch,
                   routeEpoch > 0,
@@ -1439,7 +1708,8 @@ struct TchurchStudioLANEnvelopeVerifier {
                               validText($0.title, maximumBytes: limits.maximumTextBytes)
                       }),
                       control.routing == nil,
-                      control.cueCatalogManifest == nil else {
+                      control.cueCatalogManifest == nil,
+                      control.operatorTimers == nil else {
                     throw TchurchStudioLANError.invalidPayload
                 }
             } else {
@@ -1454,7 +1724,10 @@ struct TchurchStudioLANEnvelopeVerifier {
                       TchurchStudioLANCueCatalogAccumulator.validCatalogID(manifest.catalogID),
                       manifest.totalCount == snapshot.cueCount,
                       (0 ... TchurchStudioLANCueCatalogManifest.maximumTotalCount).contains(manifest.totalCount),
-                      manifest.pageSize == TchurchStudioLANCueCatalogManifest.pageSize else {
+                      manifest.pageSize == TchurchStudioLANCueCatalogManifest.pageSize,
+                      envelope.schemaVersion == 5
+                        ? control.operatorTimers == nil
+                        : (control.operatorTimers?.isCanonical ?? true) else {
                     throw TchurchStudioLANError.invalidPayload
                 }
             }
@@ -1473,7 +1746,8 @@ struct TchurchStudioLANEnvelopeVerifier {
             guard slide == nil else { throw TchurchStudioLANError.invalidPayload }
             return
         }
-        guard payloadVersion == 2 || payloadVersion == 3 || payloadVersion == 4 || payloadVersion == 5 else {
+        guard payloadVersion == 2 || payloadVersion == 3 || payloadVersion == 4 ||
+                payloadVersion == 5 || payloadVersion == 6 else {
             throw TchurchStudioLANError.unsupportedPayloadVersion
         }
         guard let slide else {
@@ -1572,7 +1846,8 @@ struct TchurchStudioLANEnvelopeVerifier {
         payloadVersion: Int
     ) -> Bool {
         guard let descriptor else { return true }
-        guard payloadVersion == 3 || payloadVersion == 4 || payloadVersion == 5 else { return false }
+        guard payloadVersion == 3 || payloadVersion == 4 || payloadVersion == 5 ||
+                payloadVersion == 6 else { return false }
         return descriptor.schemaVersion == TchurchStudioLANImageAssetDescriptor.schemaVersion &&
             descriptor.objectID == mediaAssetID &&
             validAssetID(descriptor.referenceID) &&
@@ -1680,7 +1955,10 @@ enum TchurchStudioLANWireErrorCode: String, Codable, Equatable {
 }
 
 enum TchurchStudioLANWireMessage: Codable, Equatable {
-    case challenge(TchurchStudioLANServerChallenge)
+    case challenge(
+        TchurchStudioLANServerChallenge,
+        supportedPayloadVersions: [Int]? = nil
+    )
     case subscribe(TchurchStudioLANSubscriptionRequest)
     case grant(TchurchStudioLANSubscriptionGrant)
     case envelope(Data)
@@ -1691,6 +1969,8 @@ enum TchurchStudioLANWireMessage: Codable, Equatable {
     case assetUnavailable(TchurchStudioLANAssetUnavailable)
     case remoteCommand(TchurchStudioLANRemoteCommand)
     case remoteReceipt(TchurchStudioLANRemoteCommandReceipt)
+    case operatorTimerCommand(TchurchStudioLANOperatorTimerCommand)
+    case operatorTimerReceipt(TchurchStudioLANOperatorTimerReceipt)
     case catalogRequest(TchurchStudioLANCatalogRequest)
     case catalogPage(TchurchStudioLANCatalogPage)
     case catalogUnavailable(TchurchStudioLANCatalogUnavailable)
@@ -1699,20 +1979,47 @@ enum TchurchStudioLANWireMessage: Codable, Equatable {
     private enum Kind: String, Codable {
         case challenge, subscribe, grant, envelope, ping, pong
         case assetRequest, assetChunk, assetUnavailable
-        case remoteCommand, remoteReceipt, error
+        case remoteCommand, remoteReceipt, operatorTimerCommand, operatorTimerReceipt, error
         case catalogRequest, catalogPage, catalogUnavailable
     }
     private enum CodingKeys: String, CodingKey {
-        case kind, challenge, request, grant, envelope, nonce
+        case kind, challenge, supportedPayloadVersions, request, grant, envelope, nonce
         case assetRequest, assetChunk, assetUnavailable
-        case remoteCommand, remoteReceipt, error
+        case remoteCommand, remoteReceipt, operatorTimerCommand, operatorTimerReceipt, error
         case catalogRequest, catalogPage, catalogUnavailable
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        switch try container.decode(Kind.self, forKey: .kind) {
-        case .challenge: self = .challenge(try container.decode(TchurchStudioLANServerChallenge.self, forKey: .challenge))
+        let kind = try container.decode(Kind.self, forKey: .kind)
+        if kind == .operatorTimerCommand || kind == .operatorTimerReceipt {
+            let expected: Set<String> = [
+                CodingKeys.kind.rawValue,
+                kind == .operatorTimerCommand
+                    ? CodingKeys.operatorTimerCommand.rawValue
+                    : CodingKeys.operatorTimerReceipt.rawValue,
+            ]
+            try TchurchStudioLANExactObject.requireKeys(expected, from: decoder)
+        }
+        switch kind {
+        case .challenge:
+            let challenge = try container.decode(
+                TchurchStudioLANServerChallenge.self,
+                forKey: .challenge
+            )
+            let hintIsPresent = container.contains(.supportedPayloadVersions)
+            let decodedHint = try container.decodeIfPresent(
+                [Int].self,
+                forKey: .supportedPayloadVersions
+            )
+            guard !hintIsPresent || decodedHint ==
+                    TchurchStudioLANSubscriptionRequest.deviceTrustSupportedPayloadVersions else {
+                throw TchurchStudioLANError.unsupportedPayloadVersion
+            }
+            self = .challenge(
+                challenge,
+                supportedPayloadVersions: decodedHint
+            )
         case .subscribe: self = .subscribe(try container.decode(TchurchStudioLANSubscriptionRequest.self, forKey: .request))
         case .grant: self = .grant(try container.decode(TchurchStudioLANSubscriptionGrant.self, forKey: .grant))
         case .envelope: self = .envelope(try container.decode(Data.self, forKey: .envelope))
@@ -1734,6 +2041,20 @@ enum TchurchStudioLANWireMessage: Codable, Equatable {
             self = .remoteReceipt(
                 try container.decode(TchurchStudioLANRemoteCommandReceipt.self, forKey: .remoteReceipt)
             )
+        case .operatorTimerCommand:
+            self = .operatorTimerCommand(
+                try container.decode(
+                    TchurchStudioLANOperatorTimerCommand.self,
+                    forKey: .operatorTimerCommand
+                )
+            )
+        case .operatorTimerReceipt:
+            self = .operatorTimerReceipt(
+                try container.decode(
+                    TchurchStudioLANOperatorTimerReceipt.self,
+                    forKey: .operatorTimerReceipt
+                )
+            )
         case .catalogRequest:
             self = .catalogRequest(
                 try container.decode(TchurchStudioLANCatalogRequest.self, forKey: .catalogRequest)
@@ -1753,9 +2074,19 @@ enum TchurchStudioLANWireMessage: Codable, Equatable {
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
-        case .challenge(let value):
+        case .challenge(let value, let supportedPayloadVersions):
             try container.encode(Kind.challenge, forKey: .kind)
             try container.encode(value, forKey: .challenge)
+            if let supportedPayloadVersions {
+                guard supportedPayloadVersions ==
+                        TchurchStudioLANSubscriptionRequest.deviceTrustSupportedPayloadVersions else {
+                    throw TchurchStudioLANError.unsupportedPayloadVersion
+                }
+                try container.encode(
+                    supportedPayloadVersions,
+                    forKey: .supportedPayloadVersions
+                )
+            }
         case .subscribe(let value):
             try container.encode(Kind.subscribe, forKey: .kind)
             try container.encode(value, forKey: .request)
@@ -1786,6 +2117,12 @@ enum TchurchStudioLANWireMessage: Codable, Equatable {
         case .remoteReceipt(let value):
             try container.encode(Kind.remoteReceipt, forKey: .kind)
             try container.encode(value, forKey: .remoteReceipt)
+        case .operatorTimerCommand(let value):
+            try container.encode(Kind.operatorTimerCommand, forKey: .kind)
+            try container.encode(value, forKey: .operatorTimerCommand)
+        case .operatorTimerReceipt(let value):
+            try container.encode(Kind.operatorTimerReceipt, forKey: .kind)
+            try container.encode(value, forKey: .operatorTimerReceipt)
         case .catalogRequest(let value):
             try container.encode(Kind.catalogRequest, forKey: .kind)
             try container.encode(value, forKey: .catalogRequest)

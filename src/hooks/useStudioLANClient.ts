@@ -7,11 +7,14 @@ import {
   isStudioLANSupported,
   refreshStudioLANDiscovery,
   requestStudioLANDeviceReapproval,
+  sendStudioLANOperatorTimerCommand,
   sendStudioLANRemoteCommand,
   type StudioLANChannel,
   type StudioLANCueCatalogStatus,
   type StudioLANDeviceRole,
   type StudioLANImageAssetStatus,
+  type StudioLANOperatorTimerAction,
+  type StudioLANOperatorTimerFeedback,
   type StudioLANRemoteAction,
   type StudioLANRemoteFeedback,
   type StudioLANStatus,
@@ -35,6 +38,8 @@ const INITIAL_STATUS: StudioLANStatus = {
   studioId: null,
   remoteControlAvailable: false,
   remoteCommandInFlight: false,
+  operatorTimerControlAvailable: false,
+  operatorTimerCommandInFlight: false,
 };
 
 export function useStudioLANClient() {
@@ -42,6 +47,7 @@ export function useStudioLANClient() {
   const [update, setUpdate] = useState<StudioLANUpdate | null>(null);
   const [imageAsset, setImageAsset] = useState<StudioLANImageAssetStatus | null>(null);
   const [remoteFeedback, setRemoteFeedback] = useState<StudioLANRemoteFeedback | null>(null);
+  const [operatorTimerFeedback, setOperatorTimerFeedback] = useState<StudioLANOperatorTimerFeedback | null>(null);
   const [cueCatalog, setCueCatalog] = useState<StudioLANCueCatalogStatus | null>(null);
   const connectedRef = useRef(false);
   const updateRef = useRef<StudioLANUpdate | null>(null);
@@ -60,6 +66,8 @@ export function useStudioLANClient() {
           setUpdate(null);
           setImageAsset(null);
           setCueCatalog(null);
+          setRemoteFeedback(null);
+          setOperatorTimerFeedback(null);
         }
       },
       onUpdate(next) {
@@ -67,7 +75,7 @@ export function useStudioLANClient() {
           updateRef.current = next;
           setUpdate(next);
           setCueCatalog((current) => {
-            const manifest = next.payloadVersion === 5 ? next.control?.cueCatalogManifest : null;
+            const manifest = next.payloadVersion >= 5 ? next.control?.cueCatalogManifest : null;
             return manifest && current?.catalogId === manifest.catalogId
               && current.routeEpoch === next.control?.routeEpoch ? current : null;
           });
@@ -79,9 +87,12 @@ export function useStudioLANClient() {
       onRemoteFeedback(next) {
         if (active) setRemoteFeedback(next);
       },
+      onOperatorTimerFeedback(next) {
+        if (active) setOperatorTimerFeedback(next);
+      },
       onCueCatalog(next) {
         const current = updateRef.current;
-        if (!active || !connectedRef.current || current?.payloadVersion !== 5
+        if (!active || !connectedRef.current || (current?.payloadVersion !== 5 && current?.payloadVersion !== 6)
           || current.control?.cueCatalogManifest?.catalogId !== next.catalogId
           || current.control.routeEpoch !== next.routeEpoch) return;
         setCueCatalog(next);
@@ -96,6 +107,8 @@ export function useStudioLANClient() {
         setUpdate(null);
         setImageAsset(null);
         setCueCatalog(null);
+        setRemoteFeedback(null);
+        setOperatorTimerFeedback(null);
         setStatus((current) => ({
           ...current,
           phase: "failed",
@@ -122,6 +135,7 @@ export function useStudioLANClient() {
     setImageAsset(null);
     setCueCatalog(null);
     setRemoteFeedback(null);
+    setOperatorTimerFeedback(null);
     await connectToStudioLAN(serviceId, channel, pairingCode, requestedRole);
   }, []);
 
@@ -132,6 +146,7 @@ export function useStudioLANClient() {
     setImageAsset(null);
     setCueCatalog(null);
     setRemoteFeedback(null);
+    setOperatorTimerFeedback(null);
     await disconnectFromStudioLAN();
   }, []);
 
@@ -141,6 +156,8 @@ export function useStudioLANClient() {
     setUpdate(null);
     setImageAsset(null);
     setCueCatalog(null);
+    setRemoteFeedback(null);
+    setOperatorTimerFeedback(null);
     await forgetStudioLANPairing(serviceId);
   }, []);
 
@@ -152,6 +169,12 @@ export function useStudioLANClient() {
     await sendStudioLANRemoteCommand(action);
   }, []);
 
+  const sendOperatorTimerCommand = useCallback(async (
+    action: StudioLANOperatorTimerAction,
+  ) => {
+    await sendStudioLANOperatorTimerCommand(action);
+  }, []);
+
   const requestReapproval = useCallback(async () => {
     connectedRef.current = false;
     updateRef.current = null;
@@ -159,6 +182,7 @@ export function useStudioLANClient() {
     setImageAsset(null);
     setCueCatalog(null);
     setRemoteFeedback(null);
+    setOperatorTimerFeedback(null);
     await requestStudioLANDeviceReapproval();
   }, []);
 
@@ -167,12 +191,14 @@ export function useStudioLANClient() {
     update,
     imageAsset,
     remoteFeedback,
+    operatorTimerFeedback,
     cueCatalog,
     connect,
     disconnect,
     forget,
     refresh,
     sendRemoteCommand,
+    sendOperatorTimerCommand,
     requestReapproval,
   };
 }

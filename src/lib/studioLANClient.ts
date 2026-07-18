@@ -24,6 +24,8 @@ export type StudioLANStatus = {
   studioId: string | null;
   remoteControlAvailable: boolean;
   remoteCommandInFlight: boolean;
+  operatorTimerControlAvailable: boolean;
+  operatorTimerCommandInFlight: boolean;
 };
 
 export type StudioLANCue = {
@@ -97,11 +99,28 @@ export type StudioLANCueCatalogStatus = {
   message: string | null;
 };
 
+export type StudioLANOperatorTimerScope = "service" | "item";
+export type StudioLANOperatorTimerOperation = "start" | "pause";
+
+export type StudioLANOperatorTimerState = {
+  scope: StudioLANOperatorTimerScope;
+  anchorTimestampMilliseconds: number;
+  anchorValueMilliseconds: number;
+  isRunning: boolean;
+};
+
+export type StudioLANOperatorTimers = {
+  schemaVersion: 1;
+  revision: string;
+  timers: [StudioLANOperatorTimerState, StudioLANOperatorTimerState];
+};
+
 export type StudioLANUpdate = {
   channel: StudioLANChannel;
-  payloadVersion: 1 | 2 | 3 | 4 | 5;
+  payloadVersion: 1 | 2 | 3 | 4 | 5 | 6;
   sequence: string;
   revision: string;
+  issuedAtMs: number;
   receivedAtMs: number;
   authority: {
     runId: string;
@@ -133,6 +152,7 @@ export type StudioLANUpdate = {
     cueCatalog: Array<{ cueId: string; title: string }> | null;
     routing: StudioLANRouting | null;
     cueCatalogManifest: StudioLANCueCatalogManifest | null;
+    operatorTimers: StudioLANOperatorTimers | null;
   } | null;
 };
 
@@ -165,11 +185,44 @@ export type StudioLANRemoteFeedback = {
   wasIdempotentReplay: boolean;
 };
 
+export type StudioLANOperatorTimerAction = {
+  scope: StudioLANOperatorTimerScope;
+  operation: StudioLANOperatorTimerOperation;
+};
+
+export type StudioLANOperatorTimerFeedback = {
+  commandId: string;
+  kind: "operatorTimer";
+  scope: StudioLANOperatorTimerScope;
+  operation: StudioLANOperatorTimerOperation;
+  state: "queued" | "accepted" | "rejected" | "timedOut" | "interrupted";
+  rejection: StudioLANRemoteRejection | null;
+  timerRevision: string | null;
+  wasIdempotentReplay: boolean;
+};
+
+export function projectStudioLANOperatorTimerMilliseconds(
+  timer: StudioLANOperatorTimerState,
+  signedEnvelopeIssuedAtMilliseconds: number,
+  capturedPerformanceAtEnvelopeReceipt: number,
+  performanceNowMilliseconds: number,
+) {
+  const baseAtEnvelope = timer.anchorValueMilliseconds + (timer.isRunning ? Math.max(
+    0,
+    signedEnvelopeIssuedAtMilliseconds - timer.anchorTimestampMilliseconds,
+  ) : 0);
+  const projectedValueMilliseconds = baseAtEnvelope + (timer.isRunning
+    ? Math.max(0, performanceNowMilliseconds - capturedPerformanceAtEnvelopeReceipt)
+    : 0);
+  return Math.min(604_800_000, Math.max(0, projectedValueMilliseconds));
+}
+
 interface StudioLANNativePlugin {
   startDiscovery(): Promise<{ accepted: boolean }>;
   stopDiscovery(): Promise<{ accepted: boolean }>;
   connect(options: { serviceId: string; channel: StudioLANChannel; requestedRole: StudioLANDeviceRole; pairingCode?: string }): Promise<{ accepted: boolean }>;
   sendRemoteCommand(options: StudioLANRemoteAction): Promise<{ accepted: boolean; commandId: string }>;
+  sendOperatorTimerCommand(options: StudioLANOperatorTimerAction): Promise<{ accepted: boolean; commandId: string }>;
   requestDeviceReapproval(): Promise<{ accepted: boolean; deviceId: string }>;
   disconnect(): Promise<{ accepted: boolean }>;
   forgetPairing(options: { serviceId: string }): Promise<{ accepted: boolean }>;
@@ -185,6 +238,7 @@ interface StudioLANNativePlugin {
   addListener(eventName: "studioLANUpdate", listener: (update: unknown) => void): Promise<PluginListenerHandle>;
   addListener(eventName: "studioLANImageAsset", listener: (status: unknown) => void): Promise<PluginListenerHandle>;
   addListener(eventName: "studioLANRemoteFeedback", listener: (feedback: unknown) => void): Promise<PluginListenerHandle>;
+  addListener(eventName: "studioLANOperatorTimerFeedback", listener: (feedback: unknown) => void): Promise<PluginListenerHandle>;
   addListener(eventName: "studioLANCueCatalog", listener: (status: unknown) => void): Promise<PluginListenerHandle>;
 }
 
@@ -272,6 +326,8 @@ const DEFAULT_STATUS: StudioLANStatus = {
   studioId: null,
   remoteControlAvailable: false,
   remoteCommandInFlight: false,
+  operatorTimerControlAvailable: false,
+  operatorTimerCommandInFlight: false,
 };
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -325,7 +381,7 @@ function imageAsset(value: unknown): StudioLANImageAssetDescriptor | null | unde
   };
 }
 
-function cue(value: unknown, payloadVersion: 1 | 2 | 3 | 4 | 5): StudioLANCue | null | undefined {
+function cue(value: unknown, payloadVersion: 1 | 2 | 3 | 4 | 5 | 6): StudioLANCue | null | undefined {
   if (value === null || value === undefined) return null;
   const source = record(value);
   if (!source) return undefined;
@@ -476,6 +532,16 @@ export function normalizeStudioLANStatus(value: unknown): StudioLANStatus {
     remoteCommandInFlight: source?.remoteCommandInFlight === true
       && phase === "connected"
       && channel === "control",
+    operatorTimerControlAvailable: source?.operatorTimerControlAvailable === true
+      && phase === "connected"
+      && channel === "control"
+      && normalizedEnrollmentState === "approved"
+      && normalizedRole === "production"
+      && permissions.includes("observe")
+      && permissions.includes("controlProgram"),
+    operatorTimerCommandInFlight: source?.operatorTimerCommandInFlight === true
+      && phase === "connected"
+      && channel === "control",
   };
 }
 
@@ -495,7 +561,9 @@ export function normalizeStudioLANUpdate(value: unknown): StudioLANUpdate | null
   const currentCueId = audience.currentCueId == null ? null : boundedString(audience.currentCueId, 160);
   const currentCueIndex = audience.currentCueIndex == null ? null : Number(audience.currentCueIndex);
   const cueCount = Number(audience.cueCount);
-  if (payloadVersion !== 1 && payloadVersion !== 2 && payloadVersion !== 3 && payloadVersion !== 4 && payloadVersion !== 5) return null;
+  if (payloadVersion !== 1 && payloadVersion !== 2 && payloadVersion !== 3
+    && payloadVersion !== 4 && payloadVersion !== 5 && payloadVersion !== 6) return null;
+  if (payloadVersion === 6 && channel !== "control") return null;
   const audienceCue = cue(audience.cue, payloadVersion);
   if ((channel !== "audience" && channel !== "stage" && channel !== "control")
     || !sequence || !UINT64.test(sequence) || !revision || !UINT64.test(revision)
@@ -549,7 +617,8 @@ export function normalizeStudioLANUpdate(value: unknown): StudioLANUpdate | null
     const healthyOutputCount = Number(sourceControl?.healthyOutputCount);
     const expectedOutputCount = Number(sourceControl?.expectedOutputCount);
     const routeEpoch = boundedString(sourceControl?.routeEpoch, 20);
-    if (!sourceControl || channel !== "control" || (payloadVersion !== 4 && payloadVersion !== 5)
+    if (!sourceControl || channel !== "control"
+      || (payloadVersion !== 4 && payloadVersion !== 5 && payloadVersion !== 6)
       || typeof sourceControl.chordsVisible !== "boolean" || typeof sourceControl.lightingArmed !== "boolean"
       || !Number.isSafeInteger(healthyOutputCount) || healthyOutputCount < 0
       || !Number.isSafeInteger(expectedOutputCount) || expectedOutputCount < healthyOutputCount
@@ -558,10 +627,12 @@ export function normalizeStudioLANUpdate(value: unknown): StudioLANUpdate | null
     let cueCatalog: Array<{ cueId: string; title: string }> | null = null;
     let routing: StudioLANRouting | null = null;
     let cueCatalogManifest: StudioLANCueCatalogManifest | null = null;
+    let operatorTimers: StudioLANOperatorTimers | null = null;
     if (payloadVersion === 4) {
       if (!Array.isArray(sourceControl.cueCatalog) || sourceControl.cueCatalog.length > cueCount
         || sourceControl.cueCatalog.length > 4_096
-        || sourceControl.routing != null || sourceControl.cueCatalogManifest != null) return null;
+        || sourceControl.routing != null || sourceControl.cueCatalogManifest != null
+        || sourceControl.operatorTimers != null) return null;
       cueCatalog = sourceControl.cueCatalog.flatMap((value) => {
         const item = record(value);
         const cueId = boundedString(item?.cueId, 160);
@@ -597,6 +668,45 @@ export function normalizeStudioLANUpdate(value: unknown): StudioLANUpdate | null
         tchurchCloudProgram: false,
       };
       cueCatalogManifest = { schemaVersion: 1, catalogId, totalCount, pageSize: 128 };
+      if (payloadVersion === 5) {
+        if (sourceControl.operatorTimers != null) return null;
+      } else if (sourceControl.operatorTimers != null) {
+        const rawOperatorTimers = record(sourceControl.operatorTimers);
+        const timerRevision = boundedString(rawOperatorTimers?.revision, 20);
+        if (!rawOperatorTimers || rawOperatorTimers.schemaVersion !== 1
+          || !timerRevision || !UINT64.test(timerRevision)
+          || BigInt(timerRevision) > 9_007_199_254_740_991n
+          || !Array.isArray(rawOperatorTimers.timers)
+          || rawOperatorTimers.timers.length !== 2) return null;
+        const normalizedTimers = rawOperatorTimers.timers.flatMap((value, index) => {
+          const item = record(value);
+          const scope = item?.scope;
+          const anchorTimestampMilliseconds = Number(item?.anchorTimestampMilliseconds);
+          const anchorValueMilliseconds = Number(item?.anchorValueMilliseconds);
+          const expectedScope = index === 0 ? "service" : "item";
+          return item && scope === expectedScope
+            && Number.isSafeInteger(anchorTimestampMilliseconds)
+            && anchorTimestampMilliseconds >= 0
+            && anchorTimestampMilliseconds <= 9_007_199_254_740_991
+            && Number.isSafeInteger(anchorValueMilliseconds)
+            && anchorValueMilliseconds >= 0
+            && anchorValueMilliseconds <= 604_800_000
+            && typeof item.isRunning === "boolean"
+            ? [{
+              scope,
+              anchorTimestampMilliseconds,
+              anchorValueMilliseconds,
+              isRunning: item.isRunning,
+            } as StudioLANOperatorTimerState]
+            : [];
+        });
+        if (normalizedTimers.length !== 2) return null;
+        operatorTimers = {
+          schemaVersion: 1,
+          revision: timerRevision,
+          timers: normalizedTimers as [StudioLANOperatorTimerState, StudioLANOperatorTimerState],
+        };
+      }
     }
     control = {
       chordsVisible: sourceControl.chordsVisible,
@@ -607,18 +717,22 @@ export function normalizeStudioLANUpdate(value: unknown): StudioLANUpdate | null
       cueCatalog,
       routing,
       cueCatalogManifest,
+      operatorTimers,
     };
   }
   if (channel === "control" && !control) return null;
   if (channel !== "control" && control) return null;
 
+  const issuedAtMs = Number(source.issuedAtMs);
   const receivedAtMs = Number(source.receivedAtMs);
-  if (!Number.isSafeInteger(receivedAtMs)) return null;
+  if (!Number.isSafeInteger(issuedAtMs) || issuedAtMs <= 0
+    || !Number.isSafeInteger(receivedAtMs)) return null;
   return {
     channel,
-    payloadVersion: payloadVersion as 1 | 2 | 3 | 4 | 5,
+    payloadVersion: payloadVersion as 1 | 2 | 3 | 4 | 5 | 6,
     sequence,
     revision,
+    issuedAtMs,
     receivedAtMs,
     authority: { runId, authorityEpoch, packageId, serviceVersion },
     audience: {
@@ -733,11 +847,47 @@ export function normalizeStudioLANRemoteFeedback(value: unknown): StudioLANRemot
   };
 }
 
+export function normalizeStudioLANOperatorTimerFeedback(
+  value: unknown,
+): StudioLANOperatorTimerFeedback | null {
+  const source = record(value);
+  const commandId = boundedString(source?.commandId, 36);
+  const scope = source?.scope;
+  const operation = source?.operation;
+  const state = source?.state;
+  const rejection = source?.rejection == null ? null : source.rejection;
+  const timerRevision = source?.timerRevision == null
+    ? null : boundedString(source.timerRevision, 20);
+  if (!source || !commandId || !UUID.test(commandId)
+    || source.kind !== "operatorTimer"
+    || (scope !== "service" && scope !== "item")
+    || (operation !== "start" && operation !== "pause")
+    || (state !== "queued" && state !== "accepted" && state !== "rejected"
+      && state !== "timedOut" && state !== "interrupted")
+    || (rejection != null
+      && (typeof rejection !== "string"
+        || !REMOTE_REJECTIONS.has(rejection as StudioLANRemoteRejection)))
+    || (state === "rejected" ? rejection == null : rejection != null)
+    || (timerRevision != null && !UINT64.test(timerRevision))
+    || typeof source.wasIdempotentReplay !== "boolean") return null;
+  return {
+    commandId: commandId.toLowerCase(),
+    kind: "operatorTimer",
+    scope,
+    operation,
+    state,
+    rejection: rejection as StudioLANRemoteRejection | null,
+    timerRevision,
+    wasIdempotentReplay: source.wasIdempotentReplay,
+  };
+}
+
 export async function connectStudioLANBridge(callbacks: {
   onStatus: (status: StudioLANStatus) => void;
   onUpdate: (update: StudioLANUpdate) => void;
   onImageAsset: (status: StudioLANImageAssetStatus) => void;
   onRemoteFeedback?: (feedback: StudioLANRemoteFeedback) => void;
+  onOperatorTimerFeedback?: (feedback: StudioLANOperatorTimerFeedback) => void;
   onCueCatalog?: (status: StudioLANCueCatalogStatus) => void;
 }) {
   if (!isStudioLANSupported()) {
@@ -757,6 +907,10 @@ export async function connectStudioLANBridge(callbacks: {
     StudioLANNative.addListener("studioLANRemoteFeedback", (value) => {
       const feedback = normalizeStudioLANRemoteFeedback(value);
       if (feedback) callbacks.onRemoteFeedback?.(feedback);
+    }),
+    StudioLANNative.addListener("studioLANOperatorTimerFeedback", (value) => {
+      const feedback = normalizeStudioLANOperatorTimerFeedback(value);
+      if (feedback) callbacks.onOperatorTimerFeedback?.(feedback);
     }),
     StudioLANNative.addListener("studioLANCueCatalog", (value) => {
       const status = normalizeStudioLANCueCatalogStatus(value);
@@ -800,6 +954,17 @@ export async function sendStudioLANRemoteCommand(action: StudioLANRemoteAction) 
     }
   }
   return StudioLANNative.sendRemoteCommand(action);
+}
+
+export async function sendStudioLANOperatorTimerCommand(
+  action: StudioLANOperatorTimerAction,
+) {
+  if (!isStudioLANSupported()) throw new Error("studio_lan_unavailable");
+  if ((action.scope !== "service" && action.scope !== "item")
+    || (action.operation !== "start" && action.operation !== "pause")) {
+    throw new Error("studio_lan_invalid_action");
+  }
+  return StudioLANNative.sendOperatorTimerCommand(action);
 }
 
 export async function requestStudioLANDeviceReapproval() {
