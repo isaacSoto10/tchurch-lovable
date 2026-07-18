@@ -7,6 +7,7 @@ enum StudioLANDeviceTrustContract {
     static let protocolFloor = 4
     static let possessionDomain = "tchurch-studio-lan-device-possession-v4"
     static let maximumGrantLifetimeMilliseconds: Int64 = 12 * 60 * 60 * 1_000
+    static let maximumFutureClockSkewMilliseconds: Int64 = 5_000
 }
 
 enum StudioLANDeviceRole: String, Codable, CaseIterable, Hashable, Sendable {
@@ -368,6 +369,13 @@ struct StudioLANDeviceGrant: Codable, Equatable {
         pinnedStudioSigningPublicKey: String? = nil
     ) throws {
         let normalizedPermissions = StudioLANDevicePermission.allCases.filter(permissions.contains)
+        let futureIssuedAtOffset = issuedAtMilliseconds.subtractingReportingOverflow(
+            nowMilliseconds
+        )
+        let issuedAtIsCurrent = issuedAtMilliseconds <= nowMilliseconds ||
+            (!futureIssuedAtOffset.overflow &&
+                futureIssuedAtOffset.partialValue <=
+                    StudioLANDeviceTrustContract.maximumFutureClockSkewMilliseconds)
         guard schemaVersion == Self.schemaVersion,
               protocolFloor == StudioLANDeviceTrustContract.protocolFloor,
               deviceID == identity.deviceID,
@@ -394,7 +402,7 @@ struct StudioLANDeviceGrant: Codable, Equatable {
               issuedAtMilliseconds > 0,
               expiresAtMilliseconds > issuedAtMilliseconds,
               expiresAtMilliseconds - issuedAtMilliseconds <= StudioLANDeviceTrustContract.maximumGrantLifetimeMilliseconds,
-              issuedAtMilliseconds <= nowMilliseconds,
+              issuedAtIsCurrent,
               nowMilliseconds < expiresAtMilliseconds,
               !studioSigningKeyID.isEmpty,
               studioSigningKeyID.utf8.count <= 160,
@@ -408,7 +416,7 @@ struct StudioLANDeviceGrant: Codable, Equatable {
               signatureData.count == 64,
               signatureData.base64EncodedString() == signature,
               let publicKey = try? Curve25519.Signing.PublicKey(rawRepresentation: publicKeyData) else {
-            throw expiresAtMilliseconds < nowMilliseconds
+            throw expiresAtMilliseconds <= nowMilliseconds
                 ? StudioLANDeviceTrustError.expiredGrant
                 : StudioLANDeviceTrustError.invalidGrant
         }
@@ -841,7 +849,8 @@ final class StudioLANDeviceTrustController {
         guard challenge.deviceTrustVersion == StudioLANDeviceTrustContract.schemaVersion,
               challenge.minimumPayloadVersion == StudioLANDeviceTrustContract.protocolFloor,
               let studioID = challenge.studioID,
-              supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.deviceTrustSupportedPayloadVersions ||
+              supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.controlSupportedPayloadVersions ||
+                supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.deviceTrustSupportedPayloadVersions ||
                 supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.v5SupportedPayloadVersions ||
                 supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.v4SupportedPayloadVersions,
               requestedRole.channel == channel else {

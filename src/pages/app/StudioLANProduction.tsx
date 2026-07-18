@@ -31,7 +31,9 @@ import { useStudioLANClient } from "@/hooks/useStudioLANClient";
 import { scannerErrorNotice } from "@/lib/barcodeScannerErrors";
 import {
   normalizeStudioLANPairingQR,
+  normalizeStudioLANLocalBroadcastLowerThirdAction,
   projectStudioLANOperatorTimerMilliseconds,
+  type StudioLANLocalBroadcastLowerThirdFeedback,
   type StudioLANRemoteFeedback,
   type StudioLANOperatorTimerFeedback,
   type StudioLANOperatorTimerState,
@@ -87,6 +89,33 @@ function operatorTimerFeedbackMessage(feedback: StudioLANOperatorTimerFeedback |
   return "El timer se interrumpió antes de ser confirmado.";
 }
 
+function localBroadcastLowerThirdFeedbackMessage(
+  feedback: StudioLANLocalBroadcastLowerThirdFeedback | null,
+) {
+  if (!feedback) return null;
+  if (feedback.state === "queued") {
+    return "Lower third enviado por LAN; esperando confirmación firmada…";
+  }
+  if (feedback.state === "accepted") {
+    return feedback.wasIdempotentReplay
+      ? "Studio confirmó el lower third anterior sin ejecutarlo dos veces."
+      : "Studio confirmó el lower third del Browser Source local de OBS.";
+  }
+  if (feedback.state === "rejected" && feedback.rejection) {
+    if (feedback.rejection === "revisionConflict") {
+      return "El lower third cambió antes del comando. Esperando la revisión firmada nueva.";
+    }
+    if (feedback.rejection === "unavailable") {
+      return "El Browser Source local de OBS no está disponible.";
+    }
+    return REJECTION_MESSAGES[feedback.rejection];
+  }
+  if (feedback.state === "timedOut") {
+    return "Studio no confirmó el lower third. Reconectando sin repetirlo.";
+  }
+  return "El lower third se interrumpió antes de ser confirmado.";
+}
+
 function formatOperatorTimer(milliseconds: number) {
   const totalSeconds = Math.max(0, Math.floor(milliseconds / 1_000));
   const hours = Math.floor(totalSeconds / 3_600);
@@ -102,6 +131,7 @@ export default function StudioLANProduction() {
     update,
     remoteFeedback,
     operatorTimerFeedback,
+    localBroadcastLowerThirdFeedback,
     cueCatalog: pagedCueCatalog,
     connect,
     disconnect,
@@ -109,6 +139,7 @@ export default function StudioLANProduction() {
     refresh,
     sendRemoteCommand,
     sendOperatorTimerCommand,
+    sendLocalBroadcastLowerThirdCommand,
     requestReapproval,
   } = useStudioLANClient();
   const [selectedServiceId, setSelectedServiceId] = useState("");
@@ -124,6 +155,10 @@ export default function StudioLANProduction() {
   const [commandError, setCommandError] = useState<string | null>(null);
   const [localTimerCommandPending, setLocalTimerCommandPending] = useState(false);
   const [timerCommandError, setTimerCommandError] = useState<string | null>(null);
+  const [lowerThirdTitle, setLowerThirdTitle] = useState("");
+  const [lowerThirdSubtitle, setLowerThirdSubtitle] = useState("");
+  const [localLowerThirdCommandPending, setLocalLowerThirdCommandPending] = useState(false);
+  const [lowerThirdCommandError, setLowerThirdCommandError] = useState<string | null>(null);
   const [timerMonotonicNow, setTimerMonotonicNow] = useState(() => performance.now());
   const [reapproving, setReapproving] = useState(false);
   const [reapprovalError, setReapprovalError] = useState<string | null>(null);
@@ -155,26 +190,40 @@ export default function StudioLANProduction() {
     }
   }, [operatorTimerFeedback]);
 
+  useEffect(() => {
+    if (localBroadcastLowerThirdFeedback?.state
+      && localBroadcastLowerThirdFeedback.state !== "queued") {
+      setLocalLowerThirdCommandPending(false);
+    }
+  }, [localBroadcastLowerThirdFeedback]);
+
   const selectedService = useMemo(
     () => status.services.find((service) => service.id === selectedServiceId) ?? null,
     [selectedServiceId, status.services],
   );
   const controlUpdate = update?.channel === "control" ? update : null;
-  const usesPagedCatalog = controlUpdate?.payloadVersion === 5 || controlUpdate?.payloadVersion === 6;
+  const usesPagedCatalog = controlUpdate?.payloadVersion === 5
+    || controlUpdate?.payloadVersion === 6 || controlUpdate?.payloadVersion === 7;
   const cueCatalog = useMemo(() => (
     usesPagedCatalog
       ? (pagedCueCatalog?.phase === "ready" ? pagedCueCatalog.cues ?? [] : [])
       : controlUpdate?.control?.cueCatalog ?? []
   ), [controlUpdate?.control?.cueCatalog, pagedCueCatalog, usesPagedCatalog]);
   const commandPending = localCommandPending || localTimerCommandPending
-    || status.remoteCommandInFlight || status.operatorTimerCommandInFlight;
+    || localLowerThirdCommandPending
+    || status.remoteCommandInFlight || status.operatorTimerCommandInFlight
+    || status.localBroadcastLowerThirdCommandInFlight;
   const controlsEnabled = status.remoteControlAvailable && !commandPending && controlUpdate?.control != null;
   const jumpEnabled = controlsEnabled && (!usesPagedCatalog || pagedCueCatalog?.phase === "ready") && cueCatalog.length > 0;
   const currentCue = controlUpdate?.audience.cue ?? null;
   const feedback = feedbackMessage(remoteFeedback);
   const timerFeedback = operatorTimerFeedbackMessage(operatorTimerFeedback);
+  const lowerThirdFeedback = localBroadcastLowerThirdFeedbackMessage(
+    localBroadcastLowerThirdFeedback,
+  );
   const routing = controlUpdate?.control?.routing ?? null;
   const operatorTimers = controlUpdate?.payloadVersion === 6
+    || controlUpdate?.payloadVersion === 7
     ? controlUpdate.control?.operatorTimers ?? null : null;
   const timerClockOrigin = useMemo(() => ({
     sequence: controlUpdate?.sequence ?? "0",
@@ -182,9 +231,30 @@ export default function StudioLANProduction() {
     monotonicMilliseconds: performance.now(),
   }), [controlUpdate?.sequence, operatorTimers?.revision]);
   const timerControlsEnabled = status.operatorTimerControlAvailable
-    && controlUpdate?.payloadVersion === 6
+    && (controlUpdate?.payloadVersion === 6 || controlUpdate?.payloadVersion === 7)
     && operatorTimers != null
     && !commandPending;
+  const lowerThird = controlUpdate?.payloadVersion === 7
+    ? controlUpdate.control?.localBroadcastLowerThird ?? null : null;
+  const lowerThirdShowAction = useMemo(() => {
+    const title = lowerThirdTitle.trim();
+    const subtitle = lowerThirdSubtitle.trim();
+    return normalizeStudioLANLocalBroadcastLowerThirdAction({
+      kind: "localBroadcastLowerThird",
+      operation: "show",
+      title,
+      ...(subtitle ? { subtitle } : {}),
+    });
+  }, [lowerThirdSubtitle, lowerThirdTitle]);
+  const lowerThirdControlsEnabled = status.localBroadcastLowerThirdControlAvailable
+    && controlUpdate?.payloadVersion === 7
+    && lowerThird != null
+    && !commandPending;
+
+  useEffect(() => {
+    setLowerThirdTitle(lowerThird?.visible ? lowerThird.title ?? "" : "");
+    setLowerThirdSubtitle(lowerThird?.visible ? lowerThird.subtitle ?? "" : "");
+  }, [lowerThird?.revision, lowerThird?.subtitle, lowerThird?.title, lowerThird?.visible]);
 
   useEffect(() => {
     setTimerMonotonicNow(timerClockOrigin.monotonicMilliseconds);
@@ -286,6 +356,27 @@ export default function StudioLANProduction() {
     } catch {
       setLocalTimerCommandPending(false);
       setTimerCommandError("Studio todavía no está listo para aceptar ese timer local.");
+    }
+  }
+
+  async function runLocalBroadcastLowerThirdCommand(operation: "show" | "hide") {
+    if (!lowerThirdControlsEnabled) return;
+    const action = operation === "show"
+      ? lowerThirdShowAction
+      : normalizeStudioLANLocalBroadcastLowerThirdAction({
+        kind: "localBroadcastLowerThird",
+        operation: "hide",
+      });
+    if (!action) return;
+    setLocalLowerThirdCommandPending(true);
+    setLowerThirdCommandError(null);
+    try {
+      await sendLocalBroadcastLowerThirdCommand(action);
+    } catch {
+      setLocalLowerThirdCommandPending(false);
+      setLowerThirdCommandError(
+        "Studio todavía no está listo para aceptar ese lower third de OBS local.",
+      );
     }
   }
 
@@ -474,7 +565,94 @@ export default function StudioLANProduction() {
               </div>
             </div>
 
-            {controlUpdate.payloadVersion === 6 && (
+            {controlUpdate.payloadVersion === 7 && (
+              <div className="rounded-3xl border border-fuchsia-300/15 bg-fuchsia-300/[0.05] p-5" data-testid="studio-lan-local-broadcast-lower-third">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-black uppercase tracking-[0.18em] text-fuchsia-200">Lower third de transmisión</p>
+                    <p className="mt-1 text-xs leading-5 text-slate-300">Controla solo el Browser Source loopback que consume OBS.</p>
+                  </div>
+                  <MonitorUp className="h-5 w-5 shrink-0 text-fuchsia-200" aria-hidden="true" />
+                </div>
+                <div className="mt-4 flex flex-wrap gap-2" aria-label="Aislamiento del lower third local">
+                  {["OBS local", "sin Program", "sin Músicos", "sin Cloud"].map((label) => (
+                    <span key={label} className="rounded-full border border-white/10 bg-black/25 px-3 py-1.5 text-[10px] font-black tracking-wide text-slate-200">
+                      {label}
+                    </span>
+                  ))}
+                </div>
+                {lowerThird ? (
+                  <div className="mt-4 flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-black/20 px-4 py-3" role="status">
+                    <span className={`text-xs font-black ${lowerThird.visible ? "text-emerald-200" : "text-slate-300"}`}>
+                      {lowerThird.visible ? "Visible en OBS local" : "Oculto en OBS local"}
+                    </span>
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">Revisión {lowerThird.revision}</span>
+                  </div>
+                ) : (
+                  <p className="mt-4 rounded-2xl border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-sm font-semibold text-amber-100" role="status">
+                    Studio no publicó el estado firmado del lower third. Program y los demás controles locales siguen disponibles.
+                  </p>
+                )}
+                <div className="mt-4 grid gap-3">
+                  <div>
+                    <label htmlFor="studio-production-lower-third-title" className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Título</label>
+                    <Input
+                      id="studio-production-lower-third-title"
+                      value={lowerThirdTitle}
+                      maxLength={160}
+                      autoComplete="off"
+                      onChange={(event) => setLowerThirdTitle(event.target.value)}
+                      placeholder="Nombre o mensaje principal"
+                      className="mt-2 h-12 rounded-2xl border-white/15 bg-black/30 text-white placeholder:text-slate-600"
+                      disabled={lowerThird == null || localLowerThirdCommandPending || status.localBroadcastLowerThirdCommandInFlight}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="studio-production-lower-third-subtitle" className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Subtítulo (opcional)</label>
+                    <Input
+                      id="studio-production-lower-third-subtitle"
+                      value={lowerThirdSubtitle}
+                      maxLength={240}
+                      autoComplete="off"
+                      onChange={(event) => setLowerThirdSubtitle(event.target.value)}
+                      placeholder="Rol, iglesia o detalle breve"
+                      className="mt-2 h-12 rounded-2xl border-white/15 bg-black/30 text-white placeholder:text-slate-600"
+                      disabled={lowerThird == null || localLowerThirdCommandPending || status.localBroadcastLowerThirdCommandInFlight}
+                    />
+                  </div>
+                </div>
+                <div className="mt-4 grid grid-cols-2 gap-3">
+                  <Button
+                    type="button"
+                    className="h-12 rounded-2xl font-black"
+                    disabled={!lowerThirdControlsEnabled || lowerThirdShowAction == null}
+                    onClick={() => void runLocalBroadcastLowerThirdCommand("show")}
+                  >
+                    {localLowerThirdCommandPending && <LoaderCircle className="h-4 w-4 animate-spin" />}
+                    Mostrar / actualizar
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-12 rounded-2xl border-white/15 bg-transparent font-black text-white hover:bg-white/10 hover:text-white"
+                    disabled={!lowerThirdControlsEnabled || lowerThird?.visible !== true}
+                    onClick={() => void runLocalBroadcastLowerThirdCommand("hide")}
+                  >
+                    Ocultar
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {(lowerThirdFeedback || lowerThirdCommandError) && (
+              <div className={`rounded-2xl border px-4 py-3 text-sm font-semibold ${localBroadcastLowerThirdFeedback?.state === "accepted" ? "border-emerald-300/20 bg-emerald-300/10 text-emerald-100" : localBroadcastLowerThirdFeedback?.state === "rejected" || localBroadcastLowerThirdFeedback?.state === "timedOut" || lowerThirdCommandError ? "border-red-300/20 bg-red-300/10 text-red-100" : "border-fuchsia-300/20 bg-fuchsia-300/10 text-fuchsia-100"}`} role="status" data-testid="studio-lan-local-broadcast-lower-third-feedback">
+                {localBroadcastLowerThirdFeedback?.state === "accepted" && <CheckCircle2 className="mr-2 inline h-4 w-4" />}
+                {localLowerThirdCommandPending && <LoaderCircle className="mr-2 inline h-4 w-4 animate-spin" />}
+                {lowerThirdCommandError || lowerThirdFeedback}
+              </div>
+            )}
+
+            {(controlUpdate.payloadVersion === 6 || controlUpdate.payloadVersion === 7) && (
               <div className="rounded-3xl border border-cyan-300/15 bg-cyan-300/[0.05] p-5" data-testid="studio-lan-operator-timers">
                 <div className="flex items-start justify-between gap-3">
                   <div>

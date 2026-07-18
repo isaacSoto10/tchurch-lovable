@@ -12,6 +12,10 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "connect", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "sendRemoteCommand", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "sendOperatorTimerCommand", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(
+            name: "sendLocalBroadcastLowerThirdCommand",
+            returnType: CAPPluginReturnPromise
+        ),
         CAPPluginMethod(name: "requestDeviceReapproval", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "disconnect", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "forgetPairing", returnType: CAPPluginReturnPromise),
@@ -52,6 +56,9 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
             DispatchQueue.main.async { self?.publish(feedback) }
         }
         client?.operatorTimerFeedbackHandler = { [weak self] feedback in
+            DispatchQueue.main.async { self?.publish(feedback) }
+        }
+        client?.localBroadcastLowerThirdFeedbackHandler = { [weak self] feedback in
             DispatchQueue.main.async { self?.publish(feedback) }
         }
         client?.cueCatalogHandler = { [weak self] status in
@@ -208,6 +215,71 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
                     )
                 case .failure(TchurchStudioLANRemoteControlError.unauthorized):
                     call.reject("Studio todavía no autorizó este timer.", "UNAUTHORIZED")
+                case .failure:
+                    call.reject("El control LAN no está disponible.", "UNAVAILABLE")
+                }
+            }
+        }
+    }
+
+    @objc public func sendLocalBroadcastLowerThirdCommand(_ call: CAPPluginCall) {
+        guard let client else {
+            call.reject("El control LAN no está disponible.", "UNAVAILABLE")
+            return
+        }
+        guard call.getString("kind") ==
+                TchurchStudioLANLocalBroadcastLowerThirdActionKind
+                    .localBroadcastLowerThird.rawValue,
+              let operation = call.getString("operation").flatMap(
+                TchurchStudioLANLocalBroadcastLowerThirdOperation.init(rawValue:)
+              ) else {
+            call.reject("Este lower third local no está permitido.", "INVALID_ACTION")
+            return
+        }
+        let title = call.getString("title")
+        let subtitle = call.getString("subtitle")
+        let action: TchurchStudioLANLocalBroadcastLowerThirdAction
+        switch operation {
+        case .show:
+            guard let title else {
+                call.reject("Escribe un título válido.", "INVALID_ACTION")
+                return
+            }
+            action = .show(title: title, subtitle: subtitle)
+        case .hide:
+            guard title == nil, subtitle == nil else {
+                call.reject("Este lower third local no está permitido.", "INVALID_ACTION")
+                return
+            }
+            action = .hide
+        }
+        guard action.isValid else {
+            call.reject("Este lower third local no está permitido.", "INVALID_ACTION")
+            return
+        }
+        client.sendLocalBroadcastLowerThirdCommand(action: action) { result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let commandID):
+                    call.resolve([
+                        "accepted": true,
+                        "commandId": commandID.uuidString.lowercased(),
+                    ])
+                case .failure(TchurchStudioLANRemoteControlError.commandInFlight):
+                    call.reject(
+                        "Espera la confirmación del control anterior.",
+                        "COMMAND_IN_FLIGHT"
+                    )
+                case .failure(TchurchStudioLANRemoteControlError.invalidAction):
+                    call.reject(
+                        "Este lower third local no está permitido.",
+                        "INVALID_ACTION"
+                    )
+                case .failure(TchurchStudioLANRemoteControlError.unauthorized):
+                    call.reject(
+                        "Studio todavía no autorizó este lower third.",
+                        "UNAUTHORIZED"
+                    )
                 case .failure:
                     call.reject("El control LAN no está disponible.", "UNAVAILABLE")
                 }
@@ -388,6 +460,20 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
         ])
     }
 
+    private func publish(_ feedback: TchurchStudioLANLocalBroadcastLowerThirdFeedback) {
+        notifyListeners("studioLANLocalBroadcastLowerThirdFeedback", data: [
+            "commandId": feedback.commandID.uuidString.lowercased(),
+            "kind": feedback.action.kind.rawValue,
+            "operation": feedback.action.operation.rawValue,
+            "title": feedback.action.title ?? NSNull(),
+            "subtitle": feedback.action.subtitle ?? NSNull(),
+            "state": feedback.state.rawValue,
+            "rejection": feedback.rejection?.rawValue ?? NSNull(),
+            "lowerThirdRevision": feedback.lowerThirdRevision.map(String.init) ?? NSNull(),
+            "wasIdempotentReplay": feedback.wasIdempotentReplay,
+        ])
+    }
+
     private func publish(_ status: TchurchStudioLANCueCatalogStatus) {
         notifyListeners("studioLANCueCatalog", data: [
             "phase": status.phase.rawValue,
@@ -424,6 +510,10 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
             "remoteCommandInFlight": status.remoteCommandInFlight,
             "operatorTimerControlAvailable": status.operatorTimerControlAvailable,
             "operatorTimerCommandInFlight": status.operatorTimerCommandInFlight,
+            "localBroadcastLowerThirdControlAvailable":
+                status.localBroadcastLowerThirdControlAvailable,
+            "localBroadcastLowerThirdCommandInFlight":
+                status.localBroadcastLowerThirdCommandInFlight,
         ]
     }
 
@@ -507,6 +597,18 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
                     },
                 ] as [String: Any]
             } ?? NSNull()
+            controlPayload["localBroadcastLowerThird"] =
+                control.localBroadcastLowerThird.map {
+                    var payload: [String: Any] = [
+                        "schemaVersion": $0.schemaVersion,
+                        "revision": String($0.revision),
+                        "target": $0.target.rawValue,
+                        "visible": $0.visible,
+                    ]
+                    if let title = $0.title { payload["title"] = title }
+                    if let subtitle = $0.subtitle { payload["subtitle"] = subtitle }
+                    return payload
+                } ?? NSNull()
             result["control"] = controlPayload
         } else {
             result["control"] = NSNull()

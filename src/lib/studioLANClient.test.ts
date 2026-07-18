@@ -6,6 +6,10 @@ const nativeMocks = vi.hoisted(() => ({
     accepted: true,
     deviceId: "BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB",
   }),
+  sendLocalBroadcastLowerThirdCommand: vi.fn().mockResolvedValue({
+    accepted: true,
+    commandId: "abcdefab-cdef-4abc-8def-abcdefabcdef",
+  }),
 }));
 
 vi.mock("@capacitor/core", () => ({
@@ -19,6 +23,8 @@ vi.mock("@capacitor/core", () => ({
 import {
   normalizeStudioLANCueCatalogStatus,
   normalizeStudioLANImageAssetStatus,
+  normalizeStudioLANLocalBroadcastLowerThirdAction,
+  normalizeStudioLANLocalBroadcastLowerThirdFeedback,
   normalizeStudioLANPairingQR,
   normalizeStudioLANOperatorTimerFeedback,
   normalizeStudioLANRemoteFeedback,
@@ -26,6 +32,7 @@ import {
   normalizeStudioLANUpdate,
   projectStudioLANOperatorTimerMilliseconds,
   requestStudioLANDeviceReapproval,
+  sendStudioLANLocalBroadcastLowerThirdCommand,
   synchronizeStudioLANPrivacyContext,
 } from "./studioLANClient";
 
@@ -97,6 +104,8 @@ describe("Studio LAN native bridge boundary", () => {
       remoteCommandInFlight: false,
       operatorTimerControlAvailable: false,
       operatorTimerCommandInFlight: false,
+      localBroadcastLowerThirdControlAvailable: false,
+      localBroadcastLowerThirdCommandInFlight: false,
     });
 
     const unsafe = normalizeStudioLANStatus({
@@ -391,6 +400,186 @@ describe("Studio LAN native bridge boundary", () => {
       ...accepted,
       state: "rejected",
       rejection: "secretFailure",
+    })).toBeNull();
+  });
+
+  it("accepts only the strict control-only v7 OBS lower-third sidecar", () => {
+    const base = validUpdate();
+    const catalogId = `sha256:${"7".repeat(64)}`;
+    const lowerThird = {
+      schemaVersion: 1,
+      revision: "14",
+      target: "localBrowserOBS",
+      visible: true,
+      title: "Pastor Isaac Soto",
+      subtitle: "Tchurch",
+    };
+    const v7 = {
+      ...base,
+      channel: "control",
+      payloadVersion: 7,
+      stage: { ...base.stage, chordLines: [] },
+      control: {
+        chordsVisible: true,
+        lightingArmed: false,
+        healthyOutputCount: 2,
+        expectedOutputCount: 3,
+        routeEpoch: "9",
+        cueCatalog: null,
+        routing: {
+          schemaVersion: 1,
+          localAudience: true,
+          localBroadcast: true,
+          stageAndMusicians: false,
+          lanRemoteControl: true,
+          lightingAndMIDI: false,
+          tchurchCloudProgram: false,
+        },
+        cueCatalogManifest: { schemaVersion: 1, catalogId, totalCount: 2, pageSize: 128 },
+        operatorTimers: null,
+        localBroadcastLowerThird: lowerThird,
+      },
+    };
+
+    expect(normalizeStudioLANUpdate(v7)).toMatchObject({
+      payloadVersion: 7,
+      control: { localBroadcastLowerThird: lowerThird },
+    });
+    expect(normalizeStudioLANUpdate({
+      ...v7,
+      control: { ...v7.control, localBroadcastLowerThird: null },
+    })).toMatchObject({ payloadVersion: 7, control: { localBroadcastLowerThird: null } });
+    expect(normalizeStudioLANUpdate({
+      ...v7,
+      control: {
+        ...v7.control,
+        routing: { ...v7.control.routing, localBroadcast: false },
+      },
+    })).toBeNull();
+    expect(normalizeStudioLANUpdate({
+      ...v7,
+      control: {
+        ...v7.control,
+        routing: { ...v7.control.routing, localBroadcast: false },
+        localBroadcastLowerThird: null,
+      },
+    })).toMatchObject({
+      payloadVersion: 7,
+      control: { routing: { localBroadcast: false }, localBroadcastLowerThird: null },
+    });
+    expect(normalizeStudioLANUpdate({ ...v7, channel: "stage", control: null })).toBeNull();
+    expect(normalizeStudioLANUpdate({
+      ...v7,
+      payloadVersion: 6,
+    })).toBeNull();
+    expect(normalizeStudioLANUpdate({
+      ...v7,
+      control: {
+        ...v7.control,
+        localBroadcastLowerThird: { ...lowerThird, privateNotes: "never" },
+      },
+    })).toBeNull();
+    expect(normalizeStudioLANUpdate({
+      ...v7,
+      control: {
+        ...v7.control,
+        localBroadcastLowerThird: { ...lowerThird, visible: false },
+      },
+    })).toBeNull();
+    expect(normalizeStudioLANUpdate({
+      ...v7,
+      control: {
+        ...v7.control,
+        localBroadcastLowerThird: { ...lowerThird, title: " Pastor Isaac Soto" },
+      },
+    })).toBeNull();
+    expect(normalizeStudioLANUpdate({
+      ...v7,
+      control: {
+        ...v7.control,
+        localBroadcastLowerThird: { ...lowerThird, title: "Pastor\u2028Isaac Soto" },
+      },
+    })).toBeNull();
+    expect(normalizeStudioLANUpdate({
+      ...v7,
+      control: {
+        ...v7.control,
+        localBroadcastLowerThird: { ...lowerThird, subtitle: "Tchurch\u2029Studio" },
+      },
+    })).toBeNull();
+    expect(normalizeStudioLANUpdate({
+      ...v7,
+      control: {
+        ...v7.control,
+        localBroadcastLowerThird: {
+          schemaVersion: 1,
+          revision: "15",
+          target: "localBrowserOBS",
+          visible: false,
+        },
+      },
+    })).toMatchObject({
+      control: { localBroadcastLowerThird: { revision: "15", visible: false } },
+    });
+  });
+
+  it("normalizes and sends only the closed v7 lower-third action and feedback", async () => {
+    const show = {
+      kind: "localBroadcastLowerThird" as const,
+      operation: "show" as const,
+      title: "Pastor Isaac Soto",
+      subtitle: "Tchurch",
+    };
+    expect(normalizeStudioLANLocalBroadcastLowerThirdAction(show)).toEqual(show);
+    expect(normalizeStudioLANLocalBroadcastLowerThirdAction({
+      ...show,
+      privateNotes: "never",
+    })).toBeNull();
+    expect(normalizeStudioLANLocalBroadcastLowerThirdAction({
+      kind: "localBroadcastLowerThird",
+      operation: "hide",
+      title: null,
+    })).toBeNull();
+    expect(normalizeStudioLANLocalBroadcastLowerThirdAction({
+      ...show,
+      title: "Pastor\u2028Isaac Soto",
+    })).toBeNull();
+    expect(normalizeStudioLANLocalBroadcastLowerThirdAction({
+      ...show,
+      subtitle: "Tchurch\u2029Studio",
+    })).toBeNull();
+
+    await sendStudioLANLocalBroadcastLowerThirdCommand(show);
+    expect(nativeMocks.sendLocalBroadcastLowerThirdCommand).toHaveBeenCalledWith(show);
+
+    const accepted = {
+      commandId: "abcdefab-cdef-4abc-8def-abcdefabcdef",
+      kind: "localBroadcastLowerThird",
+      operation: "show",
+      title: "Pastor Isaac Soto",
+      subtitle: null,
+      state: "accepted",
+      rejection: null,
+      lowerThirdRevision: "15",
+      wasIdempotentReplay: false,
+    };
+    expect(normalizeStudioLANLocalBroadcastLowerThirdFeedback(accepted)).toEqual(accepted);
+    expect(normalizeStudioLANLocalBroadcastLowerThirdFeedback({
+      ...accepted,
+      state: "rejected",
+      rejection: "revisionConflict",
+    })).toMatchObject({ state: "rejected", rejection: "revisionConflict" });
+    expect(normalizeStudioLANLocalBroadcastLowerThirdFeedback({
+      ...accepted,
+      operation: "hide",
+    })).toBeNull();
+    expect(normalizeStudioLANLocalBroadcastLowerThirdFeedback({
+      ...accepted,
+      lowerThirdRevision: "9007199254740992",
+    })).toBeNull();
+    expect(normalizeStudioLANLocalBroadcastLowerThirdFeedback({
+      ...accepted,
+      token: "never",
     })).toBeNull();
   });
 

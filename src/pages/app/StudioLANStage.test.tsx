@@ -57,6 +57,8 @@ const baseStatus: StudioLANStatus = {
   remoteCommandInFlight: false,
   operatorTimerControlAvailable: false,
   operatorTimerCommandInFlight: false,
+  localBroadcastLowerThirdControlAvailable: false,
+  localBroadcastLowerThirdCommandInFlight: false,
 };
 
 const update: StudioLANUpdate = {
@@ -162,6 +164,10 @@ describe("Studio LAN stage route", () => {
     expect(screen.getByText(/no puede avanzar slides ni controlar producción/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Tchurch Studio/i })).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByRole("button", { name: /siguiente|anterior|blackout/i })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("studio-lan-local-broadcast-lower-third")).not.toBeInTheDocument();
+    ["OBS local", "sin Program", "sin Músicos", "sin Cloud"].forEach((badge) => {
+      expect(screen.queryByText(badge, { exact: true })).not.toBeInTheDocument();
+    });
   });
 
   it("shows local v4 approval, rotates terminal revocation, and exposes no production controls", async () => {

@@ -1,13 +1,14 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { StudioLANCueCatalogStatus, StudioLANOperatorTimerFeedback, StudioLANRemoteFeedback, StudioLANStatus, StudioLANUpdate } from "@/lib/studioLANClient";
+import type { StudioLANCueCatalogStatus, StudioLANLocalBroadcastLowerThirdFeedback, StudioLANOperatorTimerFeedback, StudioLANRemoteFeedback, StudioLANStatus, StudioLANUpdate } from "@/lib/studioLANClient";
 
 const mocks = vi.hoisted(() => ({
   status: null as StudioLANStatus | null,
   update: null as StudioLANUpdate | null,
   remoteFeedback: null as StudioLANRemoteFeedback | null,
   operatorTimerFeedback: null as StudioLANOperatorTimerFeedback | null,
+  localBroadcastLowerThirdFeedback: null as StudioLANLocalBroadcastLowerThirdFeedback | null,
   cueCatalog: null as StudioLANCueCatalogStatus | null,
   connect: vi.fn(),
   disconnect: vi.fn(),
@@ -15,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   refresh: vi.fn(),
   sendRemoteCommand: vi.fn(),
   sendOperatorTimerCommand: vi.fn(),
+  sendLocalBroadcastLowerThirdCommand: vi.fn(),
   requestReapproval: vi.fn(),
   scanBarcode: vi.fn(),
 }));
@@ -33,6 +35,7 @@ vi.mock("@/hooks/useStudioLANClient", () => ({
     imageAsset: null,
     remoteFeedback: mocks.remoteFeedback,
     operatorTimerFeedback: mocks.operatorTimerFeedback,
+    localBroadcastLowerThirdFeedback: mocks.localBroadcastLowerThirdFeedback,
     cueCatalog: mocks.cueCatalog,
     connect: mocks.connect,
     disconnect: mocks.disconnect,
@@ -40,6 +43,7 @@ vi.mock("@/hooks/useStudioLANClient", () => ({
     refresh: mocks.refresh,
     sendRemoteCommand: mocks.sendRemoteCommand,
     sendOperatorTimerCommand: mocks.sendOperatorTimerCommand,
+    sendLocalBroadcastLowerThirdCommand: mocks.sendLocalBroadcastLowerThirdCommand,
     requestReapproval: mocks.requestReapproval,
   }),
 }));
@@ -66,6 +70,8 @@ const baseStatus: StudioLANStatus = {
   remoteCommandInFlight: false,
   operatorTimerControlAvailable: false,
   operatorTimerCommandInFlight: false,
+  localBroadcastLowerThirdControlAvailable: false,
+  localBroadcastLowerThirdCommandInFlight: false,
 };
 
 const controlUpdate: StudioLANUpdate = {
@@ -106,6 +112,7 @@ const controlUpdate: StudioLANUpdate = {
     routing: null,
     cueCatalogManifest: null,
     operatorTimers: null,
+    localBroadcastLowerThird: null,
   },
 };
 
@@ -131,6 +138,7 @@ describe("Studio LAN production route", () => {
     mocks.update = null;
     mocks.remoteFeedback = null;
     mocks.operatorTimerFeedback = null;
+    mocks.localBroadcastLowerThirdFeedback = null;
     mocks.cueCatalog = null;
     mocks.connect.mockReset().mockResolvedValue(undefined);
     mocks.disconnect.mockReset().mockResolvedValue(undefined);
@@ -138,6 +146,7 @@ describe("Studio LAN production route", () => {
     mocks.refresh.mockReset().mockResolvedValue(undefined);
     mocks.sendRemoteCommand.mockReset().mockResolvedValue(undefined);
     mocks.sendOperatorTimerCommand.mockReset().mockResolvedValue(undefined);
+    mocks.sendLocalBroadcastLowerThirdCommand.mockReset().mockResolvedValue(undefined);
     mocks.requestReapproval.mockReset().mockResolvedValue(undefined);
     mocks.scanBarcode.mockReset().mockResolvedValue({ ScanResult: "" });
   });
@@ -425,5 +434,173 @@ describe("Studio LAN production route", () => {
     expect(screen.getByRole("button", { name: /^Siguiente$/i })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: /Coro/i }));
     expect(screen.getByRole("button", { name: /Ir a selección/i })).toBeEnabled();
+  });
+
+  it("shows the v7-only isolated OBS lower-third card and sends only its closed actions", async () => {
+    const catalogId = `sha256:${"5".repeat(64)}`;
+    mocks.status = {
+      ...connectedStatus,
+      operatorTimerControlAvailable: true,
+      localBroadcastLowerThirdControlAvailable: true,
+    };
+    mocks.update = {
+      ...controlUpdate,
+      payloadVersion: 7,
+      authority: { ...controlUpdate.authority, serviceVersion: "v7" },
+      control: {
+        ...controlUpdate.control!,
+        cueCatalog: null,
+        routing: {
+          schemaVersion: 1,
+          localAudience: true,
+          localBroadcast: true,
+          stageAndMusicians: false,
+          lanRemoteControl: true,
+          lightingAndMIDI: false,
+          tchurchCloudProgram: false,
+        },
+        cueCatalogManifest: { schemaVersion: 1, catalogId, totalCount: 2, pageSize: 128 },
+        operatorTimers: {
+          schemaVersion: 1,
+          revision: "12",
+          timers: [
+            {
+              scope: "service",
+              anchorTimestampMilliseconds: 1_800_000_004_000,
+              anchorValueMilliseconds: 90_000,
+              isRunning: false,
+            },
+            {
+              scope: "item",
+              anchorTimestampMilliseconds: 1_800_000_000_000,
+              anchorValueMilliseconds: 30_000,
+              isRunning: true,
+            },
+          ],
+        },
+        localBroadcastLowerThird: {
+          schemaVersion: 1,
+          revision: "21",
+          target: "localBrowserOBS",
+          visible: true,
+          title: "Pastor Isaac Soto",
+          subtitle: "Tchurch",
+        },
+      },
+    };
+    mocks.cueCatalog = {
+      phase: "ready",
+      catalogId,
+      routeEpoch: "5",
+      totalCount: 2,
+      receivedCount: 2,
+      cues: [{ cueId: "cue-1", title: "Verso" }, { cueId: "cue-2", title: "Coro" }],
+      message: null,
+    };
+    const view = render(<MemoryRouter><StudioLANProduction /></MemoryRouter>);
+
+    const lowerThird = await screen.findByTestId("studio-lan-local-broadcast-lower-third");
+    expect(lowerThird).toHaveTextContent(/OBS local.*sin Program.*sin Músicos.*sin Cloud/i);
+    expect(lowerThird).toHaveTextContent(/Visible en OBS local.*Revisión 21/i);
+    expect(screen.getByLabelText(/^Título$/i)).toHaveValue("Pastor Isaac Soto");
+    expect(screen.getByLabelText(/Subtítulo/i)).toHaveValue("Tchurch");
+    const timers = screen.getByTestId("studio-lan-operator-timers");
+    expect(timers).toHaveTextContent(/Producción local · no Stage · no Cloud/i);
+    const startServiceTimer = screen.getByRole("button", {
+      name: /Iniciar timer de servicio en Producción local/i,
+    });
+    expect(startServiceTimer).toBeEnabled();
+    fireEvent.click(startServiceTimer);
+    await waitFor(() => expect(mocks.sendOperatorTimerCommand).toHaveBeenCalledWith({
+      scope: "service",
+      operation: "start",
+    }));
+    mocks.operatorTimerFeedback = {
+      commandId: "12345678-1234-4abc-8def-123456789abc",
+      scope: "service",
+      operation: "start",
+      state: "accepted",
+      rejection: null,
+      timerRevision: "13",
+      wasIdempotentReplay: false,
+    };
+    view.rerender(<MemoryRouter><StudioLANProduction /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByRole("button", {
+      name: /Mostrar \/ actualizar/i,
+    })).toBeEnabled());
+
+    fireEvent.change(screen.getByLabelText(/^Título$/i), {
+      target: { value: "  Pastor Isaac Soto  " },
+    });
+    fireEvent.change(screen.getByLabelText(/Subtítulo/i), {
+      target: { value: "  Tchurch Studio  " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Mostrar \/ actualizar/i }));
+    await waitFor(() => expect(mocks.sendLocalBroadcastLowerThirdCommand).toHaveBeenCalledWith({
+      kind: "localBroadcastLowerThird",
+      operation: "show",
+      title: "Pastor Isaac Soto",
+      subtitle: "Tchurch Studio",
+    }));
+    expect(mocks.sendRemoteCommand).not.toHaveBeenCalled();
+    expect(mocks.sendOperatorTimerCommand).toHaveBeenCalledTimes(1);
+
+    mocks.localBroadcastLowerThirdFeedback = {
+      commandId: "abcdefab-cdef-4abc-8def-abcdefabcdef",
+      kind: "localBroadcastLowerThird",
+      operation: "show",
+      title: "Pastor Isaac Soto",
+      subtitle: "Tchurch Studio",
+      state: "accepted",
+      rejection: null,
+      lowerThirdRevision: "22",
+      wasIdempotentReplay: false,
+    };
+    view.rerender(<MemoryRouter><StudioLANProduction /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Ocultar$/i })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: /^Ocultar$/i }));
+    await waitFor(() => expect(mocks.sendLocalBroadcastLowerThirdCommand).toHaveBeenLastCalledWith({
+      kind: "localBroadcastLowerThird",
+      operation: "hide",
+    }));
+  });
+
+  it("keeps the v7 card fail-closed when its signed sidecar is unavailable", async () => {
+    mocks.status = {
+      ...connectedStatus,
+      localBroadcastLowerThirdControlAvailable: false,
+    };
+    mocks.update = {
+      ...controlUpdate,
+      payloadVersion: 7,
+      control: {
+        ...controlUpdate.control!,
+        cueCatalog: null,
+        routing: {
+          schemaVersion: 1,
+          localAudience: true,
+          localBroadcast: true,
+          stageAndMusicians: false,
+          lanRemoteControl: true,
+          lightingAndMIDI: false,
+          tchurchCloudProgram: false,
+        },
+        cueCatalogManifest: {
+          schemaVersion: 1,
+          catalogId: `sha256:${"4".repeat(64)}`,
+          totalCount: 2,
+          pageSize: 128,
+        },
+        operatorTimers: null,
+        localBroadcastLowerThird: null,
+      },
+    };
+    render(<MemoryRouter><StudioLANProduction /></MemoryRouter>);
+
+    const lowerThird = await screen.findByTestId("studio-lan-local-broadcast-lower-third");
+    expect(lowerThird).toHaveTextContent(/no publicó el estado firmado/i);
+    expect(lowerThird).toHaveTextContent(/Program y los demás controles locales siguen disponibles/i);
+    expect(screen.getByRole("button", { name: /Mostrar \/ actualizar/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Ocultar$/i })).toBeDisabled();
   });
 });

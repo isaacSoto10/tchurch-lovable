@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   StudioLANCueCatalogStatus,
   StudioLANImageAssetStatus,
+  StudioLANLocalBroadcastLowerThirdFeedback,
   StudioLANOperatorTimerFeedback,
   StudioLANRemoteFeedback,
   StudioLANStatus,
@@ -15,6 +16,7 @@ type BridgeCallbacks = {
   onImageAsset: (status: StudioLANImageAssetStatus) => void;
   onRemoteFeedback?: (feedback: StudioLANRemoteFeedback) => void;
   onOperatorTimerFeedback?: (feedback: StudioLANOperatorTimerFeedback) => void;
+  onLocalBroadcastLowerThirdFeedback?: (feedback: StudioLANLocalBroadcastLowerThirdFeedback) => void;
   onCueCatalog?: (status: StudioLANCueCatalogStatus) => void;
 };
 
@@ -26,6 +28,7 @@ const mocks = vi.hoisted(() => ({
   forget: vi.fn(),
   refresh: vi.fn(),
   reapproval: vi.fn(),
+  sendLowerThird: vi.fn(),
 }));
 
 vi.mock("@/lib/studioLANClient", () => ({
@@ -41,6 +44,7 @@ vi.mock("@/lib/studioLANClient", () => ({
   requestStudioLANDeviceReapproval: mocks.reapproval,
   sendStudioLANRemoteCommand: vi.fn(),
   sendStudioLANOperatorTimerCommand: vi.fn(),
+  sendStudioLANLocalBroadcastLowerThirdCommand: mocks.sendLowerThird,
 }));
 
 import { useStudioLANClient } from "./useStudioLANClient";
@@ -65,6 +69,8 @@ const connectedStatus: StudioLANStatus = {
   remoteCommandInFlight: false,
   operatorTimerControlAvailable: false,
   operatorTimerCommandInFlight: false,
+  localBroadcastLowerThirdControlAvailable: false,
+  localBroadcastLowerThirdCommandInFlight: false,
 };
 
 const update: StudioLANUpdate = {
@@ -122,6 +128,10 @@ describe("useStudioLANClient transport lifecycle", () => {
       accepted: true,
       deviceId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
     });
+    mocks.sendLowerThird.mockResolvedValue({
+      accepted: true,
+      commandId: "abcdefab-cdef-4abc-8def-abcdefabcdef",
+    });
   });
 
   it("clears private show state across reconnect, suspension, and terminal failures", async () => {
@@ -145,10 +155,22 @@ describe("useStudioLANClient transport lifecycle", () => {
         timerRevision: null,
         wasIdempotentReplay: false,
       });
+      mocks.callbacks?.onLocalBroadcastLowerThirdFeedback?.({
+        commandId: "abcdefab-cdef-4abc-8def-abcdefabcdef",
+        kind: "localBroadcastLowerThird",
+        operation: "show",
+        title: "Pastor Isaac Soto",
+        subtitle: null,
+        state: "queued",
+        rejection: null,
+        lowerThirdRevision: null,
+        wasIdempotentReplay: false,
+      });
     });
     expect(view.result.current.update).toEqual(update);
     expect(view.result.current.imageAsset).toEqual(imageAsset);
     expect(view.result.current.operatorTimerFeedback?.state).toBe("queued");
+    expect(view.result.current.localBroadcastLowerThirdFeedback?.state).toBe("queued");
 
     act(() => mocks.callbacks?.onStatus({
       ...connectedStatus,
@@ -158,6 +180,7 @@ describe("useStudioLANClient transport lifecycle", () => {
     expect(view.result.current.update).toBeNull();
     expect(view.result.current.imageAsset).toBeNull();
     expect(view.result.current.operatorTimerFeedback).toBeNull();
+    expect(view.result.current.localBroadcastLowerThirdFeedback).toBeNull();
 
     act(() => mocks.callbacks?.onStatus({
       ...connectedStatus,
@@ -190,6 +213,19 @@ describe("useStudioLANClient transport lifecycle", () => {
 
     view.unmount();
     await waitFor(() => expect(mocks.cleanup).toHaveBeenCalledOnce());
+  });
+
+  it("delegates the closed v7 lower-third action through its independent bridge lane", async () => {
+    const view = renderHook(() => useStudioLANClient());
+    await waitFor(() => expect(mocks.callbacks).not.toBeNull());
+
+    const action = {
+      kind: "localBroadcastLowerThird" as const,
+      operation: "show" as const,
+      title: "Pastor Isaac Soto",
+    };
+    await act(async () => view.result.current.sendLocalBroadcastLowerThirdCommand(action));
+    expect(mocks.sendLowerThird).toHaveBeenCalledWith(action);
   });
 
   it("clears the visible frame at every manual connection boundary", async () => {

@@ -26,6 +26,8 @@ export type StudioLANStatus = {
   remoteCommandInFlight: boolean;
   operatorTimerControlAvailable: boolean;
   operatorTimerCommandInFlight: boolean;
+  localBroadcastLowerThirdControlAvailable: boolean;
+  localBroadcastLowerThirdCommandInFlight: boolean;
 };
 
 export type StudioLANCue = {
@@ -115,9 +117,18 @@ export type StudioLANOperatorTimers = {
   timers: [StudioLANOperatorTimerState, StudioLANOperatorTimerState];
 };
 
+export type StudioLANLocalBroadcastLowerThird = {
+  schemaVersion: 1;
+  revision: string;
+  target: "localBrowserOBS";
+  visible: boolean;
+  title?: string;
+  subtitle?: string;
+};
+
 export type StudioLANUpdate = {
   channel: StudioLANChannel;
-  payloadVersion: 1 | 2 | 3 | 4 | 5 | 6;
+  payloadVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7;
   sequence: string;
   revision: string;
   issuedAtMs: number;
@@ -153,6 +164,7 @@ export type StudioLANUpdate = {
     routing: StudioLANRouting | null;
     cueCatalogManifest: StudioLANCueCatalogManifest | null;
     operatorTimers: StudioLANOperatorTimers | null;
+    localBroadcastLowerThird: StudioLANLocalBroadcastLowerThird | null;
   } | null;
 };
 
@@ -201,6 +213,30 @@ export type StudioLANOperatorTimerFeedback = {
   wasIdempotentReplay: boolean;
 };
 
+export type StudioLANLocalBroadcastLowerThirdAction =
+  | {
+    kind: "localBroadcastLowerThird";
+    operation: "show";
+    title: string;
+    subtitle?: string;
+  }
+  | {
+    kind: "localBroadcastLowerThird";
+    operation: "hide";
+  };
+
+export type StudioLANLocalBroadcastLowerThirdFeedback = {
+  commandId: string;
+  kind: "localBroadcastLowerThird";
+  operation: "show" | "hide";
+  title: string | null;
+  subtitle: string | null;
+  state: "queued" | "accepted" | "rejected" | "timedOut" | "interrupted";
+  rejection: StudioLANRemoteRejection | null;
+  lowerThirdRevision: string | null;
+  wasIdempotentReplay: boolean;
+};
+
 export function projectStudioLANOperatorTimerMilliseconds(
   timer: StudioLANOperatorTimerState,
   signedEnvelopeIssuedAtMilliseconds: number,
@@ -223,6 +259,7 @@ interface StudioLANNativePlugin {
   connect(options: { serviceId: string; channel: StudioLANChannel; requestedRole: StudioLANDeviceRole; pairingCode?: string }): Promise<{ accepted: boolean }>;
   sendRemoteCommand(options: StudioLANRemoteAction): Promise<{ accepted: boolean; commandId: string }>;
   sendOperatorTimerCommand(options: StudioLANOperatorTimerAction): Promise<{ accepted: boolean; commandId: string }>;
+  sendLocalBroadcastLowerThirdCommand(options: StudioLANLocalBroadcastLowerThirdAction): Promise<{ accepted: boolean; commandId: string }>;
   requestDeviceReapproval(): Promise<{ accepted: boolean; deviceId: string }>;
   disconnect(): Promise<{ accepted: boolean }>;
   forgetPairing(options: { serviceId: string }): Promise<{ accepted: boolean }>;
@@ -239,6 +276,7 @@ interface StudioLANNativePlugin {
   addListener(eventName: "studioLANImageAsset", listener: (status: unknown) => void): Promise<PluginListenerHandle>;
   addListener(eventName: "studioLANRemoteFeedback", listener: (feedback: unknown) => void): Promise<PluginListenerHandle>;
   addListener(eventName: "studioLANOperatorTimerFeedback", listener: (feedback: unknown) => void): Promise<PluginListenerHandle>;
+  addListener(eventName: "studioLANLocalBroadcastLowerThirdFeedback", listener: (feedback: unknown) => void): Promise<PluginListenerHandle>;
   addListener(eventName: "studioLANCueCatalog", listener: (status: unknown) => void): Promise<PluginListenerHandle>;
 }
 
@@ -260,6 +298,7 @@ const REMOTE_REJECTIONS = new Set<StudioLANRemoteRejection>([
 ]);
 const MAXIMUM_IMAGE_BYTES = 64 * 1_024 * 1_024;
 const CONTROL_CHARACTER = /\p{Cc}/u;
+const UNICODE_LINE_SEPARATOR = /[\u2028\u2029]/u;
 const SAFE_MESSAGES = new Set([
   "Selecciona un Tchurch Studio disponible.",
   "Ingresa el código de emparejamiento de Tchurch Studio.",
@@ -289,6 +328,8 @@ const SAFE_MESSAGES = new Set([
   "No se pudo proteger la identidad local de este dispositivo.",
   "El rol solicitado no corresponde a esta salida local.",
   "Studio no confirmó el control local. Reconectando…",
+  "Studio no confirmó el timer local. Reconectando…",
+  "Studio no confirmó el lower third local. Reconectando…",
 ]);
 const SAFE_ASSET_MESSAGES = new Set([
   "Preparando imagen offline…",
@@ -328,10 +369,61 @@ const DEFAULT_STATUS: StudioLANStatus = {
   remoteCommandInFlight: false,
   operatorTimerControlAvailable: false,
   operatorTimerCommandInFlight: false,
+  localBroadcastLowerThirdControlAvailable: false,
+  localBroadcastLowerThirdCommandInFlight: false,
 };
 
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function hasOnlyKeys(source: Record<string, unknown>, allowedKeys: readonly string[]) {
+  const allowed = new Set(allowedKeys);
+  return Object.keys(source).every((key) => allowed.has(key));
+}
+
+function hasExactKeys(source: Record<string, unknown>, expectedKeys: readonly string[]) {
+  return Object.keys(source).length === expectedKeys.length
+    && expectedKeys.every((key) => Object.prototype.hasOwnProperty.call(source, key));
+}
+
+function canonicalSingleLine(value: unknown, maximumBytes: number) {
+  const normalized = boundedString(value, maximumBytes);
+  return normalized != null && normalized === normalized.trim()
+    && !UNICODE_LINE_SEPARATOR.test(normalized) ? normalized : null;
+}
+
+function localBroadcastLowerThirdProjection(
+  value: unknown,
+): StudioLANLocalBroadcastLowerThird | null | undefined {
+  if (value === null || value === undefined) return null;
+  const lowerThird = record(value);
+  const revision = boundedString(lowerThird?.revision, 20);
+  if (!lowerThird || lowerThird.schemaVersion !== 1
+    || !revision || !UINT64.test(revision)
+    || BigInt(revision) > 9_007_199_254_740_991n
+    || lowerThird.target !== "localBrowserOBS"
+    || typeof lowerThird.visible !== "boolean") return undefined;
+  if (!lowerThird.visible) {
+    return hasExactKeys(lowerThird, ["schemaVersion", "revision", "target", "visible"])
+      ? { schemaVersion: 1, revision, target: "localBrowserOBS", visible: false }
+      : undefined;
+  }
+  if (!hasOnlyKeys(lowerThird, [
+    "schemaVersion", "revision", "target", "visible", "title", "subtitle",
+  ]) || !Object.prototype.hasOwnProperty.call(lowerThird, "title")) return undefined;
+  const title = canonicalSingleLine(lowerThird.title, 160);
+  const subtitle = lowerThird.subtitle === undefined
+    ? null : canonicalSingleLine(lowerThird.subtitle, 240);
+  if (!title || (lowerThird.subtitle !== undefined && !subtitle)) return undefined;
+  return {
+    schemaVersion: 1,
+    revision,
+    target: "localBrowserOBS",
+    visible: true,
+    title,
+    ...(subtitle ? { subtitle } : {}),
+  };
 }
 
 function boundedString(value: unknown, maximum = 16_384) {
@@ -381,7 +473,7 @@ function imageAsset(value: unknown): StudioLANImageAssetDescriptor | null | unde
   };
 }
 
-function cue(value: unknown, payloadVersion: 1 | 2 | 3 | 4 | 5 | 6): StudioLANCue | null | undefined {
+function cue(value: unknown, payloadVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7): StudioLANCue | null | undefined {
   if (value === null || value === undefined) return null;
   const source = record(value);
   if (!source) return undefined;
@@ -542,6 +634,16 @@ export function normalizeStudioLANStatus(value: unknown): StudioLANStatus {
     operatorTimerCommandInFlight: source?.operatorTimerCommandInFlight === true
       && phase === "connected"
       && channel === "control",
+    localBroadcastLowerThirdControlAvailable: source?.localBroadcastLowerThirdControlAvailable === true
+      && phase === "connected"
+      && channel === "control"
+      && normalizedEnrollmentState === "approved"
+      && normalizedRole === "production"
+      && permissions.includes("observe")
+      && permissions.includes("controlProgram"),
+    localBroadcastLowerThirdCommandInFlight: source?.localBroadcastLowerThirdCommandInFlight === true
+      && phase === "connected"
+      && channel === "control",
   };
 }
 
@@ -562,8 +664,9 @@ export function normalizeStudioLANUpdate(value: unknown): StudioLANUpdate | null
   const currentCueIndex = audience.currentCueIndex == null ? null : Number(audience.currentCueIndex);
   const cueCount = Number(audience.cueCount);
   if (payloadVersion !== 1 && payloadVersion !== 2 && payloadVersion !== 3
-    && payloadVersion !== 4 && payloadVersion !== 5 && payloadVersion !== 6) return null;
-  if (payloadVersion === 6 && channel !== "control") return null;
+    && payloadVersion !== 4 && payloadVersion !== 5 && payloadVersion !== 6
+    && payloadVersion !== 7) return null;
+  if ((payloadVersion === 6 || payloadVersion === 7) && channel !== "control") return null;
   const audienceCue = cue(audience.cue, payloadVersion);
   if ((channel !== "audience" && channel !== "stage" && channel !== "control")
     || !sequence || !UINT64.test(sequence) || !revision || !UINT64.test(revision)
@@ -618,7 +721,8 @@ export function normalizeStudioLANUpdate(value: unknown): StudioLANUpdate | null
     const expectedOutputCount = Number(sourceControl?.expectedOutputCount);
     const routeEpoch = boundedString(sourceControl?.routeEpoch, 20);
     if (!sourceControl || channel !== "control"
-      || (payloadVersion !== 4 && payloadVersion !== 5 && payloadVersion !== 6)
+      || (payloadVersion !== 4 && payloadVersion !== 5 && payloadVersion !== 6
+        && payloadVersion !== 7)
       || typeof sourceControl.chordsVisible !== "boolean" || typeof sourceControl.lightingArmed !== "boolean"
       || !Number.isSafeInteger(healthyOutputCount) || healthyOutputCount < 0
       || !Number.isSafeInteger(expectedOutputCount) || expectedOutputCount < healthyOutputCount
@@ -628,11 +732,13 @@ export function normalizeStudioLANUpdate(value: unknown): StudioLANUpdate | null
     let routing: StudioLANRouting | null = null;
     let cueCatalogManifest: StudioLANCueCatalogManifest | null = null;
     let operatorTimers: StudioLANOperatorTimers | null = null;
+    let localBroadcastLowerThird: StudioLANLocalBroadcastLowerThird | null = null;
     if (payloadVersion === 4) {
       if (!Array.isArray(sourceControl.cueCatalog) || sourceControl.cueCatalog.length > cueCount
         || sourceControl.cueCatalog.length > 4_096
         || sourceControl.routing != null || sourceControl.cueCatalogManifest != null
-        || sourceControl.operatorTimers != null) return null;
+        || sourceControl.operatorTimers != null
+        || sourceControl.localBroadcastLowerThird != null) return null;
       cueCatalog = sourceControl.cueCatalog.flatMap((value) => {
         const item = record(value);
         const cueId = boundedString(item?.cueId, 160);
@@ -707,6 +813,13 @@ export function normalizeStudioLANUpdate(value: unknown): StudioLANUpdate | null
           timers: normalizedTimers as [StudioLANOperatorTimerState, StudioLANOperatorTimerState],
         };
       }
+      const normalizedLowerThird = localBroadcastLowerThirdProjection(
+        sourceControl.localBroadcastLowerThird,
+      );
+      if (normalizedLowerThird === undefined
+        || (payloadVersion <= 6 && normalizedLowerThird != null)
+        || (normalizedLowerThird != null && rawRouting.localBroadcast !== true)) return null;
+      if (payloadVersion === 7) localBroadcastLowerThird = normalizedLowerThird;
     }
     control = {
       chordsVisible: sourceControl.chordsVisible,
@@ -718,6 +831,7 @@ export function normalizeStudioLANUpdate(value: unknown): StudioLANUpdate | null
       routing,
       cueCatalogManifest,
       operatorTimers,
+      localBroadcastLowerThird,
     };
   }
   if (channel === "control" && !control) return null;
@@ -729,7 +843,7 @@ export function normalizeStudioLANUpdate(value: unknown): StudioLANUpdate | null
     || !Number.isSafeInteger(receivedAtMs)) return null;
   return {
     channel,
-    payloadVersion: payloadVersion as 1 | 2 | 3 | 4 | 5 | 6,
+    payloadVersion: payloadVersion as 1 | 2 | 3 | 4 | 5 | 6 | 7,
     sequence,
     revision,
     issuedAtMs,
@@ -882,12 +996,85 @@ export function normalizeStudioLANOperatorTimerFeedback(
   };
 }
 
+export function normalizeStudioLANLocalBroadcastLowerThirdAction(
+  value: unknown,
+): StudioLANLocalBroadcastLowerThirdAction | null {
+  const source = record(value);
+  if (!source || source.kind !== "localBroadcastLowerThird") return null;
+  if (source.operation === "hide") {
+    return hasExactKeys(source, ["kind", "operation"])
+      ? { kind: "localBroadcastLowerThird", operation: "hide" }
+      : null;
+  }
+  if (source.operation !== "show"
+    || !hasOnlyKeys(source, ["kind", "operation", "title", "subtitle"])
+    || !Object.prototype.hasOwnProperty.call(source, "title")) return null;
+  const title = canonicalSingleLine(source.title, 160);
+  const subtitle = source.subtitle === undefined
+    ? null : canonicalSingleLine(source.subtitle, 240);
+  if (!title || (source.subtitle !== undefined && !subtitle)) return null;
+  return {
+    kind: "localBroadcastLowerThird",
+    operation: "show",
+    title,
+    ...(subtitle ? { subtitle } : {}),
+  };
+}
+
+export function normalizeStudioLANLocalBroadcastLowerThirdFeedback(
+  value: unknown,
+): StudioLANLocalBroadcastLowerThirdFeedback | null {
+  const source = record(value);
+  const commandId = boundedString(source?.commandId, 36);
+  const operation = source?.operation;
+  const state = source?.state;
+  const title = source?.title == null ? null : canonicalSingleLine(source.title, 160);
+  const subtitle = source?.subtitle == null
+    ? null : canonicalSingleLine(source.subtitle, 240);
+  const rejection = source?.rejection == null ? null : source.rejection;
+  const lowerThirdRevision = source?.lowerThirdRevision == null
+    ? null : boundedString(source.lowerThirdRevision, 20);
+  if (!source
+    || !hasExactKeys(source, [
+      "commandId", "kind", "operation", "title", "subtitle", "state", "rejection",
+      "lowerThirdRevision", "wasIdempotentReplay",
+    ])
+    || !commandId || !UUID.test(commandId)
+    || source.kind !== "localBroadcastLowerThird"
+    || (operation !== "show" && operation !== "hide")
+    || (state !== "queued" && state !== "accepted" && state !== "rejected"
+      && state !== "timedOut" && state !== "interrupted")
+    || (operation === "show" ? !title : title != null || subtitle != null)
+    || (source.title != null && title == null)
+    || (source.subtitle != null && subtitle == null)
+    || (rejection != null
+      && (typeof rejection !== "string"
+        || !REMOTE_REJECTIONS.has(rejection as StudioLANRemoteRejection)))
+    || (state === "rejected" ? rejection == null : rejection != null)
+    || (lowerThirdRevision != null
+      && (!UINT64.test(lowerThirdRevision)
+        || BigInt(lowerThirdRevision) > 9_007_199_254_740_991n))
+    || typeof source.wasIdempotentReplay !== "boolean") return null;
+  return {
+    commandId: commandId.toLowerCase(),
+    kind: "localBroadcastLowerThird",
+    operation,
+    title,
+    subtitle,
+    state,
+    rejection: rejection as StudioLANRemoteRejection | null,
+    lowerThirdRevision,
+    wasIdempotentReplay: source.wasIdempotentReplay,
+  };
+}
+
 export async function connectStudioLANBridge(callbacks: {
   onStatus: (status: StudioLANStatus) => void;
   onUpdate: (update: StudioLANUpdate) => void;
   onImageAsset: (status: StudioLANImageAssetStatus) => void;
   onRemoteFeedback?: (feedback: StudioLANRemoteFeedback) => void;
   onOperatorTimerFeedback?: (feedback: StudioLANOperatorTimerFeedback) => void;
+  onLocalBroadcastLowerThirdFeedback?: (feedback: StudioLANLocalBroadcastLowerThirdFeedback) => void;
   onCueCatalog?: (status: StudioLANCueCatalogStatus) => void;
 }) {
   if (!isStudioLANSupported()) {
@@ -911,6 +1098,10 @@ export async function connectStudioLANBridge(callbacks: {
     StudioLANNative.addListener("studioLANOperatorTimerFeedback", (value) => {
       const feedback = normalizeStudioLANOperatorTimerFeedback(value);
       if (feedback) callbacks.onOperatorTimerFeedback?.(feedback);
+    }),
+    StudioLANNative.addListener("studioLANLocalBroadcastLowerThirdFeedback", (value) => {
+      const feedback = normalizeStudioLANLocalBroadcastLowerThirdFeedback(value);
+      if (feedback) callbacks.onLocalBroadcastLowerThirdFeedback?.(feedback);
     }),
     StudioLANNative.addListener("studioLANCueCatalog", (value) => {
       const status = normalizeStudioLANCueCatalogStatus(value);
@@ -965,6 +1156,15 @@ export async function sendStudioLANOperatorTimerCommand(
     throw new Error("studio_lan_invalid_action");
   }
   return StudioLANNative.sendOperatorTimerCommand(action);
+}
+
+export async function sendStudioLANLocalBroadcastLowerThirdCommand(
+  action: StudioLANLocalBroadcastLowerThirdAction,
+) {
+  if (!isStudioLANSupported()) throw new Error("studio_lan_unavailable");
+  const normalized = normalizeStudioLANLocalBroadcastLowerThirdAction(action);
+  if (!normalized) throw new Error("studio_lan_invalid_action");
+  return StudioLANNative.sendLocalBroadcastLowerThirdCommand(normalized);
 }
 
 export async function requestStudioLANDeviceReapproval() {

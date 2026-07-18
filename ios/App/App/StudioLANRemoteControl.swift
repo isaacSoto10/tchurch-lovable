@@ -688,3 +688,438 @@ struct TchurchStudioLANOperatorTimerFeedback: Equatable {
     let timerRevision: UInt64?
     let wasIdempotentReplay: Bool
 }
+
+enum TchurchStudioLANLocalBroadcastLowerThirdContract {
+    static let schemaVersion = 1
+    static let payloadVersion = 7
+    static let signatureDomain =
+        "tchurch-studio-lan-local-broadcast-lower-third-command-v1"
+    static let receiptSignatureDomain =
+        "tchurch-studio-lan-local-broadcast-lower-third-receipt-v1"
+}
+
+enum TchurchStudioLANLocalBroadcastLowerThirdActionKind: String, Codable, Equatable {
+    case localBroadcastLowerThird
+}
+
+enum TchurchStudioLANLocalBroadcastLowerThirdOperation: String, Codable, Equatable {
+    case show
+    case hide
+}
+
+struct TchurchStudioLANLocalBroadcastLowerThirdAction: Codable, Equatable {
+    let kind: TchurchStudioLANLocalBroadcastLowerThirdActionKind
+    let operation: TchurchStudioLANLocalBroadcastLowerThirdOperation
+    let title: String?
+    let subtitle: String?
+
+    static func show(title: String, subtitle: String? = nil) -> Self {
+        Self(
+            kind: .localBroadcastLowerThird,
+            operation: .show,
+            title: title,
+            subtitle: subtitle
+        )
+    }
+
+    static let hide = Self(
+        kind: .localBroadcastLowerThird,
+        operation: .hide,
+        title: nil,
+        subtitle: nil
+    )
+
+    var isValid: Bool {
+        guard kind == .localBroadcastLowerThird else { return false }
+        switch operation {
+        case .show:
+            guard let title,
+                  TchurchStudioLANLocalBroadcastLowerThirdProjection.validSingleLine(
+                    title,
+                    maximumBytes:
+                        TchurchStudioLANLocalBroadcastLowerThirdProjection.maximumTitleBytes
+                  ) else {
+                return false
+            }
+            return subtitle.map {
+                TchurchStudioLANLocalBroadcastLowerThirdProjection.validSingleLine(
+                    $0,
+                    maximumBytes:
+                        TchurchStudioLANLocalBroadcastLowerThirdProjection.maximumSubtitleBytes
+                )
+            } ?? true
+        case .hide:
+            return title == nil && subtitle == nil
+        }
+    }
+}
+
+extension TchurchStudioLANLocalBroadcastLowerThirdAction {
+    private enum CodingKeys: String, CodingKey {
+        case kind, operation, title, subtitle
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        operation = try container.decode(
+            TchurchStudioLANLocalBroadcastLowerThirdOperation.self,
+            forKey: .operation
+        )
+        var expected: Set<String> = [CodingKeys.kind.rawValue, CodingKeys.operation.rawValue]
+        if operation == .show {
+            expected.insert(CodingKeys.title.rawValue)
+            let anyContainer = try decoder.container(
+                keyedBy: TchurchStudioLANAnyCodingKey.self
+            )
+            if anyContainer.contains(
+                TchurchStudioLANAnyCodingKey(stringValue: CodingKeys.subtitle.rawValue)!
+            ) {
+                expected.insert(CodingKeys.subtitle.rawValue)
+            }
+        }
+        try TchurchStudioLANExactObject.requireKeys(expected, from: decoder)
+        kind = try container.decode(
+            TchurchStudioLANLocalBroadcastLowerThirdActionKind.self,
+            forKey: .kind
+        )
+        title = container.contains(.title)
+            ? try container.decode(String.self, forKey: .title)
+            : nil
+        subtitle = container.contains(.subtitle)
+            ? try container.decode(String.self, forKey: .subtitle)
+            : nil
+        guard isValid else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath,
+                debugDescription: "Invalid local broadcast lower-third action"
+            ))
+        }
+    }
+}
+
+struct TchurchStudioLANLocalBroadcastLowerThirdCommand: Codable, Equatable {
+    static let schemaVersion = TchurchStudioLANLocalBroadcastLowerThirdContract.schemaVersion
+    static let payloadVersion = TchurchStudioLANLocalBroadcastLowerThirdContract.payloadVersion
+
+    let schemaVersion: Int
+    let payloadVersion: Int
+    let commandID: UUID
+    let sessionID: UUID
+    let deviceID: UUID
+    let grantID: UUID
+    let deviceGrantChecksum: String
+    let permissionRevision: UInt64
+    let revocationGeneration: UInt64
+    let authority: TchurchStudioLANAuthority
+    let routeEpoch: UInt64
+    let expectedLowerThirdRevision: UInt64
+    let issuedAtMilliseconds: Int64
+    let expiresAtMilliseconds: Int64
+    let action: TchurchStudioLANLocalBroadcastLowerThirdAction
+    let signature: String
+}
+
+extension TchurchStudioLANLocalBroadcastLowerThirdCommand {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case schemaVersion, payloadVersion, commandID, sessionID, deviceID, grantID
+        case deviceGrantChecksum, permissionRevision, revocationGeneration, authority
+        case routeEpoch, expectedLowerThirdRevision, issuedAtMilliseconds, expiresAtMilliseconds
+        case action, signature
+    }
+
+    init(from decoder: Decoder) throws {
+        try TchurchStudioLANExactObject.requireKeys(
+            Set(CodingKeys.allCases.map(\.rawValue)),
+            from: decoder
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        payloadVersion = try container.decode(Int.self, forKey: .payloadVersion)
+        commandID = try container.decode(UUID.self, forKey: .commandID)
+        sessionID = try container.decode(UUID.self, forKey: .sessionID)
+        deviceID = try container.decode(UUID.self, forKey: .deviceID)
+        grantID = try container.decode(UUID.self, forKey: .grantID)
+        deviceGrantChecksum = try container.decode(String.self, forKey: .deviceGrantChecksum)
+        permissionRevision = try container.decode(UInt64.self, forKey: .permissionRevision)
+        revocationGeneration = try container.decode(UInt64.self, forKey: .revocationGeneration)
+        authority = try container.decode(TchurchStudioLANAuthority.self, forKey: .authority)
+        routeEpoch = try container.decode(UInt64.self, forKey: .routeEpoch)
+        expectedLowerThirdRevision = try container.decode(
+            UInt64.self,
+            forKey: .expectedLowerThirdRevision
+        )
+        issuedAtMilliseconds = try container.decode(Int64.self, forKey: .issuedAtMilliseconds)
+        expiresAtMilliseconds = try container.decode(Int64.self, forKey: .expiresAtMilliseconds)
+        action = try container.decode(
+            TchurchStudioLANLocalBroadcastLowerThirdAction.self,
+            forKey: .action
+        )
+        signature = try container.decode(String.self, forKey: .signature)
+    }
+}
+
+struct TchurchStudioLANLocalBroadcastLowerThirdCommandRecoveryState: Equatable {
+    let commandID: UUID
+    let action: TchurchStudioLANLocalBroadcastLowerThirdAction
+    let expectedLowerThirdRevision: UInt64
+    let recoverUntilMilliseconds: Int64
+    private(set) var recoveryAttempts: Int
+    private(set) var isAwaitingAuthenticatedContext: Bool
+
+    init(command: TchurchStudioLANLocalBroadcastLowerThirdCommand) {
+        commandID = command.commandID
+        action = command.action
+        expectedLowerThirdRevision = command.expectedLowerThirdRevision
+        recoverUntilMilliseconds = command.issuedAtMilliseconds +
+            TchurchStudioLANRemoteControlContract.maximumAmbiguousRecoveryWindowMilliseconds
+        recoveryAttempts = 0
+        isAwaitingAuthenticatedContext = false
+    }
+
+    mutating func markAmbiguous(nowMilliseconds: Int64) -> Bool {
+        guard nowMilliseconds <= recoverUntilMilliseconds,
+              recoveryAttempts <
+                TchurchStudioLANRemoteControlContract.maximumAmbiguousRecoveryAttempts else {
+            return false
+        }
+        isAwaitingAuthenticatedContext = true
+        return true
+    }
+
+    mutating func recordResignedAttempt(
+        _ command: TchurchStudioLANLocalBroadcastLowerThirdCommand,
+        nowMilliseconds: Int64
+    ) throws {
+        guard isAwaitingAuthenticatedContext,
+              nowMilliseconds <= recoverUntilMilliseconds,
+              recoveryAttempts <
+                TchurchStudioLANRemoteControlContract.maximumAmbiguousRecoveryAttempts,
+              command.commandID == commandID,
+              command.action == action,
+              command.expectedLowerThirdRevision == expectedLowerThirdRevision else {
+            throw TchurchStudioLANRemoteControlError.invalidCommand
+        }
+        recoveryAttempts += 1
+        isAwaitingAuthenticatedContext = false
+    }
+}
+
+private struct TchurchStudioLANLocalBroadcastLowerThirdCommandSigningMaterial: Codable {
+    let schemaVersion: Int
+    let domain: String
+    let payloadVersion: Int
+    let commandID: UUID
+    let sessionID: UUID
+    let deviceID: UUID
+    let grantID: UUID
+    let deviceGrantChecksum: String
+    let permissionRevision: UInt64
+    let revocationGeneration: UInt64
+    let authority: TchurchStudioLANAuthority
+    let routeEpoch: UInt64
+    let expectedLowerThirdRevision: UInt64
+    let issuedAtMilliseconds: Int64
+    let expiresAtMilliseconds: Int64
+    let action: TchurchStudioLANLocalBroadcastLowerThirdAction
+}
+
+enum TchurchStudioLANLocalBroadcastLowerThirdCommandCrypto {
+    static func signingData(
+        for command: TchurchStudioLANLocalBroadcastLowerThirdCommand
+    ) throws -> Data {
+        try TchurchStudioLANCoding.encoder().encode(
+            TchurchStudioLANLocalBroadcastLowerThirdCommandSigningMaterial(
+                schemaVersion: command.schemaVersion,
+                domain: TchurchStudioLANLocalBroadcastLowerThirdContract.signatureDomain,
+                payloadVersion: command.payloadVersion,
+                commandID: command.commandID,
+                sessionID: command.sessionID,
+                deviceID: command.deviceID,
+                grantID: command.grantID,
+                deviceGrantChecksum: command.deviceGrantChecksum,
+                permissionRevision: command.permissionRevision,
+                revocationGeneration: command.revocationGeneration,
+                authority: command.authority,
+                routeEpoch: command.routeEpoch,
+                expectedLowerThirdRevision: command.expectedLowerThirdRevision,
+                issuedAtMilliseconds: command.issuedAtMilliseconds,
+                expiresAtMilliseconds: command.expiresAtMilliseconds,
+                action: command.action
+            )
+        )
+    }
+
+    static func verify(
+        _ command: TchurchStudioLANLocalBroadcastLowerThirdCommand,
+        deviceGrant: StudioLANDeviceGrant
+    ) throws {
+        guard command.schemaVersion ==
+                TchurchStudioLANLocalBroadcastLowerThirdCommand.schemaVersion,
+              command.payloadVersion ==
+                TchurchStudioLANLocalBroadcastLowerThirdCommand.payloadVersion,
+              command.deviceID == deviceGrant.deviceID,
+              command.grantID == deviceGrant.grantID,
+              command.permissionRevision == deviceGrant.permissionRevision,
+              command.revocationGeneration == deviceGrant.revocationGeneration,
+              command.routeEpoch > 0,
+              command.expectedLowerThirdRevision <=
+                TchurchStudioLANLocalBroadcastLowerThirdProjection.maximumRevision,
+              command.action.isValid,
+              let publicKeyData = Data(base64Encoded: deviceGrant.devicePublicKey),
+              publicKeyData.count == 65,
+              let publicKey = try? P256.Signing.PublicKey(x963Representation: publicKeyData),
+              let signatureData = Data(base64Encoded: command.signature),
+              (64 ... 80).contains(signatureData.count),
+              let signature = try? P256.Signing.ECDSASignature(
+                derRepresentation: signatureData
+              ),
+              publicKey.isValidSignature(signature, for: try signingData(for: command)) else {
+            throw TchurchStudioLANRemoteControlError.invalidCommand
+        }
+    }
+}
+
+struct TchurchStudioLANLocalBroadcastLowerThirdReceipt: Codable, Equatable {
+    static let schemaVersion = TchurchStudioLANLocalBroadcastLowerThirdContract.schemaVersion
+    static let payloadVersion = TchurchStudioLANLocalBroadcastLowerThirdContract.payloadVersion
+
+    let schemaVersion: Int
+    let payloadVersion: Int
+    let commandID: UUID
+    let deviceID: UUID
+    let authority: TchurchStudioLANAuthority
+    let routeEpoch: UInt64
+    let permissionRevision: UInt64
+    let status: TchurchStudioLANRemoteReceiptStatus
+    let rejection: TchurchStudioLANRemoteRejection?
+    let lowerThirdRevision: UInt64
+    let wasIdempotentReplay: Bool
+    let issuedAtMilliseconds: Int64
+    let studioSigningKeyID: String
+    let signature: String
+}
+
+extension TchurchStudioLANLocalBroadcastLowerThirdReceipt {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case schemaVersion, payloadVersion, commandID, deviceID, authority, routeEpoch
+        case permissionRevision, status, rejection, lowerThirdRevision, wasIdempotentReplay
+        case issuedAtMilliseconds, studioSigningKeyID, signature
+    }
+
+    init(from decoder: Decoder) throws {
+        let dynamic = try decoder.container(keyedBy: TchurchStudioLANAnyCodingKey.self)
+        let statusKey = TchurchStudioLANAnyCodingKey(
+            stringValue: CodingKeys.status.rawValue
+        )!
+        let decodedStatus = try dynamic.decode(
+            TchurchStudioLANRemoteReceiptStatus.self,
+            forKey: statusKey
+        )
+        var expected = Set(CodingKeys.allCases.map(\.rawValue))
+        if decodedStatus == .accepted {
+            expected.remove(CodingKeys.rejection.rawValue)
+        }
+        try TchurchStudioLANExactObject.requireKeys(expected, from: decoder)
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        payloadVersion = try container.decode(Int.self, forKey: .payloadVersion)
+        commandID = try container.decode(UUID.self, forKey: .commandID)
+        deviceID = try container.decode(UUID.self, forKey: .deviceID)
+        authority = try container.decode(TchurchStudioLANAuthority.self, forKey: .authority)
+        routeEpoch = try container.decode(UInt64.self, forKey: .routeEpoch)
+        permissionRevision = try container.decode(UInt64.self, forKey: .permissionRevision)
+        status = decodedStatus
+        rejection = try container.decodeIfPresent(
+            TchurchStudioLANRemoteRejection.self,
+            forKey: .rejection
+        )
+        lowerThirdRevision = try container.decode(UInt64.self, forKey: .lowerThirdRevision)
+        wasIdempotentReplay = try container.decode(Bool.self, forKey: .wasIdempotentReplay)
+        issuedAtMilliseconds = try container.decode(Int64.self, forKey: .issuedAtMilliseconds)
+        studioSigningKeyID = try container.decode(String.self, forKey: .studioSigningKeyID)
+        signature = try container.decode(String.self, forKey: .signature)
+        guard (status == .accepted) == (rejection == nil) else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath,
+                debugDescription: "Receipt status and rejection disagree"
+            ))
+        }
+    }
+}
+
+private struct TchurchStudioLANLocalBroadcastLowerThirdReceiptSigningMaterial: Codable {
+    let schemaVersion: Int
+    let domain: String
+    let payloadVersion: Int
+    let commandID: UUID
+    let deviceID: UUID
+    let authority: TchurchStudioLANAuthority
+    let routeEpoch: UInt64
+    let permissionRevision: UInt64
+    let status: TchurchStudioLANRemoteReceiptStatus
+    let rejection: TchurchStudioLANRemoteRejection?
+    let lowerThirdRevision: UInt64
+    let wasIdempotentReplay: Bool
+    let issuedAtMilliseconds: Int64
+    let studioSigningKeyID: String
+}
+
+enum TchurchStudioLANLocalBroadcastLowerThirdReceiptCrypto {
+    static func signingData(
+        for receipt: TchurchStudioLANLocalBroadcastLowerThirdReceipt
+    ) throws -> Data {
+        try TchurchStudioLANCoding.encoder().encode(
+            TchurchStudioLANLocalBroadcastLowerThirdReceiptSigningMaterial(
+                schemaVersion: receipt.schemaVersion,
+                domain: TchurchStudioLANLocalBroadcastLowerThirdContract.receiptSignatureDomain,
+                payloadVersion: receipt.payloadVersion,
+                commandID: receipt.commandID,
+                deviceID: receipt.deviceID,
+                authority: receipt.authority,
+                routeEpoch: receipt.routeEpoch,
+                permissionRevision: receipt.permissionRevision,
+                status: receipt.status,
+                rejection: receipt.rejection,
+                lowerThirdRevision: receipt.lowerThirdRevision,
+                wasIdempotentReplay: receipt.wasIdempotentReplay,
+                issuedAtMilliseconds: receipt.issuedAtMilliseconds,
+                studioSigningKeyID: receipt.studioSigningKeyID
+            )
+        )
+    }
+
+    static func verify(
+        _ receipt: TchurchStudioLANLocalBroadcastLowerThirdReceipt,
+        studioSigningPublicKey: String
+    ) throws {
+        guard receipt.schemaVersion ==
+                TchurchStudioLANLocalBroadcastLowerThirdReceipt.schemaVersion,
+              receipt.payloadVersion ==
+                TchurchStudioLANLocalBroadcastLowerThirdReceipt.payloadVersion,
+              receipt.routeEpoch > 0,
+              receipt.lowerThirdRevision <=
+                TchurchStudioLANLocalBroadcastLowerThirdProjection.maximumRevision,
+              (receipt.status == .accepted) == (receipt.rejection == nil),
+              let publicKeyData = Data(base64Encoded: studioSigningPublicKey),
+              publicKeyData.count == 32,
+              publicKeyData.base64EncodedString() == studioSigningPublicKey,
+              String(TchurchStudioLANCrypto.sha256Hex(publicKeyData).prefix(24)) ==
+                receipt.studioSigningKeyID,
+              let signature = Data(base64Encoded: receipt.signature),
+              signature.count == 64,
+              signature.base64EncodedString() == receipt.signature,
+              let key = try? Curve25519.Signing.PublicKey(rawRepresentation: publicKeyData),
+              key.isValidSignature(signature, for: try signingData(for: receipt)) else {
+            throw TchurchStudioLANRemoteControlError.invalidReceipt
+        }
+    }
+}
+
+struct TchurchStudioLANLocalBroadcastLowerThirdFeedback: Equatable {
+    let commandID: UUID
+    let action: TchurchStudioLANLocalBroadcastLowerThirdAction
+    let state: TchurchStudioLANRemoteFeedbackState
+    let rejection: TchurchStudioLANRemoteRejection?
+    let lowerThirdRevision: UInt64?
+    let wasIdempotentReplay: Bool
+}
