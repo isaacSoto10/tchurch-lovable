@@ -1,24 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { CalendarDays, ChevronRight, Loader2, PlayCircle, Radio, RefreshCw, Search, Settings2, Video } from "lucide-react";
+import { ArrowLeft, CalendarDays, Loader2, Play, Radio, RefreshCw, Search, Settings2, X } from "lucide-react";
 import { LiveDestinationSetup } from "@/components/LiveDestinationSetup";
-import { MediaProviderBadge } from "@/components/MediaEmbed";
 import { SectionNav } from "@/components/SectionNav";
-import { Badge } from "@/components/ui/badge";
+import { SermonArtwork, SermonCard, SermonSeriesCard } from "@/components/SermonCards";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { useApi } from "@/hooks/useApi";
-import { preloadAppRoute } from "@/lib/appRoutePreloaders";
 import {
   flattenServiceMedia,
   formatMediaDate,
   groupMediaBySeries,
   isMediaEndpointUnavailableError,
-  mediaSearchText,
   mediaSnapshotKey,
   normalizeSeriesKey,
   readMediaSnapshot,
+  searchServiceMedia,
+  selectFeaturedMedia,
+  sortMediaByDate,
   writeMediaSnapshot,
   type MediaSeriesGroup,
   type ServiceMediaEntry,
@@ -27,7 +27,7 @@ import {
 import { useChurch } from "@/providers/ChurchProvider";
 
 const MEDIA_LIST_PATH = "/service-media?limit=140";
-type MediaView = "recent" | "series" | "live";
+const SERMON_CANVAS_CLASS = "sermons-canvas mobile-page -mx-3 -mb-4 -mt-4 w-[calc(100%+1.5rem)] max-w-none px-3 pb-10 pt-4 sm:-mx-4 sm:w-[calc(100%+2rem)] sm:px-4 md:-mx-5 md:w-[calc(100%+2.5rem)] md:px-5 lg:-mx-6 lg:w-[calc(100%+3rem)] lg:px-6 xl:-mx-8 xl:w-[calc(100%+4rem)] xl:px-8";
 
 function roleCanManage(role?: string | null) {
   const normalized = String(role || "").toUpperCase();
@@ -40,95 +40,148 @@ function emptyResponse(): ServiceMediaResponse {
 
 function MediaSkeleton() {
   return (
-    <div className="mobile-page space-y-4" role="status" aria-label="Cargando sermones">
-      <div className="h-11 animate-pulse rounded-xl border border-border bg-card" />
-      <div className="h-20 animate-pulse rounded-xl border border-border bg-card" />
-      <div className="grid gap-3 sm:grid-cols-2">
-        {[0, 1, 2, 3].map((item) => <div key={item} className="h-64 animate-pulse rounded-xl border border-border bg-card" />)}
+    <div className={SERMON_CANVAS_CLASS} role="status" aria-label="Cargando sermones">
+      <div className="mx-auto max-w-6xl space-y-5">
+        <div className="h-12 animate-pulse rounded-xl border border-white/10 bg-[#15121D]" />
+        <div className="flex gap-3">
+          <div className="h-11 flex-1 animate-pulse rounded-xl bg-[#1C1826]" />
+          <div className="h-11 w-11 animate-pulse rounded-xl bg-[#1C1826]" />
+        </div>
+        <div className="grid overflow-hidden rounded-3xl border border-white/10 bg-[#15121D] md:grid-cols-[minmax(0,1.45fr)_minmax(18rem,0.8fr)]">
+          <div className="aspect-video animate-pulse bg-[#1C1826]" />
+          <div className="min-h-64 animate-pulse bg-[#15121D]" />
+        </div>
+        <div className="flex gap-3 overflow-hidden">
+          {[0, 1, 2].map((item) => <div key={item} className="aspect-[4/3] w-[72vw] max-w-[20rem] shrink-0 animate-pulse rounded-2xl bg-[#15121D]" />)}
+        </div>
       </div>
     </div>
   );
 }
 
-function SermonArtwork({ item }: { item: ServiceMediaEntry }) {
+function FeaturedSermon({ item }: { item: ServiceMediaEntry }) {
+  const title = item.title || item.serviceTitle;
+  const status = item.isLive ? "En vivo" : item.isScheduled ? "Próximo" : "Destacado";
+
   return (
-    <div className="relative aspect-video overflow-hidden bg-secondary">
-      {item.thumbnailUrl ? (
-        <img src={item.thumbnailUrl} alt="" className="h-full w-full object-cover" />
+    <section
+      aria-label="Sermón destacado"
+      className="grid overflow-hidden rounded-3xl border border-white/10 bg-[#15121D] shadow-[0_24px_70px_rgba(0,0,0,0.28)] md:grid-cols-[minmax(0,1.45fr)_minmax(18rem,0.8fr)]"
+    >
+      <SermonArtwork item={item} title={title} eyebrow={item.series} priority className="md:aspect-auto md:min-h-[21rem]" />
+      <div className="flex min-w-0 flex-col justify-center p-5 sm:p-6 md:p-8">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={item.isLive
+            ? "rounded-full bg-red-600 px-3 py-1 text-[0.68rem] font-bold uppercase tracking-[0.14em] text-white"
+            : "rounded-full border border-[#818CF8]/50 bg-[#1C1826] px-3 py-1 text-[0.68rem] font-bold uppercase tracking-[0.14em] text-[#C5C9FF]"}
+          >
+            {status}
+          </span>
+          {item.series ? <span className="truncate text-xs font-semibold text-[#A9A4B7]">{item.series}</span> : null}
+        </div>
+        <h2 className="mt-4 break-words text-2xl font-semibold leading-tight tracking-[-0.025em] text-[#F8F7FF] sm:text-3xl">
+          {title}
+        </h2>
+        {item.serviceTitle && item.serviceTitle !== title ? (
+          <p className="mt-2 line-clamp-1 text-sm text-[#A9A4B7]">{item.serviceTitle}</p>
+        ) : null}
+        <p className="mt-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-[#C2BECC]">
+          <CalendarDays className="h-4 w-4 text-[#818CF8]" />
+          <span>{formatMediaDate(item.date)}</span>
+          {item.speaker ? <><span aria-hidden="true">·</span><span>{item.speaker}</span></> : null}
+          {item.scripture ? <><span aria-hidden="true">·</span><span>{item.scripture}</span></> : null}
+        </p>
+        {item.description ? <p className="mt-4 line-clamp-3 text-sm leading-6 text-[#A9A4B7]">{item.description}</p> : null}
+        <Button asChild className="mt-6 min-h-11 w-full rounded-xl bg-[#5B4FD8] text-white hover:bg-[#685DE0] sm:w-fit">
+          <Link to={`/app/media/${item.id}`}>
+            <Play className="h-4 w-4 fill-current" />
+            {item.isScheduled ? "Ver detalles" : "Ver ahora"}
+          </Link>
+        </Button>
+      </div>
+    </section>
+  );
+}
+
+function RailHeader({ title, description, id }: { title: string; description?: string; id: string }) {
+  return (
+    <div className="mb-3 flex items-end justify-between gap-4">
+      <div>
+        <h2 id={id} className="text-xl font-semibold tracking-[-0.02em] text-[#F8F7FF]">{title}</h2>
+        {description ? <p className="mt-1 text-sm text-[#A9A4B7]">{description}</p> : null}
+      </div>
+    </div>
+  );
+}
+
+function SermonRail({ id, title, description, items }: {
+  id: string;
+  title: string;
+  description?: string;
+  items: ServiceMediaEntry[];
+}) {
+  if (items.length === 0) return null;
+  return (
+    <section aria-labelledby={id}>
+      <RailHeader id={id} title={title} description={description} />
+      <div className="sermon-rail -mx-3 flex snap-x snap-mandatory gap-3 overflow-x-auto px-3 pb-2 sm:-mx-4 sm:px-4 md:-mx-1 md:px-1">
+        {items.map((item) => (
+          <SermonCard key={item.id} item={item} className="w-[76vw] max-w-[20rem] flex-none snap-start sm:w-[19rem] md:w-[20rem]" />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function SearchResults({ query, items }: { query: string; items: ServiceMediaEntry[] }) {
+  return (
+    <section aria-labelledby="sermon-search-results" className="space-y-4">
+      <div>
+        <p className="text-[0.68rem] font-bold uppercase tracking-[0.18em] text-[#818CF8]">Búsqueda</p>
+        <h2 id="sermon-search-results" className="mt-1 text-2xl font-semibold text-[#F8F7FF]">Resultados para “{query.trim()}”</h2>
+        <p className="mt-1 text-sm text-[#A9A4B7]">{items.length} resultado{items.length === 1 ? "" : "s"}</p>
+      </div>
+      {items.length > 0 ? (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {items.map((item) => <SermonCard key={item.id} item={item} />)}
+        </div>
       ) : (
-        <div className="flex h-full items-center justify-center text-primary"><Video className="h-10 w-10" /></div>
+        <div className="rounded-2xl border border-dashed border-white/15 bg-[#15121D] px-5 py-12 text-center">
+          <Search className="mx-auto h-8 w-8 text-[#818CF8]" />
+          <p className="mt-3 font-semibold text-[#F8F7FF]">No encontramos coincidencias</p>
+          <p className="mt-1 text-sm text-[#A9A4B7]">Prueba con otro título, serie, predicador o pasaje.</p>
+        </div>
       )}
-      <div className="absolute left-3 top-3 flex flex-wrap gap-2">
-        {item.isLive && <Badge className="bg-red-600 text-white hover:bg-red-600">En vivo</Badge>}
-        {item.isScheduled && <Badge className="bg-amber-500 text-white hover:bg-amber-500">Próximo</Badge>}
-      </div>
-      <span className="absolute bottom-3 right-3 flex h-11 w-11 items-center justify-center rounded-full bg-primary text-white">
-        <PlayCircle className="h-5 w-5" />
-      </span>
-    </div>
+    </section>
   );
 }
 
-function SermonCard({ item }: { item: ServiceMediaEntry }) {
-  const href = `/app/media/${item.id}`;
+function SeriesView({ series, onBack }: { series: MediaSeriesGroup | null; onBack: () => void }) {
   return (
-    <Link
-      to={href}
-      onFocus={() => preloadAppRoute(href)}
-      onPointerEnter={() => preloadAppRoute(href)}
-      onTouchStart={() => preloadAppRoute(href)}
-      className="group overflow-hidden rounded-xl border border-border bg-card transition-colors hover:border-primary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-    >
-      <SermonArtwork item={item} />
-      <div className="p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h3 className="line-clamp-2 text-lg font-semibold leading-tight text-foreground group-hover:text-primary">{item.title || item.serviceTitle}</h3>
-            {item.serviceTitle && item.serviceTitle !== item.title && <p className="mt-1 truncate text-sm text-muted-foreground">{item.serviceTitle}</p>}
+    <section className="space-y-4" aria-labelledby="selected-series-title">
+      <Button variant="ghost" onClick={onBack} className="min-h-11 w-fit px-0 text-[#C5C9FF] hover:bg-transparent hover:text-white">
+        <ArrowLeft className="h-4 w-4" />
+        Todas las series
+      </Button>
+      {series ? (
+        <>
+          <div>
+            <p className="text-[0.68rem] font-bold uppercase tracking-[0.18em] text-[#818CF8]">Serie</p>
+            <h2 id="selected-series-title" className="mt-1 text-3xl font-semibold tracking-[-0.025em] text-[#F8F7FF]">{series.label}</h2>
+            <p className="mt-1 text-sm text-[#A9A4B7]">{series.items.length} mensaje{series.items.length === 1 ? "" : "s"}</p>
           </div>
-          <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground"><CalendarDays className="h-3.5 w-3.5" />{formatMediaDate(item.date)}</span>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {series.items.map((item) => <SermonCard key={item.id} item={item} />)}
+          </div>
+        </>
+      ) : (
+        <div className="rounded-2xl border border-dashed border-white/15 bg-[#15121D] px-5 py-12 text-center">
+          <Radio className="mx-auto h-9 w-9 text-[#818CF8]" />
+          <p id="selected-series-title" className="mt-3 font-semibold text-[#F8F7FF]">No encontramos esta serie</p>
+          <p className="mt-1 text-sm text-[#A9A4B7]">Vuelve a la biblioteca para elegir otra.</p>
         </div>
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <MediaProviderBadge item={item} />
-          {item.series && <Badge variant="secondary">{item.series.trim()}</Badge>}
-        </div>
-        {(item.speaker || item.scripture) && <p className="mt-3 line-clamp-2 text-sm text-muted-foreground">{[item.speaker, item.scripture].filter(Boolean).join(" · ")}</p>}
-      </div>
-    </Link>
-  );
-}
-
-function MediaGrid({ items, emptyTitle, emptyDescription }: { items: ServiceMediaEntry[]; emptyTitle: string; emptyDescription: string }) {
-  if (items.length === 0) {
-    return (
-      <div className="rounded-xl border border-dashed border-border bg-card px-5 py-12 text-center">
-        <Radio className="mx-auto h-9 w-9 text-primary" />
-        <p className="mt-3 font-semibold text-foreground">{emptyTitle}</p>
-        <p className="mt-1 text-sm text-muted-foreground">{emptyDescription}</p>
-      </div>
-    );
-  }
-  return <div className="grid gap-3 sm:grid-cols-2">{items.map((item) => <SermonCard key={item.id} item={item} />)}</div>;
-}
-
-function SeriesCard({ series, onSelect }: { series: MediaSeriesGroup; onSelect: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className="group overflow-hidden rounded-xl border border-border bg-card text-left transition-colors hover:border-primary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-    >
-      <div className="aspect-[16/9] bg-secondary">
-        {series.coverUrl ? <img src={series.coverUrl} alt="" className="h-full w-full object-cover" /> : <div className="flex h-full items-center justify-center text-primary"><Video className="h-10 w-10" /></div>}
-      </div>
-      <div className="flex items-center gap-3 p-4">
-        <div className="min-w-0 flex-1">
-          <h3 className="truncate text-lg font-semibold text-foreground group-hover:text-primary">{series.label}</h3>
-          <p className="mt-1 text-sm text-muted-foreground">{series.items.length} sermón{series.items.length === 1 ? "" : "es"}</p>
-        </div>
-        <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground" />
-      </div>
-    </button>
+      )}
+    </section>
   );
 }
 
@@ -136,14 +189,13 @@ export default function Media() {
   const { fetchApi } = useApi();
   const { selectedChurch } = useChurch();
   const [searchParams, setSearchParams] = useSearchParams();
+  const search = searchParams.get("q") || "";
   const selectedChurchId = selectedChurch?.id ?? null;
   const canManage = roleCanManage(selectedChurch?.role);
   const [response, setResponse] = useState<ServiceMediaResponse>(() => emptyResponse());
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
-  const [view, setView] = useState<MediaView>(() => searchParams.get("series") ? "series" : "recent");
   const hasLoadedPageRef = useRef(false);
   const snapshotKey = mediaSnapshotKey(selectedChurchId);
 
@@ -187,98 +239,152 @@ export default function Media() {
     void loadPage();
   }, [loadPage]);
 
-  const query = search.trim().toLocaleLowerCase("es");
-  const filterItems = useCallback((items: ServiceMediaEntry[]) => query ? items.filter((item) => mediaSearchText(item).includes(query)) : items, [query]);
-  const recentItems = useMemo(() => filterItems([...response.previous].sort((left, right) => new Date(right.date).getTime() - new Date(left.date).getTime())), [filterItems, response.previous]);
-  const liveItems = useMemo(() => filterItems([...response.live, ...response.scheduled]), [filterItems, response.live, response.scheduled]);
-  const seriesGroups = useMemo(() => groupMediaBySeries(filterItems(response.previous)), [filterItems, response.previous]);
+  const allItems = useMemo(() => flattenServiceMedia(response), [response]);
+  const featured = useMemo(() => selectFeaturedMedia(response), [response]);
+  const recentItems = useMemo(() => sortMediaByDate(response.previous), [response.previous]);
+  const liveItems = useMemo(() => [
+    ...response.live,
+    ...sortMediaByDate(response.scheduled, "ascending"),
+  ], [response.live, response.scheduled]);
+  const seriesGroups = useMemo(() => groupMediaBySeries(response.previous), [response.previous]);
+  const searchResults = useMemo(() => searchServiceMedia(response, search), [response, search]);
   const selectedSeriesKey = normalizeSeriesKey(searchParams.get("series"));
   const selectedSeries = seriesGroups.find((series) => series.key === selectedSeriesKey) || null;
-  const allItems = useMemo(() => flattenServiceMedia(response), [response]);
-
-  useEffect(() => {
-    if (selectedSeriesKey) setView("series");
-  }, [selectedSeriesKey]);
+  const hasSearch = search.trim().length > 0;
 
   function selectSeries(series: MediaSeriesGroup | null) {
-    const currentSeriesKey = normalizeSeriesKey(searchParams.get("series"));
-    if ((series && currentSeriesKey === series.key) || (!series && !currentSeriesKey)) return;
     const next = new URLSearchParams(searchParams);
     if (series) next.set("series", series.key);
     else next.delete("series");
     setSearchParams(next);
   }
 
+  function updateSearch(value: string) {
+    const next = new URLSearchParams(searchParams);
+    if (value.trim()) {
+      next.set("q", value);
+      next.delete("series");
+    } else {
+      next.delete("q");
+    }
+    setSearchParams(next, { replace: true });
+  }
+
   if (loading && allItems.length === 0) return <MediaSkeleton />;
 
   return (
-    <div className="mobile-page mx-auto max-w-6xl space-y-5">
-      <SectionNav section="community" label="Comunidad" />
+    <div className={SERMON_CANVAS_CLASS}>
+      <div className="mx-auto max-w-6xl space-y-6">
+        <SectionNav section="community" label="Comunidad" />
 
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="mobile-section-title">Comunidad</p>
-          <h1 className="mt-1 text-3xl font-bold tracking-tight text-foreground">Sermones</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Mensajes, series y transmisiones de {selectedChurch?.name || "tu iglesia"}.</p>
-        </div>
-        <Button variant="outline" onClick={() => loadPage({ silent: true, preferSnapshot: false })} disabled={refreshing}>
-          {refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Actualizar
-        </Button>
-      </header>
+        <header className="space-y-4">
+          <div className="flex items-end justify-between gap-4">
+            <div className="min-w-0">
+              <p className="text-[0.68rem] font-bold uppercase tracking-[0.2em] text-[#818CF8]">{selectedChurch?.name || "Tu iglesia"}</p>
+              <h1 className="mt-1 text-3xl font-semibold tracking-[-0.03em] text-[#F8F7FF]">Sermones</h1>
+            </div>
+            <div className="flex shrink-0 gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                aria-label="Actualizar sermones"
+                onClick={() => loadPage({ silent: true, preferSnapshot: false })}
+                disabled={refreshing}
+                className="h-11 w-11 rounded-xl border-white/10 bg-[#15121D] text-[#C5C9FF] hover:bg-[#1C1826] hover:text-white"
+              >
+                {refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              </Button>
+              {canManage ? (
+                <Sheet>
+                  <SheetTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      aria-label="Configuración de transmisión"
+                      className="h-11 w-11 rounded-xl border-white/10 bg-[#15121D] text-[#C5C9FF] hover:bg-[#1C1826] hover:text-white"
+                    >
+                      <Settings2 className="h-4 w-4" />
+                    </Button>
+                  </SheetTrigger>
+                  <SheetContent side="right" className="w-[min(94vw,38rem)] max-w-[38rem] overflow-y-auto border-zinc-200 bg-[#F8F7FF] px-4 pb-[max(env(safe-area-inset-bottom),1.5rem)] pt-[max(env(safe-area-inset-top),1.5rem)] text-zinc-950 [&>button]:flex [&>button]:h-11 [&>button]:w-11 [&>button]:items-center [&>button]:justify-center sm:px-6">
+                    <SheetHeader className="mb-5 pr-8 text-left">
+                      <SheetTitle className="text-xl font-semibold text-zinc-950">Configuración de transmisión</SheetTitle>
+                      <SheetDescription>Administra los destinos que alimentan la biblioteca de Sermones.</SheetDescription>
+                    </SheetHeader>
+                    <LiveDestinationSetup compact />
+                  </SheetContent>
+                </Sheet>
+              ) : null}
+            </div>
+          </div>
 
-      <label className="relative block">
-        <span className="sr-only">Buscar sermones</span>
-        <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por serie, predicador o pasaje..." className="h-11 rounded-xl bg-card pl-10 text-base sm:text-sm" />
-      </label>
+          <label className="relative block">
+            <span className="sr-only">Buscar sermones</span>
+            <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#818CF8]" />
+            <Input
+              value={search}
+              onChange={(event) => updateSearch(event.target.value)}
+              placeholder="Buscar serie, predicador o pasaje"
+              className="h-11 rounded-xl border-white/10 bg-[#15121D] pl-10 pr-11 text-base text-[#F8F7FF] placeholder:text-[#8F899B] focus-visible:ring-[#818CF8] sm:text-sm"
+            />
+            {hasSearch ? (
+              <button
+                type="button"
+                onClick={() => updateSearch("")}
+                aria-label="Limpiar búsqueda"
+                className="absolute right-0 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-xl text-[#A9A4B7] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#818CF8]"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            ) : null}
+          </label>
+        </header>
 
-      {error && (
-        <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700" role="alert">
-          <p className="font-semibold">No pudimos cargar los sermones.</p><p className="mt-1">{error}</p>
-          <Button size="sm" variant="outline" className="mt-3 border-red-200 bg-white text-red-700" onClick={() => loadPage({ preferSnapshot: false })}>Reintentar</Button>
-        </div>
-      )}
+        {error ? (
+          <div className="rounded-2xl border border-red-500/30 bg-[#211116] p-4 text-sm text-red-100" role="alert">
+            <p className="font-semibold">No pudimos cargar los sermones.</p>
+            <p className="mt-1 text-red-200/80">{error}</p>
+            <Button size="sm" variant="outline" className="mt-3 min-h-11 border-red-300/20 bg-transparent text-red-100 hover:bg-red-500/10" onClick={() => loadPage({ preferSnapshot: false })}>
+              Reintentar
+            </Button>
+          </div>
+        ) : null}
 
-      <Tabs value={view} onValueChange={(value) => { setView(value as MediaView); if (value !== "series") selectSeries(null); }}>
-        <TabsList className="grid h-auto w-full grid-cols-3 rounded-xl border border-border bg-card p-1">
-          <TabsTrigger value="recent">Recientes</TabsTrigger>
-          <TabsTrigger value="series">Series</TabsTrigger>
-          <TabsTrigger value="live">En vivo</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="recent" className="mt-4">
-          <MediaGrid items={recentItems} emptyTitle="Aún no hay sermones" emptyDescription="Los mensajes anteriores aparecerán aquí cuando tengan audio o video." />
-        </TabsContent>
-
-        <TabsContent value="series" className="mt-4 space-y-4">
-          {selectedSeries ? (
-            <>
-              <div className="flex items-center justify-between gap-3">
-                <div><p className="mobile-section-title">Serie</p><h2 className="mt-1 text-2xl font-semibold text-foreground">{selectedSeries.label}</h2></div>
-                <Button variant="outline" onClick={() => selectSeries(null)}>Todas las series</Button>
-              </div>
-              <MediaGrid items={selectedSeries.items} emptyTitle="Esta serie está vacía" emptyDescription="Prueba otra serie." />
-            </>
-          ) : seriesGroups.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-border bg-card px-5 py-12 text-center"><Video className="mx-auto h-9 w-9 text-primary" /><p className="mt-3 font-semibold text-foreground">Aún no hay series</p><p className="mt-1 text-sm text-muted-foreground">Asigna una serie a los sermones para organizarlos aquí.</p></div>
-          ) : (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{seriesGroups.map((series) => <SeriesCard key={series.key} series={series} onSelect={() => selectSeries(series)} />)}</div>
-          )}
-        </TabsContent>
-
-        <TabsContent value="live" className="mt-4">
-          <MediaGrid items={liveItems} emptyTitle="No hay transmisión ahora" emptyDescription="Las transmisiones en vivo y programadas aparecerán aquí." />
-        </TabsContent>
-      </Tabs>
-
-      {canManage && (
-        <details className="rounded-xl border border-border bg-card">
-          <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 px-4 py-3 text-sm font-semibold text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-            <Settings2 className="h-4 w-4 text-primary" /> Configuración de transmisión
-          </summary>
-          <div className="border-t border-border p-4"><LiveDestinationSetup /></div>
-        </details>
-      )}
+        {hasSearch ? (
+          <SearchResults query={search} items={searchResults} />
+        ) : selectedSeriesKey ? (
+          <SeriesView series={selectedSeries} onBack={() => selectSeries(null)} />
+        ) : allItems.length === 0 ? (
+          <div className="rounded-3xl border border-dashed border-white/15 bg-[#15121D] px-5 py-14 text-center">
+            <Radio className="mx-auto h-10 w-10 text-[#818CF8]" />
+            <p className="mt-4 text-lg font-semibold text-[#F8F7FF]">Aún no hay sermones</p>
+            <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-[#A9A4B7]">Los mensajes, series y transmisiones aparecerán aquí cuando estén disponibles.</p>
+          </div>
+        ) : (
+          <>
+            {featured ? <FeaturedSermon item={featured} /> : null}
+            <SermonRail id="live-sermons" title="En vivo y próximamente" description="Acompaña a tu iglesia desde donde estés." items={liveItems} />
+            <SermonRail id="recent-sermons" title="Mensajes recientes" items={recentItems} />
+            {seriesGroups.length > 0 ? (
+              <section aria-labelledby="sermon-series">
+                <RailHeader id="sermon-series" title="Series" description="Explora conversaciones completas, mensaje a mensaje." />
+                <div className="sermon-rail -mx-3 flex snap-x snap-mandatory gap-3 overflow-x-auto px-3 pb-2 sm:-mx-4 sm:px-4 md:-mx-1 md:px-1">
+                  {seriesGroups.map((series) => (
+                    <SermonSeriesCard
+                      key={series.key}
+                      series={series}
+                      onSelect={() => selectSeries(series)}
+                      className="w-[76vw] max-w-[20rem] flex-none snap-start sm:w-[19rem] md:w-[20rem]"
+                    />
+                  ))}
+                </div>
+              </section>
+            ) : null}
+          </>
+        )}
+      </div>
     </div>
   );
 }

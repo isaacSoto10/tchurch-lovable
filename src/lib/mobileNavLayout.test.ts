@@ -57,14 +57,18 @@ describe("mobile nav layout", () => {
     expect(source).toContain("scrollPaddingBottom");
     expect(source).toContain("MOBILE_CONTENT_WITH_CHAT_CLEARANCE");
     expect(source).toContain("keyboardOpen ? 0");
-    expect(source).toContain("isMessagesRoute ? MOBILE_CONTENT_CLEARANCE : MOBILE_CONTENT_WITH_CHAT_CLEARANCE");
+    expect(source).toContain("isMessagesRoute || isSermonsRoute ? MOBILE_CONTENT_CLEARANCE : MOBILE_CONTENT_WITH_CHAT_CLEARANCE");
     expect(source).toContain("var(--app-safe-area-bottom, var(--tchurch-mobile-safe-bottom, 22px))");
     expect(source).toContain("h-[3.75rem]");
     expect(source).toContain("window.visualViewport");
     expect(source).toContain("isMobileKeyboardOpen");
     expect(source).toContain('viewport.addEventListener("resize", update)');
     expect(source).toContain("showShortcutBar && !keyboardOpen");
+    expect(source).toContain('const isSermonsRoute = location.pathname === "/app/media"');
+    expect(source).toContain("const contentRouteKey = isSermonsRoute ? location.pathname : routeKey");
+    expect(source).toContain("key={contentRouteKey}");
     expect(source).toContain("<ChatDock keyboardOpen={keyboardOpen} hasBottomNav={showShortcutBar} />");
+    expect(source).toContain("!isSermonsRoute ? <ChatDock keyboardOpen={keyboardOpen} hasBottomNav={showShortcutBar} /> : null");
 
     const sidebarCloseIndex = source.indexOf("</SidebarInset>");
     const navIndex = source.indexOf('data-testid="mobile-bottom-nav"');

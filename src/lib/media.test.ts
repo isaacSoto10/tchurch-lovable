@@ -3,6 +3,7 @@ import {
   MEDIA_SNAPSHOT_TTL_MS,
   getMediaEmbed,
   getMediaProvider,
+  getRelatedMedia,
   groupMediaBySeries,
   getServiceMediaEntryFromDetail,
   getUrlMediaEmbed,
@@ -11,6 +12,8 @@ import {
   readMediaSnapshot,
   normalizeMediaUrl,
   normalizeSeriesKey,
+  searchServiceMedia,
+  selectFeaturedMedia,
   type LiveDestination,
   type ServiceMediaEntry,
   type ServiceMediaPlayback,
@@ -326,13 +329,59 @@ describe("service media helpers", () => {
 
   it("groups series without splitting case, accents, or whitespace variants", () => {
     const grouped = groupMediaBySeries([
-      entry({ id: "one", series: "Fe y Vida", date: "2026-06-01T12:00:00.000Z" }),
-      entry({ id: "two", series: "  FÉ   Y VIDA ", date: "2026-06-08T12:00:00.000Z" }),
+      entry({ id: "one", series: "Fe y Vida", date: "2026-06-01T12:00:00.000Z", thumbnailUrl: "https://example.com/old.jpg" }),
+      entry({ id: "two", series: "  FÉ   Y VIDA ", date: "2026-06-08T12:00:00.000Z", thumbnailUrl: "https://example.com/latest.jpg" }),
       entry({ id: "three", series: null }),
     ]);
 
     expect(normalizeSeriesKey("  FÉ   Y VIDA ")).toBe("fe y vida");
     expect(grouped).toHaveLength(1);
     expect(grouped[0].items.map((item) => item.id)).toEqual(["two", "one"]);
+    expect(grouped[0].coverUrl).toBe("https://example.com/latest.jpg");
+  });
+
+  it("selects the hero in live, recent, then upcoming priority order", () => {
+    const live = entry({ id: "live", isLive: true, date: "2026-06-10T12:00:00.000Z" });
+    const recent = entry({ id: "recent", date: "2026-06-09T12:00:00.000Z" });
+    const older = entry({ id: "older", date: "2026-06-01T12:00:00.000Z" });
+    const soon = entry({ id: "soon", isScheduled: true, date: "2026-06-12T12:00:00.000Z" });
+    const later = entry({ id: "later", isScheduled: true, date: "2026-06-20T12:00:00.000Z" });
+
+    expect(selectFeaturedMedia({ ...response(live), previous: [recent, older], scheduled: [later, soon] })?.id).toBe("live");
+    expect(selectFeaturedMedia({ ...response(live), live: [], previous: [older, recent], scheduled: [later, soon] })?.id).toBe("recent");
+    expect(selectFeaturedMedia({ ...response(live), live: [], previous: [], scheduled: [later, soon] })?.id).toBe("soon");
+  });
+
+  it("searches all media without accents and keeps live results first", () => {
+    const live = entry({ id: "live", title: "Oración", isLive: true });
+    const previous = entry({ id: "previous", title: "Una vida de oración", speaker: "José" });
+    const unrelated = entry({ id: "unrelated", title: "Generosidad" });
+    const mediaResponse: ServiceMediaResponse = {
+      live: [live],
+      scheduled: [],
+      previous: [unrelated, previous],
+      destinations: [],
+      generatedAt: "2026-06-29T12:00:00.000Z",
+    };
+
+    expect(searchServiceMedia(mediaResponse, "oracion").map((item) => item.id)).toEqual(["live", "previous"]);
+    expect(searchServiceMedia(mediaResponse, "jose").map((item) => item.id)).toEqual(["previous"]);
+    expect(searchServiceMedia(mediaResponse, "vida jose").map((item) => item.id)).toEqual(["previous"]);
+  });
+
+  it("prefers related messages from the same series and otherwise falls back to recent", () => {
+    const current = entry({ id: "current", series: "Fe y Vida", date: "2026-06-15T12:00:00.000Z" });
+    const sameSeries = entry({ id: "same-series", series: "FÉ Y VIDA", date: "2026-06-08T12:00:00.000Z" });
+    const recent = entry({ id: "recent", series: "Otra", date: "2026-06-12T12:00:00.000Z" });
+    const mediaResponse: ServiceMediaResponse = {
+      live: [],
+      scheduled: [],
+      previous: [current, recent, sameSeries],
+      destinations: [],
+      generatedAt: "2026-06-29T12:00:00.000Z",
+    };
+
+    expect(getRelatedMedia(current, mediaResponse).map((item) => item.id)).toEqual(["same-series"]);
+    expect(getRelatedMedia(entry({ id: "standalone", series: null }), mediaResponse, 2).map((item) => item.id)).toEqual(["current", "recent"]);
   });
 });

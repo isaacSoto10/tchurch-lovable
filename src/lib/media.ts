@@ -440,6 +440,24 @@ export function flattenServiceMedia(response: ServiceMediaResponse | null | unde
   return [...response.live, ...response.scheduled, ...response.previous];
 }
 
+function mediaTimestamp(item: ServiceMediaEntry) {
+  const timestamp = new Date(item.date).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+export function sortMediaByDate(items: ServiceMediaEntry[], direction: "ascending" | "descending" = "descending") {
+  const multiplier = direction === "ascending" ? 1 : -1;
+  return [...items].sort((left, right) => (mediaTimestamp(left) - mediaTimestamp(right)) * multiplier);
+}
+
+export function selectFeaturedMedia(response: ServiceMediaResponse | null | undefined) {
+  if (!response) return null;
+  return response.live[0]
+    || sortMediaByDate(response.previous)[0]
+    || sortMediaByDate(response.scheduled, "ascending")[0]
+    || null;
+}
+
 export type MediaSeriesGroup = {
   key: string;
   label: string;
@@ -468,7 +486,6 @@ export function groupMediaBySeries(items: ServiceMediaEntry[]): MediaSeriesGroup
     const existing = groups.get(key);
     if (existing) {
       existing.items.push(item);
-      if (!existing.coverUrl && item.thumbnailUrl) existing.coverUrl = item.thumbnailUrl;
       if (new Date(item.date).getTime() > new Date(existing.latestDate).getTime()) existing.latestDate = item.date;
     } else {
       groups.set(key, {
@@ -482,11 +499,70 @@ export function groupMediaBySeries(items: ServiceMediaEntry[]): MediaSeriesGroup
   }
 
   return [...groups.values()]
-    .map((group) => ({
-      ...group,
-      items: [...group.items].sort((left, right) => new Date(right.date).getTime() - new Date(left.date).getTime()),
-    }))
+    .map((group) => {
+      const sortedItems = sortMediaByDate(group.items);
+      return {
+        ...group,
+        items: sortedItems,
+        latestDate: sortedItems[0]?.date || group.latestDate,
+        coverUrl: sortedItems[0]?.thumbnailUrl || null,
+      };
+    })
     .sort((left, right) => new Date(right.latestDate).getTime() - new Date(left.latestDate).getTime());
+}
+
+function uniqueMediaItems(items: ServiceMediaEntry[]) {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    if (seen.has(item.id)) return false;
+    seen.add(item.id);
+    return true;
+  });
+}
+
+export function normalizeMediaSearchValue(value?: string | null) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLocaleLowerCase("es");
+}
+
+export function searchServiceMedia(response: ServiceMediaResponse | null | undefined, query: string) {
+  if (!response) return [];
+  const normalizedQuery = normalizeMediaSearchValue(query);
+  const curated = uniqueMediaItems([
+    ...response.live,
+    ...sortMediaByDate(response.scheduled, "ascending"),
+    ...sortMediaByDate(response.previous),
+  ]);
+
+  if (!normalizedQuery) return curated;
+  const terms = normalizedQuery.split(" ").filter(Boolean);
+  return curated.filter((item) => {
+    const searchText = mediaSearchText(item);
+    return terms.every((term) => searchText.includes(term));
+  });
+}
+
+export function getRelatedMedia(
+  item: ServiceMediaEntry,
+  response: ServiceMediaResponse | null | undefined,
+  limit = 6,
+) {
+  if (!response || limit <= 0) return [];
+  const seriesKey = normalizeSeriesKey(item.series);
+  const sameSeries = seriesKey
+    ? sortMediaByDate(response.previous).filter((candidate) => (
+      candidate.id !== item.id && normalizeSeriesKey(candidate.series) === seriesKey
+    ))
+    : [];
+
+  if (sameSeries.length > 0) return sameSeries.slice(0, limit);
+  return sortMediaByDate(response.previous)
+    .filter((candidate) => candidate.id !== item.id)
+    .slice(0, limit);
 }
 
 export function isMediaEndpointUnavailableError(error: unknown) {
@@ -569,7 +645,7 @@ export function formatMediaDate(value?: string | null) {
 }
 
 export function mediaSearchText(item: ServiceMediaEntry) {
-  return [
+  return normalizeMediaSearchValue([
     item.title,
     item.serviceTitle,
     item.providerLabel,
@@ -578,5 +654,5 @@ export function mediaSearchText(item: ServiceMediaEntry) {
     item.series,
     item.description,
     item.type,
-  ].filter(Boolean).join(" ").toLowerCase();
+  ].filter(Boolean).join(" "));
 }

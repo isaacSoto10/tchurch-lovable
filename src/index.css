@@ -204,6 +204,36 @@
   @apply rounded-xl border border-border bg-card;
 }
 
+.sermons-canvas {
+  --background: 250 23% 5%;
+  --foreground: 248 100% 98%;
+  --card: 256 23% 9%;
+  --card-foreground: 248 100% 98%;
+  --popover: 256 23% 9%;
+  --popover-foreground: 248 100% 98%;
+  --primary: 245.3 63.7% 57.8%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 257 23% 12%;
+  --secondary-foreground: 234 100% 89%;
+  --muted: 257 23% 12%;
+  --muted-foreground: 258 11% 68%;
+  --accent: 257 23% 12%;
+  --accent-foreground: 234 100% 89%;
+  --border: 257 19% 18%;
+  --input: 257 19% 18%;
+  --ring: 234 94% 74%;
+  background: #0b0a10;
+  color: #f8f7ff;
+}
+
+.sermon-rail {
+  scrollbar-width: none;
+}
+
+.sermon-rail::-webkit-scrollbar {
+  display: none;
+}
+
 @media (max-width: 767px) {
   [data-mobile-shell="true"] {
     --app-safe-area-top: max(env(safe-area-inset-top, 0px), 0px);

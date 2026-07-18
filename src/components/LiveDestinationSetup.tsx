@@ -250,7 +250,7 @@ export function LiveDestinationSetup({ compact = false }: { compact?: boolean })
           <Radio className="mx-auto h-8 w-8 text-zinc-300" />
           <p className="mt-2 text-sm font-bold text-zinc-700">La configuración de transmisiones todavía no está activa</p>
           <p className="mx-auto mt-1 max-w-sm text-xs font-medium text-zinc-500">
-            Media se puede revisar en modo lectura hasta que el backend de transmisiones esté desplegado.
+            Sermones se puede revisar en modo lectura hasta que el backend de transmisiones esté desplegado.
           </p>
         </div>
       ) : destinations.length === 0 ? (

@@ -8,6 +8,8 @@ import { Badge } from "@/components/ui/badge";
 import { getMediaEmbed, type MediaEmbed as MediaEmbedConfig, type ServiceMediaEntry } from "@/lib/media";
 import { cn } from "@/lib/utils";
 
+type MediaAppearance = "default" | "sermons";
+
 function getNativeAwareMediaEmbed(item: ServiceMediaEntry) {
   return getMediaEmbed(item, {
     respectIosPlaybackFlags: Capacitor.isNativePlatform() && Capacitor.getPlatform() === "ios",
@@ -98,11 +100,11 @@ async function openExternalMediaLink(event: MouseEvent<HTMLAnchorElement>, href:
   }
 }
 
-function OpenLink({ href, label = "Abrir" }: { href: string | null; label?: string }) {
+function OpenLink({ href, label = "Abrir", touchTarget = false }: { href: string | null; label?: string; touchTarget?: boolean }) {
   if (!href) return null;
 
   return (
-    <Button asChild variant="outline" size="sm" className="h-9 shrink-0 rounded-lg">
+    <Button asChild variant="outline" size="sm" className={cn("shrink-0 rounded-lg", touchTarget ? "h-11" : "h-9")}>
       <a href={href} target="_blank" rel="noreferrer" onClick={(event) => void openExternalMediaLink(event, href)}>
         <ExternalLink className="h-4 w-4" />
         {label}
@@ -111,23 +113,38 @@ function OpenLink({ href, label = "Abrir" }: { href: string | null; label?: stri
   );
 }
 
-export function MediaProviderBadge({ item }: { item: ServiceMediaEntry }) {
+export function MediaProviderBadge({ item, appearance = "default" }: { item: ServiceMediaEntry; appearance?: MediaAppearance }) {
   const embed = getNativeAwareMediaEmbed(item);
 
   return (
-    <Badge variant="outline" className="gap-1.5 bg-white/85 text-zinc-700">
+    <Badge
+      variant="outline"
+      className={cn(
+        "gap-1.5",
+        appearance === "sermons"
+          ? "border-white/10 bg-[#1C1826] text-[#C5C9FF]"
+          : "bg-white/85 text-zinc-700",
+      )}
+    >
       <ProviderIcon embed={embed} />
       {embed.providerLabel}
     </Badge>
   );
 }
 
-export function MediaEmbed({ item, compact = false }: { item: ServiceMediaEntry; compact?: boolean }) {
+export function MediaEmbed({ item, compact = false, appearance = "default" }: {
+  item: ServiceMediaEntry;
+  compact?: boolean;
+  appearance?: MediaAppearance;
+}) {
   const embed = getNativeAwareMediaEmbed(item);
+  const frameClassName = appearance === "sermons"
+    ? "overflow-hidden rounded-2xl border border-white/10 bg-zinc-950 shadow-[0_20px_60px_rgba(0,0,0,0.28)]"
+    : "overflow-hidden rounded-lg border border-zinc-200 bg-zinc-950 shadow-sm";
 
   if (embed.kind === "iframe" && embed.embedUrl) {
     return (
-      <div className="overflow-hidden rounded-lg border border-zinc-200 bg-zinc-950 shadow-sm">
+      <div className={frameClassName}>
         <AspectRatio ratio={16 / 9}>
           <iframe
             title={item.title}
@@ -145,7 +162,7 @@ export function MediaEmbed({ item, compact = false }: { item: ServiceMediaEntry;
 
   if ((embed.kind === "hls" || embed.kind === "video") && embed.embedUrl) {
     return (
-      <div className="overflow-hidden rounded-lg border border-zinc-200 bg-zinc-950 shadow-sm">
+      <div className={frameClassName}>
         <AspectRatio ratio={16 / 9}>
           {embed.kind === "hls" || isHlsSource(embed.embedUrl)
             ? <HlsVideo src={embed.embedUrl} title={item.title} compact={compact} />
@@ -157,8 +174,16 @@ export function MediaEmbed({ item, compact = false }: { item: ServiceMediaEntry;
 
   if (embed.kind === "audio" && embed.embedUrl) {
     return (
-      <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-        <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-zinc-700">
+      <div className={cn(
+        "p-4",
+        appearance === "sermons"
+          ? "rounded-2xl border border-white/10 bg-[#15121D] shadow-[0_20px_60px_rgba(0,0,0,0.2)]"
+          : "rounded-lg border border-zinc-200 bg-white shadow-sm",
+      )}>
+        <div className={cn(
+          "mb-3 flex items-center gap-2 text-sm font-semibold",
+          appearance === "sermons" ? "text-[#F8F7FF]" : "text-zinc-700",
+        )}>
           <Volume2 className="h-4 w-4 text-primary" />
           {item.title}
         </div>
@@ -170,25 +195,35 @@ export function MediaEmbed({ item, compact = false }: { item: ServiceMediaEntry;
   return (
     <div
       className={cn(
-        "rounded-lg border border-zinc-200 bg-white p-4 shadow-sm",
+        "p-4",
+        appearance === "sermons"
+          ? "rounded-2xl border border-white/10 bg-[#15121D] shadow-[0_20px_60px_rgba(0,0,0,0.2)]"
+          : "rounded-lg border border-zinc-200 bg-white shadow-sm",
         compact ? "min-h-32" : "min-h-48",
       )}
     >
       <div className="flex h-full min-h-28 items-center justify-between gap-4">
         <div className="min-w-0">
-          <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-lg bg-zinc-100 text-zinc-700">
+          <div className={cn(
+            "mb-3 flex h-11 w-11 items-center justify-center rounded-lg",
+            appearance === "sermons" ? "bg-[#1C1826] text-[#C5C9FF]" : "bg-zinc-100 text-zinc-700",
+          )}>
             <ProviderIcon embed={embed} />
           </div>
-          <p className="truncate text-sm font-black text-zinc-950">{item.title}</p>
-          <p className="mt-1 truncate text-xs font-semibold text-zinc-500">{embed.providerLabel}</p>
+          <p className={cn("truncate text-sm font-black", appearance === "sermons" ? "text-[#F8F7FF]" : "text-zinc-950")}>{item.title}</p>
+          <p className={cn("mt-1 truncate text-xs font-semibold", appearance === "sermons" ? "text-[#A9A4B7]" : "text-zinc-500")}>{embed.providerLabel}</p>
         </div>
-        <OpenLink href={embed.sourceUrl} />
+        <OpenLink href={embed.sourceUrl} touchTarget={appearance === "sermons"} />
       </div>
     </div>
   );
 }
 
-export function MediaExternalLink({ item, label = "Abrir" }: { item: ServiceMediaEntry; label?: string }) {
+export function MediaExternalLink({ item, label = "Abrir", touchTarget = false }: {
+  item: ServiceMediaEntry;
+  label?: string;
+  touchTarget?: boolean;
+}) {
   const embed = getNativeAwareMediaEmbed(item);
-  return <OpenLink href={embed.sourceUrl} label={label} />;
+  return <OpenLink href={embed.sourceUrl} label={label} touchTarget={touchTarget} />;
 }
