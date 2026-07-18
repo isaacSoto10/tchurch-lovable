@@ -517,6 +517,7 @@ describe("Studio LAN production route", () => {
     }));
     mocks.operatorTimerFeedback = {
       commandId: "12345678-1234-4abc-8def-123456789abc",
+      kind: "operatorTimer",
       scope: "service",
       operation: "start",
       state: "accepted",
