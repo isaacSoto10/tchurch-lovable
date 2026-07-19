@@ -21,6 +21,7 @@ enum StudioLANDeviceRole: String, Codable, CaseIterable, Hashable, Sendable {
 enum StudioLANDevicePermission: String, Codable, CaseIterable, Hashable, Sendable {
     case observe
     case controlProgram
+    case controlLocalOBS
 }
 
 enum StudioLANDeviceTrustStatus: String, Codable, CaseIterable, Hashable, Sendable {
