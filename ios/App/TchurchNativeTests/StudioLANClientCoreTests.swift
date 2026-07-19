@@ -7002,6 +7002,53 @@ final class StudioLANOperatorTimerV6Tests: XCTestCase {
         }
     }
 
+    func testV8OBSReconciliationFloorClearsForNewConnectionAtLowerRevision() {
+        var reconciliation = TchurchStudioLANLocalOBSReconciliationState()
+        let connectionA = makeLocalOBS(
+            connectionID: testLocalOBSConnectionA,
+            revision: 31
+        )
+        let connectionB = makeLocalOBS(
+            connectionID: testLocalOBSConnectionB,
+            revision: 1
+        )
+
+        reconciliation.requireRevision(32, connectionID: testLocalOBSConnectionA)
+        XCTAssertTrue(reconciliation.isActive)
+        XCTAssertFalse(reconciliation.permits(connectionA, envelopeSequence: 40))
+
+        reconciliation.observe(connectionB, envelopeSequence: 41)
+
+        XCTAssertFalse(reconciliation.isActive)
+        XCTAssertTrue(reconciliation.permits(connectionB, envelopeSequence: 41))
+    }
+
+    func testV8DelayedReceiptFromOldConnectionCannotReinstallFloorAfterNewConnection() {
+        var reconciliation = TchurchStudioLANLocalOBSReconciliationState()
+        let connectionB = makeLocalOBS(
+            connectionID: testLocalOBSConnectionB,
+            revision: 1
+        )
+
+        reconciliation.requireEnvelope(
+            after: 40,
+            connectionID: testLocalOBSConnectionA
+        )
+        reconciliation.observe(connectionB, envelopeSequence: 41)
+        XCTAssertFalse(reconciliation.isActive)
+
+        XCTAssertEqual(
+            reconciliation.reconcileReceipt(
+                commandConnectionID: testLocalOBSConnectionA,
+                expectedRevision: 31,
+                signedLocalOBS: connectionB
+            ),
+            .connectionBoundary
+        )
+        XCTAssertFalse(reconciliation.isActive)
+        XCTAssertTrue(reconciliation.permits(connectionB, envelopeSequence: 41))
+    }
+
     func testV8ReplayRevisionIsScopedToTheSignedConnectionID() throws {
         let fixture = try makeDeviceTrustV6SubscriptionFixture(
             selectedPayloadVersion: 8,
