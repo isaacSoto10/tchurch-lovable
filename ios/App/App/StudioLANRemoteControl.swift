@@ -1148,10 +1148,7 @@ struct TchurchStudioLANLocalOBSSceneAction: Codable, Equatable {
 
     var isValid: Bool {
         kind == .selectLocalOBSScene &&
-            TchurchStudioLANLocalOBSScene.validText(
-                sceneID,
-                maximumBytes: TchurchStudioLANLocalOBSScene.maximumSceneIDBytes
-            )
+            TchurchStudioLANLocalOBSScene.validSceneID(sceneID)
     }
 }
 
@@ -1291,11 +1288,10 @@ enum TchurchStudioLANLocalOBSSceneCommandCrypto {
               command.permissionRevision == deviceGrant.permissionRevision,
               command.revocationGeneration == deviceGrant.revocationGeneration,
               command.routeEpoch > 0,
-              TchurchStudioLANLocalOBSScene.validText(
-                command.connectionID,
-                maximumBytes: TchurchStudioLANLocalOBSProjection.maximumConnectionIDBytes
+              TchurchStudioLANLocalOBSProjection.validConnectionID(command.connectionID),
+              (1 ... TchurchStudioLANLocalOBSProjection.maximumRevision).contains(
+                command.expectedOBSRevision
               ),
-              command.expectedOBSRevision <= TchurchStudioLANLocalOBSProjection.maximumRevision,
               command.action.isValid,
               let publicKeyData = Data(base64Encoded: deviceGrant.devicePublicKey),
               publicKeyData.count == 65,
@@ -1447,17 +1443,13 @@ enum TchurchStudioLANLocalOBSSceneReceiptCrypto {
         guard receipt.schemaVersion == TchurchStudioLANLocalOBSSceneReceipt.schemaVersion,
               receipt.payloadVersion == TchurchStudioLANLocalOBSSceneReceipt.payloadVersion,
               receipt.routeEpoch > 0,
-              receipt.obsRevision <= TchurchStudioLANLocalOBSProjection.maximumRevision,
+              (1 ... TchurchStudioLANLocalOBSProjection.maximumRevision).contains(
+                receipt.obsRevision
+              ),
               (receipt.status == .rejected) == (receipt.rejection != nil),
               (receipt.status == .unconfirmed) == (receipt.uncertaintyReason != nil),
-              TchurchStudioLANLocalOBSScene.validText(
-                receipt.connectionID,
-                maximumBytes: TchurchStudioLANLocalOBSProjection.maximumConnectionIDBytes
-              ),
-              TchurchStudioLANLocalOBSScene.validText(
-                receipt.requestedSceneID,
-                maximumBytes: TchurchStudioLANLocalOBSScene.maximumSceneIDBytes
-              ),
+              TchurchStudioLANLocalOBSProjection.validConnectionID(receipt.connectionID),
+              TchurchStudioLANLocalOBSScene.validSceneID(receipt.requestedSceneID),
               let publicKeyData = Data(base64Encoded: studioSigningPublicKey),
               publicKeyData.count == 32,
               publicKeyData.base64EncodedString() == studioSigningPublicKey,

@@ -138,7 +138,7 @@ export type StudioLANLocalOBSScene = {
 export type StudioLANLocalOBS = {
   schemaVersion: 1;
   revision: string;
-  connectionId: string;
+  connectionId?: string;
   availability: StudioLANLocalOBSAvailability;
   currentSceneId?: string;
   scenes: StudioLANLocalOBSScene[];
@@ -468,18 +468,23 @@ function localBroadcastLowerThirdProjection(
 function localOBSProjection(value: unknown): StudioLANLocalOBS | null | undefined {
   if (value === null || value === undefined) return null;
   const localOBS = record(value);
-  if (!localOBS || !hasOnlyKeys(localOBS, [
+  if (!localOBS) return undefined;
+  const hasConnection = Object.prototype.hasOwnProperty.call(localOBS, "connectionId");
+  const hasCurrentScene = Object.prototype.hasOwnProperty.call(localOBS, "currentSceneId");
+  if (!hasOnlyKeys(localOBS, [
     "schemaVersion", "revision", "connectionId", "availability", "currentSceneId", "scenes",
   ]) || !hasExactKeys(localOBS, [
-    "schemaVersion", "revision", "connectionId", "availability", "scenes",
-    ...(Object.prototype.hasOwnProperty.call(localOBS, "currentSceneId") ? ["currentSceneId"] : []),
+    "schemaVersion", "revision", "availability", "scenes",
+    ...(hasConnection ? ["connectionId"] : []),
+    ...(hasCurrentScene ? ["currentSceneId"] : []),
   ])) return undefined;
   const revision = boundedString(localOBS.revision, 20);
-  const connectionId = canonicalSingleLine(localOBS.connectionId, 160);
+  const connectionId = hasConnection
+    ? canonicalSingleLine(localOBS.connectionId, 160) : null;
   const availability = localOBS.availability;
   if (localOBS.schemaVersion !== 1 || !revision || !UINT64.test(revision)
+    || BigInt(revision) <= 0n
     || BigInt(revision) > 9_007_199_254_740_991n
-    || !connectionId
     || (availability !== "disconnected" && availability !== "busy"
       && availability !== "ready" && availability !== "uncertain")
     || !Array.isArray(localOBS.scenes) || localOBS.scenes.length > 256) return undefined;
@@ -487,18 +492,24 @@ function localOBSProjection(value: unknown): StudioLANLocalOBS | null | undefine
     const scene = record(value);
     const sceneId = canonicalSingleLine(scene?.sceneId, 160);
     const title = canonicalSingleLine(scene?.title, 512);
-    return scene && hasExactKeys(scene, ["sceneId", "title"]) && sceneId && title
+    return scene && hasExactKeys(scene, ["sceneId", "title"])
+      && sceneId && ASSET_ID.test(sceneId) && title
       ? [{ sceneId, title }] : [];
   });
   if (scenes.length !== localOBS.scenes.length
-    || new Set(scenes.map((scene) => scene.sceneId)).size !== scenes.length) return undefined;
-  const hasCurrentScene = Object.prototype.hasOwnProperty.call(localOBS, "currentSceneId");
+    || new Set(scenes.map((scene) => scene.sceneId)).size !== scenes.length
+    || new Set(scenes.map((scene) => scene.title)).size !== scenes.length) return undefined;
   const currentSceneId = hasCurrentScene
     ? canonicalSingleLine(localOBS.currentSceneId, 160) : null;
-  if ((hasCurrentScene && !currentSceneId)
+  if ((hasCurrentScene && (!currentSceneId || !ASSET_ID.test(currentSceneId)))
     || (currentSceneId != null && !scenes.some((scene) => scene.sceneId === currentSceneId))) {
     return undefined;
   }
+  if (availability === "disconnected") {
+    if (hasConnection || hasCurrentScene || scenes.length !== 0) return undefined;
+    return { schemaVersion: 1, revision, availability, scenes: [] };
+  }
+  if (!connectionId || !UUID.test(connectionId) || scenes.length === 0) return undefined;
   return {
     schemaVersion: 1,
     revision,
@@ -1179,7 +1190,7 @@ export function normalizeStudioLANLocalOBSSceneAction(
   const source = record(value);
   const sceneId = canonicalSingleLine(source?.sceneId, 160);
   if (!source || !hasExactKeys(source, ["kind", "sceneId"])
-    || source.kind !== "selectLocalOBSScene" || !sceneId) return null;
+    || source.kind !== "selectLocalOBSScene" || !sceneId || !ASSET_ID.test(sceneId)) return null;
   return { kind: "selectLocalOBSScene", sceneId };
 }
 
@@ -1198,7 +1209,7 @@ export function normalizeStudioLANLocalOBSSceneFeedback(
   if (!source || !hasExactKeys(source, [
     "commandId", "kind", "sceneId", "state", "rejection", "uncertaintyReason", "obsRevision",
   ]) || !commandId || !UUID.test(commandId)
-    || source.kind !== "selectLocalOBSScene" || !sceneId
+    || source.kind !== "selectLocalOBSScene" || !sceneId || !ASSET_ID.test(sceneId)
     || (state !== "queued" && state !== "accepted" && state !== "rejected"
       && state !== "unconfirmed" && state !== "interrupted")
     || (rejection != null

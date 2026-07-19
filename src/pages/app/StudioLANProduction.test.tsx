@@ -577,6 +577,8 @@ describe("Studio LAN production route", () => {
 
   it("selects only a signed v8 local OBS scene and treats uncertainty as terminal", async () => {
     const catalogId = `sha256:${"3".repeat(64)}`;
+    const programSceneId = `sha256:${"1".repeat(64)}`;
+    const messageSceneId = `sha256:${"2".repeat(64)}`;
     mocks.status = {
       ...connectedStatus,
       permissions: ["observe", "controlProgram", "controlLocalOBS"],
@@ -604,12 +606,12 @@ describe("Studio LAN production route", () => {
         localOBS: {
           schemaVersion: 1,
           revision: "31",
-          connectionId: "obs-connection-a",
+          connectionId: "90000000-0000-4000-8000-000000000001",
           availability: "ready",
-          currentSceneId: "scene-program",
+          currentSceneId: programSceneId,
           scenes: [
-            { sceneId: "scene-program", title: "Program" },
-            { sceneId: "scene-message", title: "Message" },
+            { sceneId: programSceneId, title: "Program" },
+            { sceneId: messageSceneId, title: "Message" },
           ],
         },
       },
@@ -629,12 +631,12 @@ describe("Studio LAN production route", () => {
     expect(card).toHaveTextContent(/catálogo firmado.*No toca stream, grabación, credenciales, músicos, Stage, Cloud ni luces/i);
     expect(card).toHaveTextContent(/OBS listo.*Revisión OBS 31/i);
     const selector = screen.getByLabelText(/Escena firmada/i);
-    expect(selector).toHaveValue("scene-program");
-    fireEvent.change(selector, { target: { value: "scene-message" } });
+    expect(selector).toHaveValue(programSceneId);
+    fireEvent.change(selector, { target: { value: messageSceneId } });
     fireEvent.click(screen.getByRole("button", { name: /Cambiar escena en OBS local/i }));
     await waitFor(() => expect(mocks.sendLocalOBSSceneCommand).toHaveBeenCalledWith({
       kind: "selectLocalOBSScene",
-      sceneId: "scene-message",
+      sceneId: messageSceneId,
     }));
     expect(mocks.sendRemoteCommand).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: /stream|grabar|endpoint|contraseña/i })).not.toBeInTheDocument();
@@ -642,7 +644,7 @@ describe("Studio LAN production route", () => {
     mocks.localOBSSceneFeedback = {
       commandId: "12345678-1234-4abc-8def-123456789abc",
       kind: "selectLocalOBSScene",
-      sceneId: "scene-message",
+      sceneId: messageSceneId,
       state: "unconfirmed",
       rejection: null,
       uncertaintyReason: "mutationMayHaveExecuted",

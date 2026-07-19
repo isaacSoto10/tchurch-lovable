@@ -2772,16 +2772,50 @@ private struct StudioLANV7LocalBroadcastLowerThirdFixture: Decodable {
     let hideReceiptSigningMaterialHex: String
 }
 
-private struct StudioLANV8LocalOBSUnsignedFixture: Decodable {
-    let fixtureID: String
+private struct StudioLANV8LocalOBSFixture: Decodable {
     let schemaVersion: Int
-    let payloadVersion: Int
+    let fixtureID: String
+    let devicePrivateKeyRawHex: String
+    let devicePublicKey: String
+    let devicePublicKeyFingerprint: String
+    let studioPrivateKeyRawHex: String
+    let studioSigningPublicKey: String
+    let studioSigningKeyID: String
     let state: TchurchStudioLANLocalOBSProjection
+    let stateCanonicalHex: String
     let action: TchurchStudioLANLocalOBSSceneAction
+    let command: TchurchStudioLANLocalOBSSceneCommand
+    let commandSigningMaterialHex: String
+    let acceptedReceipt: TchurchStudioLANLocalOBSSceneReceipt
+    let acceptedReceiptSigningMaterialHex: String
+    let unconfirmedReceipt: TchurchStudioLANLocalOBSSceneReceipt
+    let unconfirmedReceiptSigningMaterialHex: String
 }
 
 private extension Data {
     var hex: String { map { String(format: "%02x", $0) }.joined() }
+}
+
+private func fixtureHexData(_ hex: String) -> Data? {
+    let characters = Array(hex.utf8)
+    guard characters.count.isMultiple(of: 2) else { return nil }
+
+    func nibble(_ character: UInt8) -> UInt8? {
+        switch character {
+        case 48 ... 57: return character - 48
+        case 65 ... 70: return character - 55
+        case 97 ... 102: return character - 87
+        default: return nil
+        }
+    }
+
+    var result = Data(capacity: characters.count / 2)
+    for index in stride(from: 0, to: characters.count, by: 2) {
+        guard let high = nibble(characters[index]),
+              let low = nibble(characters[index + 1]) else { return nil }
+        result.append((high << 4) | low)
+    }
+    return result
 }
 
 private func loadStudioLANFixture<Value: Decodable>(named name: String) throws -> Value {
@@ -6621,19 +6655,145 @@ final class StudioLANOperatorTimerV6Tests: XCTestCase {
         )
     }
 
-    func testV8UnsignedFixtureAndDynamicReceiptKeysStayClosed() throws {
-        let fixture: StudioLANV8LocalOBSUnsignedFixture = try loadStudioLANFixture(
-            named: "studio_lan_v8_local_obs_unsigned_fixture"
+    func testV8CrossPlatformFixtureMatchesCanonicalBytesWireAndRealSignatures() throws {
+        let fixture: StudioLANV8LocalOBSFixture = try loadStudioLANFixture(
+            named: "studio_lan_v8_local_obs_fixture"
         )
         XCTAssertEqual(
             fixture.fixtureID,
-            "studio-lan-v8-local-obs-unsigned-preliminary-1"
+            "studio-lan-v8-local-obs-scenes-cross-platform-1"
         )
         XCTAssertEqual(fixture.schemaVersion, 1)
-        XCTAssertEqual(fixture.payloadVersion, 8)
         XCTAssertTrue(fixture.state.isCanonical)
         XCTAssertTrue(fixture.action.isValid)
         XCTAssertEqual(fixture.state.scenes.count, 2)
+        XCTAssertEqual(fixture.command.payloadVersion, 8)
+        XCTAssertEqual(fixture.command.connectionID, fixture.state.connectionID)
+        XCTAssertEqual(fixture.command.expectedOBSRevision, fixture.state.revision)
+        XCTAssertEqual(fixture.command.action, fixture.action)
+        XCTAssertTrue(fixture.state.scenes.contains(where: {
+            $0.sceneID == fixture.action.sceneID
+        }))
+        XCTAssertEqual(
+            try TchurchStudioLANCoding.encoder().encode(fixture.state).hex,
+            fixture.stateCanonicalHex
+        )
+
+        let devicePrivateKey = try P256.Signing.PrivateKey(
+            rawRepresentation: XCTUnwrap(fixtureHexData(fixture.devicePrivateKeyRawHex))
+        )
+        XCTAssertEqual(
+            devicePrivateKey.publicKey.x963Representation.base64EncodedString(),
+            fixture.devicePublicKey
+        )
+        XCTAssertEqual(
+            StudioLANDeviceGrant.fingerprint(
+                forPublicKeyData: devicePrivateKey.publicKey.x963Representation
+            ),
+            fixture.devicePublicKeyFingerprint
+        )
+        let studioPrivateKey = try Curve25519.Signing.PrivateKey(
+            rawRepresentation: XCTUnwrap(fixtureHexData(fixture.studioPrivateKeyRawHex))
+        )
+        XCTAssertEqual(
+            studioPrivateKey.publicKey.rawRepresentation.base64EncodedString(),
+            fixture.studioSigningPublicKey
+        )
+        XCTAssertEqual(
+            String(TchurchStudioLANCrypto.sha256Hex(
+                studioPrivateKey.publicKey.rawRepresentation
+            ).prefix(24)),
+            fixture.studioSigningKeyID
+        )
+
+        XCTAssertEqual(
+            try TchurchStudioLANLocalOBSSceneCommandCrypto
+                .signingData(for: fixture.command).hex,
+            fixture.commandSigningMaterialHex
+        )
+        let grant = StudioLANDeviceGrant(
+            schemaVersion: 4,
+            protocolFloor: 4,
+            grantID: fixture.command.grantID,
+            deviceID: fixture.command.deviceID,
+            deviceName: "Tchurch iOS",
+            role: .production,
+            permissions: [.observe, .controlProgram, .controlLocalOBS],
+            keyAlgorithm: .p256Signing,
+            devicePublicKey: fixture.devicePublicKey,
+            devicePublicKeyFingerprint: fixture.devicePublicKeyFingerprint,
+            studioID: UUID(uuidString: "80000000-0000-4000-8000-000000000006")!,
+            studioSigningKeyID: fixture.studioSigningKeyID,
+            studioSigningPublicKey: fixture.studioSigningPublicKey,
+            permissionRevision: fixture.command.permissionRevision,
+            revocationGeneration: fixture.command.revocationGeneration,
+            issuedAtMilliseconds: fixture.command.issuedAtMilliseconds - 1_000,
+            expiresAtMilliseconds: fixture.command.expiresAtMilliseconds + 1_000,
+            signature: ""
+        )
+        XCTAssertNoThrow(try TchurchStudioLANLocalOBSSceneCommandCrypto.verify(
+            fixture.command,
+            deviceGrant: grant
+        ))
+
+        let commandWire = TchurchStudioLANWireMessage.localOBSSceneCommand(fixture.command)
+        let encodedCommandWire = try TchurchStudioLANCoding.encoder().encode(commandWire)
+        XCTAssertEqual(
+            try TchurchStudioLANCoding.decoder().decode(
+                TchurchStudioLANWireMessage.self,
+                from: encodedCommandWire
+            ),
+            commandWire
+        )
+        XCTAssertTrue(String(decoding: encodedCommandWire, as: UTF8.self).contains(
+            "\"kind\":\"localOBSSceneCommand\",\"localOBSSceneCommand\""
+        ))
+
+        let receiptsAndSigningMaterial = [
+            (fixture.acceptedReceipt, fixture.acceptedReceiptSigningMaterialHex),
+            (fixture.unconfirmedReceipt, fixture.unconfirmedReceiptSigningMaterialHex),
+        ]
+        for (receipt, signingMaterialHex) in receiptsAndSigningMaterial {
+            XCTAssertEqual(receipt.commandID, fixture.command.commandID)
+            XCTAssertEqual(receipt.deviceID, fixture.command.deviceID)
+            XCTAssertEqual(receipt.authority, fixture.command.authority)
+            XCTAssertEqual(receipt.routeEpoch, fixture.command.routeEpoch)
+            XCTAssertEqual(receipt.permissionRevision, fixture.command.permissionRevision)
+            XCTAssertEqual(receipt.connectionID, fixture.command.connectionID)
+            XCTAssertEqual(receipt.requestedSceneID, fixture.command.action.sceneID)
+            XCTAssertEqual(
+                try TchurchStudioLANLocalOBSSceneReceiptCrypto.signingData(for: receipt).hex,
+                signingMaterialHex
+            )
+            XCTAssertNoThrow(try TchurchStudioLANLocalOBSSceneReceiptCrypto.verify(
+                receipt,
+                studioSigningPublicKey: fixture.studioSigningPublicKey
+            ))
+
+            let receiptWire = TchurchStudioLANWireMessage.localOBSSceneReceipt(receipt)
+            let encodedReceiptWire = try TchurchStudioLANCoding.encoder().encode(receiptWire)
+            XCTAssertEqual(
+                try TchurchStudioLANCoding.decoder().decode(
+                    TchurchStudioLANWireMessage.self,
+                    from: encodedReceiptWire
+                ),
+                receiptWire
+            )
+            XCTAssertTrue(String(decoding: encodedReceiptWire, as: UTF8.self).contains(
+                "\"kind\":\"localOBSSceneReceipt\",\"localOBSSceneReceipt\""
+            ))
+        }
+        XCTAssertEqual(fixture.acceptedReceipt.status, .accepted)
+        XCTAssertNil(fixture.acceptedReceipt.rejection)
+        XCTAssertNil(fixture.acceptedReceipt.uncertaintyReason)
+        XCTAssertEqual(fixture.acceptedReceipt.obsRevision, fixture.state.revision + 1)
+        XCTAssertEqual(fixture.unconfirmedReceipt.status, .unconfirmed)
+        XCTAssertNil(fixture.unconfirmedReceipt.rejection)
+        XCTAssertEqual(
+            fixture.unconfirmedReceipt.uncertaintyReason,
+            .mutationMayHaveExecuted
+        )
+        XCTAssertEqual(fixture.unconfirmedReceipt.obsRevision, fixture.state.revision)
 
         var stateWithExplicitNull = try XCTUnwrap(
             JSONSerialization.jsonObject(
@@ -6649,26 +6809,9 @@ final class StudioLANOperatorTimerV6Tests: XCTestCase {
             )
         ), "currentSceneID must be omitted instead of encoded as null")
 
-        let authority = makeAuthority(epoch: 17)
-        let accepted = TchurchStudioLANLocalOBSSceneReceipt(
-            schemaVersion: 1,
-            payloadVersion: 8,
-            commandID: UUID(uuidString: "80000000-0000-4000-8000-000000000004")!,
-            deviceID: UUID(uuidString: "80000000-0000-4000-8000-000000000002")!,
-            authority: authority,
-            routeEpoch: 19,
-            permissionRevision: 5,
-            status: .accepted,
-            rejection: nil,
-            uncertaintyReason: nil,
-            connectionID: fixture.state.connectionID,
-            requestedSceneID: fixture.action.sceneID,
-            obsRevision: 32,
-            issuedAtMilliseconds: 1_800_000_200_100,
-            studioSigningKeyID: "pending-final-fixture",
-            signature: ""
+        let acceptedData = try TchurchStudioLANCoding.encoder().encode(
+            fixture.acceptedReceipt
         )
-        let acceptedData = try TchurchStudioLANCoding.encoder().encode(accepted)
         let acceptedObject = try XCTUnwrap(
             JSONSerialization.jsonObject(with: acceptedData) as? [String: Any]
         )
@@ -6676,27 +6819,11 @@ final class StudioLANOperatorTimerV6Tests: XCTestCase {
         XCTAssertNil(acceptedObject["uncertaintyReason"])
         XCTAssertNil(acceptedObject["wasIdempotentReplay"])
 
-        let unconfirmed = TchurchStudioLANLocalOBSSceneReceipt(
-            schemaVersion: accepted.schemaVersion,
-            payloadVersion: accepted.payloadVersion,
-            commandID: accepted.commandID,
-            deviceID: accepted.deviceID,
-            authority: accepted.authority,
-            routeEpoch: accepted.routeEpoch,
-            permissionRevision: accepted.permissionRevision,
-            status: .unconfirmed,
-            rejection: nil,
-            uncertaintyReason: .mutationMayHaveExecuted,
-            connectionID: accepted.connectionID,
-            requestedSceneID: accepted.requestedSceneID,
-            obsRevision: 31,
-            issuedAtMilliseconds: accepted.issuedAtMilliseconds + 1,
-            studioSigningKeyID: accepted.studioSigningKeyID,
-            signature: ""
-        )
         let unconfirmedObject = try XCTUnwrap(
             JSONSerialization.jsonObject(
-                with: TchurchStudioLANCoding.encoder().encode(unconfirmed)
+                with: TchurchStudioLANCoding.encoder().encode(
+                    fixture.unconfirmedReceipt
+                )
             ) as? [String: Any]
         )
         XCTAssertEqual(
@@ -6714,6 +6841,159 @@ final class StudioLANOperatorTimerV6Tests: XCTestCase {
                 options: [.sortedKeys]
             )
         ))
+
+        var missingUncertainty = unconfirmedObject
+        missingUncertainty.removeValue(forKey: "uncertaintyReason")
+        XCTAssertThrowsError(try TchurchStudioLANCoding.decoder().decode(
+            TchurchStudioLANLocalOBSSceneReceipt.self,
+            from: JSONSerialization.data(
+                withJSONObject: missingUncertainty,
+                options: [.sortedKeys]
+            )
+        ))
+
+        var tamperedCommandObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: TchurchStudioLANCoding.encoder().encode(fixture.command)
+            ) as? [String: Any]
+        )
+        var tamperedAction = try XCTUnwrap(
+            tamperedCommandObject["action"] as? [String: Any]
+        )
+        tamperedAction["sceneID"] = fixture.state.currentSceneID
+        tamperedCommandObject["action"] = tamperedAction
+        let tamperedCommand = try TchurchStudioLANCoding.decoder().decode(
+            TchurchStudioLANLocalOBSSceneCommand.self,
+            from: JSONSerialization.data(
+                withJSONObject: tamperedCommandObject,
+                options: [.sortedKeys]
+            )
+        )
+        XCTAssertThrowsError(try TchurchStudioLANLocalOBSSceneCommandCrypto.verify(
+            tamperedCommand,
+            deviceGrant: grant
+        )) { XCTAssertEqual(
+            $0 as? TchurchStudioLANRemoteControlError,
+            .invalidCommand
+        ) }
+
+        var tamperedReceiptObject = acceptedObject
+        tamperedReceiptObject["obsRevision"] = fixture.acceptedReceipt.obsRevision + 1
+        let tamperedReceipt = try TchurchStudioLANCoding.decoder().decode(
+            TchurchStudioLANLocalOBSSceneReceipt.self,
+            from: JSONSerialization.data(
+                withJSONObject: tamperedReceiptObject,
+                options: [.sortedKeys]
+            )
+        )
+        XCTAssertThrowsError(try TchurchStudioLANLocalOBSSceneReceiptCrypto.verify(
+            tamperedReceipt,
+            studioSigningPublicKey: fixture.studioSigningPublicKey
+        )) { XCTAssertEqual(
+            $0 as? TchurchStudioLANRemoteControlError,
+            .invalidReceipt
+        ) }
+    }
+
+    func testV8DisconnectedFallbackRoundTripsAndMalformedStatesFailClosed() throws {
+        let fallback = TchurchStudioLANLocalOBSProjection(
+            schemaVersion: 1,
+            revision: 1,
+            connectionID: nil,
+            availability: .disconnected,
+            currentSceneID: nil,
+            scenes: []
+        )
+        XCTAssertTrue(fallback.isCanonical)
+        let encodedFallback = try TchurchStudioLANCoding.encoder().encode(fallback)
+        let fallbackObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encodedFallback) as? [String: Any]
+        )
+        XCTAssertEqual(
+            Set(fallbackObject.keys),
+            Set(["availability", "revision", "scenes", "schemaVersion"])
+        )
+        XCTAssertNil(fallbackObject["connectionID"])
+        XCTAssertNil(fallbackObject["currentSceneID"])
+        XCTAssertEqual(
+            try TchurchStudioLANCoding.decoder().decode(
+                TchurchStudioLANLocalOBSProjection.self,
+                from: encodedFallback
+            ),
+            fallback
+        )
+
+        var fallbackWithNullConnection = fallbackObject
+        fallbackWithNullConnection["connectionID"] = NSNull()
+        XCTAssertThrowsError(try TchurchStudioLANCoding.decoder().decode(
+            TchurchStudioLANLocalOBSProjection.self,
+            from: JSONSerialization.data(
+                withJSONObject: fallbackWithNullConnection,
+                options: [.sortedKeys]
+            )
+        ))
+
+        let fixture: StudioLANV8LocalOBSFixture = try loadStudioLANFixture(
+            named: "studio_lan_v8_local_obs_fixture"
+        )
+        let validConnected = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: TchurchStudioLANCoding.encoder().encode(fixture.state)
+            ) as? [String: Any]
+        )
+        var invalidStates: [[String: Any]] = []
+
+        var zeroRevision = fallbackObject
+        zeroRevision["revision"] = 0
+        invalidStates.append(zeroRevision)
+
+        var disconnectedWithConnection = validConnected
+        disconnectedWithConnection["availability"] = "disconnected"
+        invalidStates.append(disconnectedWithConnection)
+
+        var readyWithoutConnection = validConnected
+        readyWithoutConnection.removeValue(forKey: "connectionID")
+        invalidStates.append(readyWithoutConnection)
+
+        var readyWithInvalidConnection = validConnected
+        readyWithInvalidConnection["connectionID"] = "obs-local"
+        invalidStates.append(readyWithInvalidConnection)
+
+        var readyWithNonRFCConnection = validConnected
+        readyWithNonRFCConnection["connectionID"] =
+            "00000000-0000-0000-0000-000000000000"
+        invalidStates.append(readyWithNonRFCConnection)
+
+        var readyWithoutScenes = validConnected
+        readyWithoutScenes.removeValue(forKey: "currentSceneID")
+        readyWithoutScenes["scenes"] = []
+        invalidStates.append(readyWithoutScenes)
+
+        var invalidSceneDigest = validConnected
+        var invalidDigestScenes = try XCTUnwrap(
+            invalidSceneDigest["scenes"] as? [[String: Any]]
+        )
+        invalidDigestScenes[0]["sceneID"] = "scene-program"
+        invalidSceneDigest["scenes"] = invalidDigestScenes
+        invalidStates.append(invalidSceneDigest)
+
+        var duplicateTitle = validConnected
+        var duplicateTitleScenes = try XCTUnwrap(
+            duplicateTitle["scenes"] as? [[String: Any]]
+        )
+        duplicateTitleScenes[1]["title"] = duplicateTitleScenes[0]["title"]
+        duplicateTitle["scenes"] = duplicateTitleScenes
+        invalidStates.append(duplicateTitle)
+
+        for invalid in invalidStates {
+            XCTAssertThrowsError(try TchurchStudioLANCoding.decoder().decode(
+                TchurchStudioLANLocalOBSProjection.self,
+                from: JSONSerialization.data(
+                    withJSONObject: invalid,
+                    options: [.sortedKeys]
+                )
+            ))
+        }
     }
 
     func testV8ReplayRevisionIsScopedToTheSignedConnectionID() throws {
@@ -6729,23 +7009,23 @@ final class StudioLANOperatorTimerV6Tests: XCTestCase {
             fixture: fixture,
             sequence: 12,
             programRevision: 3,
-            localOBS: makeLocalOBS(connectionID: "obs-a", revision: 31)
+            localOBS: makeLocalOBS(connectionID: testLocalOBSConnectionA, revision: 31)
         ))
         XCTAssertThrowsError(try guardState.accept(makeV8Envelope(
             fixture: fixture,
             sequence: 13,
             programRevision: 3,
-            localOBS: makeLocalOBS(connectionID: "obs-a", revision: 30)
+            localOBS: makeLocalOBS(connectionID: testLocalOBSConnectionA, revision: 30)
         ))) { XCTAssertEqual($0 as? TchurchStudioLANError, .staleRevision) }
 
         XCTAssertNoThrow(try guardState.accept(makeV8Envelope(
             fixture: fixture,
             sequence: 13,
             programRevision: 3,
-            localOBS: makeLocalOBS(connectionID: "obs-b", revision: 0)
+            localOBS: makeLocalOBS(connectionID: testLocalOBSConnectionB, revision: 1)
         )), "a signed new OBS connection starts a fresh revision epoch")
-        XCTAssertEqual(guardState.lastOBSConnectionID, "obs-b")
-        XCTAssertEqual(guardState.lastOBSRevision, 0)
+        XCTAssertEqual(guardState.lastOBSConnectionID, testLocalOBSConnectionB)
+        XCTAssertEqual(guardState.lastOBSRevision, 1)
     }
 
     func testV8VerifierBindsLocalOBSStateToTheSignedLocalBroadcastRoute() throws {
@@ -6758,7 +7038,7 @@ final class StudioLANOperatorTimerV6Tests: XCTestCase {
         let verifier = try TchurchStudioLANEnvelopeVerifier(
             subscription: fixture.subscription
         )
-        let localOBS = makeLocalOBS(connectionID: "obs-a", revision: 1)
+        let localOBS = makeLocalOBS(connectionID: testLocalOBSConnectionA, revision: 1)
         XCTAssertNoThrow(try verifier.verify(
             TchurchStudioLANCoding.encoder().encode(try makeV8Envelope(
                 fixture: fixture,
@@ -7163,11 +7443,16 @@ private func makeLowerThird(
     )
 }
 
+private let testLocalOBSConnectionA = "90000000-0000-4000-8000-00000000000a"
+private let testLocalOBSConnectionB = "90000000-0000-4000-8000-00000000000b"
+private let testLocalOBSProgramSceneID = "sha256:\(String(repeating: "1", count: 64))"
+private let testLocalOBSMessageSceneID = "sha256:\(String(repeating: "2", count: 64))"
+
 private func makeLocalOBS(
     connectionID: String,
     revision: UInt64,
     availability: TchurchStudioLANLocalOBSAvailability = .ready,
-    currentSceneID: String? = "scene-program"
+    currentSceneID: String? = testLocalOBSProgramSceneID
 ) -> TchurchStudioLANLocalOBSProjection {
     TchurchStudioLANLocalOBSProjection(
         schemaVersion: 1,
@@ -7176,8 +7461,14 @@ private func makeLocalOBS(
         availability: availability,
         currentSceneID: currentSceneID,
         scenes: [
-            TchurchStudioLANLocalOBSScene(sceneID: "scene-program", title: "Program"),
-            TchurchStudioLANLocalOBSScene(sceneID: "scene-message", title: "Message"),
+            TchurchStudioLANLocalOBSScene(
+                sceneID: testLocalOBSProgramSceneID,
+                title: "Program"
+            ),
+            TchurchStudioLANLocalOBSScene(
+                sceneID: testLocalOBSMessageSceneID,
+                title: "Message"
+            ),
         ]
     )
 }

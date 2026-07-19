@@ -674,12 +674,14 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
                 var payload: [String: Any] = [
                     "schemaVersion": $0.schemaVersion,
                     "revision": String($0.revision),
-                    "connectionId": $0.connectionID,
                     "availability": $0.availability.rawValue,
                     "scenes": $0.scenes.map { scene in
                         ["sceneId": scene.sceneID, "title": scene.title]
                     },
                 ]
+                if let connectionID = $0.connectionID {
+                    payload["connectionId"] = connectionID
+                }
                 if let currentSceneID = $0.currentSceneID {
                     payload["currentSceneId"] = currentSceneID
                 }

@@ -850,7 +850,9 @@ final class StudioLANDeviceTrustController {
         guard challenge.deviceTrustVersion == StudioLANDeviceTrustContract.schemaVersion,
               challenge.minimumPayloadVersion == StudioLANDeviceTrustContract.protocolFloor,
               let studioID = challenge.studioID,
-              supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.controlSupportedPayloadVersions ||
+              supportedPayloadVersions ==
+                TchurchStudioLANSubscriptionRequest.localOBSControlSupportedPayloadVersions ||
+                supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.controlSupportedPayloadVersions ||
                 supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.deviceTrustSupportedPayloadVersions ||
                 supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.v5SupportedPayloadVersions ||
                 supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.v4SupportedPayloadVersions,

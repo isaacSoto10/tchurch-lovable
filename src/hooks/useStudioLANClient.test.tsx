@@ -179,7 +179,7 @@ describe("useStudioLANClient transport lifecycle", () => {
       mocks.callbacks?.onLocalOBSSceneFeedback?.({
         commandId: "12345678-1234-4abc-8def-123456789abc",
         kind: "selectLocalOBSScene",
-        sceneId: "scene-message",
+        sceneId: `sha256:${"2".repeat(64)}`,
         state: "unconfirmed",
         rejection: null,
         uncertaintyReason: "mutationMayHaveExecuted",
@@ -253,7 +253,10 @@ describe("useStudioLANClient transport lifecycle", () => {
     const view = renderHook(() => useStudioLANClient());
     await waitFor(() => expect(mocks.callbacks).not.toBeNull());
 
-    const action = { kind: "selectLocalOBSScene" as const, sceneId: "scene-message" };
+    const action = {
+      kind: "selectLocalOBSScene" as const,
+      sceneId: `sha256:${"2".repeat(64)}`,
+    };
     await act(async () => view.result.current.sendLocalOBSSceneCommand(action));
     expect(mocks.sendLocalOBSScene).toHaveBeenCalledWith(action);
   });
