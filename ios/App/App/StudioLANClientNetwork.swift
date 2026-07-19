@@ -822,6 +822,151 @@ enum TchurchStudioLANCatalogResponseStrictness {
     }
 }
 
+/// Reconciliation requirements are meaningful only within one concrete OBS
+/// connection. OBS revisions restart when the local OBS instance reconnects,
+/// so comparing revisions across connection IDs can permanently disable an
+/// otherwise valid replacement instance.
+struct TchurchStudioLANLocalOBSReconciliationState: Equatable {
+    enum ReceiptContext: Equatable {
+        case sameConnection
+        case connectionBoundary
+        case invalid
+    }
+
+    struct Floor: Equatable {
+        let connectionID: String
+        let minimumRevision: UInt64?
+        let minimumEnvelopeSequence: UInt64?
+    }
+
+    private(set) var floor: Floor?
+
+    var isActive: Bool { floor != nil }
+
+    mutating func clear() {
+        floor = nil
+    }
+
+    mutating func requireRevision(_ revision: UInt64, connectionID: String) {
+        guard TchurchStudioLANLocalOBSProjection.validConnectionID(connectionID) else {
+            clear()
+            return
+        }
+        let prior = floor?.connectionID == connectionID ? floor?.minimumRevision : nil
+        floor = Floor(
+            connectionID: connectionID,
+            minimumRevision: max(prior ?? 0, revision),
+            minimumEnvelopeSequence: nil
+        )
+    }
+
+    mutating func requireEnvelope(
+        after sequence: UInt64,
+        connectionID: String
+    ) {
+        guard TchurchStudioLANLocalOBSProjection.validConnectionID(connectionID) else {
+            clear()
+            return
+        }
+        let next = sequence.addingReportingOverflow(1)
+        let required = next.overflow ? UInt64.max : next.partialValue
+        let prior = floor?.connectionID == connectionID
+            ? floor?.minimumEnvelopeSequence
+            : nil
+        floor = Floor(
+            connectionID: connectionID,
+            minimumRevision: nil,
+            minimumEnvelopeSequence: max(prior ?? 0, required)
+        )
+    }
+
+    mutating func observe(
+        _ localOBS: TchurchStudioLANLocalOBSProjection?,
+        envelopeSequence: UInt64
+    ) {
+        guard var floor,
+              let localOBS,
+              localOBS.isCanonical,
+              let observedConnectionID = localOBS.connectionID else { return }
+        if observedConnectionID != floor.connectionID {
+            clear()
+            return
+        }
+        if let minimumRevision = floor.minimumRevision,
+           localOBS.revision >= minimumRevision {
+            floor = Floor(
+                connectionID: floor.connectionID,
+                minimumRevision: nil,
+                minimumEnvelopeSequence: floor.minimumEnvelopeSequence
+            )
+        }
+        if let minimumSequence = floor.minimumEnvelopeSequence,
+           envelopeSequence >= minimumSequence {
+            floor = Floor(
+                connectionID: floor.connectionID,
+                minimumRevision: floor.minimumRevision,
+                minimumEnvelopeSequence: nil
+            )
+        }
+        self.floor = floor.minimumRevision == nil && floor.minimumEnvelopeSequence == nil
+            ? nil
+            : floor
+    }
+
+    func permits(
+        _ localOBS: TchurchStudioLANLocalOBSProjection,
+        envelopeSequence: UInt64
+    ) -> Bool {
+        guard let floor else { return true }
+        guard localOBS.isCanonical,
+              let observedConnectionID = localOBS.connectionID else { return false }
+        if observedConnectionID != floor.connectionID {
+            return true
+        }
+        return (floor.minimumRevision.map { localOBS.revision >= $0 } ?? true) &&
+            (floor.minimumEnvelopeSequence.map { envelopeSequence >= $0 } ?? true)
+    }
+
+    mutating func reconcileReceipt(
+        commandConnectionID: String,
+        expectedRevision: UInt64,
+        signedLocalOBS: TchurchStudioLANLocalOBSProjection
+    ) -> ReceiptContext {
+        let context = Self.receiptContext(
+            commandConnectionID: commandConnectionID,
+            expectedRevision: expectedRevision,
+            signedLocalOBS: signedLocalOBS
+        )
+        if context == .connectionBoundary {
+            clear()
+        }
+        return context
+    }
+
+    static func receiptContext(
+        commandConnectionID: String,
+        expectedRevision: UInt64,
+        signedLocalOBS: TchurchStudioLANLocalOBSProjection
+    ) -> ReceiptContext {
+        guard signedLocalOBS.isCanonical,
+              let observedConnectionID = signedLocalOBS.connectionID else { return .invalid }
+        if observedConnectionID != commandConnectionID {
+            return .connectionBoundary
+        }
+        return signedLocalOBS.revision >= expectedRevision ? .sameConnection : .invalid
+    }
+
+    static func isConnectionBoundary(
+        from connectionID: String,
+        observed localOBS: TchurchStudioLANLocalOBSProjection?
+    ) -> Bool {
+        guard let localOBS,
+              localOBS.isCanonical,
+              let observedConnectionID = localOBS.connectionID else { return false }
+        return observedConnectionID != connectionID
+    }
+}
+
 final class TchurchStudioLANClient: @unchecked Sendable {
     static let bonjourServiceType = "_tchurch-show._tcp"
     static let assetRequestTimeoutSeconds: TimeInterval = 15
@@ -976,8 +1121,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
     private var minimumControlEnvelopeRevision: UInt64?
     private var minimumOperatorTimerRevision: UInt64?
     private var minimumLowerThirdRevision: UInt64?
-    private var minimumOBSRevision: UInt64?
-    private var minimumOBSEnvelopeSequence: UInt64?
+    private var localOBSReconciliation = TchurchStudioLANLocalOBSReconciliationState()
     private var cueCatalogKey: CueCatalogKey?
     private var cueCatalogAccumulator: TchurchStudioLANCueCatalogAccumulator?
     private var inFlightCatalogRequest: TchurchStudioLANCatalogRequest?
@@ -2239,8 +2383,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             minimumControlEnvelopeRevision = nil
             minimumOperatorTimerRevision = nil
             minimumLowerThirdRevision = nil
-            minimumOBSRevision = nil
-            minimumOBSEnvelopeSequence = nil
+            localOBSReconciliation.clear()
             resetCueCatalog(publishUnavailable: false)
             didAuthenticate = true
             reconnectPolicy.recordAuthenticatedSession()
@@ -3662,8 +3805,10 @@ final class TchurchStudioLANClient: @unchecked Sendable {
               localOBS.availability == .ready,
               let connectionID = localOBS.connectionID,
               localOBS.scenes.contains(where: { $0.sceneID == action.sceneID }),
-              minimumOBSRevision.map({ localOBS.revision >= $0 }) ?? true,
-              minimumOBSEnvelopeSequence.map({ envelope.sequence >= $0 }) ?? true else {
+              localOBSReconciliation.permits(
+                localOBS,
+                envelopeSequence: envelope.sequence
+              ) else {
             throw TchurchStudioLANRemoteControlError.unauthorized
         }
         let now = TchurchStudioLANTime.nowMilliseconds()
@@ -4159,15 +4304,21 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                 TchurchStudioLANRemoteControlContract.maximumFutureClockSkewMilliseconds,
               let signedEnvelope = latestControlEnvelope,
               signedEnvelope.schemaVersion == TchurchStudioLANLocalOBSSceneContract.payloadVersion,
-              let signedLocalOBS = signedEnvelope.payload.control?.localOBS,
-              signedLocalOBS.connectionID == command.connectionID,
-              signedLocalOBS.revision >= command.expectedOBSRevision else {
+              let signedLocalOBS = signedEnvelope.payload.control?.localOBS else {
             throw TchurchStudioLANRemoteControlError.invalidReceipt
         }
         try TchurchStudioLANLocalOBSSceneReceiptCrypto.verify(
             receipt,
             studioSigningPublicKey: subscription.signingPublicKey
         )
+        let receiptContext = localOBSReconciliation.reconcileReceipt(
+            commandConnectionID: command.connectionID,
+            expectedRevision: command.expectedOBSRevision,
+            signedLocalOBS: signedLocalOBS
+        )
+        guard receiptContext != .invalid else {
+            throw TchurchStudioLANRemoteControlError.invalidReceipt
+        }
         guard boundedRequestLane.finish(.localOBSSceneCommand(command.commandID)) else {
             throw TchurchStudioLANRemoteControlError.invalidReceipt
         }
@@ -4175,28 +4326,40 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         localOBSSceneCommandTimeoutWork = nil
         inFlightLocalOBSSceneCommand = nil
 
-        switch receipt.status {
-        case .accepted:
-            minimumOBSEnvelopeSequence = nil
-            minimumOBSRevision = signedLocalOBS.revision >= receipt.obsRevision
-                ? nil : receipt.obsRevision
-        case .rejected:
-            if receipt.rejection == .staleRoute || receipt.rejection == .routeDisabled ||
-                receipt.rejection == .authorityMismatch {
-                minimumOBSRevision = nil
-                minimumOBSEnvelopeSequence = nil
-                latestControlEnvelope = nil
-                resetCueCatalog(
-                    publishUnavailable: true,
-                    message: "La ruta local cambió en Studio. Esperando el estado firmado nuevo…"
+        if receiptContext != .connectionBoundary {
+            switch receipt.status {
+            case .accepted:
+                if signedLocalOBS.revision >= receipt.obsRevision {
+                    localOBSReconciliation.clear()
+                } else {
+                    localOBSReconciliation.requireRevision(
+                        receipt.obsRevision,
+                        connectionID: command.connectionID
+                    )
+                }
+            case .rejected:
+                if receipt.rejection == .staleRoute || receipt.rejection == .routeDisabled ||
+                    receipt.rejection == .authorityMismatch {
+                    localOBSReconciliation.clear()
+                    latestControlEnvelope = nil
+                    resetCueCatalog(
+                        publishUnavailable: true,
+                        message: "La ruta local cambió en Studio. Esperando el estado firmado nuevo…"
+                    )
+                } else if signedLocalOBS.revision < receipt.obsRevision {
+                    localOBSReconciliation.requireRevision(
+                        receipt.obsRevision,
+                        connectionID: command.connectionID
+                    )
+                } else {
+                    localOBSReconciliation.clear()
+                }
+            case .unconfirmed:
+                localOBSReconciliation.requireEnvelope(
+                    after: signedEnvelope.sequence,
+                    connectionID: command.connectionID
                 )
-            } else if signedLocalOBS.revision < receipt.obsRevision {
-                minimumOBSRevision = receipt.obsRevision
             }
-        case .unconfirmed:
-            minimumOBSRevision = nil
-            let next = signedEnvelope.sequence.addingReportingOverflow(1)
-            minimumOBSEnvelopeSequence = next.overflow ? UInt64.max : next.partialValue
         }
 
         let feedbackState: TchurchStudioLANLocalOBSSceneFeedbackState
@@ -4273,15 +4436,10 @@ final class TchurchStudioLANClient: @unchecked Sendable {
            revision >= minimum {
             minimumLowerThirdRevision = nil
         }
-        if let minimum = minimumOBSRevision,
-           let revision = envelope.payload.control?.localOBS?.revision,
-           revision >= minimum {
-            minimumOBSRevision = nil
-        }
-        if let minimum = minimumOBSEnvelopeSequence,
-           envelope.sequence >= minimum {
-            minimumOBSEnvelopeSequence = nil
-        }
+        localOBSReconciliation.observe(
+            envelope.payload.control?.localOBS,
+            envelopeSequence: envelope.sequence
+        )
         replayAmbiguousRemoteCommandIfReady()
         replayAmbiguousOperatorTimerCommandIfReady()
         replayAmbiguousLocalBroadcastLowerThirdCommandIfReady()
@@ -4869,12 +5027,19 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         let uncertaintyReason: TchurchStudioLANLocalOBSSceneUncertaintyReason? =
             state == .unconfirmed ? .mutationMayHaveExecuted : nil
         if state == .unconfirmed {
-            minimumOBSRevision = nil
-            if let sequence = latestControlEnvelope?.sequence {
-                let next = sequence.addingReportingOverflow(1)
-                minimumOBSEnvelopeSequence = next.overflow ? UInt64.max : next.partialValue
+            let signedLocalOBS = latestControlEnvelope?.payload.control?.localOBS
+            if TchurchStudioLANLocalOBSReconciliationState.isConnectionBoundary(
+                from: inFlight.command.connectionID,
+                observed: signedLocalOBS
+            ) {
+                localOBSReconciliation.clear()
+            } else if let sequence = latestControlEnvelope?.sequence {
+                localOBSReconciliation.requireEnvelope(
+                    after: sequence,
+                    connectionID: inFlight.command.connectionID
+                )
             } else {
-                minimumOBSEnvelopeSequence = nil
+                localOBSReconciliation.clear()
             }
         }
         localOBSSceneFeedbackHandler?(TchurchStudioLANLocalOBSSceneFeedback(
@@ -5045,8 +5210,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         minimumControlEnvelopeRevision = nil
         minimumOperatorTimerRevision = nil
         minimumLowerThirdRevision = nil
-        minimumOBSRevision = nil
-        minimumOBSEnvelopeSequence = nil
+        localOBSReconciliation.clear()
         resetCueCatalog(publishUnavailable: true)
     }
 
@@ -5437,10 +5601,12 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                 envelope.payload.control?.routing?.tchurchCloudProgram == false &&
                 envelope.payload.control?.localOBS?.isCanonical == true &&
                 envelope.payload.control?.localOBS?.availability == .ready &&
-                (minimumOBSRevision.map {
-                    (envelope.payload.control?.localOBS?.revision ?? 0) >= $0
-                } ?? true) &&
-                (minimumOBSEnvelopeSequence.map { envelope.sequence >= $0 } ?? true)
+                (envelope.payload.control?.localOBS.map {
+                    localOBSReconciliation.permits(
+                        $0,
+                        envelopeSequence: envelope.sequence
+                    )
+                } ?? false)
         } ?? false
         let localOBSSceneControlAvailable = !privateStateBlocked && !revoked &&
             currentPhase == .connected &&
