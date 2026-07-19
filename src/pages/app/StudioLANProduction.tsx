@@ -294,6 +294,27 @@ export default function StudioLANProduction() {
     && routing?.localBroadcast === true
     && routing.tchurchCloudProgram === false
     && !commandPending;
+  const signedRoutingIndicators = controlUpdate?.payloadVersion === 8 && routing ? [
+    { key: "localAudience", label: "Audiencia local", enabled: routing.localAudience },
+    { key: "stageAndMusicians", label: "Stage / músicos", enabled: routing.stageAndMusicians },
+    { key: "localBroadcast", label: "Transmisión local", enabled: routing.localBroadcast },
+    { key: "lanRemoteControl", label: "Control LAN", enabled: routing.lanRemoteControl },
+    {
+      key: "lightingAndMIDI",
+      label: "Ruta luces / MIDI",
+      enabled: routing.lightingAndMIDI,
+      activeLabel: "Habilitada",
+      inactiveLabel: "Deshabilitada",
+    },
+    {
+      key: "lightingArmed",
+      label: "Luces armadas",
+      enabled: controlUpdate?.control?.lightingArmed,
+      activeLabel: "Armadas",
+      inactiveLabel: "Desarmadas",
+    },
+    { key: "tchurchCloudProgram", label: "Cloud Program", enabled: routing.tchurchCloudProgram },
+  ] : null;
 
   useEffect(() => {
     const preferredSceneId = localOBS?.currentSceneId ?? localOBS?.scenes[0]?.sceneId ?? "";
@@ -621,21 +642,30 @@ export default function StudioLANProduction() {
                 </div>
                 <ShieldCheck className="h-5 w-5 shrink-0 text-emerald-300" />
               </div>
-              <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                {[
-                  ["Músicos", routing?.stageAndMusicians],
-                  ["Cloud", routing?.tchurchCloudProgram],
-                  ["OBS", routing?.localBroadcast],
-                  ["Luces", routing?.lightingAndMIDI],
-                ].map(([label, enabled]) => (
-                  <div key={String(label)} className="rounded-2xl border border-white/10 bg-black/20 px-3 py-3 text-center">
+              <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label="Estado firmado de rutas locales">
+                {(signedRoutingIndicators ?? [
+                  { key: "stageAndMusicians", label: "Músicos", enabled: routing?.stageAndMusicians },
+                  { key: "tchurchCloudProgram", label: "Cloud", enabled: routing?.tchurchCloudProgram },
+                  { key: "localBroadcast", label: "OBS", enabled: routing?.localBroadcast },
+                  { key: "lightingAndMIDI", label: "Luces", enabled: routing?.lightingAndMIDI },
+                ]).map(({ key, label, enabled, activeLabel, inactiveLabel }) => (
+                  <div
+                    key={key}
+                    className="rounded-2xl border border-white/10 bg-black/20 px-3 py-3 text-center"
+                    data-testid={`studio-lan-routing-${key}`}
+                  >
                     <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">{label}</p>
                     <p className={`mt-1 text-sm font-black ${enabled === true ? "text-emerald-300" : enabled === false ? "text-slate-300" : "text-amber-200"}`}>
-                      {enabled === true ? "Activo" : enabled === false ? "Apagado" : "Compat. v4"}
+                      {enabled === true ? activeLabel ?? "Activo" : enabled === false ? inactiveLabel ?? "Apagado" : "Compat. v4"}
                     </p>
                   </div>
                 ))}
               </div>
+              {signedRoutingIndicators && (
+                <p className="mt-3 text-center text-[10px] font-semibold leading-4 text-slate-500" data-testid="studio-lan-lighting-routing-note">
+                  La ruta de luces/MIDI y el armado del motor son estados distintos. Este panel no puede modificarlos.
+                </p>
+              )}
             </div>
 
             {controlUpdate.payloadVersion === 8 && (

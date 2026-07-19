@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { StudioLANCueCatalogStatus, StudioLANLocalBroadcastLowerThirdFeedback, StudioLANLocalOBSSceneFeedback, StudioLANOperatorTimerFeedback, StudioLANRemoteFeedback, StudioLANStatus, StudioLANUpdate } from "@/lib/studioLANClient";
@@ -277,6 +277,63 @@ describe("Studio LAN production route", () => {
     expect(screen.getByRole("button", { name: /Activar blackout/i })).toBeEnabled();
     expect(screen.getByRole("button", { name: /Ir a selección/i })).toBeDisabled();
     expect(screen.getByTestId("studio-lan-production-catalog-status")).toHaveTextContent(/Cargando el catálogo/i);
+  });
+
+  it("shows complete signed v8 routing and lighting telemetry without exposing mutations", async () => {
+    const catalogId = `sha256:${"6".repeat(64)}`;
+    mocks.status = connectedStatus;
+    mocks.update = {
+      ...controlUpdate,
+      payloadVersion: 8,
+      authority: { ...controlUpdate.authority, serviceVersion: "v8" },
+      control: {
+        ...controlUpdate.control!,
+        lightingArmed: false,
+        cueCatalog: null,
+        routing: {
+          schemaVersion: 1,
+          localAudience: true,
+          localBroadcast: true,
+          stageAndMusicians: false,
+          lanRemoteControl: true,
+          lightingAndMIDI: true,
+          tchurchCloudProgram: false,
+        },
+        cueCatalogManifest: { schemaVersion: 1, catalogId, totalCount: 2, pageSize: 128 },
+        operatorTimers: null,
+        localBroadcastLowerThird: null,
+        localOBS: null,
+      },
+    };
+    mocks.cueCatalog = {
+      phase: "ready",
+      catalogId,
+      routeEpoch: "5",
+      totalCount: 2,
+      receivedCount: 2,
+      cues: [{ cueId: "cue-1", title: "Verso" }, { cueId: "cue-2", title: "Coro" }],
+      message: null,
+    };
+    const view = render(<MemoryRouter><StudioLANProduction /></MemoryRouter>);
+
+    const routing = await screen.findByTestId("studio-lan-production-routing");
+    expect(screen.getByTestId("studio-lan-routing-localAudience")).toHaveTextContent(/Audiencia localActivo/i);
+    expect(screen.getByTestId("studio-lan-routing-lanRemoteControl")).toHaveTextContent(/Control LANActivo/i);
+    expect(screen.getByTestId("studio-lan-routing-lightingAndMIDI")).toHaveTextContent(/Ruta luces \/ MIDIHabilitada/i);
+    expect(screen.getByTestId("studio-lan-routing-lightingArmed")).toHaveTextContent(/Luces armadasDesarmadas/i);
+    expect(screen.getByTestId("studio-lan-lighting-routing-note")).toHaveTextContent(/estados distintos.*no puede modificarlos/i);
+    expect(within(routing).queryByRole("button")).not.toBeInTheDocument();
+    expect(within(routing).queryByRole("switch")).not.toBeInTheDocument();
+    expect(within(routing).queryByRole("checkbox")).not.toBeInTheDocument();
+
+    mocks.update = {
+      ...mocks.update,
+      control: { ...mocks.update.control!, lightingArmed: true },
+    };
+    view.rerender(<MemoryRouter><StudioLANProduction /></MemoryRouter>);
+    expect(screen.getByTestId("studio-lan-routing-lightingArmed")).toHaveTextContent(/Luces armadasArmadas/i);
+    expect(mocks.sendRemoteCommand).not.toHaveBeenCalled();
+    expect(mocks.sendLocalOBSSceneCommand).not.toHaveBeenCalled();
   });
 
   it("pages the verified v5 catalog locally without exposing routing toggles", async () => {
