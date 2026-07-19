@@ -4,6 +4,7 @@ import type {
   StudioLANCueCatalogStatus,
   StudioLANImageAssetStatus,
   StudioLANLocalBroadcastLowerThirdFeedback,
+  StudioLANLocalOBSSceneFeedback,
   StudioLANOperatorTimerFeedback,
   StudioLANRemoteFeedback,
   StudioLANStatus,
@@ -17,6 +18,7 @@ type BridgeCallbacks = {
   onRemoteFeedback?: (feedback: StudioLANRemoteFeedback) => void;
   onOperatorTimerFeedback?: (feedback: StudioLANOperatorTimerFeedback) => void;
   onLocalBroadcastLowerThirdFeedback?: (feedback: StudioLANLocalBroadcastLowerThirdFeedback) => void;
+  onLocalOBSSceneFeedback?: (feedback: StudioLANLocalOBSSceneFeedback) => void;
   onCueCatalog?: (status: StudioLANCueCatalogStatus) => void;
 };
 
@@ -29,6 +31,7 @@ const mocks = vi.hoisted(() => ({
   refresh: vi.fn(),
   reapproval: vi.fn(),
   sendLowerThird: vi.fn(),
+  sendLocalOBSScene: vi.fn(),
 }));
 
 vi.mock("@/lib/studioLANClient", () => ({
@@ -45,6 +48,7 @@ vi.mock("@/lib/studioLANClient", () => ({
   sendStudioLANRemoteCommand: vi.fn(),
   sendStudioLANOperatorTimerCommand: vi.fn(),
   sendStudioLANLocalBroadcastLowerThirdCommand: mocks.sendLowerThird,
+  sendStudioLANLocalOBSSceneCommand: mocks.sendLocalOBSScene,
 }));
 
 import { useStudioLANClient } from "./useStudioLANClient";
@@ -71,6 +75,8 @@ const connectedStatus: StudioLANStatus = {
   operatorTimerCommandInFlight: false,
   localBroadcastLowerThirdControlAvailable: false,
   localBroadcastLowerThirdCommandInFlight: false,
+  localOBSSceneControlAvailable: false,
+  localOBSSceneCommandInFlight: false,
 };
 
 const update: StudioLANUpdate = {
@@ -132,6 +138,10 @@ describe("useStudioLANClient transport lifecycle", () => {
       accepted: true,
       commandId: "abcdefab-cdef-4abc-8def-abcdefabcdef",
     });
+    mocks.sendLocalOBSScene.mockResolvedValue({
+      accepted: true,
+      commandId: "12345678-1234-4abc-8def-123456789abc",
+    });
   });
 
   it("clears private show state across reconnect, suspension, and terminal failures", async () => {
@@ -166,11 +176,21 @@ describe("useStudioLANClient transport lifecycle", () => {
         lowerThirdRevision: null,
         wasIdempotentReplay: false,
       });
+      mocks.callbacks?.onLocalOBSSceneFeedback?.({
+        commandId: "12345678-1234-4abc-8def-123456789abc",
+        kind: "selectLocalOBSScene",
+        sceneId: `sha256:${"2".repeat(64)}`,
+        state: "unconfirmed",
+        rejection: null,
+        uncertaintyReason: "mutationMayHaveExecuted",
+        obsRevision: null,
+      });
     });
     expect(view.result.current.update).toEqual(update);
     expect(view.result.current.imageAsset).toEqual(imageAsset);
     expect(view.result.current.operatorTimerFeedback?.state).toBe("queued");
     expect(view.result.current.localBroadcastLowerThirdFeedback?.state).toBe("queued");
+    expect(view.result.current.localOBSSceneFeedback?.state).toBe("unconfirmed");
 
     act(() => mocks.callbacks?.onStatus({
       ...connectedStatus,
@@ -181,6 +201,7 @@ describe("useStudioLANClient transport lifecycle", () => {
     expect(view.result.current.imageAsset).toBeNull();
     expect(view.result.current.operatorTimerFeedback).toBeNull();
     expect(view.result.current.localBroadcastLowerThirdFeedback).toBeNull();
+    expect(view.result.current.localOBSSceneFeedback).toBeNull();
 
     act(() => mocks.callbacks?.onStatus({
       ...connectedStatus,
@@ -226,6 +247,18 @@ describe("useStudioLANClient transport lifecycle", () => {
     };
     await act(async () => view.result.current.sendLocalBroadcastLowerThirdCommand(action));
     expect(mocks.sendLowerThird).toHaveBeenCalledWith(action);
+  });
+
+  it("delegates the closed v8 local OBS scene action through its independent bridge lane", async () => {
+    const view = renderHook(() => useStudioLANClient());
+    await waitFor(() => expect(mocks.callbacks).not.toBeNull());
+
+    const action = {
+      kind: "selectLocalOBSScene" as const,
+      sceneId: `sha256:${"2".repeat(64)}`,
+    };
+    await act(async () => view.result.current.sendLocalOBSSceneCommand(action));
+    expect(mocks.sendLocalOBSScene).toHaveBeenCalledWith(action);
   });
 
   it("clears the visible frame at every manual connection boundary", async () => {

@@ -10,6 +10,10 @@ const nativeMocks = vi.hoisted(() => ({
     accepted: true,
     commandId: "abcdefab-cdef-4abc-8def-abcdefabcdef",
   }),
+  sendLocalOBSSceneCommand: vi.fn().mockResolvedValue({
+    accepted: true,
+    commandId: "12345678-1234-4abc-8def-123456789abc",
+  }),
 }));
 
 vi.mock("@capacitor/core", () => ({
@@ -25,6 +29,8 @@ import {
   normalizeStudioLANImageAssetStatus,
   normalizeStudioLANLocalBroadcastLowerThirdAction,
   normalizeStudioLANLocalBroadcastLowerThirdFeedback,
+  normalizeStudioLANLocalOBSSceneAction,
+  normalizeStudioLANLocalOBSSceneFeedback,
   normalizeStudioLANPairingQR,
   normalizeStudioLANOperatorTimerFeedback,
   normalizeStudioLANRemoteFeedback,
@@ -33,6 +39,7 @@ import {
   projectStudioLANOperatorTimerMilliseconds,
   requestStudioLANDeviceReapproval,
   sendStudioLANLocalBroadcastLowerThirdCommand,
+  sendStudioLANLocalOBSSceneCommand,
   synchronizeStudioLANPrivacyContext,
 } from "./studioLANClient";
 
@@ -106,6 +113,8 @@ describe("Studio LAN native bridge boundary", () => {
       operatorTimerCommandInFlight: false,
       localBroadcastLowerThirdControlAvailable: false,
       localBroadcastLowerThirdCommandInFlight: false,
+      localOBSSceneControlAvailable: false,
+      localOBSSceneCommandInFlight: false,
     });
 
     const unsafe = normalizeStudioLANStatus({
@@ -583,6 +592,185 @@ describe("Studio LAN native bridge boundary", () => {
     })).toBeNull();
   });
 
+  it("accepts only the closed v8 local-OBS projection, action, and terminal uncertainty", async () => {
+    const base = validUpdate();
+    const catalogId = `sha256:${"4".repeat(64)}`;
+    const programSceneId = `sha256:${"1".repeat(64)}`;
+    const messageSceneId = `sha256:${"2".repeat(64)}`;
+    const localOBS = {
+      schemaVersion: 1,
+      revision: "31",
+      connectionId: "90000000-0000-4000-8000-000000000001",
+      availability: "ready",
+      currentSceneId: programSceneId,
+      scenes: [
+        { sceneId: programSceneId, title: "Program" },
+        { sceneId: messageSceneId, title: "Message" },
+      ],
+    };
+    const v8 = {
+      ...base,
+      channel: "control",
+      payloadVersion: 8,
+      stage: { ...base.stage, chordLines: [] },
+      control: {
+        chordsVisible: true,
+        lightingArmed: false,
+        healthyOutputCount: 2,
+        expectedOutputCount: 3,
+        routeEpoch: "9",
+        cueCatalog: null,
+        routing: {
+          schemaVersion: 1,
+          localAudience: true,
+          localBroadcast: true,
+          stageAndMusicians: true,
+          lanRemoteControl: true,
+          lightingAndMIDI: true,
+          tchurchCloudProgram: false,
+        },
+        cueCatalogManifest: { schemaVersion: 1, catalogId, totalCount: 2, pageSize: 128 },
+        operatorTimers: null,
+        localBroadcastLowerThird: null,
+        localOBS,
+      },
+    };
+
+    expect(normalizeStudioLANUpdate(v8)).toMatchObject({
+      payloadVersion: 8,
+      control: { localOBS, routing: { stageAndMusicians: true, lightingAndMIDI: true } },
+    });
+    expect(normalizeStudioLANUpdate({
+      ...v8,
+      payloadVersion: 7,
+    })).toBeNull();
+    expect(normalizeStudioLANUpdate({
+      ...v8,
+      control: { ...v8.control, localOBS: { ...localOBS, privateEndpoint: "never" } },
+    })).toBeNull();
+    expect(normalizeStudioLANUpdate({
+      ...v8,
+      control: {
+        ...v8.control,
+        localOBS: { ...localOBS, scenes: [localOBS.scenes[0], localOBS.scenes[0]] },
+      },
+    })).toBeNull();
+    expect(normalizeStudioLANUpdate({
+      ...v8,
+      control: { ...v8.control, localOBS: { ...localOBS, currentSceneId: "not-signed" } },
+    })).toBeNull();
+    expect(normalizeStudioLANUpdate({
+      ...v8,
+      control: { ...v8.control, localOBS: { ...localOBS, revision: "0" } },
+    })).toBeNull();
+    expect(normalizeStudioLANUpdate({
+      ...v8,
+      control: { ...v8.control, localOBS: { ...localOBS, connectionId: "obs-local" } },
+    })).toBeNull();
+    const localOBSWithoutCurrentScene: Partial<typeof localOBS> = { ...localOBS };
+    delete localOBSWithoutCurrentScene.currentSceneId;
+    for (const availability of ["busy", "ready", "uncertain"] as const) {
+      expect(normalizeStudioLANUpdate({
+        ...v8,
+        control: {
+          ...v8.control,
+          localOBS: { ...localOBSWithoutCurrentScene, availability },
+        },
+      })).toBeNull();
+    }
+    expect(normalizeStudioLANUpdate({
+      ...v8,
+      control: {
+        ...v8.control,
+        localOBS: {
+          ...localOBS,
+          scenes: [localOBS.scenes[0], { ...localOBS.scenes[1], title: "Program" }],
+        },
+      },
+    })).toBeNull();
+    const disconnected = {
+      schemaVersion: localOBS.schemaVersion,
+      revision: localOBS.revision,
+      availability: localOBS.availability,
+      scenes: localOBS.scenes,
+    };
+    expect(normalizeStudioLANUpdate({
+      ...v8,
+      control: {
+        ...v8.control,
+        localOBS: { ...disconnected, revision: "32", availability: "disconnected", scenes: [] },
+      },
+    })).toMatchObject({
+      payloadVersion: 8,
+      control: {
+        localOBS: { schemaVersion: 1, revision: "32", availability: "disconnected", scenes: [] },
+      },
+    });
+    expect(normalizeStudioLANUpdate({
+      ...v8,
+      control: {
+        ...v8.control,
+        localOBS: { ...localOBS, availability: "disconnected", scenes: [] },
+      },
+    })).toBeNull();
+    expect(normalizeStudioLANUpdate({
+      ...v8,
+      control: {
+        ...v8.control,
+        localOBS: { ...disconnected, availability: "ready", scenes: localOBS.scenes },
+      },
+    })).toBeNull();
+    expect(normalizeStudioLANUpdate({
+      ...v8,
+      control: {
+        ...v8.control,
+        routing: { ...v8.control.routing, localBroadcast: false },
+      },
+    })).toBeNull();
+    expect(normalizeStudioLANUpdate({
+      ...v8,
+      control: { ...v8.control, localOBS: null },
+    })).toMatchObject({ payloadVersion: 8, control: { localOBS: null } });
+
+    const action = { kind: "selectLocalOBSScene" as const, sceneId: messageSceneId };
+    expect(normalizeStudioLANLocalOBSSceneAction(action)).toEqual(action);
+    expect(normalizeStudioLANLocalOBSSceneAction({ ...action, endpoint: "never" })).toBeNull();
+    expect(normalizeStudioLANLocalOBSSceneAction({ ...action, sceneId: "scene-message" })).toBeNull();
+    await sendStudioLANLocalOBSSceneCommand(action);
+    expect(nativeMocks.sendLocalOBSSceneCommand).toHaveBeenCalledWith(action);
+
+    const accepted = {
+      commandId: "12345678-1234-4abc-8def-123456789abc",
+      kind: "selectLocalOBSScene",
+      sceneId: messageSceneId,
+      state: "accepted",
+      rejection: null,
+      uncertaintyReason: null,
+      obsRevision: "32",
+    };
+    expect(normalizeStudioLANLocalOBSSceneFeedback(accepted)).toEqual(accepted);
+    const unconfirmed = {
+      ...accepted,
+      state: "unconfirmed",
+      obsRevision: null,
+      uncertaintyReason: "mutationMayHaveExecuted",
+    };
+    expect(normalizeStudioLANLocalOBSSceneFeedback(unconfirmed)).toEqual(unconfirmed);
+    expect(normalizeStudioLANLocalOBSSceneFeedback({
+      ...unconfirmed,
+      uncertaintyReason: null,
+    })).toBeNull();
+    expect(normalizeStudioLANLocalOBSSceneFeedback({
+      ...accepted,
+      state: "rejected",
+      rejection: null,
+    })).toBeNull();
+    expect(normalizeStudioLANLocalOBSSceneFeedback({
+      ...accepted,
+      wasIdempotentReplay: true,
+    })).toBeNull();
+  });
+
   it("normalizes v4 device trust and fails closed on non-canonical permissions", () => {
     const approved = normalizeStudioLANStatus({
       supported: true,
@@ -621,6 +809,24 @@ describe("Studio LAN native bridge boundary", () => {
     expect(normalizeStudioLANStatus({
       ...approved,
       permissions: ["controlProgram", "observe"],
+    }).phase).toBe("failed");
+
+    const localOBSApproved = normalizeStudioLANStatus({
+      ...approved,
+      channel: "control",
+      role: "production",
+      permissions: ["observe", "controlProgram", "controlLocalOBS"],
+      localOBSSceneControlAvailable: true,
+      localOBSSceneCommandInFlight: false,
+    });
+    expect(localOBSApproved).toMatchObject({
+      phase: "connected",
+      permissions: ["observe", "controlProgram", "controlLocalOBS"],
+      localOBSSceneControlAvailable: true,
+    });
+    expect(normalizeStudioLANStatus({
+      ...localOBSApproved,
+      permissions: ["observe", "controlLocalOBS", "controlProgram"],
     }).phase).toBe("failed");
   });
 
