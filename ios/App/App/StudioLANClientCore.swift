@@ -389,6 +389,131 @@ struct TchurchStudioLANLocalBroadcastLowerThirdProjection: Codable, Equatable {
     }
 }
 
+enum TchurchStudioLANLocalOBSAvailability: String, Codable, Equatable {
+    case disconnected
+    case busy
+    case ready
+    case uncertain
+}
+
+/// V8 exposes only signed, display-safe identifiers for scenes owned by the
+/// local OBS instance. Connection details and stream/record mutations never
+/// cross the Studio LAN boundary.
+struct TchurchStudioLANLocalOBSScene: Codable, Equatable {
+    static let maximumSceneIDBytes = 160
+    static let maximumTitleBytes = 512
+
+    let sceneID: String
+    let title: String
+
+    var isCanonical: Bool {
+        Self.validText(sceneID, maximumBytes: Self.maximumSceneIDBytes) &&
+            Self.validText(title, maximumBytes: Self.maximumTitleBytes)
+    }
+
+    static func validText(_ value: String, maximumBytes: Int) -> Bool {
+        value == value.trimmingCharacters(in: .whitespacesAndNewlines) &&
+            (1 ... maximumBytes).contains(value.utf8.count) &&
+            !value.unicodeScalars.contains(where: {
+                $0.properties.generalCategory == .control
+            })
+    }
+}
+
+extension TchurchStudioLANLocalOBSScene {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case sceneID, title
+    }
+
+    init(from decoder: Decoder) throws {
+        try TchurchStudioLANExactObject.requireKeys(
+            Set(CodingKeys.allCases.map(\.rawValue)),
+            from: decoder
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        sceneID = try container.decode(String.self, forKey: .sceneID)
+        title = try container.decode(String.self, forKey: .title)
+        guard isCanonical else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath,
+                debugDescription: "Invalid local OBS scene"
+            ))
+        }
+    }
+}
+
+struct TchurchStudioLANLocalOBSProjection: Codable, Equatable {
+    static let schemaVersion = 1
+    static let maximumRevision: UInt64 = 9_007_199_254_740_991
+    static let maximumScenes = 256
+    static let maximumConnectionIDBytes = 160
+
+    let schemaVersion: Int
+    let revision: UInt64
+    let connectionID: String
+    let availability: TchurchStudioLANLocalOBSAvailability
+    let currentSceneID: String?
+    let scenes: [TchurchStudioLANLocalOBSScene]
+
+    var isCanonical: Bool {
+        schemaVersion == Self.schemaVersion &&
+            revision <= Self.maximumRevision &&
+            TchurchStudioLANLocalOBSScene.validText(
+                connectionID,
+                maximumBytes: Self.maximumConnectionIDBytes
+            ) &&
+            scenes.count <= Self.maximumScenes &&
+            scenes.allSatisfy(\.isCanonical) &&
+            Set(scenes.map(\.sceneID)).count == scenes.count &&
+            currentSceneID.map { current in
+                scenes.contains(where: { $0.sceneID == current })
+            } ?? true
+    }
+}
+
+extension TchurchStudioLANLocalOBSProjection {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case schemaVersion, revision, connectionID, availability, currentSceneID, scenes
+    }
+
+    init(from decoder: Decoder) throws {
+        let required: Set<String> = [
+            CodingKeys.schemaVersion.rawValue,
+            CodingKeys.revision.rawValue,
+            CodingKeys.connectionID.rawValue,
+            CodingKeys.availability.rawValue,
+            CodingKeys.scenes.rawValue,
+        ]
+        let anyContainer = try decoder.container(keyedBy: TchurchStudioLANAnyCodingKey.self)
+        let actual = Set(anyContainer.allKeys.map(\.stringValue))
+        guard required.isSubset(of: actual),
+              actual.subtracting(required).isSubset(of: [CodingKeys.currentSceneID.rawValue]) else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath,
+                debugDescription: "Object keys do not match the signed local OBS contract"
+            ))
+        }
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        revision = try container.decode(UInt64.self, forKey: .revision)
+        connectionID = try container.decode(String.self, forKey: .connectionID)
+        availability = try container.decode(
+            TchurchStudioLANLocalOBSAvailability.self,
+            forKey: .availability
+        )
+        currentSceneID = actual.contains(CodingKeys.currentSceneID.rawValue)
+            ? try container.decode(String.self, forKey: .currentSceneID)
+            : nil
+        scenes = try container.decode([TchurchStudioLANLocalOBSScene].self, forKey: .scenes)
+        guard isCanonical else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath,
+                debugDescription: "Invalid local OBS state"
+            ))
+        }
+    }
+}
+
 extension TchurchStudioLANLocalBroadcastLowerThirdProjection {
     private enum CodingKeys: String, CodingKey, CaseIterable {
         case schemaVersion, revision, target, visible, title, subtitle
@@ -638,6 +763,7 @@ struct TchurchStudioLANControlSupplement: Codable, Equatable {
     let cueCatalogManifest: TchurchStudioLANCueCatalogManifest?
     let operatorTimers: TchurchStudioLANOperatorTimersProjection?
     let localBroadcastLowerThird: TchurchStudioLANLocalBroadcastLowerThirdProjection?
+    let localOBS: TchurchStudioLANLocalOBSProjection?
 
     init(
         chordsVisible: Bool,
@@ -649,7 +775,8 @@ struct TchurchStudioLANControlSupplement: Codable, Equatable {
         routing: TchurchStudioLANRoutingProjection? = nil,
         cueCatalogManifest: TchurchStudioLANCueCatalogManifest? = nil,
         operatorTimers: TchurchStudioLANOperatorTimersProjection? = nil,
-        localBroadcastLowerThird: TchurchStudioLANLocalBroadcastLowerThirdProjection? = nil
+        localBroadcastLowerThird: TchurchStudioLANLocalBroadcastLowerThirdProjection? = nil,
+        localOBS: TchurchStudioLANLocalOBSProjection? = nil
     ) {
         self.chordsVisible = chordsVisible
         self.lightingArmed = lightingArmed
@@ -661,6 +788,7 @@ struct TchurchStudioLANControlSupplement: Codable, Equatable {
         self.cueCatalogManifest = cueCatalogManifest
         self.operatorTimers = operatorTimers
         self.localBroadcastLowerThird = localBroadcastLowerThird
+        self.localOBS = localOBS
     }
 }
 
@@ -785,6 +913,8 @@ struct TchurchStudioLANSubscriptionRequest: Codable, Equatable {
     static let v5SupportedPayloadVersions = [5, 4, 3, 2, 1]
     static let deviceTrustSupportedPayloadVersions = [6, 5, 4, 3, 2, 1]
     static let controlSupportedPayloadVersions = [7, 6, 5, 4, 3, 2, 1]
+    static let localOBSControlPayloadVersions = [8]
+    static let localOBSControlSupportedPayloadVersions = [8, 7, 6, 5, 4, 3, 2, 1]
 
     let schemaVersion: Int
     let requestID: UUID
@@ -870,7 +1000,7 @@ struct TchurchStudioLANSubscriptionGrant: Codable, Equatable {
 }
 
 struct TchurchStudioLANSignedEnvelope: Codable, Equatable {
-    static let supportedSchemaVersions = Set([1, 2, 3, 4, 5, 6, 7])
+    static let supportedSchemaVersions = Set([1, 2, 3, 4, 5, 6, 7, 8])
 
     let schemaVersion: Int
     let authority: TchurchStudioLANAuthority
@@ -1180,6 +1310,7 @@ struct TchurchStudioLANPayloadNegotiation: Equatable {
     func supportedPayloadVersions(
         for channel: TchurchStudioLANChannel,
         controlAdvertisedPayloadVersions: [Int]? = nil,
+        localOBSControlPayloadVersions: [Int]? = nil,
         advertisedPayloadVersions: [Int]? = nil
     ) -> [Int] {
         guard protocolFloor >= StudioLANDeviceTrustContract.protocolFloor else {
@@ -1188,6 +1319,11 @@ struct TchurchStudioLANPayloadNegotiation: Equatable {
         if channel == .control,
            controlAdvertisedPayloadVersions ==
             TchurchStudioLANSubscriptionRequest.controlSupportedPayloadVersions {
+            if localOBSControlPayloadVersions ==
+                TchurchStudioLANSubscriptionRequest.localOBSControlPayloadVersions {
+                return TchurchStudioLANSubscriptionRequest
+                    .localOBSControlSupportedPayloadVersions
+            }
             return TchurchStudioLANSubscriptionRequest.controlSupportedPayloadVersions
         }
         switch advertisedPayloadVersions {
@@ -1223,7 +1359,8 @@ struct TchurchStudioLANPayloadNegotiation: Equatable {
 
     mutating func recordAuthenticatedGrant(_ subscription: TchurchStudioLANVerifiedSubscription) throws {
         let selected = subscription.payloadVersion
-        guard supportedPayloadVersions.contains(selected),
+        guard (supportedPayloadVersions.contains(selected) ||
+                selected == TchurchStudioLANLocalOBSSceneContract.payloadVersion),
               (selected < 6 || subscription.channel == .control),
               selected >= protocolFloor,
               negotiatedPayloadVersion.map({ $0 == selected }) ?? true else {
@@ -1285,6 +1422,7 @@ enum TchurchStudioLANSubscriptionAuthenticator {
                 (schemaVersion == TchurchStudioLANSubscriptionRequest.deviceTrustSchemaVersion &&
                     (supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.deviceTrustSupportedPayloadVersions ||
                         supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.controlSupportedPayloadVersions ||
+                        supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.localOBSControlSupportedPayloadVersions ||
                         supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.v5SupportedPayloadVersions ||
                         supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.v4SupportedPayloadVersions)) else {
             throw TchurchStudioLANError.unsupportedPayloadVersion
@@ -1295,6 +1433,7 @@ enum TchurchStudioLANSubscriptionAuthenticator {
            let deviceAttestation {
             guard supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.deviceTrustSupportedPayloadVersions ||
                     supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.controlSupportedPayloadVersions ||
+                    supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.localOBSControlSupportedPayloadVersions ||
                     supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.v5SupportedPayloadVersions ||
                     supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.v4SupportedPayloadVersions,
                   deviceAttestation.deviceID == clientID,
@@ -1446,18 +1585,21 @@ enum TchurchStudioLANSubscriptionAuthenticator {
                   let studioID = challenge.studioID,
                   let offeredPayloadVersions = request.supportedPayloadVersions,
                   offeredPayloadVersions == TchurchStudioLANSubscriptionRequest.controlSupportedPayloadVersions ||
+                    offeredPayloadVersions == TchurchStudioLANSubscriptionRequest.localOBSControlSupportedPayloadVersions ||
                     offeredPayloadVersions == TchurchStudioLANSubscriptionRequest.deviceTrustSupportedPayloadVersions ||
                     offeredPayloadVersions == TchurchStudioLANSubscriptionRequest.v5SupportedPayloadVersions ||
                     offeredPayloadVersions == TchurchStudioLANSubscriptionRequest.v4SupportedPayloadVersions,
                   let attestation = request.deviceAttestation,
                   let selectedPayloadVersion = grant.selectedPayloadVersion,
-                  (4 ... 7).contains(selectedPayloadVersion),
+                  (4 ... 8).contains(selectedPayloadVersion),
                   selectedPayloadVersion < 6 || request.channel == .control,
                   offeredPayloadVersions.contains(selectedPayloadVersion),
                   let deviceGrant = grant.deviceGrant,
                   deviceGrant.deviceID == request.clientID,
                   deviceGrant.deviceID == attestation.deviceID,
                   deviceGrant.role == attestation.requestedRole,
+                  (selectedPayloadVersion == TchurchStudioLANLocalOBSSceneContract.payloadVersion ||
+                    !deviceGrant.permissions.contains(.controlLocalOBS)),
                   deviceGrant.devicePublicKey == attestation.devicePublicKey,
                   deviceGrant.devicePublicKeyFingerprint == attestation.devicePublicKeyFingerprint else {
                 throw TchurchStudioLANError.invalidSubscription
@@ -1519,6 +1661,9 @@ struct TchurchStudioLANReplayGuard: Equatable {
     private(set) var lastOperatorTimersChecksum: String?
     private(set) var lastLowerThirdRevision: UInt64?
     private(set) var lastLowerThirdChecksum: String?
+    private(set) var lastOBSRevision: UInt64?
+    private(set) var lastOBSChecksum: String?
+    private(set) var lastOBSConnectionID: String?
     private(set) var lastRouteEpoch: UInt64?
     private(set) var lastRoutingChecksum: String?
     private(set) var lastTelemetryChecksum: String?
@@ -1529,6 +1674,9 @@ struct TchurchStudioLANReplayGuard: Equatable {
     private(set) var lastEnvelopeOperatorTimerRevision: UInt64?
     private(set) var lastEnvelopeLowerThirdAvailable: Bool?
     private(set) var lastEnvelopeLowerThirdRevision: UInt64?
+    private(set) var lastEnvelopeOBSAvailable: Bool?
+    private(set) var lastEnvelopeOBSRevision: UInt64?
+    private(set) var lastEnvelopeOBSConnectionID: String?
     private(set) var negotiatedPayloadVersion: Int?
 
     mutating func begin(_ subscription: TchurchStudioLANVerifiedSubscription) throws {
@@ -1572,6 +1720,9 @@ struct TchurchStudioLANReplayGuard: Equatable {
         lastOperatorTimersChecksum = nil
         lastLowerThirdRevision = nil
         lastLowerThirdChecksum = nil
+        lastOBSRevision = nil
+        lastOBSChecksum = nil
+        lastOBSConnectionID = nil
         lastRouteEpoch = nil
         lastRoutingChecksum = nil
         lastTelemetryChecksum = nil
@@ -1582,6 +1733,9 @@ struct TchurchStudioLANReplayGuard: Equatable {
         lastEnvelopeOperatorTimerRevision = nil
         lastEnvelopeLowerThirdAvailable = nil
         lastEnvelopeLowerThirdRevision = nil
+        lastEnvelopeOBSAvailable = nil
+        lastEnvelopeOBSRevision = nil
+        lastEnvelopeOBSConnectionID = nil
     }
 
     mutating func accept(_ envelope: TchurchStudioLANSignedEnvelope) throws {
@@ -1594,7 +1748,7 @@ struct TchurchStudioLANReplayGuard: Equatable {
         guard lastRevision.map({ envelope.revision >= $0 }) ?? true else {
             throw TchurchStudioLANError.staleRevision
         }
-        if (4 ... 7).contains(envelope.schemaVersion) {
+        if (4 ... 8).contains(envelope.schemaVersion) {
             guard let control = envelope.payload.control else {
                 throw TchurchStudioLANError.invalidPayload
             }
@@ -1613,11 +1767,15 @@ struct TchurchStudioLANReplayGuard: Equatable {
             let operatorTimers = supportsOperatorTimers ? control.operatorTimers : nil
             let timerRevision = operatorTimers?.revision
             let timersAvailable = timerRevision != nil
-            let lowerThird = envelope.schemaVersion == 7
+            let lowerThird = envelope.schemaVersion >= 7
                 ? control.localBroadcastLowerThird
                 : nil
             let lowerThirdRevision = lowerThird?.revision
             let lowerThirdAvailable = lowerThirdRevision != nil
+            let localOBS = envelope.schemaVersion == 8 ? control.localOBS : nil
+            let obsRevision = localOBS?.revision
+            let obsConnectionID = localOBS?.connectionID
+            let obsAvailable = obsRevision != nil
             let programChecksum = try Self.programPayloadChecksum(envelope.payload)
             let operatorTimersChecksum = try operatorTimers.map {
                 TchurchStudioLANCrypto.sha256Hex(
@@ -1625,6 +1783,11 @@ struct TchurchStudioLANReplayGuard: Equatable {
                 )
             }
             let lowerThirdChecksum = try lowerThird.map {
+                TchurchStudioLANCrypto.sha256Hex(
+                    try TchurchStudioLANCoding.encoder().encode($0)
+                )
+            }
+            let obsChecksum = try localOBS.map {
                 TchurchStudioLANCrypto.sha256Hex(
                     try TchurchStudioLANCoding.encoder().encode($0)
                 )
@@ -1647,6 +1810,14 @@ struct TchurchStudioLANReplayGuard: Equatable {
                 lastRevision: lastLowerThirdRevision,
                 lastChecksum: lastLowerThirdChecksum
             )
+            if obsConnectionID == lastOBSConnectionID {
+                try Self.validateProjectionIdentity(
+                    revision: obsRevision,
+                    checksum: obsChecksum,
+                    lastRevision: lastOBSRevision,
+                    lastChecksum: lastOBSChecksum
+                )
+            }
             if lastEnvelopeRoutingAvailable == false,
                let routeEpoch,
                let retainedEpoch = lastRouteEpoch,
@@ -1665,6 +1836,13 @@ struct TchurchStudioLANReplayGuard: Equatable {
                lowerThirdRevision <= retainedRevision {
                 throw TchurchStudioLANError.staleRevision
             }
+            if lastEnvelopeOBSAvailable == false,
+               let obsRevision,
+               let retainedRevision = lastOBSRevision,
+               obsConnectionID == lastOBSConnectionID,
+               obsRevision <= retainedRevision {
+                throw TchurchStudioLANError.staleRevision
+            }
             if envelope.revision == lastRevision {
                 guard programChecksum == lastProgramPayloadChecksum else {
                     throw TchurchStudioLANError.equivocatedRevision
@@ -1676,7 +1854,10 @@ struct TchurchStudioLANReplayGuard: Equatable {
                           timersAvailable == lastEnvelopeOperatorTimersAvailable,
                           timerRevision == lastEnvelopeOperatorTimerRevision,
                           lowerThirdAvailable == lastEnvelopeLowerThirdAvailable,
-                          lowerThirdRevision == lastEnvelopeLowerThirdRevision else {
+                          lowerThirdRevision == lastEnvelopeLowerThirdRevision,
+                          obsAvailable == lastEnvelopeOBSAvailable,
+                          obsRevision == lastEnvelopeOBSRevision,
+                          obsConnectionID == lastEnvelopeOBSConnectionID else {
                         throw TchurchStudioLANError.equivocatedRevision
                     }
                 } else {
@@ -1698,8 +1879,20 @@ struct TchurchStudioLANReplayGuard: Equatable {
                         retainedRevision: lastLowerThirdRevision,
                         currentRevision: lowerThirdRevision
                     )
+                    let obsChanged: Bool
+                    if obsConnectionID != lastEnvelopeOBSConnectionID {
+                        obsChanged = true
+                    } else {
+                        obsChanged = try Self.sidecarChanged(
+                            previousAvailable: lastEnvelopeOBSAvailable,
+                            previousRevision: lastEnvelopeOBSRevision,
+                            retainedRevision: lastOBSRevision,
+                            currentRevision: obsRevision
+                        )
+                    }
                     let telemetryChanged = telemetryChecksum != lastTelemetryChecksum
-                    guard routingChanged || telemetryChanged || timerChanged || lowerThirdChanged else {
+                    guard routingChanged || telemetryChanged || timerChanged || lowerThirdChanged ||
+                            obsChanged else {
                         throw TchurchStudioLANError.equivocatedRevision
                     }
                 }
@@ -1722,6 +1915,14 @@ struct TchurchStudioLANReplayGuard: Equatable {
                     lastLowerThirdChecksum = lowerThirdChecksum
                 }
             }
+            if let obsRevision {
+                if obsConnectionID != lastOBSConnectionID ||
+                    (lastOBSRevision.map({ obsRevision > $0 }) ?? true) {
+                    lastOBSRevision = obsRevision
+                    lastOBSChecksum = obsChecksum
+                    lastOBSConnectionID = obsConnectionID
+                }
+            }
             lastTelemetryChecksum = telemetryChecksum
             lastProgramPayloadChecksum = programChecksum
             lastEnvelopeRoutingAvailable = routingAvailable
@@ -1730,6 +1931,9 @@ struct TchurchStudioLANReplayGuard: Equatable {
             lastEnvelopeOperatorTimerRevision = timerRevision
             lastEnvelopeLowerThirdAvailable = lowerThirdAvailable
             lastEnvelopeLowerThirdRevision = lowerThirdRevision
+            lastEnvelopeOBSAvailable = obsAvailable
+            lastEnvelopeOBSRevision = obsRevision
+            lastEnvelopeOBSConnectionID = obsConnectionID
         } else {
             if envelope.revision == lastRevision,
                envelope.payloadChecksum != lastPayloadChecksum {
@@ -1739,6 +1943,9 @@ struct TchurchStudioLANReplayGuard: Equatable {
             lastOperatorTimersChecksum = nil
             lastLowerThirdRevision = nil
             lastLowerThirdChecksum = nil
+            lastOBSRevision = nil
+            lastOBSChecksum = nil
+            lastOBSConnectionID = nil
             lastRouteEpoch = nil
             lastRoutingChecksum = nil
             lastTelemetryChecksum = nil
@@ -1749,6 +1956,9 @@ struct TchurchStudioLANReplayGuard: Equatable {
             lastEnvelopeOperatorTimerRevision = nil
             lastEnvelopeLowerThirdAvailable = nil
             lastEnvelopeLowerThirdRevision = nil
+            lastEnvelopeOBSAvailable = nil
+            lastEnvelopeOBSRevision = nil
+            lastEnvelopeOBSConnectionID = nil
         }
         lastSequence = envelope.sequence
         lastRevision = envelope.revision
@@ -1823,7 +2033,8 @@ struct TchurchStudioLANReplayGuard: Equatable {
                     routing: nil,
                     cueCatalogManifest: nil,
                     operatorTimers: nil,
-                    localBroadcastLowerThird: nil
+                    localBroadcastLowerThird: nil,
+                    localOBS: nil
                 )
             )
         )
@@ -1996,7 +2207,8 @@ struct TchurchStudioLANEnvelopeVerifier {
         }
         if envelope.channel == .control {
             guard envelope.schemaVersion == 4 || envelope.schemaVersion == 5 ||
-                    envelope.schemaVersion == 6 || envelope.schemaVersion == 7,
+                    envelope.schemaVersion == 6 || envelope.schemaVersion == 7 ||
+                    envelope.schemaVersion == 8,
                   let control = envelope.payload.control,
                   let routeEpoch = control.routeEpoch,
                   routeEpoch > 0,
@@ -2019,7 +2231,8 @@ struct TchurchStudioLANEnvelopeVerifier {
                       control.routing == nil,
                       control.cueCatalogManifest == nil,
                       control.operatorTimers == nil,
-                      control.localBroadcastLowerThird == nil else {
+                      control.localBroadcastLowerThird == nil,
+                      control.localOBS == nil else {
                     throw TchurchStudioLANError.invalidPayload
                 }
             } else {
@@ -2038,11 +2251,15 @@ struct TchurchStudioLANEnvelopeVerifier {
                       envelope.schemaVersion >= 6
                         ? (control.operatorTimers?.isCanonical ?? true)
                         : control.operatorTimers == nil,
-                      envelope.schemaVersion == 7
+                      envelope.schemaVersion >= 7
                         ? ((control.localBroadcastLowerThird?.isCanonical ?? true) &&
                             (control.localBroadcastLowerThird == nil ||
                                 routing.localBroadcast))
-                        : control.localBroadcastLowerThird == nil else {
+                        : control.localBroadcastLowerThird == nil,
+                      envelope.schemaVersion == 8
+                        ? ((control.localOBS?.isCanonical ?? true) &&
+                            (control.localOBS == nil || routing.localBroadcast))
+                        : control.localOBS == nil else {
                     throw TchurchStudioLANError.invalidPayload
                 }
             }
@@ -2062,7 +2279,8 @@ struct TchurchStudioLANEnvelopeVerifier {
             return
         }
         guard payloadVersion == 2 || payloadVersion == 3 || payloadVersion == 4 ||
-                payloadVersion == 5 || payloadVersion == 6 || payloadVersion == 7 else {
+                payloadVersion == 5 || payloadVersion == 6 || payloadVersion == 7 ||
+                payloadVersion == 8 else {
             throw TchurchStudioLANError.unsupportedPayloadVersion
         }
         guard let slide else {
@@ -2162,7 +2380,9 @@ struct TchurchStudioLANEnvelopeVerifier {
     ) -> Bool {
         guard let descriptor else { return true }
         guard payloadVersion == 3 || payloadVersion == 4 || payloadVersion == 5 ||
-                payloadVersion == 6 || payloadVersion == 7 else { return false }
+                payloadVersion == 6 || payloadVersion == 7 || payloadVersion == 8 else {
+            return false
+        }
         return descriptor.schemaVersion == TchurchStudioLANImageAssetDescriptor.schemaVersion &&
             descriptor.objectID == mediaAssetID &&
             validAssetID(descriptor.referenceID) &&
@@ -2273,7 +2493,8 @@ enum TchurchStudioLANWireMessage: Codable, Equatable {
     case challenge(
         TchurchStudioLANServerChallenge,
         supportedPayloadVersions: [Int]? = nil,
-        controlSupportedPayloadVersions: [Int]? = nil
+        controlSupportedPayloadVersions: [Int]? = nil,
+        localOBSControlPayloadVersions: [Int]? = nil
     )
     case subscribe(TchurchStudioLANSubscriptionRequest)
     case grant(TchurchStudioLANSubscriptionGrant)
@@ -2293,6 +2514,8 @@ enum TchurchStudioLANWireMessage: Codable, Equatable {
     case localBroadcastLowerThirdReceipt(
         TchurchStudioLANLocalBroadcastLowerThirdReceipt
     )
+    case localOBSSceneCommand(TchurchStudioLANLocalOBSSceneCommand)
+    case localOBSSceneReceipt(TchurchStudioLANLocalOBSSceneReceipt)
     case catalogRequest(TchurchStudioLANCatalogRequest)
     case catalogPage(TchurchStudioLANCatalogPage)
     case catalogUnavailable(TchurchStudioLANCatalogUnavailable)
@@ -2303,14 +2526,17 @@ enum TchurchStudioLANWireMessage: Codable, Equatable {
         case assetRequest, assetChunk, assetUnavailable
         case remoteCommand, remoteReceipt, operatorTimerCommand, operatorTimerReceipt, error
         case localBroadcastLowerThirdCommand, localBroadcastLowerThirdReceipt
+        case localOBSSceneCommand, localOBSSceneReceipt
         case catalogRequest, catalogPage, catalogUnavailable
     }
     private enum CodingKeys: String, CodingKey {
         case kind, challenge, supportedPayloadVersions, controlSupportedPayloadVersions
+        case localOBSControlPayloadVersions
         case request, grant, envelope, nonce
         case assetRequest, assetChunk, assetUnavailable
         case remoteCommand, remoteReceipt, operatorTimerCommand, operatorTimerReceipt, error
         case localBroadcastLowerThirdCommand, localBroadcastLowerThirdReceipt
+        case localOBSSceneCommand, localOBSSceneReceipt
         case catalogRequest, catalogPage, catalogUnavailable
     }
 
@@ -2319,7 +2545,8 @@ enum TchurchStudioLANWireMessage: Codable, Equatable {
         let kind = try container.decode(Kind.self, forKey: .kind)
         if kind == .operatorTimerCommand || kind == .operatorTimerReceipt ||
             kind == .localBroadcastLowerThirdCommand ||
-            kind == .localBroadcastLowerThirdReceipt {
+            kind == .localBroadcastLowerThirdReceipt ||
+            kind == .localOBSSceneCommand || kind == .localOBSSceneReceipt {
             let valueKey: String
             switch kind {
             case .operatorTimerCommand:
@@ -2330,6 +2557,10 @@ enum TchurchStudioLANWireMessage: Codable, Equatable {
                 valueKey = CodingKeys.localBroadcastLowerThirdCommand.rawValue
             case .localBroadcastLowerThirdReceipt:
                 valueKey = CodingKeys.localBroadcastLowerThirdReceipt.rawValue
+            case .localOBSSceneCommand:
+                valueKey = CodingKeys.localOBSSceneCommand.rawValue
+            case .localOBSSceneReceipt:
+                valueKey = CodingKeys.localOBSSceneReceipt.rawValue
             default:
                 throw TchurchStudioLANError.invalidPayload
             }
@@ -2367,10 +2598,26 @@ enum TchurchStudioLANWireMessage: Codable, Equatable {
                     TchurchStudioLANSubscriptionRequest.deviceTrustSupportedPayloadVersions else {
                 throw TchurchStudioLANError.unsupportedPayloadVersion
             }
+            let localOBSHintIsPresent = container.contains(.localOBSControlPayloadVersions)
+            let decodedLocalOBSHint = try container.decodeIfPresent(
+                [Int].self,
+                forKey: .localOBSControlPayloadVersions
+            )
+            guard !localOBSHintIsPresent || decodedLocalOBSHint ==
+                    TchurchStudioLANSubscriptionRequest.localOBSControlPayloadVersions,
+                  decodedLocalOBSHint == nil || (
+                    decodedControlHint ==
+                        TchurchStudioLANSubscriptionRequest.controlSupportedPayloadVersions &&
+                    decodedHint ==
+                        TchurchStudioLANSubscriptionRequest.deviceTrustSupportedPayloadVersions
+                  ) else {
+                throw TchurchStudioLANError.unsupportedPayloadVersion
+            }
             self = .challenge(
                 challenge,
                 supportedPayloadVersions: decodedHint,
-                controlSupportedPayloadVersions: decodedControlHint
+                controlSupportedPayloadVersions: decodedControlHint,
+                localOBSControlPayloadVersions: decodedLocalOBSHint
             )
         case .subscribe: self = .subscribe(try container.decode(TchurchStudioLANSubscriptionRequest.self, forKey: .request))
         case .grant: self = .grant(try container.decode(TchurchStudioLANSubscriptionGrant.self, forKey: .grant))
@@ -2421,6 +2668,20 @@ enum TchurchStudioLANWireMessage: Codable, Equatable {
                     forKey: .localBroadcastLowerThirdReceipt
                 )
             )
+        case .localOBSSceneCommand:
+            self = .localOBSSceneCommand(
+                try container.decode(
+                    TchurchStudioLANLocalOBSSceneCommand.self,
+                    forKey: .localOBSSceneCommand
+                )
+            )
+        case .localOBSSceneReceipt:
+            self = .localOBSSceneReceipt(
+                try container.decode(
+                    TchurchStudioLANLocalOBSSceneReceipt.self,
+                    forKey: .localOBSSceneReceipt
+                )
+            )
         case .catalogRequest:
             self = .catalogRequest(
                 try container.decode(TchurchStudioLANCatalogRequest.self, forKey: .catalogRequest)
@@ -2443,7 +2704,8 @@ enum TchurchStudioLANWireMessage: Codable, Equatable {
         case .challenge(
             let value,
             let supportedPayloadVersions,
-            let controlSupportedPayloadVersions
+            let controlSupportedPayloadVersions,
+            let localOBSControlPayloadVersions
         ):
             try container.encode(Kind.challenge, forKey: .kind)
             try container.encode(value, forKey: .challenge)
@@ -2467,6 +2729,20 @@ enum TchurchStudioLANWireMessage: Codable, Equatable {
                 try container.encode(
                     controlSupportedPayloadVersions,
                     forKey: .controlSupportedPayloadVersions
+                )
+            }
+            if let localOBSControlPayloadVersions {
+                guard localOBSControlPayloadVersions ==
+                        TchurchStudioLANSubscriptionRequest.localOBSControlPayloadVersions,
+                      controlSupportedPayloadVersions ==
+                        TchurchStudioLANSubscriptionRequest.controlSupportedPayloadVersions,
+                      supportedPayloadVersions ==
+                        TchurchStudioLANSubscriptionRequest.deviceTrustSupportedPayloadVersions else {
+                    throw TchurchStudioLANError.unsupportedPayloadVersion
+                }
+                try container.encode(
+                    localOBSControlPayloadVersions,
+                    forKey: .localOBSControlPayloadVersions
                 )
             }
         case .subscribe(let value):
@@ -2511,6 +2787,12 @@ enum TchurchStudioLANWireMessage: Codable, Equatable {
         case .localBroadcastLowerThirdReceipt(let value):
             try container.encode(Kind.localBroadcastLowerThirdReceipt, forKey: .kind)
             try container.encode(value, forKey: .localBroadcastLowerThirdReceipt)
+        case .localOBSSceneCommand(let value):
+            try container.encode(Kind.localOBSSceneCommand, forKey: .kind)
+            try container.encode(value, forKey: .localOBSSceneCommand)
+        case .localOBSSceneReceipt(let value):
+            try container.encode(Kind.localOBSSceneReceipt, forKey: .kind)
+            try container.encode(value, forKey: .localOBSSceneReceipt)
         case .catalogRequest(let value):
             try container.encode(Kind.catalogRequest, forKey: .kind)
             try container.encode(value, forKey: .catalogRequest)

@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { StudioLANCueCatalogStatus, StudioLANLocalBroadcastLowerThirdFeedback, StudioLANOperatorTimerFeedback, StudioLANRemoteFeedback, StudioLANStatus, StudioLANUpdate } from "@/lib/studioLANClient";
+import type { StudioLANCueCatalogStatus, StudioLANLocalBroadcastLowerThirdFeedback, StudioLANLocalOBSSceneFeedback, StudioLANOperatorTimerFeedback, StudioLANRemoteFeedback, StudioLANStatus, StudioLANUpdate } from "@/lib/studioLANClient";
 
 const mocks = vi.hoisted(() => ({
   status: null as StudioLANStatus | null,
@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   remoteFeedback: null as StudioLANRemoteFeedback | null,
   operatorTimerFeedback: null as StudioLANOperatorTimerFeedback | null,
   localBroadcastLowerThirdFeedback: null as StudioLANLocalBroadcastLowerThirdFeedback | null,
+  localOBSSceneFeedback: null as StudioLANLocalOBSSceneFeedback | null,
   cueCatalog: null as StudioLANCueCatalogStatus | null,
   connect: vi.fn(),
   disconnect: vi.fn(),
@@ -17,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   sendRemoteCommand: vi.fn(),
   sendOperatorTimerCommand: vi.fn(),
   sendLocalBroadcastLowerThirdCommand: vi.fn(),
+  sendLocalOBSSceneCommand: vi.fn(),
   requestReapproval: vi.fn(),
   scanBarcode: vi.fn(),
 }));
@@ -36,6 +38,7 @@ vi.mock("@/hooks/useStudioLANClient", () => ({
     remoteFeedback: mocks.remoteFeedback,
     operatorTimerFeedback: mocks.operatorTimerFeedback,
     localBroadcastLowerThirdFeedback: mocks.localBroadcastLowerThirdFeedback,
+    localOBSSceneFeedback: mocks.localOBSSceneFeedback,
     cueCatalog: mocks.cueCatalog,
     connect: mocks.connect,
     disconnect: mocks.disconnect,
@@ -44,6 +47,7 @@ vi.mock("@/hooks/useStudioLANClient", () => ({
     sendRemoteCommand: mocks.sendRemoteCommand,
     sendOperatorTimerCommand: mocks.sendOperatorTimerCommand,
     sendLocalBroadcastLowerThirdCommand: mocks.sendLocalBroadcastLowerThirdCommand,
+    sendLocalOBSSceneCommand: mocks.sendLocalOBSSceneCommand,
     requestReapproval: mocks.requestReapproval,
   }),
 }));
@@ -72,6 +76,8 @@ const baseStatus: StudioLANStatus = {
   operatorTimerCommandInFlight: false,
   localBroadcastLowerThirdControlAvailable: false,
   localBroadcastLowerThirdCommandInFlight: false,
+  localOBSSceneControlAvailable: false,
+  localOBSSceneCommandInFlight: false,
 };
 
 const controlUpdate: StudioLANUpdate = {
@@ -113,6 +119,7 @@ const controlUpdate: StudioLANUpdate = {
     cueCatalogManifest: null,
     operatorTimers: null,
     localBroadcastLowerThird: null,
+    localOBS: null,
   },
 };
 
@@ -139,6 +146,7 @@ describe("Studio LAN production route", () => {
     mocks.remoteFeedback = null;
     mocks.operatorTimerFeedback = null;
     mocks.localBroadcastLowerThirdFeedback = null;
+    mocks.localOBSSceneFeedback = null;
     mocks.cueCatalog = null;
     mocks.connect.mockReset().mockResolvedValue(undefined);
     mocks.disconnect.mockReset().mockResolvedValue(undefined);
@@ -147,6 +155,7 @@ describe("Studio LAN production route", () => {
     mocks.sendRemoteCommand.mockReset().mockResolvedValue(undefined);
     mocks.sendOperatorTimerCommand.mockReset().mockResolvedValue(undefined);
     mocks.sendLocalBroadcastLowerThirdCommand.mockReset().mockResolvedValue(undefined);
+    mocks.sendLocalOBSSceneCommand.mockReset().mockResolvedValue(undefined);
     mocks.requestReapproval.mockReset().mockResolvedValue(undefined);
     mocks.scanBarcode.mockReset().mockResolvedValue({ ScanResult: "" });
   });
@@ -376,7 +385,7 @@ describe("Studio LAN production route", () => {
     render(<MemoryRouter><StudioLANProduction /></MemoryRouter>);
 
     const timers = await screen.findByTestId("studio-lan-operator-timers");
-    expect(timers).toHaveTextContent(/Producción local · no Stage · no Cloud/i);
+    expect(timers).toHaveTextContent(/Producción local · Stage\/músicos aislados · sin Cloud/i);
     expect(timers).toHaveTextContent(/Servicio.*0:01:30.*En pausa/i);
     expect(timers).toHaveTextContent(/Elemento.*0:00:34.*En curso/i);
     expect(screen.getByRole("button", { name: /Iniciar timer de servicio en Producción local/i })).toBeEnabled();
@@ -500,12 +509,12 @@ describe("Studio LAN production route", () => {
     const view = render(<MemoryRouter><StudioLANProduction /></MemoryRouter>);
 
     const lowerThird = await screen.findByTestId("studio-lan-local-broadcast-lower-third");
-    expect(lowerThird).toHaveTextContent(/OBS local.*sin Program.*sin Músicos.*sin Cloud/i);
+    expect(lowerThird).toHaveTextContent(/OBS local.*sin Program.*Músicos aislados.*sin Cloud/i);
     expect(lowerThird).toHaveTextContent(/Visible en OBS local.*Revisión 21/i);
     expect(screen.getByLabelText(/^Título$/i)).toHaveValue("Pastor Isaac Soto");
     expect(screen.getByLabelText(/Subtítulo/i)).toHaveValue("Tchurch");
     const timers = screen.getByTestId("studio-lan-operator-timers");
-    expect(timers).toHaveTextContent(/Producción local · no Stage · no Cloud/i);
+    expect(timers).toHaveTextContent(/Producción local · Stage\/músicos aislados · sin Cloud/i);
     const startServiceTimer = screen.getByRole("button", {
       name: /Iniciar timer de servicio en Producción local/i,
     });
@@ -564,6 +573,91 @@ describe("Studio LAN production route", () => {
       kind: "localBroadcastLowerThird",
       operation: "hide",
     }));
+  });
+
+  it("selects only a signed v8 local OBS scene and treats uncertainty as terminal", async () => {
+    const catalogId = `sha256:${"3".repeat(64)}`;
+    mocks.status = {
+      ...connectedStatus,
+      permissions: ["observe", "controlProgram", "controlLocalOBS"],
+      localOBSSceneControlAvailable: true,
+    };
+    mocks.update = {
+      ...controlUpdate,
+      payloadVersion: 8,
+      authority: { ...controlUpdate.authority, serviceVersion: "v8" },
+      control: {
+        ...controlUpdate.control!,
+        cueCatalog: null,
+        routing: {
+          schemaVersion: 1,
+          localAudience: true,
+          localBroadcast: true,
+          stageAndMusicians: true,
+          lanRemoteControl: true,
+          lightingAndMIDI: true,
+          tchurchCloudProgram: false,
+        },
+        cueCatalogManifest: { schemaVersion: 1, catalogId, totalCount: 2, pageSize: 128 },
+        operatorTimers: null,
+        localBroadcastLowerThird: null,
+        localOBS: {
+          schemaVersion: 1,
+          revision: "31",
+          connectionId: "obs-connection-a",
+          availability: "ready",
+          currentSceneId: "scene-program",
+          scenes: [
+            { sceneId: "scene-program", title: "Program" },
+            { sceneId: "scene-message", title: "Message" },
+          ],
+        },
+      },
+    };
+    mocks.cueCatalog = {
+      phase: "ready",
+      catalogId,
+      routeEpoch: "5",
+      totalCount: 2,
+      receivedCount: 2,
+      cues: [{ cueId: "cue-1", title: "Verso" }, { cueId: "cue-2", title: "Coro" }],
+      message: null,
+    };
+    const view = render(<MemoryRouter><StudioLANProduction /></MemoryRouter>);
+
+    const card = await screen.findByTestId("studio-lan-local-obs-scenes");
+    expect(card).toHaveTextContent(/catálogo firmado.*No toca stream, grabación, credenciales, músicos, Stage, Cloud ni luces/i);
+    expect(card).toHaveTextContent(/OBS listo.*Revisión OBS 31/i);
+    const selector = screen.getByLabelText(/Escena firmada/i);
+    expect(selector).toHaveValue("scene-program");
+    fireEvent.change(selector, { target: { value: "scene-message" } });
+    fireEvent.click(screen.getByRole("button", { name: /Cambiar escena en OBS local/i }));
+    await waitFor(() => expect(mocks.sendLocalOBSSceneCommand).toHaveBeenCalledWith({
+      kind: "selectLocalOBSScene",
+      sceneId: "scene-message",
+    }));
+    expect(mocks.sendRemoteCommand).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: /stream|grabar|endpoint|contraseña/i })).not.toBeInTheDocument();
+
+    mocks.localOBSSceneFeedback = {
+      commandId: "12345678-1234-4abc-8def-123456789abc",
+      kind: "selectLocalOBSScene",
+      sceneId: "scene-message",
+      state: "unconfirmed",
+      rejection: null,
+      uncertaintyReason: "mutationMayHaveExecuted",
+      obsRevision: null,
+    };
+    mocks.status = {
+      ...connectedStatus,
+      permissions: ["observe", "controlProgram", "controlLocalOBS"],
+      localOBSSceneControlAvailable: false,
+    };
+    view.rerender(<MemoryRouter><StudioLANProduction /></MemoryRouter>);
+    expect(await screen.findByTestId("studio-lan-local-obs-scene-feedback")).toHaveTextContent(
+      /puede haber ejecutado.*No lo repetiremos.*estado firmado nuevo/i,
+    );
+    expect(mocks.sendLocalOBSSceneCommand).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the v7 card fail-closed when its signed sidecar is unavailable", async () => {

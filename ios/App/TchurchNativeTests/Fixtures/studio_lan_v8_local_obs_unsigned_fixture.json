@@ -1,0 +1,93 @@
+{
+  "fixtureID": "studio-lan-v8-local-obs-unsigned-preliminary-1",
+  "schemaVersion": 1,
+  "payloadVersion": 8,
+  "state": {
+    "schemaVersion": 1,
+    "revision": 31,
+    "connectionID": "obs-connection-2026-07-19-a",
+    "availability": "ready",
+    "currentSceneID": "scene-program",
+    "scenes": [
+      {
+        "sceneID": "scene-program",
+        "title": "Program"
+      },
+      {
+        "sceneID": "scene-message",
+        "title": "Message"
+      }
+    ]
+  },
+  "action": {
+    "kind": "selectLocalOBSScene",
+    "sceneID": "scene-message"
+  },
+  "unsignedCommand": {
+    "schemaVersion": 1,
+    "payloadVersion": 8,
+    "commandID": "80000000-0000-4000-8000-000000000004",
+    "sessionID": "80000000-0000-4000-8000-000000000001",
+    "deviceID": "80000000-0000-4000-8000-000000000002",
+    "grantID": "80000000-0000-4000-8000-000000000003",
+    "deviceGrantChecksum": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "permissionRevision": 5,
+    "revocationGeneration": 3,
+    "authority": {
+      "runID": "88888888-8888-4888-8888-888888888888",
+      "authorityEpoch": 17,
+      "packageID": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+      "serviceVersion": "2026-07-19T04:00:00.000Z"
+    },
+    "routeEpoch": 19,
+    "connectionID": "obs-connection-2026-07-19-a",
+    "expectedOBSRevision": 31,
+    "issuedAtMilliseconds": 1800000200000,
+    "expiresAtMilliseconds": 1800000204900,
+    "action": {
+      "kind": "selectLocalOBSScene",
+      "sceneID": "scene-message"
+    }
+  },
+  "unsignedAcceptedReceipt": {
+    "schemaVersion": 1,
+    "payloadVersion": 8,
+    "commandID": "80000000-0000-4000-8000-000000000004",
+    "deviceID": "80000000-0000-4000-8000-000000000002",
+    "authority": {
+      "runID": "88888888-8888-4888-8888-888888888888",
+      "authorityEpoch": 17,
+      "packageID": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+      "serviceVersion": "2026-07-19T04:00:00.000Z"
+    },
+    "routeEpoch": 19,
+    "permissionRevision": 5,
+    "status": "accepted",
+    "connectionID": "obs-connection-2026-07-19-a",
+    "requestedSceneID": "scene-message",
+    "obsRevision": 32,
+    "issuedAtMilliseconds": 1800000200100,
+    "studioSigningKeyID": "pending-final-fixture"
+  },
+  "unsignedUnconfirmedReceipt": {
+    "schemaVersion": 1,
+    "payloadVersion": 8,
+    "commandID": "80000000-0000-4000-8000-000000000004",
+    "deviceID": "80000000-0000-4000-8000-000000000002",
+    "authority": {
+      "runID": "88888888-8888-4888-8888-888888888888",
+      "authorityEpoch": 17,
+      "packageID": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+      "serviceVersion": "2026-07-19T04:00:00.000Z"
+    },
+    "routeEpoch": 19,
+    "permissionRevision": 5,
+    "status": "unconfirmed",
+    "uncertaintyReason": "mutationMayHaveExecuted",
+    "connectionID": "obs-connection-2026-07-19-a",
+    "requestedSceneID": "scene-message",
+    "obsRevision": 31,
+    "issuedAtMilliseconds": 1800000205000,
+    "studioSigningKeyID": "pending-final-fixture"
+  }
+}
