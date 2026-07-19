@@ -667,6 +667,17 @@ describe("Studio LAN native bridge boundary", () => {
       ...v8,
       control: { ...v8.control, localOBS: { ...localOBS, connectionId: "obs-local" } },
     })).toBeNull();
+    const localOBSWithoutCurrentScene: Partial<typeof localOBS> = { ...localOBS };
+    delete localOBSWithoutCurrentScene.currentSceneId;
+    for (const availability of ["busy", "ready", "uncertain"] as const) {
+      expect(normalizeStudioLANUpdate({
+        ...v8,
+        control: {
+          ...v8.control,
+          localOBS: { ...localOBSWithoutCurrentScene, availability },
+        },
+      })).toBeNull();
+    }
     expect(normalizeStudioLANUpdate({
       ...v8,
       control: {
