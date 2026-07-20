@@ -509,13 +509,15 @@ function localOBSProjection(value: unknown): StudioLANLocalOBS | null | undefine
     if (hasConnection || hasCurrentScene || scenes.length !== 0) return undefined;
     return { schemaVersion: 1, revision, availability, scenes: [] };
   }
-  if (!connectionId || !UUID.test(connectionId) || scenes.length === 0) return undefined;
+  if (!connectionId || !UUID.test(connectionId) || scenes.length === 0 || !currentSceneId) {
+    return undefined;
+  }
   return {
     schemaVersion: 1,
     revision,
     connectionId,
     availability,
-    ...(currentSceneId ? { currentSceneId } : {}),
+    currentSceneId,
     scenes,
   };
 }

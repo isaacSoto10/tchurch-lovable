@@ -474,14 +474,14 @@ struct TchurchStudioLANLocalOBSProjection: Codable, Equatable {
         case .busy, .ready, .uncertain:
             guard let connectionID,
                   Self.validConnectionID(connectionID),
+                  let currentSceneID,
                   !scenes.isEmpty,
                   scenes.allSatisfy(\.isCanonical),
                   Set(scenes.map(\.sceneID)).count == scenes.count,
-                  Set(scenes.map(\.title)).count == scenes.count else { return false }
-            return currentSceneID.map { current in
-                TchurchStudioLANLocalOBSScene.validSceneID(current) &&
-                    scenes.contains(where: { $0.sceneID == current })
-            } ?? true
+                  Set(scenes.map(\.title)).count == scenes.count,
+                  TchurchStudioLANLocalOBSScene.validSceneID(currentSceneID),
+                  scenes.contains(where: { $0.sceneID == currentSceneID }) else { return false }
+            return true
         }
     }
 

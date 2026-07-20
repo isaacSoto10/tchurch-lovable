@@ -6964,8 +6964,14 @@ final class StudioLANOperatorTimerV6Tests: XCTestCase {
             "00000000-0000-0000-0000-000000000000"
         invalidStates.append(readyWithNonRFCConnection)
 
+        for availability in ["busy", "ready", "uncertain"] {
+            var connectedWithoutCurrentScene = validConnected
+            connectedWithoutCurrentScene["availability"] = availability
+            connectedWithoutCurrentScene.removeValue(forKey: "currentSceneID")
+            invalidStates.append(connectedWithoutCurrentScene)
+        }
+
         var readyWithoutScenes = validConnected
-        readyWithoutScenes.removeValue(forKey: "currentSceneID")
         readyWithoutScenes["scenes"] = []
         invalidStates.append(readyWithoutScenes)
 
