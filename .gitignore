@@ -25,3 +25,14 @@ dist-ssr
 branding/
 __pycache__/
 *.pyc
+
+# Local backend and agent tooling (may contain credentials)
+.insforge/
+.insforge-credentials.json
+.insforge-credentials.*.json
+.insforge-config.json
+.insforge-config.*.json
+.opencode/
+opencode.json
+opencode.jsonc
+opencode.local.json
