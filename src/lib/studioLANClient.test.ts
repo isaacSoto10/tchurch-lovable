@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const nativeMocks = vi.hoisted(() => ({
@@ -1021,6 +1022,19 @@ describe("Studio LAN native bridge boundary", () => {
   });
 
   it("accepts only v9 OBS output state, isolated permissions, CAS actions, and terminal receipts", async () => {
+    const golden = JSON.parse(readFileSync(
+      `${process.cwd()}/ios/App/TchurchNativeTests/Fixtures/studio_lan_v9_local_obs_output_fixture.json`,
+      "utf8",
+    ));
+    expect(golden.fixtureID).toBe("studio-lan-v9-local-obs-output-cross-platform-1");
+    const goldenBridgeState = {
+      schemaVersion: golden.state.schemaVersion,
+      revision: String(golden.state.revision),
+      connectionId: golden.state.connectionID,
+      availability: golden.state.availability,
+      streamActive: golden.state.streamActive,
+      recordingActive: golden.state.recordingActive,
+    };
     const base = validUpdate();
     const v9 = {
       ...base,
@@ -1052,19 +1066,12 @@ describe("Studio LAN native bridge boundary", () => {
         operatorTimers: null,
         localBroadcastLowerThird: null,
         localOBS: null,
-        localOBSOutputs: {
-          schemaVersion: 1,
-          revision: "44",
-          connectionId: "123e4567-e89b-42d3-a456-426614174000",
-          availability: "ready",
-          streamActive: false,
-          recordingActive: true,
-        },
+        localOBSOutputs: goldenBridgeState,
       },
     };
     expect(normalizeStudioLANUpdate(v9)).toMatchObject({
       payloadVersion: 9,
-      control: { localOBSOutputs: { revision: "44", recordingActive: true } },
+      control: { localOBSOutputs: goldenBridgeState },
     });
     expect(normalizeStudioLANUpdate({
       ...v9,
@@ -1093,11 +1100,7 @@ describe("Studio LAN native bridge boundary", () => {
       },
     })).toMatchObject({ control: { localOBSOutputs: { connectionId: null } } });
 
-    const streamAction = {
-      kind: "setLocalOBSStreamActive" as const,
-      active: true,
-      expectedCurrentActive: false,
-    };
+    const streamAction = golden.action;
     expect(normalizeStudioLANLocalOBSOutputAction(streamAction)).toEqual(streamAction);
     expect(normalizeStudioLANLocalOBSOutputAction({ ...streamAction, endpoint: "never" })).toBeNull();
     expect(normalizeStudioLANLocalOBSOutputAction({
@@ -1108,20 +1111,27 @@ describe("Studio LAN native bridge boundary", () => {
     expect(nativeMocks.sendLocalOBSOutputCommand).toHaveBeenCalledWith(streamAction);
 
     const accepted = {
-      commandId: "22345678-1234-4abc-8def-123456789abc",
-      ...streamAction,
-      state: "accepted",
-      rejection: null,
-      uncertaintyReason: null,
-      operationsRevision: "45",
+      commandId: golden.acceptedReceipt.commandID,
+      kind: golden.acceptedReceipt.actionKind,
+      active: golden.acceptedReceipt.requestedActive,
+      expectedCurrentActive: golden.acceptedReceipt.expectedCurrentActive,
+      state: golden.acceptedReceipt.status,
+      rejection: golden.acceptedReceipt.rejection ?? null,
+      uncertaintyReason: golden.acceptedReceipt.uncertaintyReason ?? null,
+      operationsRevision: String(golden.acceptedReceipt.operationsRevision),
     };
     expect(normalizeStudioLANLocalOBSOutputFeedback(accepted)).toEqual(accepted);
-    expect(normalizeStudioLANLocalOBSOutputFeedback({
-      ...accepted,
-      state: "unconfirmed",
-      operationsRevision: null,
-      uncertaintyReason: "mutationMayHaveExecuted",
-    })).toMatchObject({ state: "unconfirmed", uncertaintyReason: "mutationMayHaveExecuted" });
+    const unconfirmed = {
+      commandId: golden.unconfirmedReceipt.commandID,
+      kind: golden.unconfirmedReceipt.actionKind,
+      active: golden.unconfirmedReceipt.requestedActive,
+      expectedCurrentActive: golden.unconfirmedReceipt.expectedCurrentActive,
+      state: golden.unconfirmedReceipt.status,
+      rejection: golden.unconfirmedReceipt.rejection ?? null,
+      uncertaintyReason: golden.unconfirmedReceipt.uncertaintyReason ?? null,
+      operationsRevision: String(golden.unconfirmedReceipt.operationsRevision),
+    };
+    expect(normalizeStudioLANLocalOBSOutputFeedback(unconfirmed)).toEqual(unconfirmed);
     expect(normalizeStudioLANLocalOBSOutputFeedback({
       ...accepted,
       state: "unconfirmed",

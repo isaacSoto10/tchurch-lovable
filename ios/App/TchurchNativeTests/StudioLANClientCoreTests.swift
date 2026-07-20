@@ -2794,6 +2794,26 @@ private struct StudioLANV8LocalOBSFixture: Decodable {
     let unconfirmedReceiptSigningMaterialHex: String
 }
 
+private struct StudioLANV9LocalOBSOutputFixture: Decodable {
+    let schemaVersion: Int
+    let fixtureID: String
+    let devicePrivateKeyRawHex: String
+    let devicePublicKey: String
+    let devicePublicKeyFingerprint: String
+    let studioPrivateKeyRawHex: String
+    let studioSigningPublicKey: String
+    let studioSigningKeyID: String
+    let state: TchurchStudioLANLocalOBSOutputsProjection
+    let stateCanonicalHex: String
+    let action: TchurchStudioLANLocalOBSOutputAction
+    let command: TchurchStudioLANLocalOBSOutputCommand
+    let commandSigningMaterialHex: String
+    let acceptedReceipt: TchurchStudioLANLocalOBSOutputReceipt
+    let acceptedReceiptSigningMaterialHex: String
+    let unconfirmedReceipt: TchurchStudioLANLocalOBSOutputReceipt
+    let unconfirmedReceiptSigningMaterialHex: String
+}
+
 private extension Data {
     var hex: String { map { String(format: "%02x", $0) }.joined() }
 }
@@ -7222,6 +7242,165 @@ final class StudioLANOperatorTimerV6Tests: XCTestCase {
             TchurchStudioLANLocalOBSOutputsProjection.self,
             from: JSONSerialization.data(withJSONObject: disconnected)
         ))
+    }
+
+    func testV9CrossPlatformGoldenFixtureMatchesCanonicalBytesKeysAndSignatures() throws {
+        let fixture: StudioLANV9LocalOBSOutputFixture = try loadStudioLANFixture(
+            named: "studio_lan_v9_local_obs_output_fixture"
+        )
+        XCTAssertEqual(
+            fixture.fixtureID,
+            "studio-lan-v9-local-obs-output-cross-platform-1"
+        )
+        XCTAssertEqual(fixture.schemaVersion, 1)
+        XCTAssertTrue(fixture.state.isCanonical)
+        XCTAssertEqual(fixture.command.payloadVersion, 9)
+        XCTAssertEqual(fixture.command.connectionID, fixture.state.connectionID)
+        XCTAssertEqual(
+            fixture.command.expectedOperationsRevision,
+            fixture.state.revision
+        )
+        XCTAssertEqual(fixture.command.action, fixture.action)
+        XCTAssertEqual(
+            try TchurchStudioLANCoding.encoder().encode(fixture.state).hex,
+            fixture.stateCanonicalHex
+        )
+
+        let devicePrivateKey = try P256.Signing.PrivateKey(
+            rawRepresentation: XCTUnwrap(fixtureHexData(fixture.devicePrivateKeyRawHex))
+        )
+        XCTAssertEqual(
+            devicePrivateKey.publicKey.x963Representation.base64EncodedString(),
+            fixture.devicePublicKey
+        )
+        XCTAssertEqual(
+            StudioLANDeviceGrant.fingerprint(
+                forPublicKeyData: devicePrivateKey.publicKey.x963Representation
+            ),
+            fixture.devicePublicKeyFingerprint
+        )
+        let commandSigningData = try TchurchStudioLANLocalOBSOutputCommandCrypto
+            .signingData(for: fixture.command)
+        XCTAssertEqual(commandSigningData.hex, fixture.commandSigningMaterialHex)
+        let commandSignatureData = try XCTUnwrap(
+            Data(base64Encoded: fixture.command.signature)
+        )
+        let commandSignature = try P256.Signing.ECDSASignature(
+            derRepresentation: commandSignatureData
+        )
+        XCTAssertTrue(devicePrivateKey.publicKey.isValidSignature(
+            commandSignature,
+            for: commandSigningData
+        ))
+
+        let studioPrivateKey = try Curve25519.Signing.PrivateKey(
+            rawRepresentation: XCTUnwrap(fixtureHexData(fixture.studioPrivateKeyRawHex))
+        )
+        XCTAssertEqual(
+            studioPrivateKey.publicKey.rawRepresentation.base64EncodedString(),
+            fixture.studioSigningPublicKey
+        )
+        XCTAssertEqual(
+            String(TchurchStudioLANCrypto.sha256Hex(
+                studioPrivateKey.publicKey.rawRepresentation
+            ).prefix(24)),
+            fixture.studioSigningKeyID
+        )
+
+        let grant = StudioLANDeviceGrant(
+            schemaVersion: 4,
+            protocolFloor: 4,
+            grantID: fixture.command.grantID,
+            deviceID: fixture.command.deviceID,
+            deviceName: "Tchurch iOS",
+            role: .production,
+            permissions: [.observe, .controlLocalOBSStream],
+            keyAlgorithm: .p256Signing,
+            devicePublicKey: fixture.devicePublicKey,
+            devicePublicKeyFingerprint: fixture.devicePublicKeyFingerprint,
+            studioID: UUID(uuidString: "81000000-0000-4000-8000-000000000005")!,
+            studioSigningKeyID: fixture.studioSigningKeyID,
+            studioSigningPublicKey: fixture.studioSigningPublicKey,
+            permissionRevision: fixture.command.permissionRevision,
+            revocationGeneration: fixture.command.revocationGeneration,
+            issuedAtMilliseconds: fixture.command.issuedAtMilliseconds - 1_000,
+            expiresAtMilliseconds: fixture.command.expiresAtMilliseconds + 1_000,
+            signature: ""
+        )
+        XCTAssertNoThrow(try TchurchStudioLANLocalOBSOutputCommandCrypto.verify(
+            fixture.command,
+            deviceGrant: grant
+        ))
+
+        let commandWire = TchurchStudioLANWireMessage.localOBSOutputCommand(
+            fixture.command
+        )
+        let encodedCommandWire = try TchurchStudioLANCoding.encoder().encode(commandWire)
+        XCTAssertEqual(
+            try TchurchStudioLANCoding.decoder().decode(
+                TchurchStudioLANWireMessage.self,
+                from: encodedCommandWire
+            ),
+            commandWire
+        )
+
+        let receiptsAndSigningMaterial = [
+            (fixture.acceptedReceipt, fixture.acceptedReceiptSigningMaterialHex),
+            (fixture.unconfirmedReceipt, fixture.unconfirmedReceiptSigningMaterialHex),
+        ]
+        for (receipt, signingMaterialHex) in receiptsAndSigningMaterial {
+            XCTAssertEqual(receipt.commandID, fixture.command.commandID)
+            XCTAssertEqual(receipt.deviceID, fixture.command.deviceID)
+            XCTAssertEqual(receipt.authority, fixture.command.authority)
+            XCTAssertEqual(receipt.routeEpoch, fixture.command.routeEpoch)
+            XCTAssertEqual(receipt.permissionRevision, fixture.command.permissionRevision)
+            XCTAssertEqual(receipt.connectionID, fixture.command.connectionID)
+            XCTAssertEqual(receipt.actionKind, fixture.command.action.kind)
+            XCTAssertEqual(receipt.requestedActive, fixture.command.action.active)
+            XCTAssertEqual(
+                receipt.expectedCurrentActive,
+                fixture.command.action.expectedCurrentActive
+            )
+            let receiptSigningData = try TchurchStudioLANLocalOBSOutputReceiptCrypto
+                .signingData(for: receipt)
+            XCTAssertEqual(receiptSigningData.hex, signingMaterialHex)
+            let receiptSignature = try XCTUnwrap(Data(base64Encoded: receipt.signature))
+            XCTAssertTrue(studioPrivateKey.publicKey.isValidSignature(
+                receiptSignature,
+                for: receiptSigningData
+            ))
+            XCTAssertNoThrow(try TchurchStudioLANLocalOBSOutputReceiptCrypto.verify(
+                receipt,
+                studioSigningPublicKey: fixture.studioSigningPublicKey
+            ))
+
+            let receiptWire = TchurchStudioLANWireMessage.localOBSOutputReceipt(receipt)
+            let encodedReceiptWire = try TchurchStudioLANCoding.encoder().encode(receiptWire)
+            XCTAssertEqual(
+                try TchurchStudioLANCoding.decoder().decode(
+                    TchurchStudioLANWireMessage.self,
+                    from: encodedReceiptWire
+                ),
+                receiptWire
+            )
+        }
+        XCTAssertEqual(fixture.acceptedReceipt.status, .accepted)
+        XCTAssertNil(fixture.acceptedReceipt.rejection)
+        XCTAssertNil(fixture.acceptedReceipt.uncertaintyReason)
+        XCTAssertEqual(
+            fixture.acceptedReceipt.operationsRevision,
+            fixture.state.revision + 1
+        )
+        XCTAssertEqual(fixture.unconfirmedReceipt.status, .unconfirmed)
+        XCTAssertNil(fixture.unconfirmedReceipt.rejection)
+        XCTAssertEqual(
+            fixture.unconfirmedReceipt.uncertaintyReason,
+            .mutationMayHaveExecuted
+        )
+        XCTAssertEqual(
+            fixture.unconfirmedReceipt.operationsRevision,
+            fixture.state.revision
+        )
     }
 
     func testV9OutputCommandSignatureBindsPermissionRouteConnectionCASAndAction() throws {
