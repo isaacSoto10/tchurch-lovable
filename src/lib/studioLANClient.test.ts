@@ -595,15 +595,17 @@ describe("Studio LAN native bridge boundary", () => {
   it("accepts only the closed v8 local-OBS projection, action, and terminal uncertainty", async () => {
     const base = validUpdate();
     const catalogId = `sha256:${"4".repeat(64)}`;
+    const programSceneId = `sha256:${"1".repeat(64)}`;
+    const messageSceneId = `sha256:${"2".repeat(64)}`;
     const localOBS = {
       schemaVersion: 1,
       revision: "31",
-      connectionId: "obs-connection-2026-07-19-a",
+      connectionId: "90000000-0000-4000-8000-000000000001",
       availability: "ready",
-      currentSceneId: "scene-program",
+      currentSceneId: programSceneId,
       scenes: [
-        { sceneId: "scene-program", title: "Program" },
-        { sceneId: "scene-message", title: "Message" },
+        { sceneId: programSceneId, title: "Program" },
+        { sceneId: messageSceneId, title: "Message" },
       ],
     };
     const v8 = {
@@ -659,6 +661,56 @@ describe("Studio LAN native bridge boundary", () => {
     })).toBeNull();
     expect(normalizeStudioLANUpdate({
       ...v8,
+      control: { ...v8.control, localOBS: { ...localOBS, revision: "0" } },
+    })).toBeNull();
+    expect(normalizeStudioLANUpdate({
+      ...v8,
+      control: { ...v8.control, localOBS: { ...localOBS, connectionId: "obs-local" } },
+    })).toBeNull();
+    expect(normalizeStudioLANUpdate({
+      ...v8,
+      control: {
+        ...v8.control,
+        localOBS: {
+          ...localOBS,
+          scenes: [localOBS.scenes[0], { ...localOBS.scenes[1], title: "Program" }],
+        },
+      },
+    })).toBeNull();
+    const disconnected = {
+      schemaVersion: localOBS.schemaVersion,
+      revision: localOBS.revision,
+      availability: localOBS.availability,
+      scenes: localOBS.scenes,
+    };
+    expect(normalizeStudioLANUpdate({
+      ...v8,
+      control: {
+        ...v8.control,
+        localOBS: { ...disconnected, revision: "32", availability: "disconnected", scenes: [] },
+      },
+    })).toMatchObject({
+      payloadVersion: 8,
+      control: {
+        localOBS: { schemaVersion: 1, revision: "32", availability: "disconnected", scenes: [] },
+      },
+    });
+    expect(normalizeStudioLANUpdate({
+      ...v8,
+      control: {
+        ...v8.control,
+        localOBS: { ...localOBS, availability: "disconnected", scenes: [] },
+      },
+    })).toBeNull();
+    expect(normalizeStudioLANUpdate({
+      ...v8,
+      control: {
+        ...v8.control,
+        localOBS: { ...disconnected, availability: "ready", scenes: localOBS.scenes },
+      },
+    })).toBeNull();
+    expect(normalizeStudioLANUpdate({
+      ...v8,
       control: {
         ...v8.control,
         routing: { ...v8.control.routing, localBroadcast: false },
@@ -669,17 +721,17 @@ describe("Studio LAN native bridge boundary", () => {
       control: { ...v8.control, localOBS: null },
     })).toMatchObject({ payloadVersion: 8, control: { localOBS: null } });
 
-    const action = { kind: "selectLocalOBSScene" as const, sceneId: "scene-message" };
+    const action = { kind: "selectLocalOBSScene" as const, sceneId: messageSceneId };
     expect(normalizeStudioLANLocalOBSSceneAction(action)).toEqual(action);
     expect(normalizeStudioLANLocalOBSSceneAction({ ...action, endpoint: "never" })).toBeNull();
-    expect(normalizeStudioLANLocalOBSSceneAction({ ...action, sceneId: " scene-message" })).toBeNull();
+    expect(normalizeStudioLANLocalOBSSceneAction({ ...action, sceneId: "scene-message" })).toBeNull();
     await sendStudioLANLocalOBSSceneCommand(action);
     expect(nativeMocks.sendLocalOBSSceneCommand).toHaveBeenCalledWith(action);
 
     const accepted = {
       commandId: "12345678-1234-4abc-8def-123456789abc",
       kind: "selectLocalOBSScene",
-      sceneId: "scene-message",
+      sceneId: messageSceneId,
       state: "accepted",
       rejection: null,
       uncertaintyReason: null,

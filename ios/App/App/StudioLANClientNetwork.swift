@@ -3660,6 +3660,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
               let localOBS = control.localOBS,
               localOBS.isCanonical,
               localOBS.availability == .ready,
+              let connectionID = localOBS.connectionID,
               localOBS.scenes.contains(where: { $0.sceneID == action.sceneID }),
               minimumOBSRevision.map({ localOBS.revision >= $0 }) ?? true,
               minimumOBSEnvelopeSequence.map({ envelope.sequence >= $0 }) ?? true else {
@@ -3680,7 +3681,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             revocationGeneration: deviceGrant.revocationGeneration,
             authority: subscription.authority,
             routeEpoch: routeEpoch,
-            connectionID: localOBS.connectionID,
+            connectionID: connectionID,
             expectedOBSRevision: localOBS.revision,
             issuedAtMilliseconds: now,
             expiresAtMilliseconds: expiresAt,

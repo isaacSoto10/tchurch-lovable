@@ -407,8 +407,16 @@ struct TchurchStudioLANLocalOBSScene: Codable, Equatable {
     let title: String
 
     var isCanonical: Bool {
-        Self.validText(sceneID, maximumBytes: Self.maximumSceneIDBytes) &&
+        Self.validSceneID(sceneID) &&
             Self.validText(title, maximumBytes: Self.maximumTitleBytes)
+    }
+
+    static func validSceneID(_ value: String) -> Bool {
+        guard value.hasPrefix("sha256:") else { return false }
+        let digest = value.dropFirst("sha256:".count)
+        return digest.utf8.count == 64 && digest.utf8.allSatisfy {
+            ($0 >= 48 && $0 <= 57) || ($0 >= 97 && $0 <= 102)
+        }
     }
 
     static func validText(_ value: String, maximumBytes: Int) -> Bool {
@@ -450,24 +458,55 @@ struct TchurchStudioLANLocalOBSProjection: Codable, Equatable {
 
     let schemaVersion: Int
     let revision: UInt64
-    let connectionID: String
+    let connectionID: String?
     let availability: TchurchStudioLANLocalOBSAvailability
     let currentSceneID: String?
     let scenes: [TchurchStudioLANLocalOBSScene]
 
     var isCanonical: Bool {
-        schemaVersion == Self.schemaVersion &&
-            revision <= Self.maximumRevision &&
-            TchurchStudioLANLocalOBSScene.validText(
-                connectionID,
-                maximumBytes: Self.maximumConnectionIDBytes
-            ) &&
-            scenes.count <= Self.maximumScenes &&
-            scenes.allSatisfy(\.isCanonical) &&
-            Set(scenes.map(\.sceneID)).count == scenes.count &&
-            currentSceneID.map { current in
-                scenes.contains(where: { $0.sceneID == current })
+        guard schemaVersion == Self.schemaVersion,
+              (1 ... Self.maximumRevision).contains(revision),
+              scenes.count <= Self.maximumScenes else { return false }
+
+        switch availability {
+        case .disconnected:
+            return connectionID == nil && currentSceneID == nil && scenes.isEmpty
+        case .busy, .ready, .uncertain:
+            guard let connectionID,
+                  Self.validConnectionID(connectionID),
+                  !scenes.isEmpty,
+                  scenes.allSatisfy(\.isCanonical),
+                  Set(scenes.map(\.sceneID)).count == scenes.count,
+                  Set(scenes.map(\.title)).count == scenes.count else { return false }
+            return currentSceneID.map { current in
+                TchurchStudioLANLocalOBSScene.validSceneID(current) &&
+                    scenes.contains(where: { $0.sceneID == current })
             } ?? true
+        }
+    }
+
+    static func validConnectionID(_ value: String) -> Bool {
+        guard TchurchStudioLANLocalOBSScene.validText(
+            value,
+            maximumBytes: Self.maximumConnectionIDBytes
+        ), let uuid = UUID(uuidString: value) else { return false }
+        let bytes = Array(value.utf8)
+        guard bytes.count == 36,
+              bytes[8] == 45,
+              bytes[13] == 45,
+              bytes[18] == 45,
+              bytes[23] == 45,
+              (49 ... 56).contains(bytes[14]),
+              (bytes[19] >= 56 && bytes[19] <= 57) ||
+                (bytes[19] >= 65 && bytes[19] <= 66) ||
+                (bytes[19] >= 97 && bytes[19] <= 98),
+              bytes.enumerated().allSatisfy({ index, byte in
+                [8, 13, 18, 23].contains(index) ||
+                    (byte >= 48 && byte <= 57) ||
+                    (byte >= 65 && byte <= 70) ||
+                    (byte >= 97 && byte <= 102)
+              }) else { return false }
+        return uuid.uuidString.lowercased() == value.lowercased()
     }
 }
 
@@ -480,14 +519,16 @@ extension TchurchStudioLANLocalOBSProjection {
         let required: Set<String> = [
             CodingKeys.schemaVersion.rawValue,
             CodingKeys.revision.rawValue,
-            CodingKeys.connectionID.rawValue,
             CodingKeys.availability.rawValue,
             CodingKeys.scenes.rawValue,
         ]
         let anyContainer = try decoder.container(keyedBy: TchurchStudioLANAnyCodingKey.self)
         let actual = Set(anyContainer.allKeys.map(\.stringValue))
         guard required.isSubset(of: actual),
-              actual.subtracting(required).isSubset(of: [CodingKeys.currentSceneID.rawValue]) else {
+              actual.subtracting(required).isSubset(of: [
+                CodingKeys.connectionID.rawValue,
+                CodingKeys.currentSceneID.rawValue,
+              ]) else {
             throw DecodingError.dataCorrupted(.init(
                 codingPath: decoder.codingPath,
                 debugDescription: "Object keys do not match the signed local OBS contract"
@@ -496,7 +537,9 @@ extension TchurchStudioLANLocalOBSProjection {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
         revision = try container.decode(UInt64.self, forKey: .revision)
-        connectionID = try container.decode(String.self, forKey: .connectionID)
+        connectionID = actual.contains(CodingKeys.connectionID.rawValue)
+            ? try container.decode(String.self, forKey: .connectionID)
+            : nil
         availability = try container.decode(
             TchurchStudioLANLocalOBSAvailability.self,
             forKey: .availability
