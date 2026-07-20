@@ -77,6 +77,10 @@ const connectedStatus: StudioLANStatus = {
   localBroadcastLowerThirdCommandInFlight: false,
   localOBSSceneControlAvailable: false,
   localOBSSceneCommandInFlight: false,
+  localOBSStreamControlAvailable: false,
+  localOBSStreamCommandInFlight: false,
+  localOBSRecordingControlAvailable: false,
+  localOBSRecordingCommandInFlight: false,
 };
 
 const update: StudioLANUpdate = {

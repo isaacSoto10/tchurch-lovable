@@ -14,6 +14,10 @@ const nativeMocks = vi.hoisted(() => ({
     accepted: true,
     commandId: "12345678-1234-4abc-8def-123456789abc",
   }),
+  sendLocalOBSOutputCommand: vi.fn().mockResolvedValue({
+    accepted: true,
+    commandId: "22345678-1234-4abc-8def-123456789abc",
+  }),
 }));
 
 vi.mock("@capacitor/core", () => ({
@@ -31,6 +35,8 @@ import {
   normalizeStudioLANLocalBroadcastLowerThirdFeedback,
   normalizeStudioLANLocalOBSSceneAction,
   normalizeStudioLANLocalOBSSceneFeedback,
+  normalizeStudioLANLocalOBSOutputAction,
+  normalizeStudioLANLocalOBSOutputFeedback,
   normalizeStudioLANPairingQR,
   normalizeStudioLANOperatorTimerFeedback,
   normalizeStudioLANRemoteFeedback,
@@ -40,6 +46,7 @@ import {
   requestStudioLANDeviceReapproval,
   sendStudioLANLocalBroadcastLowerThirdCommand,
   sendStudioLANLocalOBSSceneCommand,
+  sendStudioLANLocalOBSOutputCommand,
   synchronizeStudioLANPrivacyContext,
 } from "./studioLANClient";
 
@@ -115,6 +122,10 @@ describe("Studio LAN native bridge boundary", () => {
       localBroadcastLowerThirdCommandInFlight: false,
       localOBSSceneControlAvailable: false,
       localOBSSceneCommandInFlight: false,
+      localOBSStreamControlAvailable: false,
+      localOBSStreamCommandInFlight: false,
+      localOBSRecordingControlAvailable: false,
+      localOBSRecordingCommandInFlight: false,
     });
 
     const unsafe = normalizeStudioLANStatus({
@@ -1007,6 +1018,135 @@ describe("Studio LAN native bridge boundary", () => {
       localUrl: null,
       message: "token=must-not-cross",
     })).toBeNull();
+  });
+
+  it("accepts only v9 OBS output state, isolated permissions, CAS actions, and terminal receipts", async () => {
+    const base = validUpdate();
+    const v9 = {
+      ...base,
+      channel: "control",
+      payloadVersion: 9,
+      stage: { ...base.stage, chordLines: [] },
+      control: {
+        chordsVisible: true,
+        lightingArmed: false,
+        healthyOutputCount: 1,
+        expectedOutputCount: 1,
+        routeEpoch: "9",
+        cueCatalog: null,
+        routing: {
+          schemaVersion: 1,
+          localAudience: true,
+          localBroadcast: true,
+          stageAndMusicians: false,
+          lanRemoteControl: true,
+          lightingAndMIDI: false,
+          tchurchCloudProgram: false,
+        },
+        cueCatalogManifest: {
+          schemaVersion: 1,
+          catalogId: `sha256:${"4".repeat(64)}`,
+          totalCount: 2,
+          pageSize: 128,
+        },
+        operatorTimers: null,
+        localBroadcastLowerThird: null,
+        localOBS: null,
+        localOBSOutputs: {
+          schemaVersion: 1,
+          revision: "44",
+          connectionId: "123e4567-e89b-42d3-a456-426614174000",
+          availability: "ready",
+          streamActive: false,
+          recordingActive: true,
+        },
+      },
+    };
+    expect(normalizeStudioLANUpdate(v9)).toMatchObject({
+      payloadVersion: 9,
+      control: { localOBSOutputs: { revision: "44", recordingActive: true } },
+    });
+    expect(normalizeStudioLANUpdate({
+      ...v9,
+      control: {
+        ...v9.control,
+        localOBSOutputs: { ...v9.control.localOBSOutputs, password: "never" },
+      },
+    })).toBeNull();
+    expect(normalizeStudioLANUpdate({
+      ...v9,
+      control: {
+        ...v9.control,
+        routing: { ...v9.control.routing, stageAndMusicians: true },
+      },
+    })).toBeNull();
+    expect(normalizeStudioLANUpdate({
+      ...v9,
+      control: {
+        ...v9.control,
+        localOBSOutputs: {
+          ...v9.control.localOBSOutputs,
+          availability: "disconnected",
+          connectionId: null,
+          recordingActive: false,
+        },
+      },
+    })).toMatchObject({ control: { localOBSOutputs: { connectionId: null } } });
+
+    const streamAction = {
+      kind: "setLocalOBSStreamActive" as const,
+      active: true,
+      expectedCurrentActive: false,
+    };
+    expect(normalizeStudioLANLocalOBSOutputAction(streamAction)).toEqual(streamAction);
+    expect(normalizeStudioLANLocalOBSOutputAction({ ...streamAction, endpoint: "never" })).toBeNull();
+    expect(normalizeStudioLANLocalOBSOutputAction({
+      ...streamAction,
+      active: false,
+    })).toBeNull();
+    await sendStudioLANLocalOBSOutputCommand(streamAction);
+    expect(nativeMocks.sendLocalOBSOutputCommand).toHaveBeenCalledWith(streamAction);
+
+    const accepted = {
+      commandId: "22345678-1234-4abc-8def-123456789abc",
+      ...streamAction,
+      state: "accepted",
+      rejection: null,
+      uncertaintyReason: null,
+      operationsRevision: "45",
+    };
+    expect(normalizeStudioLANLocalOBSOutputFeedback(accepted)).toEqual(accepted);
+    expect(normalizeStudioLANLocalOBSOutputFeedback({
+      ...accepted,
+      state: "unconfirmed",
+      operationsRevision: null,
+      uncertaintyReason: "mutationMayHaveExecuted",
+    })).toMatchObject({ state: "unconfirmed", uncertaintyReason: "mutationMayHaveExecuted" });
+    expect(normalizeStudioLANLocalOBSOutputFeedback({
+      ...accepted,
+      state: "unconfirmed",
+    })).toBeNull();
+
+    const outputStatus = normalizeStudioLANStatus({
+      supported: true,
+      phase: "connected",
+      services: [],
+      selectedServiceId: null,
+      channel: "control",
+      paired: true,
+      message: null,
+      enrollmentState: "approved",
+      protocolFloor: 4,
+      role: "production",
+      permissions: ["observe", "controlLocalOBSStream"],
+      permissionRevision: "7",
+      revocationGeneration: "2",
+      studioId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      localOBSStreamControlAvailable: true,
+      localOBSRecordingControlAvailable: true,
+    });
+    expect(outputStatus.localOBSStreamControlAvailable).toBe(true);
+    expect(outputStatus.localOBSRecordingControlAvailable).toBe(false);
   });
 
   it("forwards only bounded privacy contexts and keeps unknown auth non-destructive", async () => {

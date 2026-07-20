@@ -192,7 +192,8 @@ final class StudioLANClientCoreTests: XCTestCase {
             let challenge,
             let supportedPayloadVersions,
             let controlSupportedPayloadVersions,
-            let localOBSControlPayloadVersions
+            let localOBSControlPayloadVersions,
+            _
         ) = challengeMessage else {
             return XCTFail("Expected challenge fixture")
         }
@@ -287,7 +288,8 @@ final class StudioLANClientCoreTests: XCTestCase {
             let challenge,
             let supportedPayloadVersions,
             let controlSupportedPayloadVersions,
-            let localOBSControlPayloadVersions
+            let localOBSControlPayloadVersions,
+            _
         ) = challengeMessage else {
             return XCTFail("Expected v1 challenge fixture")
         }
@@ -5108,7 +5110,8 @@ final class StudioLANOperatorTimerV6Tests: XCTestCase {
             let decodedChallenge,
             let outerHint,
             let controlOuterHint,
-            let localOBSOuterHint
+            let localOBSOuterHint,
+            _
         ) =
                 try TchurchStudioLANWireCodec.decode(hintedWire) else {
             return XCTFail("Expected hinted challenge")
@@ -5147,7 +5150,8 @@ final class StudioLANOperatorTimerV6Tests: XCTestCase {
             let decodedChallenge,
             let outerHint,
             let controlOuterHint,
-            let localOBSOuterHint
+            let localOBSOuterHint,
+            _
         ) =
                 try TchurchStudioLANWireCodec.decode(legacyWire) else {
             return XCTFail("Expected legacy challenge")
@@ -5205,7 +5209,7 @@ final class StudioLANOperatorTimerV6Tests: XCTestCase {
                 TchurchStudioLANSubscriptionRequest.controlSupportedPayloadVersions
         )
         let encoded = try TchurchStudioLANCoding.encoder().encode(message)
-        guard case .challenge(let decoded, let v6Hint, let v7Hint, let v8Hint) =
+        guard case .challenge(let decoded, let v6Hint, let v7Hint, let v8Hint, _) =
                 try TchurchStudioLANWireCodec.decode(encoded) else {
             return XCTFail("Expected v7-capable challenge")
         }
@@ -6597,7 +6601,7 @@ final class StudioLANOperatorTimerV6Tests: XCTestCase {
                 TchurchStudioLANSubscriptionRequest.localOBSControlPayloadVersions
         )
         let encoded = try TchurchStudioLANCoding.encoder().encode(message)
-        guard case .challenge(let decoded, let v6Hint, let v7Hint, let v8Hint) =
+        guard case .challenge(let decoded, let v6Hint, let v7Hint, let v8Hint, _) =
                 try TchurchStudioLANWireCodec.decode(encoded) else {
             return XCTFail("Expected v8-capable challenge")
         }
@@ -7146,6 +7150,224 @@ final class StudioLANOperatorTimerV6Tests: XCTestCase {
         XCTAssertTrue(lane.begin(.localOBSSceneCommand(localOBSID)))
         XCTAssertFalse(lane.begin(.operatorTimerCommand(UUID())))
         XCTAssertTrue(lane.finish(.localOBSSceneCommand(localOBSID)))
+    }
+
+    func testV9ChallengeHintIsAdditiveExactAndEarlierHintsStayFrozen() throws {
+        XCTAssertEqual(TchurchStudioLANSubscriptionRequest.supportedPayloadVersions, [3, 2, 1])
+        XCTAssertEqual(TchurchStudioLANSubscriptionRequest.deviceTrustSupportedPayloadVersions, [6, 5, 4, 3, 2, 1])
+        XCTAssertEqual(TchurchStudioLANSubscriptionRequest.controlSupportedPayloadVersions, [7, 6, 5, 4, 3, 2, 1])
+        XCTAssertEqual(TchurchStudioLANSubscriptionRequest.localOBSControlPayloadVersions, [8])
+        XCTAssertEqual(TchurchStudioLANSubscriptionRequest.localOBSOutputControlPayloadVersions, [9])
+        let challenge = makeChallenge(identity: try Curve25519.Signing.PrivateKey())
+        let legacyV8 = TchurchStudioLANWireMessage.challenge(
+            challenge,
+            supportedPayloadVersions: [6, 5, 4, 3, 2, 1],
+            controlSupportedPayloadVersions: [7, 6, 5, 4, 3, 2, 1],
+            localOBSControlPayloadVersions: [8]
+        )
+        let legacyObject = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: TchurchStudioLANCoding.encoder().encode(legacyV8)
+        ) as? [String: Any])
+        XCTAssertNil(legacyObject["localOBSOutputControlPayloadVersions"])
+        let v9 = TchurchStudioLANWireMessage.challenge(
+            challenge,
+            supportedPayloadVersions: [6, 5, 4, 3, 2, 1],
+            controlSupportedPayloadVersions: [7, 6, 5, 4, 3, 2, 1],
+            localOBSControlPayloadVersions: [8],
+            localOBSOutputControlPayloadVersions: [9]
+        )
+        guard case .challenge(_, _, _, _, let outputHint) = try TchurchStudioLANWireCodec.decode(
+            TchurchStudioLANCoding.encoder().encode(v9)
+        ) else { return XCTFail("Expected v9 challenge") }
+        XCTAssertEqual(outputHint, [9])
+        let negotiation = TchurchStudioLANPayloadNegotiation(protocolFloor: 4)
+        XCTAssertEqual(negotiation.supportedPayloadVersions(
+            for: .control,
+            controlAdvertisedPayloadVersions: [7, 6, 5, 4, 3, 2, 1],
+            localOBSControlPayloadVersions: [8],
+            localOBSOutputControlPayloadVersions: [9],
+            advertisedPayloadVersions: [6, 5, 4, 3, 2, 1]
+        ), [9, 8, 7, 6, 5, 4, 3, 2, 1])
+    }
+
+    func testV9LocalOBSOutputsProjectionRequiresExactSafeFields() throws {
+        let object: [String: Any] = [
+            "schemaVersion": 1,
+            "revision": 12,
+            "connectionID": "123e4567-e89b-42d3-a456-426614174000",
+            "availability": "ready",
+            "streamActive": false,
+            "recordingActive": true,
+        ]
+        let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        let projection = try TchurchStudioLANCoding.decoder().decode(
+            TchurchStudioLANLocalOBSOutputsProjection.self,
+            from: data
+        )
+        XCTAssertTrue(projection.isCanonical)
+        XCTAssertFalse(projection.streamActive)
+        XCTAssertTrue(projection.recordingActive)
+        var injected = object
+        injected["endpoint"] = "ws://127.0.0.1:4455"
+        XCTAssertThrowsError(try TchurchStudioLANCoding.decoder().decode(
+            TchurchStudioLANLocalOBSOutputsProjection.self,
+            from: JSONSerialization.data(withJSONObject: injected)
+        ))
+        var disconnected = object
+        disconnected["connectionID"] = NSNull()
+        disconnected["availability"] = "disconnected"
+        disconnected["streamActive"] = false
+        disconnected["recordingActive"] = false
+        XCTAssertNoThrow(try TchurchStudioLANCoding.decoder().decode(
+            TchurchStudioLANLocalOBSOutputsProjection.self,
+            from: JSONSerialization.data(withJSONObject: disconnected)
+        ))
+    }
+
+    func testV9OutputCommandSignatureBindsPermissionRouteConnectionCASAndAction() throws {
+        let deviceKey = P256.Signing.PrivateKey()
+        let studioKey = Curve25519.Signing.PrivateKey()
+        let studioPublic = studioKey.publicKey.rawRepresentation
+        let authority = TchurchStudioLANAuthority(
+            runID: UUID(), authorityEpoch: 4, packageID: "pkg", serviceVersion: "v9"
+        )
+        let deviceID = UUID()
+        let grantID = UUID()
+        let grant = StudioLANDeviceGrant(
+            schemaVersion: 4,
+            protocolFloor: 4,
+            grantID: grantID,
+            deviceID: deviceID,
+            deviceName: "Tchurch iOS",
+            role: .production,
+            permissions: [.observe, .controlLocalOBSStream],
+            keyAlgorithm: .p256Signing,
+            devicePublicKey: deviceKey.publicKey.x963Representation.base64EncodedString(),
+            devicePublicKeyFingerprint: StudioLANDeviceGrant.fingerprint(
+                forPublicKeyData: deviceKey.publicKey.x963Representation
+            ),
+            studioID: UUID(),
+            studioSigningKeyID: String(TchurchStudioLANCrypto.sha256Hex(studioPublic).prefix(24)),
+            studioSigningPublicKey: studioPublic.base64EncodedString(),
+            permissionRevision: 7,
+            revocationGeneration: 2,
+            issuedAtMilliseconds: 1_000,
+            expiresAtMilliseconds: 10_000,
+            signature: ""
+        )
+        let unsigned = TchurchStudioLANLocalOBSOutputCommand(
+            schemaVersion: 1,
+            payloadVersion: 9,
+            commandID: UUID(),
+            sessionID: UUID(),
+            deviceID: deviceID,
+            grantID: grantID,
+            deviceGrantChecksum: "sha256:" + String(repeating: "a", count: 64),
+            permissionRevision: 7,
+            revocationGeneration: 2,
+            authority: authority,
+            routeEpoch: 5,
+            connectionID: "123e4567-e89b-42d3-a456-426614174000",
+            expectedOperationsRevision: 12,
+            issuedAtMilliseconds: 2_000,
+            expiresAtMilliseconds: 7_000,
+            action: .stream(active: true, expectedCurrentActive: false),
+            signature: ""
+        )
+        let signature = try deviceKey.signature(
+            for: TchurchStudioLANLocalOBSOutputCommandCrypto.signingData(for: unsigned)
+        ).derRepresentation.base64EncodedString()
+        let command = replacingLocalOBSOutputCommand(unsigned, signature: signature)
+        XCTAssertNoThrow(try TchurchStudioLANLocalOBSOutputCommandCrypto.verify(
+            command, deviceGrant: grant
+        ))
+        XCTAssertThrowsError(try TchurchStudioLANLocalOBSOutputCommandCrypto.verify(
+            replacingLocalOBSOutputCommand(
+                command,
+                action: .recording(active: true, expectedCurrentActive: false)
+            ),
+            deviceGrant: grant
+        ))
+        let recordingGrant = StudioLANDeviceGrant(
+            schemaVersion: grant.schemaVersion, protocolFloor: grant.protocolFloor,
+            grantID: grant.grantID, deviceID: grant.deviceID, deviceName: grant.deviceName,
+            role: grant.role, permissions: [.observe, .controlLocalOBSRecording],
+            keyAlgorithm: grant.keyAlgorithm, devicePublicKey: grant.devicePublicKey,
+            devicePublicKeyFingerprint: grant.devicePublicKeyFingerprint,
+            studioID: grant.studioID, studioSigningKeyID: grant.studioSigningKeyID,
+            studioSigningPublicKey: grant.studioSigningPublicKey,
+            permissionRevision: grant.permissionRevision,
+            revocationGeneration: grant.revocationGeneration,
+            issuedAtMilliseconds: grant.issuedAtMilliseconds,
+            expiresAtMilliseconds: grant.expiresAtMilliseconds,
+            signature: ""
+        )
+        XCTAssertThrowsError(try TchurchStudioLANLocalOBSOutputCommandCrypto.verify(
+            command, deviceGrant: recordingGrant
+        ))
+    }
+
+    func testV9OutputReconciliationNeverPermitsStaleAutomaticReplay() {
+        let connectionID = "123e4567-e89b-42d3-a456-426614174000"
+        var reconciliation = TchurchStudioLANLocalOBSOutputsReconciliationState()
+        reconciliation.requireEnvelope(after: 40, connectionID: connectionID)
+        let stale = TchurchStudioLANLocalOBSOutputsProjection(
+            schemaVersion: 1, revision: 12, connectionID: connectionID,
+            availability: .ready, streamActive: true, recordingActive: false
+        )
+        XCTAssertFalse(reconciliation.permits(stale, envelopeSequence: 40))
+        reconciliation.observe(stale, envelopeSequence: 41)
+        XCTAssertTrue(reconciliation.permits(stale, envelopeSequence: 41))
+    }
+
+    func testV9OutputReceiptUsesFlatActionBindingsAndStrictStatusKeys() throws {
+        let signer = Curve25519.Signing.PrivateKey()
+        let publicData = signer.publicKey.rawRepresentation
+        let unsigned = TchurchStudioLANLocalOBSOutputReceipt(
+            schemaVersion: 1,
+            payloadVersion: 9,
+            commandID: UUID(),
+            deviceID: UUID(),
+            authority: TchurchStudioLANAuthority(
+                runID: UUID(), authorityEpoch: 2, packageID: "pkg", serviceVersion: "v9"
+            ),
+            routeEpoch: 3,
+            permissionRevision: 4,
+            connectionID: "123e4567-e89b-42d3-a456-426614174000",
+            actionKind: .setLocalOBSRecordingActive,
+            requestedActive: true,
+            expectedCurrentActive: false,
+            operationsRevision: 13,
+            status: .unconfirmed,
+            rejection: nil,
+            uncertaintyReason: .mutationMayHaveExecuted,
+            issuedAtMilliseconds: 5_000,
+            studioSigningKeyID: String(TchurchStudioLANCrypto.sha256Hex(publicData).prefix(24)),
+            signature: ""
+        )
+        let signed = replacingLocalOBSOutputReceipt(
+            unsigned,
+            signature: try signer.signature(
+                for: TchurchStudioLANLocalOBSOutputReceiptCrypto.signingData(for: unsigned)
+            ).base64EncodedString()
+        )
+        XCTAssertNoThrow(try TchurchStudioLANLocalOBSOutputReceiptCrypto.verify(
+            signed,
+            studioSigningPublicKey: publicData.base64EncodedString()
+        ))
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: TchurchStudioLANCoding.encoder().encode(signed)
+        ) as? [String: Any])
+        XCTAssertEqual(object["actionKind"] as? String, "setLocalOBSRecordingActive")
+        XCTAssertNil(object["action"])
+        XCTAssertNil(object["rejection"])
+        XCTAssertEqual(object["uncertaintyReason"] as? String, "mutationMayHaveExecuted")
+        var injected = object
+        injected["endpoint"] = "ws://localhost"
+        XCTAssertThrowsError(try TchurchStudioLANCoding.decoder().decode(
+            TchurchStudioLANLocalOBSOutputReceipt.self,
+            from: JSONSerialization.data(withJSONObject: injected)
+        ))
     }
 }
 
@@ -7795,5 +8017,57 @@ private func replacingLocalBroadcastLowerThirdReceipt(
         issuedAtMilliseconds: value.issuedAtMilliseconds,
         studioSigningKeyID: value.studioSigningKeyID,
         signature: value.signature
+    )
+}
+
+private func replacingLocalOBSOutputCommand(
+    _ value: TchurchStudioLANLocalOBSOutputCommand,
+    action: TchurchStudioLANLocalOBSOutputAction? = nil,
+    signature: String? = nil
+) -> TchurchStudioLANLocalOBSOutputCommand {
+    TchurchStudioLANLocalOBSOutputCommand(
+        schemaVersion: value.schemaVersion,
+        payloadVersion: value.payloadVersion,
+        commandID: value.commandID,
+        sessionID: value.sessionID,
+        deviceID: value.deviceID,
+        grantID: value.grantID,
+        deviceGrantChecksum: value.deviceGrantChecksum,
+        permissionRevision: value.permissionRevision,
+        revocationGeneration: value.revocationGeneration,
+        authority: value.authority,
+        routeEpoch: value.routeEpoch,
+        connectionID: value.connectionID,
+        expectedOperationsRevision: value.expectedOperationsRevision,
+        issuedAtMilliseconds: value.issuedAtMilliseconds,
+        expiresAtMilliseconds: value.expiresAtMilliseconds,
+        action: action ?? value.action,
+        signature: signature ?? value.signature
+    )
+}
+
+private func replacingLocalOBSOutputReceipt(
+    _ value: TchurchStudioLANLocalOBSOutputReceipt,
+    signature: String
+) -> TchurchStudioLANLocalOBSOutputReceipt {
+    TchurchStudioLANLocalOBSOutputReceipt(
+        schemaVersion: value.schemaVersion,
+        payloadVersion: value.payloadVersion,
+        commandID: value.commandID,
+        deviceID: value.deviceID,
+        authority: value.authority,
+        routeEpoch: value.routeEpoch,
+        permissionRevision: value.permissionRevision,
+        connectionID: value.connectionID,
+        actionKind: value.actionKind,
+        requestedActive: value.requestedActive,
+        expectedCurrentActive: value.expectedCurrentActive,
+        operationsRevision: value.operationsRevision,
+        status: value.status,
+        rejection: value.rejection,
+        uncertaintyReason: value.uncertaintyReason,
+        issuedAtMilliseconds: value.issuedAtMilliseconds,
+        studioSigningKeyID: value.studioSigningKeyID,
+        signature: signature
     )
 }

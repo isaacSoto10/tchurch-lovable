@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { StudioLANCueCatalogStatus, StudioLANLocalBroadcastLowerThirdFeedback, StudioLANLocalOBSSceneFeedback, StudioLANOperatorTimerFeedback, StudioLANRemoteFeedback, StudioLANStatus, StudioLANUpdate } from "@/lib/studioLANClient";
+import type { StudioLANCueCatalogStatus, StudioLANLocalBroadcastLowerThirdFeedback, StudioLANLocalOBSOutputFeedback, StudioLANLocalOBSSceneFeedback, StudioLANOperatorTimerFeedback, StudioLANRemoteFeedback, StudioLANStatus, StudioLANUpdate } from "@/lib/studioLANClient";
 
 const mocks = vi.hoisted(() => ({
   status: null as StudioLANStatus | null,
@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   operatorTimerFeedback: null as StudioLANOperatorTimerFeedback | null,
   localBroadcastLowerThirdFeedback: null as StudioLANLocalBroadcastLowerThirdFeedback | null,
   localOBSSceneFeedback: null as StudioLANLocalOBSSceneFeedback | null,
+  localOBSOutputFeedback: null as StudioLANLocalOBSOutputFeedback | null,
   cueCatalog: null as StudioLANCueCatalogStatus | null,
   connect: vi.fn(),
   disconnect: vi.fn(),
@@ -19,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   sendOperatorTimerCommand: vi.fn(),
   sendLocalBroadcastLowerThirdCommand: vi.fn(),
   sendLocalOBSSceneCommand: vi.fn(),
+  sendLocalOBSOutputCommand: vi.fn(),
   requestReapproval: vi.fn(),
   scanBarcode: vi.fn(),
 }));
@@ -39,6 +41,7 @@ vi.mock("@/hooks/useStudioLANClient", () => ({
     operatorTimerFeedback: mocks.operatorTimerFeedback,
     localBroadcastLowerThirdFeedback: mocks.localBroadcastLowerThirdFeedback,
     localOBSSceneFeedback: mocks.localOBSSceneFeedback,
+    localOBSOutputFeedback: mocks.localOBSOutputFeedback,
     cueCatalog: mocks.cueCatalog,
     connect: mocks.connect,
     disconnect: mocks.disconnect,
@@ -48,6 +51,7 @@ vi.mock("@/hooks/useStudioLANClient", () => ({
     sendOperatorTimerCommand: mocks.sendOperatorTimerCommand,
     sendLocalBroadcastLowerThirdCommand: mocks.sendLocalBroadcastLowerThirdCommand,
     sendLocalOBSSceneCommand: mocks.sendLocalOBSSceneCommand,
+    sendLocalOBSOutputCommand: mocks.sendLocalOBSOutputCommand,
     requestReapproval: mocks.requestReapproval,
   }),
 }));
@@ -78,6 +82,10 @@ const baseStatus: StudioLANStatus = {
   localBroadcastLowerThirdCommandInFlight: false,
   localOBSSceneControlAvailable: false,
   localOBSSceneCommandInFlight: false,
+  localOBSStreamControlAvailable: false,
+  localOBSStreamCommandInFlight: false,
+  localOBSRecordingControlAvailable: false,
+  localOBSRecordingCommandInFlight: false,
 };
 
 const controlUpdate: StudioLANUpdate = {
@@ -120,6 +128,7 @@ const controlUpdate: StudioLANUpdate = {
     operatorTimers: null,
     localBroadcastLowerThird: null,
     localOBS: null,
+    localOBSOutputs: null,
   },
 };
 
@@ -147,6 +156,7 @@ describe("Studio LAN production route", () => {
     mocks.operatorTimerFeedback = null;
     mocks.localBroadcastLowerThirdFeedback = null;
     mocks.localOBSSceneFeedback = null;
+    mocks.localOBSOutputFeedback = null;
     mocks.cueCatalog = null;
     mocks.connect.mockReset().mockResolvedValue(undefined);
     mocks.disconnect.mockReset().mockResolvedValue(undefined);
@@ -156,6 +166,7 @@ describe("Studio LAN production route", () => {
     mocks.sendOperatorTimerCommand.mockReset().mockResolvedValue(undefined);
     mocks.sendLocalBroadcastLowerThirdCommand.mockReset().mockResolvedValue(undefined);
     mocks.sendLocalOBSSceneCommand.mockReset().mockResolvedValue(undefined);
+    mocks.sendLocalOBSOutputCommand.mockReset().mockResolvedValue(undefined);
     mocks.requestReapproval.mockReset().mockResolvedValue(undefined);
     mocks.scanBarcode.mockReset().mockResolvedValue({ ScanResult: "" });
   });
@@ -630,6 +641,62 @@ describe("Studio LAN production route", () => {
       kind: "localBroadcastLowerThird",
       operation: "hide",
     }));
+  });
+
+  it("requires confirmation and enforces independent v9 stream and recording permissions", async () => {
+    mocks.status = {
+      ...connectedStatus,
+      permissions: ["observe", "controlProgram", "controlLocalOBSStream"],
+      localOBSStreamControlAvailable: true,
+      localOBSRecordingControlAvailable: false,
+    };
+    mocks.update = {
+      ...controlUpdate,
+      payloadVersion: 9,
+      control: {
+        ...controlUpdate.control!,
+        cueCatalog: null,
+        routing: {
+          schemaVersion: 1,
+          localAudience: true,
+          localBroadcast: true,
+          stageAndMusicians: false,
+          lanRemoteControl: true,
+          lightingAndMIDI: false,
+          tchurchCloudProgram: false,
+        },
+        cueCatalogManifest: {
+          schemaVersion: 1,
+          catalogId: `sha256:${"4".repeat(64)}`,
+          totalCount: 2,
+          pageSize: 128,
+        },
+        localOBSOutputs: {
+          schemaVersion: 1,
+          revision: "44",
+          connectionId: "123e4567-e89b-42d3-a456-426614174000",
+          availability: "ready",
+          streamActive: false,
+          recordingActive: true,
+        },
+      },
+    };
+    const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValue(true);
+    render(<MemoryRouter><StudioLANProduction /></MemoryRouter>);
+    const stream = screen.getByTestId("studio-lan-local-obs-stream-toggle");
+    const recording = screen.getByTestId("studio-lan-local-obs-recording-toggle");
+    expect(stream).toBeEnabled();
+    expect(recording).toBeDisabled();
+    fireEvent.click(stream);
+    expect(mocks.sendLocalOBSOutputCommand).not.toHaveBeenCalled();
+    fireEvent.click(stream);
+    await waitFor(() => expect(mocks.sendLocalOBSOutputCommand).toHaveBeenCalledWith({
+      kind: "setLocalOBSStreamActive",
+      active: true,
+      expectedCurrentActive: false,
+    }));
+    expect(confirm).toHaveBeenCalledTimes(2);
+    confirm.mockRestore();
   });
 
   it("selects only a signed v8 local OBS scene and treats uncertainty as terminal", async () => {

@@ -155,6 +155,7 @@ export default function StudioLANProduction() {
     operatorTimerFeedback,
     localBroadcastLowerThirdFeedback,
     localOBSSceneFeedback,
+    localOBSOutputFeedback,
     cueCatalog: pagedCueCatalog,
     connect,
     disconnect,
@@ -164,6 +165,7 @@ export default function StudioLANProduction() {
     sendOperatorTimerCommand,
     sendLocalBroadcastLowerThirdCommand,
     sendLocalOBSSceneCommand,
+    sendLocalOBSOutputCommand,
     requestReapproval,
   } = useStudioLANClient();
   const [selectedServiceId, setSelectedServiceId] = useState("");
@@ -186,6 +188,8 @@ export default function StudioLANProduction() {
   const [selectedLocalOBSSceneId, setSelectedLocalOBSSceneId] = useState("");
   const [localOBSSceneCommandPending, setLocalOBSSceneCommandPending] = useState(false);
   const [localOBSSceneCommandError, setLocalOBSSceneCommandError] = useState<string | null>(null);
+  const [localOBSOutputCommandPending, setLocalOBSOutputCommandPending] = useState(false);
+  const [localOBSOutputCommandError, setLocalOBSOutputCommandError] = useState<string | null>(null);
   const [timerMonotonicNow, setTimerMonotonicNow] = useState(() => performance.now());
   const [reapproving, setReapproving] = useState(false);
   const [reapprovalError, setReapprovalError] = useState<string | null>(null);
@@ -230,6 +234,12 @@ export default function StudioLANProduction() {
     }
   }, [localOBSSceneFeedback]);
 
+  useEffect(() => {
+    if (localOBSOutputFeedback?.state && localOBSOutputFeedback.state !== "queued") {
+      setLocalOBSOutputCommandPending(false);
+    }
+  }, [localOBSOutputFeedback]);
+
   const selectedService = useMemo(
     () => status.services.find((service) => service.id === selectedServiceId) ?? null,
     [selectedServiceId, status.services],
@@ -237,16 +247,17 @@ export default function StudioLANProduction() {
   const controlUpdate = update?.channel === "control" ? update : null;
   const usesPagedCatalog = controlUpdate?.payloadVersion === 5
     || controlUpdate?.payloadVersion === 6 || controlUpdate?.payloadVersion === 7
-    || controlUpdate?.payloadVersion === 8;
+    || controlUpdate?.payloadVersion === 8 || controlUpdate?.payloadVersion === 9;
   const cueCatalog = useMemo(() => (
     usesPagedCatalog
       ? (pagedCueCatalog?.phase === "ready" ? pagedCueCatalog.cues ?? [] : [])
       : controlUpdate?.control?.cueCatalog ?? []
   ), [controlUpdate?.control?.cueCatalog, pagedCueCatalog, usesPagedCatalog]);
   const commandPending = localCommandPending || localTimerCommandPending
-    || localLowerThirdCommandPending || localOBSSceneCommandPending
+    || localLowerThirdCommandPending || localOBSSceneCommandPending || localOBSOutputCommandPending
     || status.remoteCommandInFlight || status.operatorTimerCommandInFlight
-    || status.localBroadcastLowerThirdCommandInFlight || status.localOBSSceneCommandInFlight;
+    || status.localBroadcastLowerThirdCommandInFlight || status.localOBSSceneCommandInFlight
+    || status.localOBSStreamCommandInFlight || status.localOBSRecordingCommandInFlight;
   const controlsEnabled = status.remoteControlAvailable && !commandPending && controlUpdate?.control != null;
   const jumpEnabled = controlsEnabled && (!usesPagedCatalog || pagedCueCatalog?.phase === "ready") && cueCatalog.length > 0;
   const currentCue = controlUpdate?.audience.cue ?? null;
@@ -258,6 +269,7 @@ export default function StudioLANProduction() {
   const routing = controlUpdate?.control?.routing ?? null;
   const operatorTimers = controlUpdate?.payloadVersion === 6
     || controlUpdate?.payloadVersion === 7 || controlUpdate?.payloadVersion === 8
+    || controlUpdate?.payloadVersion === 9
     ? controlUpdate.control?.operatorTimers ?? null : null;
   const timerClockOrigin = useMemo(() => ({
     sequence: controlUpdate?.sequence ?? "0",
@@ -266,10 +278,11 @@ export default function StudioLANProduction() {
   }), [controlUpdate?.sequence, operatorTimers?.revision]);
   const timerControlsEnabled = status.operatorTimerControlAvailable
     && (controlUpdate?.payloadVersion === 6 || controlUpdate?.payloadVersion === 7
-      || controlUpdate?.payloadVersion === 8)
+      || controlUpdate?.payloadVersion === 8 || controlUpdate?.payloadVersion === 9)
     && operatorTimers != null
     && !commandPending;
   const lowerThird = controlUpdate?.payloadVersion === 7 || controlUpdate?.payloadVersion === 8
+    || controlUpdate?.payloadVersion === 9
     ? controlUpdate.control?.localBroadcastLowerThird ?? null : null;
   const lowerThirdShowAction = useMemo(() => {
     const title = lowerThirdTitle.trim();
@@ -282,19 +295,41 @@ export default function StudioLANProduction() {
     });
   }, [lowerThirdSubtitle, lowerThirdTitle]);
   const lowerThirdControlsEnabled = status.localBroadcastLowerThirdControlAvailable
-    && (controlUpdate?.payloadVersion === 7 || controlUpdate?.payloadVersion === 8)
+    && (controlUpdate?.payloadVersion === 7 || controlUpdate?.payloadVersion === 8
+      || controlUpdate?.payloadVersion === 9)
     && lowerThird != null
     && !commandPending;
-  const localOBS = controlUpdate?.payloadVersion === 8
+  const localOBS = controlUpdate?.payloadVersion === 8 || controlUpdate?.payloadVersion === 9
     ? controlUpdate.control?.localOBS ?? null : null;
   const localOBSFeedback = localOBSSceneFeedbackMessage(localOBSSceneFeedback);
   const localOBSControlsEnabled = status.localOBSSceneControlAvailable
-    && controlUpdate?.payloadVersion === 8
+    && (controlUpdate?.payloadVersion === 8 || controlUpdate?.payloadVersion === 9)
     && localOBS?.availability === "ready"
     && routing?.localBroadcast === true
     && routing.tchurchCloudProgram === false
     && !commandPending;
-  const signedRoutingIndicators = controlUpdate?.payloadVersion === 8 && routing ? [
+  const localOBSOutputs = controlUpdate?.payloadVersion === 9
+    ? controlUpdate.control?.localOBSOutputs ?? null : null;
+  const outputProfileReady = controlUpdate?.payloadVersion === 9
+    && routing?.localBroadcast === true
+    && routing.lanRemoteControl === true
+    && routing.stageAndMusicians === false
+    && routing.tchurchCloudProgram === false
+    && routing.lightingAndMIDI === false
+    && localOBSOutputs?.availability === "ready";
+  const localOBSOutputFeedbackMessage = localOBSOutputFeedback?.state === "accepted"
+    ? "Studio confirmó el cambio de salida OBS."
+    : localOBSOutputFeedback?.state === "rejected"
+      ? "Studio rechazó el cambio de salida OBS."
+      : localOBSOutputFeedback?.state === "unconfirmed"
+        ? "OBS puede haber aplicado el cambio. No se repetirá automáticamente; esperando estado firmado nuevo."
+        : localOBSOutputFeedback?.state === "interrupted"
+          ? "El cambio de salida OBS se interrumpió antes de confirmarse."
+          : localOBSOutputFeedback?.state === "queued"
+            ? "Cambio de salida OBS enviado; esperando confirmación firmada."
+            : null;
+  const signedRoutingIndicators = (controlUpdate?.payloadVersion === 8
+    || controlUpdate?.payloadVersion === 9) && routing ? [
     { key: "localAudience", label: "Audiencia local", enabled: routing.localAudience },
     { key: "stageAndMusicians", label: "Stage / músicos", enabled: routing.stageAndMusicians },
     { key: "localBroadcast", label: "Transmisión local", enabled: routing.localBroadcast },
@@ -470,6 +505,28 @@ export default function StudioLANProduction() {
     }
   }
 
+  async function runLocalOBSOutputCommand(
+    kind: "setLocalOBSStreamActive" | "setLocalOBSRecordingActive",
+  ) {
+    if (!outputProfileReady || !localOBSOutputs || commandPending) return;
+    const isStream = kind === "setLocalOBSStreamActive";
+    const expectedCurrentActive = isStream
+      ? localOBSOutputs.streamActive : localOBSOutputs.recordingActive;
+    const active = !expectedCurrentActive;
+    const label = isStream ? "transmisión" : "grabación";
+    if (!window.confirm(`¿${active ? "Activar" : "Detener"} ${label} en OBS local?`)) return;
+    setLocalOBSOutputCommandPending(true);
+    setLocalOBSOutputCommandError(null);
+    try {
+      await sendLocalOBSOutputCommand({ kind, active, expectedCurrentActive });
+    } catch {
+      setLocalOBSOutputCommandPending(false);
+      setLocalOBSOutputCommandError(
+        "El estado de OBS cambió o este dispositivo no tiene ese permiso.",
+      );
+    }
+  }
+
   async function openSetup() {
     await disconnect();
     setShowSetup(true);
@@ -520,7 +577,7 @@ export default function StudioLANProduction() {
                 <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-violet-300/10 text-violet-200"><ShieldCheck className="h-5 w-5" /></span>
                 <div>
                   <h2 className="text-lg font-black">Control local de Program</h2>
-                  <p className="mt-1 text-sm leading-6 text-slate-300">Avanza, retrocede, salta o activa blackout en la Mac. Con un permiso separado también puede elegir una escena del OBS local; nunca expone endpoint, contraseña, stream, grabación, luces, media ni Quick Edit.</p>
+                  <p className="mt-1 text-sm leading-6 text-slate-300">Avanza, retrocede, salta o activa blackout en la Mac. Con permisos separados también puede elegir una escena e iniciar o detener la transmisión y la grabación de OBS local. Nunca expone endpoints, contraseñas, claves de stream, destinos, luces, media ni Quick Edit.</p>
                 </div>
               </div>
             </div>
@@ -538,7 +595,7 @@ export default function StudioLANProduction() {
                       <LoaderCircle className="mt-0.5 h-5 w-5 shrink-0 animate-spin text-amber-200" />
                       <div>
                         <p className="font-black text-amber-100">Esperando aprobación de Producción</p>
-                        <p className="mt-1 text-sm leading-6 text-amber-100/80">Aprueba este dispositivo como Producción y habilita “Control Program”. “Control OBS local” se concede por separado.</p>
+                        <p className="mt-1 text-sm leading-6 text-amber-100/80">Aprueba este dispositivo como Producción y habilita “Control Program”. Escenas, transmisión y grabación de OBS local se conceden como tres permisos separados.</p>
                         <p className="mt-2 text-xs font-semibold text-amber-100/65">La solicitud permanece en esta red local; no se publica en internet.</p>
                       </div>
                     </div>
@@ -598,7 +655,7 @@ export default function StudioLANProduction() {
 
                 <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
                   <label htmlFor="studio-production-pairing-code" className="text-xs font-black uppercase tracking-[0.18em] text-violet-200">2 · Emparejar como Producción</label>
-                  <p className="mt-2 text-xs leading-5 text-slate-400">Este rol se solicita desde el primer enrollment. Studio debe aprobar Control Program y, si lo necesitas, Control OBS local como permisos separados.</p>
+                  <p className="mt-2 text-xs leading-5 text-slate-400">Este rol se solicita desde el primer enrollment. Studio debe aprobar Control Program y cada permiso de OBS local que necesites: escenas, transmisión o grabación.</p>
                   {scanNotice && <p className="mt-3 rounded-2xl border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs font-semibold text-amber-100" role="alert">{scanNotice}</p>}
                   <Button type="button" className="mt-4 h-12 w-full rounded-2xl font-black" disabled={!selectedService || selectedService.protocolFloor < 4 || scanning || submitting || status.enrollmentState === "revoked"} onClick={() => void scanPairingQR()}>
                     {scanning ? <><LoaderCircle className="h-4 w-4 animate-spin" />Abriendo cámara…</> : <><ScanLine className="h-4 w-4" />Escanear QR de Studio</>}
@@ -620,7 +677,7 @@ export default function StudioLANProduction() {
         <section className="min-h-0 flex-1 overflow-y-auto px-4 pb-[calc(2rem+env(safe-area-inset-bottom,0px))] pt-5 sm:px-6" data-testid="studio-lan-production-controls">
           <div className="mx-auto w-full max-w-3xl space-y-4">
             <div className="flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-emerald-300/15 bg-emerald-300/[0.07] px-4 text-[10px] font-black uppercase tracking-[0.14em] text-emerald-200" role="status">
-              <ShieldCheck className="h-3.5 w-3.5" />Producción aprobada · Control Program{status.permissions.includes("controlLocalOBS") ? " + OBS local" : ""} · revisión {controlUpdate.revision}
+              <ShieldCheck className="h-3.5 w-3.5" />Producción aprobada · Control Program{status.permissions.includes("controlLocalOBS") ? " + Escenas OBS" : ""}{status.permissions.includes("controlLocalOBSStream") ? " + Transmisión OBS" : ""}{status.permissions.includes("controlLocalOBSRecording") ? " + Grabación OBS" : ""} · revisión {controlUpdate.revision}
             </div>
 
             <div className="rounded-[2rem] border border-white/10 bg-white/[0.04] p-6 text-center">
@@ -668,7 +725,7 @@ export default function StudioLANProduction() {
               )}
             </div>
 
-            {controlUpdate.payloadVersion === 8 && (
+            {(controlUpdate.payloadVersion === 8 || controlUpdate.payloadVersion === 9) && (
               <div className="rounded-3xl border border-blue-300/15 bg-blue-300/[0.05] p-5" data-testid="studio-lan-local-obs-scenes">
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -730,7 +787,69 @@ export default function StudioLANProduction() {
               </div>
             )}
 
-            {(controlUpdate.payloadVersion === 7 || controlUpdate.payloadVersion === 8) && (
+            {controlUpdate.payloadVersion === 9 && (
+              <div className="rounded-3xl border border-emerald-300/15 bg-emerald-300/[0.05] p-5" data-testid="studio-lan-local-obs-outputs">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-200">Salidas de OBS local</p>
+                    <p className="mt-1 text-xs leading-5 text-slate-300">Transmisión y grabación tienen permisos separados. Este perfil mantiene Stage, músicos, Cloud y luces apagados.</p>
+                  </div>
+                  <MonitorUp className="h-5 w-5 shrink-0 text-emerald-200" aria-hidden="true" />
+                </div>
+                {localOBSOutputs ? (
+                  <>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                        <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Transmisión</p>
+                        <p className={`mt-1 text-sm font-black ${localOBSOutputs.streamActive ? "text-red-200" : "text-slate-200"}`}>
+                          {localOBSOutputs.streamActive ? "En vivo" : "Detenida"}
+                        </p>
+                        <Button
+                          type="button"
+                          className="mt-3 h-11 w-full rounded-xl font-black"
+                          variant={localOBSOutputs.streamActive ? "destructive" : "default"}
+                          disabled={!outputProfileReady || !status.localOBSStreamControlAvailable || commandPending}
+                          onClick={() => void runLocalOBSOutputCommand("setLocalOBSStreamActive")}
+                          data-testid="studio-lan-local-obs-stream-toggle"
+                        >
+                          {localOBSOutputs.streamActive ? "Detener transmisión" : "Activar transmisión"}
+                        </Button>
+                      </div>
+                      <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                        <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Grabación</p>
+                        <p className={`mt-1 text-sm font-black ${localOBSOutputs.recordingActive ? "text-red-200" : "text-slate-200"}`}>
+                          {localOBSOutputs.recordingActive ? "Grabando" : "Detenida"}
+                        </p>
+                        <Button
+                          type="button"
+                          className="mt-3 h-11 w-full rounded-xl font-black"
+                          variant={localOBSOutputs.recordingActive ? "destructive" : "default"}
+                          disabled={!outputProfileReady || !status.localOBSRecordingControlAvailable || commandPending}
+                          onClick={() => void runLocalOBSOutputCommand("setLocalOBSRecordingActive")}
+                          data-testid="studio-lan-local-obs-recording-toggle"
+                        >
+                          {localOBSOutputs.recordingActive ? "Detener grabación" : "Iniciar grabación"}
+                        </Button>
+                      </div>
+                    </div>
+                    <p className="mt-3 text-[10px] font-black uppercase tracking-wider text-slate-500">Revisión de operaciones {localOBSOutputs.revision}</p>
+                  </>
+                ) : (
+                  <p className="mt-4 rounded-2xl border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-sm font-semibold text-amber-100" role="status">
+                    Studio no publicó el estado firmado de transmisión y grabación.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {(localOBSOutputFeedbackMessage || localOBSOutputCommandError) && (
+              <div className={`rounded-2xl border px-4 py-3 text-sm font-semibold ${localOBSOutputFeedback?.state === "accepted" ? "border-emerald-300/20 bg-emerald-300/10 text-emerald-100" : localOBSOutputFeedback?.state === "rejected" || localOBSOutputCommandError ? "border-red-300/20 bg-red-300/10 text-red-100" : "border-amber-300/20 bg-amber-300/10 text-amber-100"}`} role="status" data-testid="studio-lan-local-obs-output-feedback">
+                {localOBSOutputCommandError || localOBSOutputFeedbackMessage}
+              </div>
+            )}
+
+            {(controlUpdate.payloadVersion === 7 || controlUpdate.payloadVersion === 8
+              || controlUpdate.payloadVersion === 9) && (
               <div className="rounded-3xl border border-fuchsia-300/15 bg-fuchsia-300/[0.05] p-5" data-testid="studio-lan-local-broadcast-lower-third">
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -817,7 +936,8 @@ export default function StudioLANProduction() {
               </div>
             )}
 
-            {(controlUpdate.payloadVersion === 6 || controlUpdate.payloadVersion === 7 || controlUpdate.payloadVersion === 8) && (
+            {(controlUpdate.payloadVersion === 6 || controlUpdate.payloadVersion === 7
+              || controlUpdate.payloadVersion === 8 || controlUpdate.payloadVersion === 9) && (
               <div className="rounded-3xl border border-cyan-300/15 bg-cyan-300/[0.05] p-5" data-testid="studio-lan-operator-timers">
                 <div className="flex items-start justify-between gap-3">
                   <div>

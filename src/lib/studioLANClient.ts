@@ -4,7 +4,8 @@ export type StudioLANChannel = "audience" | "stage" | "control";
 export type StudioLANPhase = "idle" | "discovering" | "connecting" | "authenticating" | "connected" | "reconnecting" | "failed" | "suspended";
 export type StudioLANDeviceEnrollmentState = "unenrolled" | "pending" | "approved" | "revoked";
 export type StudioLANDeviceRole = "audience" | "worshipLeader" | "musicians" | "preacher" | "production";
-export type StudioLANDevicePermission = "observe" | "controlProgram" | "controlLocalOBS";
+export type StudioLANDevicePermission = "observe" | "controlProgram" | "controlLocalOBS"
+  | "controlLocalOBSStream" | "controlLocalOBSRecording";
 
 export type StudioLANService = { id: string; name: string; protocolFloor: number };
 export type StudioLANStatus = {
@@ -30,6 +31,10 @@ export type StudioLANStatus = {
   localBroadcastLowerThirdCommandInFlight: boolean;
   localOBSSceneControlAvailable: boolean;
   localOBSSceneCommandInFlight: boolean;
+  localOBSStreamControlAvailable: boolean;
+  localOBSStreamCommandInFlight: boolean;
+  localOBSRecordingControlAvailable: boolean;
+  localOBSRecordingCommandInFlight: boolean;
 };
 
 export type StudioLANCue = {
@@ -144,9 +149,18 @@ export type StudioLANLocalOBS = {
   scenes: StudioLANLocalOBSScene[];
 };
 
+export type StudioLANLocalOBSOutputs = {
+  schemaVersion: 1;
+  revision: string;
+  connectionId: string | null;
+  availability: StudioLANLocalOBSAvailability;
+  streamActive: boolean;
+  recordingActive: boolean;
+};
+
 export type StudioLANUpdate = {
   channel: StudioLANChannel;
-  payloadVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+  payloadVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
   sequence: string;
   revision: string;
   issuedAtMs: number;
@@ -184,6 +198,7 @@ export type StudioLANUpdate = {
     operatorTimers: StudioLANOperatorTimers | null;
     localBroadcastLowerThird: StudioLANLocalBroadcastLowerThird | null;
     localOBS: StudioLANLocalOBS | null;
+    localOBSOutputs: StudioLANLocalOBSOutputs | null;
   } | null;
 };
 
@@ -271,6 +286,20 @@ export type StudioLANLocalOBSSceneFeedback = {
   obsRevision: string | null;
 };
 
+export type StudioLANLocalOBSOutputAction = {
+  kind: "setLocalOBSStreamActive" | "setLocalOBSRecordingActive";
+  active: boolean;
+  expectedCurrentActive: boolean;
+};
+
+export type StudioLANLocalOBSOutputFeedback = StudioLANLocalOBSOutputAction & {
+  commandId: string;
+  state: "queued" | "accepted" | "rejected" | "unconfirmed" | "interrupted";
+  rejection: StudioLANRemoteRejection | null;
+  uncertaintyReason: "mutationMayHaveExecuted" | null;
+  operationsRevision: string | null;
+};
+
 export function projectStudioLANOperatorTimerMilliseconds(
   timer: StudioLANOperatorTimerState,
   signedEnvelopeIssuedAtMilliseconds: number,
@@ -295,6 +324,7 @@ interface StudioLANNativePlugin {
   sendOperatorTimerCommand(options: StudioLANOperatorTimerAction): Promise<{ accepted: boolean; commandId: string }>;
   sendLocalBroadcastLowerThirdCommand(options: StudioLANLocalBroadcastLowerThirdAction): Promise<{ accepted: boolean; commandId: string }>;
   sendLocalOBSSceneCommand(options: StudioLANLocalOBSSceneAction): Promise<{ accepted: boolean; commandId: string }>;
+  sendLocalOBSOutputCommand(options: StudioLANLocalOBSOutputAction): Promise<{ accepted: boolean; commandId: string }>;
   requestDeviceReapproval(): Promise<{ accepted: boolean; deviceId: string }>;
   disconnect(): Promise<{ accepted: boolean }>;
   forgetPairing(options: { serviceId: string }): Promise<{ accepted: boolean }>;
@@ -313,6 +343,7 @@ interface StudioLANNativePlugin {
   addListener(eventName: "studioLANOperatorTimerFeedback", listener: (feedback: unknown) => void): Promise<PluginListenerHandle>;
   addListener(eventName: "studioLANLocalBroadcastLowerThirdFeedback", listener: (feedback: unknown) => void): Promise<PluginListenerHandle>;
   addListener(eventName: "studioLANLocalOBSSceneFeedback", listener: (feedback: unknown) => void): Promise<PluginListenerHandle>;
+  addListener(eventName: "studioLANLocalOBSOutputFeedback", listener: (feedback: unknown) => void): Promise<PluginListenerHandle>;
   addListener(eventName: "studioLANCueCatalog", listener: (status: unknown) => void): Promise<PluginListenerHandle>;
 }
 
@@ -410,6 +441,10 @@ const DEFAULT_STATUS: StudioLANStatus = {
   localBroadcastLowerThirdCommandInFlight: false,
   localOBSSceneControlAvailable: false,
   localOBSSceneCommandInFlight: false,
+  localOBSStreamControlAvailable: false,
+  localOBSStreamCommandInFlight: false,
+  localOBSRecordingControlAvailable: false,
+  localOBSRecordingCommandInFlight: false,
 };
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -522,6 +557,38 @@ function localOBSProjection(value: unknown): StudioLANLocalOBS | null | undefine
   };
 }
 
+function localOBSOutputsProjection(
+  value: unknown,
+): StudioLANLocalOBSOutputs | null | undefined {
+  if (value === null || value === undefined) return null;
+  const outputs = record(value);
+  if (!outputs || !hasExactKeys(outputs, [
+    "schemaVersion", "revision", "connectionId", "availability",
+    "streamActive", "recordingActive",
+  ])) return undefined;
+  const revision = boundedString(outputs.revision, 20);
+  const connectionId = outputs.connectionId == null
+    ? null : canonicalSingleLine(outputs.connectionId, 160);
+  const availability = outputs.availability;
+  if (outputs.schemaVersion !== 1 || !revision || !UINT64.test(revision)
+    || BigInt(revision) <= 0n || BigInt(revision) > 9_007_199_254_740_991n
+    || (availability !== "disconnected" && availability !== "busy"
+      && availability !== "ready" && availability !== "uncertain")
+    || typeof outputs.streamActive !== "boolean"
+    || typeof outputs.recordingActive !== "boolean") return undefined;
+  if (availability === "disconnected") {
+    if (connectionId != null || outputs.streamActive || outputs.recordingActive) return undefined;
+  } else if (!connectionId || !UUID.test(connectionId)) return undefined;
+  return {
+    schemaVersion: 1,
+    revision,
+    connectionId,
+    availability,
+    streamActive: outputs.streamActive,
+    recordingActive: outputs.recordingActive,
+  };
+}
+
 function boundedString(value: unknown, maximum = 16_384) {
   return typeof value === "string" && value.length > 0 && new TextEncoder().encode(value).length <= maximum
     && !CONTROL_CHARACTER.test(value) ? value : null;
@@ -569,7 +636,7 @@ function imageAsset(value: unknown): StudioLANImageAssetDescriptor | null | unde
   };
 }
 
-function cue(value: unknown, payloadVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8): StudioLANCue | null | undefined {
+function cue(value: unknown, payloadVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9): StudioLANCue | null | undefined {
   if (value === null || value === undefined) return null;
   const source = record(value);
   if (!source) return undefined;
@@ -674,7 +741,8 @@ export function normalizeStudioLANStatus(value: unknown): StudioLANStatus {
   const studioId = source?.studioId == null ? null : boundedString(source.studioId, 36);
   const rawPermissions = Array.isArray(source?.permissions) ? source.permissions : [];
   const permissions = rawPermissions.filter((permission): permission is StudioLANDevicePermission => permission === "observe"
-    || permission === "controlProgram" || permission === "controlLocalOBS");
+    || permission === "controlProgram" || permission === "controlLocalOBS"
+    || permission === "controlLocalOBSStream" || permission === "controlLocalOBSRecording");
   const services = Array.isArray(source?.services) ? source.services.flatMap((item) => {
     const service = record(item);
     const id = boundedString(service?.id, 32);
@@ -688,7 +756,8 @@ export function normalizeStudioLANStatus(value: unknown): StudioLANStatus {
   const normalizedRole = typeof role === "string" && DEVICE_ROLES.has(role as StudioLANDeviceRole) ? role as StudioLANDeviceRole : null;
   const permissionsAreCanonical = permissions.length === rawPermissions.length
     && permissions.every((permission, index) => permission === ([
-      "observe", "controlProgram", "controlLocalOBS",
+      "observe", "controlProgram", "controlLocalOBS", "controlLocalOBSStream",
+      "controlLocalOBSRecording",
     ] as const).filter((candidate) => permissions.includes(candidate))[index]);
   const trustIsValid = (protocolFloor === 1 || protocolFloor === 4)
     && (normalizedEnrollmentState === "unenrolled" ? protocolFloor === 1 : protocolFloor === 4)
@@ -753,6 +822,18 @@ export function normalizeStudioLANStatus(value: unknown): StudioLANStatus {
     localOBSSceneCommandInFlight: source?.localOBSSceneCommandInFlight === true
       && phase === "connected"
       && channel === "control",
+    localOBSStreamControlAvailable: source?.localOBSStreamControlAvailable === true
+      && phase === "connected" && channel === "control"
+      && normalizedEnrollmentState === "approved" && normalizedRole === "production"
+      && permissions.includes("observe") && permissions.includes("controlLocalOBSStream"),
+    localOBSStreamCommandInFlight: source?.localOBSStreamCommandInFlight === true
+      && phase === "connected" && channel === "control",
+    localOBSRecordingControlAvailable: source?.localOBSRecordingControlAvailable === true
+      && phase === "connected" && channel === "control"
+      && normalizedEnrollmentState === "approved" && normalizedRole === "production"
+      && permissions.includes("observe") && permissions.includes("controlLocalOBSRecording"),
+    localOBSRecordingCommandInFlight: source?.localOBSRecordingCommandInFlight === true
+      && phase === "connected" && channel === "control",
   };
 }
 
@@ -774,8 +855,9 @@ export function normalizeStudioLANUpdate(value: unknown): StudioLANUpdate | null
   const cueCount = Number(audience.cueCount);
   if (payloadVersion !== 1 && payloadVersion !== 2 && payloadVersion !== 3
     && payloadVersion !== 4 && payloadVersion !== 5 && payloadVersion !== 6
-    && payloadVersion !== 7 && payloadVersion !== 8) return null;
-  if ((payloadVersion === 6 || payloadVersion === 7 || payloadVersion === 8)
+    && payloadVersion !== 7 && payloadVersion !== 8 && payloadVersion !== 9) return null;
+  if ((payloadVersion === 6 || payloadVersion === 7 || payloadVersion === 8
+    || payloadVersion === 9)
     && channel !== "control") return null;
   const audienceCue = cue(audience.cue, payloadVersion);
   if ((channel !== "audience" && channel !== "stage" && channel !== "control")
@@ -832,7 +914,7 @@ export function normalizeStudioLANUpdate(value: unknown): StudioLANUpdate | null
     const routeEpoch = boundedString(sourceControl?.routeEpoch, 20);
     if (!sourceControl || channel !== "control"
       || (payloadVersion !== 4 && payloadVersion !== 5 && payloadVersion !== 6
-        && payloadVersion !== 7 && payloadVersion !== 8)
+        && payloadVersion !== 7 && payloadVersion !== 8 && payloadVersion !== 9)
       || typeof sourceControl.chordsVisible !== "boolean" || typeof sourceControl.lightingArmed !== "boolean"
       || !Number.isSafeInteger(healthyOutputCount) || healthyOutputCount < 0
       || !Number.isSafeInteger(expectedOutputCount) || expectedOutputCount < healthyOutputCount
@@ -844,13 +926,15 @@ export function normalizeStudioLANUpdate(value: unknown): StudioLANUpdate | null
     let operatorTimers: StudioLANOperatorTimers | null = null;
     let localBroadcastLowerThird: StudioLANLocalBroadcastLowerThird | null = null;
     let localOBS: StudioLANLocalOBS | null = null;
+    let localOBSOutputs: StudioLANLocalOBSOutputs | null = null;
     if (payloadVersion === 4) {
       if (!Array.isArray(sourceControl.cueCatalog) || sourceControl.cueCatalog.length > cueCount
         || sourceControl.cueCatalog.length > 4_096
         || sourceControl.routing != null || sourceControl.cueCatalogManifest != null
         || sourceControl.operatorTimers != null
         || sourceControl.localBroadcastLowerThird != null
-        || sourceControl.localOBS != null) return null;
+        || sourceControl.localOBS != null
+        || sourceControl.localOBSOutputs != null) return null;
       cueCatalog = sourceControl.cueCatalog.flatMap((value) => {
         const item = record(value);
         const cueId = boundedString(item?.cueId, 160);
@@ -885,6 +969,13 @@ export function normalizeStudioLANUpdate(value: unknown): StudioLANUpdate | null
         lightingAndMIDI: rawRouting.lightingAndMIDI,
         tchurchCloudProgram: false,
       };
+      if (payloadVersion === 9 && (
+        rawRouting.localBroadcast !== true
+        || rawRouting.lanRemoteControl !== true
+        || rawRouting.stageAndMusicians !== false
+        || rawRouting.tchurchCloudProgram !== false
+        || rawRouting.lightingAndMIDI !== false
+      )) return null;
       cueCatalogManifest = { schemaVersion: 1, catalogId, totalCount, pageSize: 128 };
       if (payloadVersion === 5) {
         if (sourceControl.operatorTimers != null) return null;
@@ -936,7 +1027,11 @@ export function normalizeStudioLANUpdate(value: unknown): StudioLANUpdate | null
       if (normalizedLocalOBS === undefined
         || (payloadVersion <= 7 && normalizedLocalOBS != null)
         || (normalizedLocalOBS != null && rawRouting.localBroadcast !== true)) return null;
-      if (payloadVersion === 8) localOBS = normalizedLocalOBS;
+      if (payloadVersion >= 8) localOBS = normalizedLocalOBS;
+      const normalizedOutputs = localOBSOutputsProjection(sourceControl.localOBSOutputs);
+      if (normalizedOutputs === undefined
+        || (payloadVersion <= 8 && normalizedOutputs != null)) return null;
+      if (payloadVersion === 9) localOBSOutputs = normalizedOutputs;
     }
     control = {
       chordsVisible: sourceControl.chordsVisible,
@@ -950,6 +1045,7 @@ export function normalizeStudioLANUpdate(value: unknown): StudioLANUpdate | null
       operatorTimers,
       localBroadcastLowerThird,
       localOBS,
+      localOBSOutputs,
     };
   }
   if (channel === "control" && !control) return null;
@@ -961,7 +1057,7 @@ export function normalizeStudioLANUpdate(value: unknown): StudioLANUpdate | null
     || !Number.isSafeInteger(receivedAtMs)) return null;
   return {
     channel,
-    payloadVersion: payloadVersion as 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8,
+    payloadVersion: payloadVersion as 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9,
     sequence,
     revision,
     issuedAtMs,
@@ -1236,6 +1332,64 @@ export function normalizeStudioLANLocalOBSSceneFeedback(
   };
 }
 
+export function normalizeStudioLANLocalOBSOutputAction(
+  value: unknown,
+): StudioLANLocalOBSOutputAction | null {
+  const source = record(value);
+  if (!source || !hasExactKeys(source, ["kind", "active", "expectedCurrentActive"])
+    || (source.kind !== "setLocalOBSStreamActive"
+      && source.kind !== "setLocalOBSRecordingActive")
+    || typeof source.active !== "boolean"
+    || typeof source.expectedCurrentActive !== "boolean"
+    || source.active === source.expectedCurrentActive) return null;
+  return {
+    kind: source.kind,
+    active: source.active,
+    expectedCurrentActive: source.expectedCurrentActive,
+  };
+}
+
+export function normalizeStudioLANLocalOBSOutputFeedback(
+  value: unknown,
+): StudioLANLocalOBSOutputFeedback | null {
+  const source = record(value);
+  const action = normalizeStudioLANLocalOBSOutputAction(source && {
+    kind: source.kind,
+    active: source.active,
+    expectedCurrentActive: source.expectedCurrentActive,
+  });
+  const commandId = boundedString(source?.commandId, 36);
+  const state = source?.state;
+  const rejection = source?.rejection == null ? null : source.rejection;
+  const uncertaintyReason = source?.uncertaintyReason == null
+    ? null : source.uncertaintyReason;
+  const operationsRevision = source?.operationsRevision == null
+    ? null : boundedString(source.operationsRevision, 20);
+  if (!source || !action || !hasExactKeys(source, [
+    "commandId", "kind", "active", "expectedCurrentActive", "state", "rejection",
+    "uncertaintyReason", "operationsRevision",
+  ]) || !commandId || !UUID.test(commandId)
+    || (state !== "queued" && state !== "accepted" && state !== "rejected"
+      && state !== "unconfirmed" && state !== "interrupted")
+    || (rejection != null
+      && (typeof rejection !== "string"
+        || !REMOTE_REJECTIONS.has(rejection as StudioLANRemoteRejection)))
+    || (state === "rejected" ? rejection == null : rejection != null)
+    || (state === "unconfirmed"
+      ? uncertaintyReason !== "mutationMayHaveExecuted"
+      : uncertaintyReason != null)
+    || (operationsRevision != null && (!UINT64.test(operationsRevision)
+      || BigInt(operationsRevision) > 9_007_199_254_740_991n))) return null;
+  return {
+    ...action,
+    commandId: commandId.toLowerCase(),
+    state,
+    rejection: rejection as StudioLANRemoteRejection | null,
+    uncertaintyReason: uncertaintyReason as "mutationMayHaveExecuted" | null,
+    operationsRevision,
+  };
+}
+
 export async function connectStudioLANBridge(callbacks: {
   onStatus: (status: StudioLANStatus) => void;
   onUpdate: (update: StudioLANUpdate) => void;
@@ -1244,6 +1398,7 @@ export async function connectStudioLANBridge(callbacks: {
   onOperatorTimerFeedback?: (feedback: StudioLANOperatorTimerFeedback) => void;
   onLocalBroadcastLowerThirdFeedback?: (feedback: StudioLANLocalBroadcastLowerThirdFeedback) => void;
   onLocalOBSSceneFeedback?: (feedback: StudioLANLocalOBSSceneFeedback) => void;
+  onLocalOBSOutputFeedback?: (feedback: StudioLANLocalOBSOutputFeedback) => void;
   onCueCatalog?: (status: StudioLANCueCatalogStatus) => void;
 }) {
   if (!isStudioLANSupported()) {
@@ -1275,6 +1430,10 @@ export async function connectStudioLANBridge(callbacks: {
     StudioLANNative.addListener("studioLANLocalOBSSceneFeedback", (value) => {
       const feedback = normalizeStudioLANLocalOBSSceneFeedback(value);
       if (feedback) callbacks.onLocalOBSSceneFeedback?.(feedback);
+    }),
+    StudioLANNative.addListener("studioLANLocalOBSOutputFeedback", (value) => {
+      const feedback = normalizeStudioLANLocalOBSOutputFeedback(value);
+      if (feedback) callbacks.onLocalOBSOutputFeedback?.(feedback);
     }),
     StudioLANNative.addListener("studioLANCueCatalog", (value) => {
       const status = normalizeStudioLANCueCatalogStatus(value);
@@ -1347,6 +1506,15 @@ export async function sendStudioLANLocalOBSSceneCommand(
   const normalized = normalizeStudioLANLocalOBSSceneAction(action);
   if (!normalized) throw new Error("studio_lan_invalid_action");
   return StudioLANNative.sendLocalOBSSceneCommand(normalized);
+}
+
+export async function sendStudioLANLocalOBSOutputCommand(
+  action: StudioLANLocalOBSOutputAction,
+) {
+  if (!isStudioLANSupported()) throw new Error("studio_lan_unavailable");
+  const normalized = normalizeStudioLANLocalOBSOutputAction(action);
+  if (!normalized) throw new Error("studio_lan_invalid_action");
+  return StudioLANNative.sendLocalOBSOutputCommand(normalized);
 }
 
 export async function requestStudioLANDeviceReapproval() {
