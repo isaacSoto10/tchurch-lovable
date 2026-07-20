@@ -59,6 +59,12 @@ const baseStatus: StudioLANStatus = {
   operatorTimerCommandInFlight: false,
   localBroadcastLowerThirdControlAvailable: false,
   localBroadcastLowerThirdCommandInFlight: false,
+  localOBSSceneControlAvailable: false,
+  localOBSSceneCommandInFlight: false,
+  localOBSStreamControlAvailable: false,
+  localOBSStreamCommandInFlight: false,
+  localOBSRecordingControlAvailable: false,
+  localOBSRecordingCommandInFlight: false,
 };
 
 const update: StudioLANUpdate = {

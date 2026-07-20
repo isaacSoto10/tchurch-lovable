@@ -21,6 +21,9 @@ enum StudioLANDeviceRole: String, Codable, CaseIterable, Hashable, Sendable {
 enum StudioLANDevicePermission: String, Codable, CaseIterable, Hashable, Sendable {
     case observe
     case controlProgram
+    case controlLocalOBS
+    case controlLocalOBSStream
+    case controlLocalOBSRecording
 }
 
 enum StudioLANDeviceTrustStatus: String, Codable, CaseIterable, Hashable, Sendable {
@@ -849,7 +852,9 @@ final class StudioLANDeviceTrustController {
         guard challenge.deviceTrustVersion == StudioLANDeviceTrustContract.schemaVersion,
               challenge.minimumPayloadVersion == StudioLANDeviceTrustContract.protocolFloor,
               let studioID = challenge.studioID,
-              supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.controlSupportedPayloadVersions ||
+              supportedPayloadVersions ==
+                TchurchStudioLANSubscriptionRequest.localOBSControlSupportedPayloadVersions ||
+                supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.controlSupportedPayloadVersions ||
                 supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.deviceTrustSupportedPayloadVersions ||
                 supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.v5SupportedPayloadVersions ||
                 supportedPayloadVersions == TchurchStudioLANSubscriptionRequest.v4SupportedPayloadVersions,

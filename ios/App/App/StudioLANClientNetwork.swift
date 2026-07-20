@@ -385,6 +385,12 @@ struct TchurchStudioLANClientStatus: Equatable {
     let operatorTimerCommandInFlight: Bool
     let localBroadcastLowerThirdControlAvailable: Bool
     let localBroadcastLowerThirdCommandInFlight: Bool
+    let localOBSSceneControlAvailable: Bool
+    let localOBSSceneCommandInFlight: Bool
+    let localOBSStreamControlAvailable: Bool
+    let localOBSStreamCommandInFlight: Bool
+    let localOBSRecordingControlAvailable: Bool
+    let localOBSRecordingCommandInFlight: Bool
 
     init(
         phase: TchurchStudioLANConnectionPhase,
@@ -405,7 +411,13 @@ struct TchurchStudioLANClientStatus: Equatable {
         operatorTimerControlAvailable: Bool = false,
         operatorTimerCommandInFlight: Bool = false,
         localBroadcastLowerThirdControlAvailable: Bool = false,
-        localBroadcastLowerThirdCommandInFlight: Bool = false
+        localBroadcastLowerThirdCommandInFlight: Bool = false,
+        localOBSSceneControlAvailable: Bool = false,
+        localOBSSceneCommandInFlight: Bool = false,
+        localOBSStreamControlAvailable: Bool = false,
+        localOBSStreamCommandInFlight: Bool = false,
+        localOBSRecordingControlAvailable: Bool = false,
+        localOBSRecordingCommandInFlight: Bool = false
     ) {
         self.phase = phase
         self.services = services
@@ -428,6 +440,12 @@ struct TchurchStudioLANClientStatus: Equatable {
             localBroadcastLowerThirdControlAvailable
         self.localBroadcastLowerThirdCommandInFlight =
             localBroadcastLowerThirdCommandInFlight
+        self.localOBSSceneControlAvailable = localOBSSceneControlAvailable
+        self.localOBSSceneCommandInFlight = localOBSSceneCommandInFlight
+        self.localOBSStreamControlAvailable = localOBSStreamControlAvailable
+        self.localOBSStreamCommandInFlight = localOBSStreamCommandInFlight
+        self.localOBSRecordingControlAvailable = localOBSRecordingControlAvailable
+        self.localOBSRecordingCommandInFlight = localOBSRecordingCommandInFlight
     }
 }
 
@@ -719,6 +737,8 @@ enum TchurchStudioLANBoundedRequestOperation: Equatable {
     case remoteCommand(UUID)
     case operatorTimerCommand(UUID)
     case localBroadcastLowerThirdCommand(UUID)
+    case localOBSSceneCommand(UUID)
+    case localOBSOutputCommand(UUID)
 }
 
 enum TchurchStudioLANBoundedRequestKind: Equatable {
@@ -749,7 +769,7 @@ enum TchurchStudioLANBoundedRequestPriority {
     }
 }
 
-/// Studio processes asset, catalog, Program, operator timer, and local lower-third pairs
+/// Studio processes asset, catalog, Program, operator timer, local lower-third, and OBS-scene pairs
 /// on one bounded lane. The client must never write a second operation until
 /// the authenticated response for the active operation has released the lane.
 struct TchurchStudioLANBoundedRequestLane: Equatable {
@@ -815,6 +835,229 @@ enum TchurchStudioLANCatalogResponseStrictness {
     }
 }
 
+/// Reconciliation requirements are meaningful only within one concrete OBS
+/// connection. OBS revisions restart when the local OBS instance reconnects,
+/// so comparing revisions across connection IDs can permanently disable an
+/// otherwise valid replacement instance.
+struct TchurchStudioLANLocalOBSReconciliationState: Equatable {
+    enum ReceiptContext: Equatable {
+        case sameConnection
+        case connectionBoundary
+        case invalid
+    }
+
+    struct Floor: Equatable {
+        let connectionID: String
+        let minimumRevision: UInt64?
+        let minimumEnvelopeSequence: UInt64?
+    }
+
+    private(set) var floor: Floor?
+
+    var isActive: Bool { floor != nil }
+
+    mutating func clear() {
+        floor = nil
+    }
+
+    mutating func requireRevision(_ revision: UInt64, connectionID: String) {
+        guard TchurchStudioLANLocalOBSProjection.validConnectionID(connectionID) else {
+            clear()
+            return
+        }
+        let prior = floor?.connectionID == connectionID ? floor?.minimumRevision : nil
+        floor = Floor(
+            connectionID: connectionID,
+            minimumRevision: max(prior ?? 0, revision),
+            minimumEnvelopeSequence: nil
+        )
+    }
+
+    mutating func requireEnvelope(
+        after sequence: UInt64,
+        connectionID: String
+    ) {
+        guard TchurchStudioLANLocalOBSProjection.validConnectionID(connectionID) else {
+            clear()
+            return
+        }
+        let next = sequence.addingReportingOverflow(1)
+        let required = next.overflow ? UInt64.max : next.partialValue
+        let prior = floor?.connectionID == connectionID
+            ? floor?.minimumEnvelopeSequence
+            : nil
+        floor = Floor(
+            connectionID: connectionID,
+            minimumRevision: nil,
+            minimumEnvelopeSequence: max(prior ?? 0, required)
+        )
+    }
+
+    mutating func observe(
+        _ localOBS: TchurchStudioLANLocalOBSProjection?,
+        envelopeSequence: UInt64
+    ) {
+        guard var floor,
+              let localOBS,
+              localOBS.isCanonical,
+              let observedConnectionID = localOBS.connectionID else { return }
+        if observedConnectionID != floor.connectionID {
+            clear()
+            return
+        }
+        if let minimumRevision = floor.minimumRevision,
+           localOBS.revision >= minimumRevision {
+            floor = Floor(
+                connectionID: floor.connectionID,
+                minimumRevision: nil,
+                minimumEnvelopeSequence: floor.minimumEnvelopeSequence
+            )
+        }
+        if let minimumSequence = floor.minimumEnvelopeSequence,
+           envelopeSequence >= minimumSequence {
+            floor = Floor(
+                connectionID: floor.connectionID,
+                minimumRevision: floor.minimumRevision,
+                minimumEnvelopeSequence: nil
+            )
+        }
+        self.floor = floor.minimumRevision == nil && floor.minimumEnvelopeSequence == nil
+            ? nil
+            : floor
+    }
+
+    func permits(
+        _ localOBS: TchurchStudioLANLocalOBSProjection,
+        envelopeSequence: UInt64
+    ) -> Bool {
+        guard let floor else { return true }
+        guard localOBS.isCanonical,
+              let observedConnectionID = localOBS.connectionID else { return false }
+        if observedConnectionID != floor.connectionID {
+            return true
+        }
+        return (floor.minimumRevision.map { localOBS.revision >= $0 } ?? true) &&
+            (floor.minimumEnvelopeSequence.map { envelopeSequence >= $0 } ?? true)
+    }
+
+    mutating func reconcileReceipt(
+        commandConnectionID: String,
+        expectedRevision: UInt64,
+        signedLocalOBS: TchurchStudioLANLocalOBSProjection
+    ) -> ReceiptContext {
+        let context = Self.receiptContext(
+            commandConnectionID: commandConnectionID,
+            expectedRevision: expectedRevision,
+            signedLocalOBS: signedLocalOBS
+        )
+        if context == .connectionBoundary {
+            clear()
+        }
+        return context
+    }
+
+    static func receiptContext(
+        commandConnectionID: String,
+        expectedRevision: UInt64,
+        signedLocalOBS: TchurchStudioLANLocalOBSProjection
+    ) -> ReceiptContext {
+        guard signedLocalOBS.isCanonical,
+              let observedConnectionID = signedLocalOBS.connectionID else { return .invalid }
+        if observedConnectionID != commandConnectionID {
+            return .connectionBoundary
+        }
+        return signedLocalOBS.revision >= expectedRevision ? .sameConnection : .invalid
+    }
+
+    static func isConnectionBoundary(
+        from connectionID: String,
+        observed localOBS: TchurchStudioLANLocalOBSProjection?
+    ) -> Bool {
+        guard let localOBS,
+              localOBS.isCanonical,
+              let observedConnectionID = localOBS.connectionID else { return false }
+        return observedConnectionID != connectionID
+    }
+}
+
+struct TchurchStudioLANLocalOBSOutputsReconciliationState: Equatable {
+    struct Floor: Equatable {
+        let connectionID: String
+        let minimumRevision: UInt64?
+        let minimumEnvelopeSequence: UInt64?
+    }
+
+    private(set) var floor: Floor?
+
+    mutating func clear() { floor = nil }
+
+    mutating func requireRevision(_ revision: UInt64, connectionID: String) {
+        guard TchurchStudioLANLocalOBSProjection.validConnectionID(connectionID) else {
+            clear(); return
+        }
+        let prior = floor?.connectionID == connectionID ? floor?.minimumRevision : nil
+        floor = Floor(
+            connectionID: connectionID,
+            minimumRevision: max(prior ?? 0, revision),
+            minimumEnvelopeSequence: nil
+        )
+    }
+
+    mutating func requireEnvelope(after sequence: UInt64, connectionID: String) {
+        guard TchurchStudioLANLocalOBSProjection.validConnectionID(connectionID) else {
+            clear(); return
+        }
+        let next = sequence.addingReportingOverflow(1)
+        let required = next.overflow ? UInt64.max : next.partialValue
+        let prior = floor?.connectionID == connectionID
+            ? floor?.minimumEnvelopeSequence : nil
+        floor = Floor(
+            connectionID: connectionID,
+            minimumRevision: nil,
+            minimumEnvelopeSequence: max(prior ?? 0, required)
+        )
+    }
+
+    mutating func observe(
+        _ outputs: TchurchStudioLANLocalOBSOutputsProjection?,
+        envelopeSequence: UInt64
+    ) {
+        guard var floor,
+              let outputs,
+              outputs.isCanonical,
+              let connectionID = outputs.connectionID else { return }
+        if connectionID != floor.connectionID { clear(); return }
+        if let minimum = floor.minimumRevision, outputs.revision >= minimum {
+            floor = Floor(
+                connectionID: floor.connectionID,
+                minimumRevision: nil,
+                minimumEnvelopeSequence: floor.minimumEnvelopeSequence
+            )
+        }
+        if let minimum = floor.minimumEnvelopeSequence, envelopeSequence >= minimum {
+            floor = Floor(
+                connectionID: floor.connectionID,
+                minimumRevision: floor.minimumRevision,
+                minimumEnvelopeSequence: nil
+            )
+        }
+        self.floor = floor.minimumRevision == nil && floor.minimumEnvelopeSequence == nil
+            ? nil : floor
+    }
+
+    func permits(
+        _ outputs: TchurchStudioLANLocalOBSOutputsProjection,
+        envelopeSequence: UInt64
+    ) -> Bool {
+        guard let floor else { return true }
+        guard outputs.isCanonical,
+              let connectionID = outputs.connectionID else { return false }
+        if connectionID != floor.connectionID { return true }
+        return (floor.minimumRevision.map { outputs.revision >= $0 } ?? true) &&
+            (floor.minimumEnvelopeSequence.map { envelopeSequence >= $0 } ?? true)
+    }
+}
+
 final class TchurchStudioLANClient: @unchecked Sendable {
     static let bonjourServiceType = "_tchurch-show._tcp"
     static let assetRequestTimeoutSeconds: TimeInterval = 15
@@ -835,6 +1078,8 @@ final class TchurchStudioLANClient: @unchecked Sendable {
     var operatorTimerFeedbackHandler: ((TchurchStudioLANOperatorTimerFeedback) -> Void)?
     var localBroadcastLowerThirdFeedbackHandler:
         ((TchurchStudioLANLocalBroadcastLowerThirdFeedback) -> Void)?
+    var localOBSSceneFeedbackHandler: ((TchurchStudioLANLocalOBSSceneFeedback) -> Void)?
+    var localOBSOutputFeedbackHandler: ((TchurchStudioLANLocalOBSOutputFeedback) -> Void)?
     var cueCatalogHandler: ((TchurchStudioLANCueCatalogStatus) -> Void)?
 
     private struct DesiredConnection {
@@ -920,6 +1165,16 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         var isAwaitingReceipt: Bool
     }
 
+    private struct InFlightLocalOBSSceneCommand: Equatable {
+        var command: TchurchStudioLANLocalOBSSceneCommand
+        var isAwaitingReceipt: Bool
+    }
+
+    private struct InFlightLocalOBSOutputCommand: Equatable {
+        var command: TchurchStudioLANLocalOBSOutputCommand
+        var isAwaitingReceipt: Bool
+    }
+
     private struct CueCatalogKey: Equatable {
         let authority: TchurchStudioLANAuthority
         let routeEpoch: UInt64
@@ -963,6 +1218,9 @@ final class TchurchStudioLANClient: @unchecked Sendable {
     private var minimumControlEnvelopeRevision: UInt64?
     private var minimumOperatorTimerRevision: UInt64?
     private var minimumLowerThirdRevision: UInt64?
+    private var localOBSReconciliation = TchurchStudioLANLocalOBSReconciliationState()
+    private var localOBSOutputsReconciliation =
+        TchurchStudioLANLocalOBSOutputsReconciliationState()
     private var cueCatalogKey: CueCatalogKey?
     private var cueCatalogAccumulator: TchurchStudioLANCueCatalogAccumulator?
     private var inFlightCatalogRequest: TchurchStudioLANCatalogRequest?
@@ -977,6 +1235,8 @@ final class TchurchStudioLANClient: @unchecked Sendable {
     private var inFlightOperatorTimerCommand: InFlightOperatorTimerCommand?
     private var inFlightLocalBroadcastLowerThirdCommand:
         InFlightLocalBroadcastLowerThirdCommand?
+    private var inFlightLocalOBSSceneCommand: InFlightLocalOBSSceneCommand?
+    private var inFlightLocalOBSOutputCommand: InFlightLocalOBSOutputCommand?
     private var boundedRequestLane = TchurchStudioLANBoundedRequestLane()
     private var remoteCommandTimeoutWork: DispatchWorkItem?
     private var remoteCommandRecoveryDeadlineWork: DispatchWorkItem?
@@ -984,6 +1244,8 @@ final class TchurchStudioLANClient: @unchecked Sendable {
     private var operatorTimerCommandRecoveryDeadlineWork: DispatchWorkItem?
     private var localBroadcastLowerThirdCommandTimeoutWork: DispatchWorkItem?
     private var localBroadcastLowerThirdCommandRecoveryDeadlineWork: DispatchWorkItem?
+    private var localOBSSceneCommandTimeoutWork: DispatchWorkItem?
+    private var localOBSOutputCommandTimeoutWork: DispatchWorkItem?
     private var payloadNegotiation = TchurchStudioLANPayloadNegotiation()
     private var replayGuards: [String: TchurchStudioLANReplayGuard] = [:]
     private var exactReplayAssetRehydration = TchurchStudioLANExactReplayAssetRehydrationGate()
@@ -1311,6 +1573,96 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                         wasIdempotentReplay: false
                     )
                 )
+                self.emitStatus()
+                completion(.success(command.commandID))
+            } catch {
+                completion(.failure(error))
+            }
+        }
+    }
+
+    func sendLocalOBSSceneCommand(
+        action: TchurchStudioLANLocalOBSSceneAction,
+        completion: @escaping (Result<UUID, Error>) -> Void
+    ) {
+        queue.async { [weak self] in
+            guard let self else {
+                completion(.failure(TchurchStudioLANRemoteControlError.unavailable))
+                return
+            }
+            do {
+                let command = try self.makeLocalOBSSceneCommand(action: action)
+                guard let connection = self.connection else {
+                    throw TchurchStudioLANRemoteControlError.unavailable
+                }
+                self.inFlightLocalOBSSceneCommand = InFlightLocalOBSSceneCommand(
+                    command: command,
+                    isAwaitingReceipt: false
+                )
+                do {
+                    _ = try self.deliverQueuedLocalOBSSceneCommandIfPossible(
+                        connection: connection
+                    )
+                } catch {
+                    self.cancelLocalOBSSceneCommand(
+                        state: .interrupted,
+                        expectedCommandID: command.commandID
+                    )
+                    throw error
+                }
+                self.localOBSSceneFeedbackHandler?(TchurchStudioLANLocalOBSSceneFeedback(
+                    commandID: command.commandID,
+                    action: command.action,
+                    state: .queued,
+                    rejection: nil,
+                    uncertaintyReason: nil,
+                    obsRevision: nil
+                ))
+                self.emitStatus()
+                completion(.success(command.commandID))
+            } catch {
+                completion(.failure(error))
+            }
+        }
+    }
+
+    func sendLocalOBSOutputCommand(
+        action: TchurchStudioLANLocalOBSOutputAction,
+        completion: @escaping (Result<UUID, Error>) -> Void
+    ) {
+        queue.async { [weak self] in
+            guard let self else {
+                completion(.failure(TchurchStudioLANRemoteControlError.unavailable))
+                return
+            }
+            do {
+                let command = try self.makeLocalOBSOutputCommand(action: action)
+                guard let connection = self.connection else {
+                    throw TchurchStudioLANRemoteControlError.unavailable
+                }
+                self.inFlightLocalOBSOutputCommand = InFlightLocalOBSOutputCommand(
+                    command: command,
+                    isAwaitingReceipt: false
+                )
+                do {
+                    _ = try self.deliverQueuedLocalOBSOutputCommandIfPossible(
+                        connection: connection
+                    )
+                } catch {
+                    self.cancelLocalOBSOutputCommand(
+                        state: .interrupted,
+                        expectedCommandID: command.commandID
+                    )
+                    throw error
+                }
+                self.localOBSOutputFeedbackHandler?(TchurchStudioLANLocalOBSOutputFeedback(
+                    commandID: command.commandID,
+                    action: command.action,
+                    state: .queued,
+                    rejection: nil,
+                    uncertaintyReason: nil,
+                    operationsRevision: nil
+                ))
                 self.emitStatus()
                 completion(.success(command.commandID))
             } catch {
@@ -1899,6 +2251,18 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         challenge = nil
         request = nil
         verifier = nil
+        if let localOBSCommand = inFlightLocalOBSSceneCommand {
+            cancelLocalOBSSceneCommand(
+                state: localOBSCommand.isAwaitingReceipt ? .unconfirmed : .interrupted,
+                expectedCommandID: localOBSCommand.command.commandID
+            )
+        }
+        if let outputCommand = inFlightLocalOBSOutputCommand {
+            cancelLocalOBSOutputCommand(
+                state: outputCommand.isAwaitingReceipt ? .unconfirmed : .interrupted,
+                expectedCommandID: outputCommand.command.commandID
+            )
+        }
         let preserveAmbiguousCommand = reconnecting &&
             (inFlightRemoteCommand?.recovery.isAwaitingAuthenticatedContext == true ||
              inFlightOperatorTimerCommand?.recovery.isAwaitingAuthenticatedContext == true ||
@@ -2027,7 +2391,9 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                 guard case .challenge(
                     let challenge,
                     let challengeSupportedPayloadVersions,
-                    let challengeControlSupportedPayloadVersions
+                    let challengeControlSupportedPayloadVersions,
+                    let challengeLocalOBSControlPayloadVersions,
+                    let challengeLocalOBSOutputControlPayloadVersions
                 ) = message else {
                     throw TchurchStudioLANError.protocolViolation
                 }
@@ -2057,6 +2423,10 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                         for: desired.channel,
                         controlAdvertisedPayloadVersions:
                             challengeControlSupportedPayloadVersions,
+                        localOBSControlPayloadVersions:
+                            challengeLocalOBSControlPayloadVersions,
+                        localOBSOutputControlPayloadVersions:
+                            challengeLocalOBSOutputControlPayloadVersions,
                         advertisedPayloadVersions: challengeSupportedPayloadVersions ??
                             discoveredServices[desired.serviceID]?.advertisedPayloadVersions
                     )
@@ -2168,6 +2538,8 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             minimumControlEnvelopeRevision = nil
             minimumOperatorTimerRevision = nil
             minimumLowerThirdRevision = nil
+            localOBSReconciliation.clear()
+            localOBSOutputsReconciliation.clear()
             resetCueCatalog(publishUnavailable: false)
             didAuthenticate = true
             reconnectPolicy.recordAuthenticatedSession()
@@ -2260,6 +2632,12 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         case .localBroadcastLowerThirdReceipt(let receipt):
             try handleLocalBroadcastLowerThirdReceipt(receipt)
             recordAuthenticatedInboundActivity(connection)
+        case .localOBSSceneReceipt(let receipt):
+            try handleLocalOBSSceneReceipt(receipt)
+            recordAuthenticatedInboundActivity(connection)
+        case .localOBSOutputReceipt(let receipt):
+            try handleLocalOBSOutputReceipt(receipt)
+            recordAuthenticatedInboundActivity(connection)
         case .catalogPage(let page):
             try handleCatalogPage(page, connection: connection)
             recordAuthenticatedInboundActivity(connection)
@@ -2294,7 +2672,8 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         imageAssetIntents = imageAssetCandidates(from: envelope).compactMap { candidate in
             guard envelope.schemaVersion == 3 || envelope.schemaVersion == 4 ||
                     envelope.schemaVersion == 5 || envelope.schemaVersion == 6 ||
-                    envelope.schemaVersion == 7,
+                    envelope.schemaVersion == 7 || envelope.schemaVersion == 8 ||
+                    envelope.schemaVersion == 9,
                   let descriptor = candidate.cue.imageAsset,
                   mode.includes(objectID: descriptor.objectID) else { return nil }
             return ImageAssetIntent(
@@ -2330,7 +2709,8 @@ final class TchurchStudioLANClient: @unchecked Sendable {
     ) -> [ImageAssetCandidate] {
         guard envelope.schemaVersion == 3 || envelope.schemaVersion == 4 ||
                 envelope.schemaVersion == 5 || envelope.schemaVersion == 6 ||
-                envelope.schemaVersion == 7 else { return [] }
+                envelope.schemaVersion == 7 || envelope.schemaVersion == 8 ||
+                envelope.schemaVersion == 9 else { return [] }
         var candidates: [ImageAssetCandidate] = []
         if let cue = envelope.payload.audience.cue, cue.imageAsset != nil {
             candidates.append(.init(cue: cue, isCurrent: true))
@@ -2760,7 +3140,8 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         guard self.connection === connection,
               envelope.channel == .control else { return }
         guard envelope.schemaVersion == 5 || envelope.schemaVersion == 6 ||
-                envelope.schemaVersion == 7 else {
+                envelope.schemaVersion == 7 || envelope.schemaVersion == 8 ||
+                envelope.schemaVersion == 9 else {
             if cueCatalogKey != nil || verifiedCueCatalog != nil || cueCatalogAccumulator != nil {
                 resetCueCatalog(
                     publishUnavailable: true,
@@ -2775,7 +3156,8 @@ final class TchurchStudioLANClient: @unchecked Sendable {
               subscription.channel == .control,
               subscription.payloadVersion == envelope.schemaVersion,
               subscription.payloadVersion == 5 || subscription.payloadVersion == 6 ||
-                subscription.payloadVersion == 7,
+                subscription.payloadVersion == 7 || subscription.payloadVersion == 8 ||
+                subscription.payloadVersion == 9,
               subscription.authority == envelope.authority,
               subscription.deviceGrant?.role == .production,
               subscription.deviceGrant?.permissions.contains(.observe) == true,
@@ -2894,6 +3276,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
            ) {
             return
         }
+        if inFlightLocalOBSSceneCommand != nil || inFlightLocalOBSOutputCommand != nil { return }
         if let backoffUntil = catalogBackoffUntil {
             let now = DispatchTime.now()
             if now < backoffUntil {
@@ -2995,11 +3378,18 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         let lowerThirdCommandQueued = inFlightLocalBroadcastLowerThirdCommand.map {
             !$0.isAwaitingReceipt && !$0.recovery.isAwaitingAuthenticatedContext
         } ?? false
+        let localOBSSceneCommandQueued = inFlightLocalOBSSceneCommand.map {
+            !$0.isAwaitingReceipt
+        } ?? false
+        let localOBSOutputCommandQueued = inFlightLocalOBSOutputCommand.map {
+            !$0.isAwaitingReceipt
+        } ?? false
         let assetReady = assetPreparationIntent == nil && assetRetryWork == nil &&
             (pendingAssetContinuation != nil || !imageAssetIntents.isEmpty)
         let next = TchurchStudioLANBoundedRequestPriority.next(
             remoteCommandQueued: programCommandQueued || operatorTimerCommandQueued ||
-                lowerThirdCommandQueued,
+                lowerThirdCommandQueued || localOBSSceneCommandQueued ||
+                localOBSOutputCommandQueued,
             catalogReady: catalogNeedsPage && !catalogBackingOff,
             catalogHasPriority: catalogPriority,
             assetReady: assetReady
@@ -3245,7 +3635,9 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         guard recovery != nil ||
                 (inFlightRemoteCommand == nil &&
                     inFlightOperatorTimerCommand == nil &&
-                    inFlightLocalBroadcastLowerThirdCommand == nil) else {
+                    inFlightLocalBroadcastLowerThirdCommand == nil &&
+                    inFlightLocalOBSSceneCommand == nil &&
+                    inFlightLocalOBSOutputCommand == nil) else {
             throw TchurchStudioLANRemoteControlError.commandInFlight
         }
         let trust = deviceTrust.snapshot
@@ -3259,7 +3651,8 @@ final class TchurchStudioLANClient: @unchecked Sendable {
               let subscription = activeSubscription,
               subscription.channel == .control,
               subscription.payloadVersion == 4 || subscription.payloadVersion == 5 ||
-                subscription.payloadVersion == 6 || subscription.payloadVersion == 7,
+                subscription.payloadVersion == 6 || subscription.payloadVersion == 7 ||
+                subscription.payloadVersion == 8 || subscription.payloadVersion == 9,
               let deviceGrant = subscription.deviceGrant,
               deviceGrant.role == .production,
               deviceGrant.permissions.contains(.observe),
@@ -3350,7 +3743,9 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         guard recovery != nil ||
                 (inFlightRemoteCommand == nil &&
                     inFlightOperatorTimerCommand == nil &&
-                    inFlightLocalBroadcastLowerThirdCommand == nil) else {
+                    inFlightLocalBroadcastLowerThirdCommand == nil &&
+                    inFlightLocalOBSSceneCommand == nil &&
+                    inFlightLocalOBSOutputCommand == nil) else {
             throw TchurchStudioLANRemoteControlError.commandInFlight
         }
         let trust = deviceTrust.snapshot
@@ -3365,7 +3760,9 @@ final class TchurchStudioLANClient: @unchecked Sendable {
               subscription.channel == .control,
               subscription.payloadVersion == TchurchStudioLANOperatorTimerContract.payloadVersion ||
                 subscription.payloadVersion ==
-                    TchurchStudioLANLocalBroadcastLowerThirdContract.payloadVersion,
+                    TchurchStudioLANLocalBroadcastLowerThirdContract.payloadVersion ||
+                subscription.payloadVersion == TchurchStudioLANLocalOBSSceneContract.payloadVersion ||
+                subscription.payloadVersion == TchurchStudioLANLocalOBSOutputContract.payloadVersion,
               let deviceGrant = subscription.deviceGrant,
               deviceGrant.role == .production,
               deviceGrant.permissions.contains(.observe),
@@ -3448,7 +3845,9 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         guard recovery != nil ||
                 (inFlightRemoteCommand == nil &&
                     inFlightOperatorTimerCommand == nil &&
-                    inFlightLocalBroadcastLowerThirdCommand == nil) else {
+                    inFlightLocalBroadcastLowerThirdCommand == nil &&
+                    inFlightLocalOBSSceneCommand == nil &&
+                    inFlightLocalOBSOutputCommand == nil) else {
             throw TchurchStudioLANRemoteControlError.commandInFlight
         }
         let trust = deviceTrust.snapshot
@@ -3462,7 +3861,9 @@ final class TchurchStudioLANClient: @unchecked Sendable {
               let subscription = activeSubscription,
               subscription.channel == .control,
               subscription.payloadVersion ==
-                TchurchStudioLANLocalBroadcastLowerThirdContract.payloadVersion,
+                TchurchStudioLANLocalBroadcastLowerThirdContract.payloadVersion ||
+                subscription.payloadVersion == TchurchStudioLANLocalOBSSceneContract.payloadVersion ||
+                subscription.payloadVersion == TchurchStudioLANLocalOBSOutputContract.payloadVersion,
               let deviceGrant = subscription.deviceGrant,
               deviceGrant.role == .production,
               deviceGrant.permissions.contains(.observe),
@@ -3471,8 +3872,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
               let envelope = latestControlEnvelope,
               envelope.authority == subscription.authority,
               envelope.channel == .control,
-              envelope.schemaVersion ==
-                TchurchStudioLANLocalBroadcastLowerThirdContract.payloadVersion,
+              envelope.schemaVersion == subscription.payloadVersion,
               let control = envelope.payload.control,
               let routeEpoch = control.routeEpoch,
               routeEpoch > 0,
@@ -3531,6 +3931,210 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             command,
             deviceGrant: deviceGrant
         )
+        return command
+    }
+
+    private func makeLocalOBSSceneCommand(
+        action: TchurchStudioLANLocalOBSSceneAction
+    ) throws -> TchurchStudioLANLocalOBSSceneCommand {
+        guard action.isValid,
+              inFlightRemoteCommand == nil,
+              inFlightOperatorTimerCommand == nil,
+              inFlightLocalBroadcastLowerThirdCommand == nil,
+              inFlightLocalOBSSceneCommand == nil,
+              inFlightLocalOBSOutputCommand == nil else {
+            throw action.isValid
+                ? TchurchStudioLANRemoteControlError.commandInFlight
+                : TchurchStudioLANRemoteControlError.invalidAction
+        }
+        let trust = deviceTrust.snapshot
+        guard didAuthenticate,
+              currentPhase == .connected,
+              desired?.channel == .control,
+              trust.enrollmentState == .approved,
+              trust.role == .production,
+              trust.permissions.contains(.observe),
+              trust.permissions.contains(.controlLocalOBS),
+              let subscription = activeSubscription,
+              subscription.channel == .control,
+              (subscription.payloadVersion == TchurchStudioLANLocalOBSSceneContract.payloadVersion ||
+                subscription.payloadVersion == TchurchStudioLANLocalOBSOutputContract.payloadVersion),
+              let deviceGrant = subscription.deviceGrant,
+              deviceGrant.role == .production,
+              deviceGrant.permissions.contains(.observe),
+              deviceGrant.permissions.contains(.controlLocalOBS),
+              let deviceGrantChecksum = subscription.deviceGrantChecksum,
+              let envelope = latestControlEnvelope,
+              envelope.authority == subscription.authority,
+              envelope.channel == .control,
+              (envelope.schemaVersion == TchurchStudioLANLocalOBSSceneContract.payloadVersion ||
+                envelope.schemaVersion == TchurchStudioLANLocalOBSOutputContract.payloadVersion),
+              let control = envelope.payload.control,
+              let routeEpoch = control.routeEpoch,
+              routeEpoch > 0,
+              control.routing?.lanRemoteControl == true,
+              control.routing?.localBroadcast == true,
+              control.routing?.tchurchCloudProgram == false,
+              let localOBS = control.localOBS,
+              localOBS.isCanonical,
+              localOBS.availability == .ready,
+              let connectionID = localOBS.connectionID,
+              localOBS.scenes.contains(where: { $0.sceneID == action.sceneID }),
+              localOBSReconciliation.permits(
+                localOBS,
+                envelopeSequence: envelope.sequence
+              ) else {
+            throw TchurchStudioLANRemoteControlError.unauthorized
+        }
+        let now = TchurchStudioLANTime.nowMilliseconds()
+        let expiresAt = now +
+            TchurchStudioLANRemoteControlContract.maximumCommandLifetimeMilliseconds
+        let unsigned = TchurchStudioLANLocalOBSSceneCommand(
+            schemaVersion: TchurchStudioLANLocalOBSSceneCommand.schemaVersion,
+            payloadVersion: TchurchStudioLANLocalOBSSceneCommand.payloadVersion,
+            commandID: UUID(),
+            sessionID: subscription.sessionID,
+            deviceID: deviceGrant.deviceID,
+            grantID: deviceGrant.grantID,
+            deviceGrantChecksum: deviceGrantChecksum,
+            permissionRevision: deviceGrant.permissionRevision,
+            revocationGeneration: deviceGrant.revocationGeneration,
+            authority: subscription.authority,
+            routeEpoch: routeEpoch,
+            connectionID: connectionID,
+            expectedOBSRevision: localOBS.revision,
+            issuedAtMilliseconds: now,
+            expiresAtMilliseconds: expiresAt,
+            action: action,
+            signature: ""
+        )
+        let signature = try deviceTrust.signPossessionProof(
+            TchurchStudioLANLocalOBSSceneCommandCrypto.signingData(for: unsigned)
+        )
+        let command = TchurchStudioLANLocalOBSSceneCommand(
+            schemaVersion: unsigned.schemaVersion,
+            payloadVersion: unsigned.payloadVersion,
+            commandID: unsigned.commandID,
+            sessionID: unsigned.sessionID,
+            deviceID: unsigned.deviceID,
+            grantID: unsigned.grantID,
+            deviceGrantChecksum: unsigned.deviceGrantChecksum,
+            permissionRevision: unsigned.permissionRevision,
+            revocationGeneration: unsigned.revocationGeneration,
+            authority: unsigned.authority,
+            routeEpoch: unsigned.routeEpoch,
+            connectionID: unsigned.connectionID,
+            expectedOBSRevision: unsigned.expectedOBSRevision,
+            issuedAtMilliseconds: unsigned.issuedAtMilliseconds,
+            expiresAtMilliseconds: unsigned.expiresAtMilliseconds,
+            action: unsigned.action,
+            signature: signature
+        )
+        try TchurchStudioLANLocalOBSSceneCommandCrypto.verify(
+            command,
+            deviceGrant: deviceGrant
+        )
+        return command
+    }
+
+    private func makeLocalOBSOutputCommand(
+        action: TchurchStudioLANLocalOBSOutputAction
+    ) throws -> TchurchStudioLANLocalOBSOutputCommand {
+        guard inFlightRemoteCommand == nil,
+              inFlightOperatorTimerCommand == nil,
+              inFlightLocalBroadcastLowerThirdCommand == nil,
+              inFlightLocalOBSSceneCommand == nil,
+              inFlightLocalOBSOutputCommand == nil else {
+            throw TchurchStudioLANRemoteControlError.commandInFlight
+        }
+        let trust = deviceTrust.snapshot
+        guard didAuthenticate,
+              currentPhase == .connected,
+              desired?.channel == .control,
+              trust.enrollmentState == .approved,
+              trust.role == .production,
+              trust.permissions.contains(.observe),
+              trust.permissions.contains(action.kind.requiredPermission),
+              let subscription = activeSubscription,
+              subscription.channel == .control,
+              subscription.payloadVersion == TchurchStudioLANLocalOBSOutputContract.payloadVersion,
+              let deviceGrant = subscription.deviceGrant,
+              deviceGrant.role == .production,
+              deviceGrant.permissions.contains(.observe),
+              deviceGrant.permissions.contains(action.kind.requiredPermission),
+              let deviceGrantChecksum = subscription.deviceGrantChecksum,
+              let envelope = latestControlEnvelope,
+              envelope.authority == subscription.authority,
+              envelope.channel == .control,
+              envelope.schemaVersion == TchurchStudioLANLocalOBSOutputContract.payloadVersion,
+              let control = envelope.payload.control,
+              let routeEpoch = control.routeEpoch,
+              routeEpoch > 0,
+              control.routing?.localBroadcast == true,
+              control.routing?.lanRemoteControl == true,
+              control.routing?.stageAndMusicians == false,
+              control.routing?.tchurchCloudProgram == false,
+              control.routing?.lightingAndMIDI == false,
+              let outputs = control.localOBSOutputs,
+              outputs.isCanonical,
+              outputs.availability == .ready,
+              let connectionID = outputs.connectionID,
+              localOBSOutputsReconciliation.permits(
+                outputs,
+                envelopeSequence: envelope.sequence
+              ) else {
+            throw TchurchStudioLANRemoteControlError.unauthorized
+        }
+        let expectedActive = action.kind == .setLocalOBSStreamActive
+            ? outputs.streamActive : outputs.recordingActive
+        guard action.expectedCurrentActive == expectedActive,
+              action.active != expectedActive else {
+            throw TchurchStudioLANRemoteControlError.invalidAction
+        }
+        let now = TchurchStudioLANTime.nowMilliseconds()
+        let unsigned = TchurchStudioLANLocalOBSOutputCommand(
+            schemaVersion: TchurchStudioLANLocalOBSOutputCommand.schemaVersion,
+            payloadVersion: TchurchStudioLANLocalOBSOutputCommand.payloadVersion,
+            commandID: UUID(),
+            sessionID: subscription.sessionID,
+            deviceID: deviceGrant.deviceID,
+            grantID: deviceGrant.grantID,
+            deviceGrantChecksum: deviceGrantChecksum,
+            permissionRevision: deviceGrant.permissionRevision,
+            revocationGeneration: deviceGrant.revocationGeneration,
+            authority: subscription.authority,
+            routeEpoch: routeEpoch,
+            connectionID: connectionID,
+            expectedOperationsRevision: outputs.revision,
+            issuedAtMilliseconds: now,
+            expiresAtMilliseconds: now +
+                TchurchStudioLANRemoteControlContract.maximumCommandLifetimeMilliseconds,
+            action: action,
+            signature: ""
+        )
+        let signature = try deviceTrust.signPossessionProof(
+            TchurchStudioLANLocalOBSOutputCommandCrypto.signingData(for: unsigned)
+        )
+        let command = TchurchStudioLANLocalOBSOutputCommand(
+            schemaVersion: unsigned.schemaVersion,
+            payloadVersion: unsigned.payloadVersion,
+            commandID: unsigned.commandID,
+            sessionID: unsigned.sessionID,
+            deviceID: unsigned.deviceID,
+            grantID: unsigned.grantID,
+            deviceGrantChecksum: unsigned.deviceGrantChecksum,
+            permissionRevision: unsigned.permissionRevision,
+            revocationGeneration: unsigned.revocationGeneration,
+            authority: unsigned.authority,
+            routeEpoch: unsigned.routeEpoch,
+            connectionID: unsigned.connectionID,
+            expectedOperationsRevision: unsigned.expectedOperationsRevision,
+            issuedAtMilliseconds: unsigned.issuedAtMilliseconds,
+            expiresAtMilliseconds: unsigned.expiresAtMilliseconds,
+            action: unsigned.action,
+            signature: signature
+        )
+        try TchurchStudioLANLocalOBSOutputCommandCrypto.verify(command, deviceGrant: deviceGrant)
         return command
     }
 
@@ -3655,6 +4259,120 @@ final class TchurchStudioLANClient: @unchecked Sendable {
     }
 
     @discardableResult
+    private func deliverQueuedLocalOBSSceneCommandIfPossible(
+        connection: NWConnection
+    ) throws -> Bool {
+        guard self.connection === connection,
+              didAuthenticate,
+              currentPhase == .connected,
+              boundedRequestLane.isIdle,
+              var inFlight = inFlightLocalOBSSceneCommand,
+              !inFlight.isAwaitingReceipt,
+              let subscription = activeSubscription,
+              (subscription.payloadVersion == TchurchStudioLANLocalOBSSceneContract.payloadVersion ||
+                subscription.payloadVersion == TchurchStudioLANLocalOBSOutputContract.payloadVersion),
+              subscription.deviceGrant?.permissions.contains(.observe) == true,
+              subscription.deviceGrant?.permissions.contains(.controlLocalOBS) == true,
+              let envelope = latestControlEnvelope,
+              (envelope.schemaVersion == TchurchStudioLANLocalOBSSceneContract.payloadVersion ||
+                envelope.schemaVersion == TchurchStudioLANLocalOBSOutputContract.payloadVersion),
+              envelope.authority == inFlight.command.authority,
+              envelope.payload.control?.routeEpoch == inFlight.command.routeEpoch,
+              envelope.payload.control?.routing?.lanRemoteControl == true,
+              envelope.payload.control?.routing?.localBroadcast == true,
+              envelope.payload.control?.routing?.tchurchCloudProgram == false,
+              let localOBS = envelope.payload.control?.localOBS,
+              localOBS.isCanonical,
+              localOBS.availability == .ready,
+              localOBS.connectionID == inFlight.command.connectionID,
+              localOBS.revision == inFlight.command.expectedOBSRevision,
+              localOBS.scenes.contains(where: {
+                $0.sceneID == inFlight.command.action.sceneID
+              }),
+              TchurchStudioLANTime.nowMilliseconds() <
+                inFlight.command.expiresAtMilliseconds else {
+            throw TchurchStudioLANRemoteControlError.unauthorized
+        }
+        let operation = TchurchStudioLANBoundedRequestOperation.localOBSSceneCommand(
+            inFlight.command.commandID
+        )
+        guard boundedRequestLane.begin(operation) else { return false }
+        inFlight.isAwaitingReceipt = true
+        inFlightLocalOBSSceneCommand = inFlight
+        do {
+            try send(.localOBSSceneCommand(inFlight.command), connection: connection)
+            armLocalOBSSceneCommandTimeout(
+                commandID: inFlight.command.commandID,
+                connection: connection
+            )
+            return true
+        } catch {
+            boundedRequestLane.cancel(operation)
+            throw error
+        }
+    }
+
+    @discardableResult
+    private func deliverQueuedLocalOBSOutputCommandIfPossible(
+        connection: NWConnection
+    ) throws -> Bool {
+        guard self.connection === connection,
+              didAuthenticate,
+              currentPhase == .connected,
+              boundedRequestLane.isIdle,
+              var inFlight = inFlightLocalOBSOutputCommand,
+              !inFlight.isAwaitingReceipt,
+              let subscription = activeSubscription,
+              subscription.payloadVersion == TchurchStudioLANLocalOBSOutputContract.payloadVersion,
+              subscription.deviceGrant?.permissions.contains(.observe) == true,
+              subscription.deviceGrant?.permissions.contains(
+                inFlight.command.action.kind.requiredPermission
+              ) == true,
+              let envelope = latestControlEnvelope,
+              envelope.schemaVersion == TchurchStudioLANLocalOBSOutputContract.payloadVersion,
+              envelope.authority == inFlight.command.authority,
+              envelope.payload.control?.routeEpoch == inFlight.command.routeEpoch,
+              envelope.payload.control?.routing?.localBroadcast == true,
+              envelope.payload.control?.routing?.lanRemoteControl == true,
+              envelope.payload.control?.routing?.stageAndMusicians == false,
+              envelope.payload.control?.routing?.tchurchCloudProgram == false,
+              envelope.payload.control?.routing?.lightingAndMIDI == false,
+              let outputs = envelope.payload.control?.localOBSOutputs,
+              outputs.isCanonical,
+              outputs.availability == .ready,
+              outputs.connectionID == inFlight.command.connectionID,
+              outputs.revision == inFlight.command.expectedOperationsRevision,
+              localOBSOutputsReconciliation.permits(
+                outputs,
+                envelopeSequence: envelope.sequence
+              ),
+              (inFlight.command.action.kind == .setLocalOBSStreamActive
+                ? outputs.streamActive : outputs.recordingActive) ==
+                    inFlight.command.action.expectedCurrentActive,
+              TchurchStudioLANTime.nowMilliseconds() <
+                inFlight.command.expiresAtMilliseconds else {
+            throw TchurchStudioLANRemoteControlError.unauthorized
+        }
+        let operation = TchurchStudioLANBoundedRequestOperation.localOBSOutputCommand(
+            inFlight.command.commandID
+        )
+        guard boundedRequestLane.begin(operation) else { return false }
+        inFlight.isAwaitingReceipt = true
+        inFlightLocalOBSOutputCommand = inFlight
+        do {
+            try send(.localOBSOutputCommand(inFlight.command), connection: connection)
+            armLocalOBSOutputCommandTimeout(
+                commandID: inFlight.command.commandID,
+                connection: connection
+            )
+            return true
+        } catch {
+            boundedRequestLane.cancel(operation)
+            throw error
+        }
+    }
+
+    @discardableResult
     private func deliverQueuedRemoteCommandOrCancel(
         connection: NWConnection
     ) -> Bool {
@@ -3670,14 +4388,24 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                     connection: connection
                 )
             }
+            if inFlightLocalOBSSceneCommand != nil {
+                return try deliverQueuedLocalOBSSceneCommandIfPossible(connection: connection)
+            }
+            if inFlightLocalOBSOutputCommand != nil {
+                return try deliverQueuedLocalOBSOutputCommandIfPossible(connection: connection)
+            }
             return false
         } catch {
             if inFlightRemoteCommand != nil {
                 cancelRemoteCommand(state: .interrupted)
             } else if inFlightOperatorTimerCommand != nil {
                 cancelOperatorTimerCommand(state: .interrupted)
-            } else {
+            } else if inFlightLocalBroadcastLowerThirdCommand != nil {
                 cancelLocalBroadcastLowerThirdCommand(state: .interrupted)
+            } else if inFlightLocalOBSSceneCommand != nil {
+                cancelLocalOBSSceneCommand(state: .interrupted)
+            } else {
+                cancelLocalOBSOutputCommand(state: .interrupted)
             }
             return false
         }
@@ -3755,7 +4483,11 @@ final class TchurchStudioLANClient: @unchecked Sendable {
               subscription.payloadVersion ==
                 TchurchStudioLANOperatorTimerContract.payloadVersion ||
                 subscription.payloadVersion ==
-                    TchurchStudioLANLocalBroadcastLowerThirdContract.payloadVersion else {
+                    TchurchStudioLANLocalBroadcastLowerThirdContract.payloadVersion ||
+                subscription.payloadVersion ==
+                    TchurchStudioLANLocalOBSSceneContract.payloadVersion ||
+                subscription.payloadVersion ==
+                    TchurchStudioLANLocalOBSOutputContract.payloadVersion else {
             throw TchurchStudioLANRemoteControlError.invalidReceipt
         }
         let command = inFlight.command
@@ -3823,7 +4555,11 @@ final class TchurchStudioLANClient: @unchecked Sendable {
               inFlight.isAwaitingReceipt,
               let subscription = activeSubscription,
               subscription.payloadVersion ==
-                TchurchStudioLANLocalBroadcastLowerThirdContract.payloadVersion else {
+                TchurchStudioLANLocalBroadcastLowerThirdContract.payloadVersion ||
+                subscription.payloadVersion ==
+                    TchurchStudioLANLocalOBSSceneContract.payloadVersion ||
+                subscription.payloadVersion ==
+                    TchurchStudioLANLocalOBSOutputContract.payloadVersion else {
             throw TchurchStudioLANRemoteControlError.invalidReceipt
         }
         let command = inFlight.command
@@ -3889,12 +4625,222 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         }
     }
 
+    private func handleLocalOBSSceneReceipt(
+        _ receipt: TchurchStudioLANLocalOBSSceneReceipt
+    ) throws {
+        guard let inFlight = inFlightLocalOBSSceneCommand,
+              inFlight.isAwaitingReceipt,
+              let subscription = activeSubscription,
+              (subscription.payloadVersion == TchurchStudioLANLocalOBSSceneContract.payloadVersion ||
+                subscription.payloadVersion == TchurchStudioLANLocalOBSOutputContract.payloadVersion),
+              subscription.deviceGrant?.permissions.contains(.observe) == true,
+              subscription.deviceGrant?.permissions.contains(.controlLocalOBS) == true else {
+            throw TchurchStudioLANRemoteControlError.invalidReceipt
+        }
+        let command = inFlight.command
+        guard receipt.commandID == command.commandID,
+              receipt.deviceID == command.deviceID,
+              receipt.authority == command.authority,
+              receipt.routeEpoch == command.routeEpoch,
+              receipt.permissionRevision == command.permissionRevision,
+              receipt.connectionID == command.connectionID,
+              receipt.requestedSceneID == command.action.sceneID,
+              receipt.obsRevision >= command.expectedOBSRevision,
+              receipt.issuedAtMilliseconds >= command.issuedAtMilliseconds -
+                TchurchStudioLANRemoteControlContract.maximumFutureClockSkewMilliseconds,
+              receipt.issuedAtMilliseconds <= TchurchStudioLANTime.nowMilliseconds() +
+                TchurchStudioLANRemoteControlContract.maximumFutureClockSkewMilliseconds,
+              let signedEnvelope = latestControlEnvelope,
+              (signedEnvelope.schemaVersion == TchurchStudioLANLocalOBSSceneContract.payloadVersion ||
+                signedEnvelope.schemaVersion == TchurchStudioLANLocalOBSOutputContract.payloadVersion),
+              let signedLocalOBS = signedEnvelope.payload.control?.localOBS else {
+            throw TchurchStudioLANRemoteControlError.invalidReceipt
+        }
+        try TchurchStudioLANLocalOBSSceneReceiptCrypto.verify(
+            receipt,
+            studioSigningPublicKey: subscription.signingPublicKey
+        )
+        let receiptContext = localOBSReconciliation.reconcileReceipt(
+            commandConnectionID: command.connectionID,
+            expectedRevision: command.expectedOBSRevision,
+            signedLocalOBS: signedLocalOBS
+        )
+        guard receiptContext != .invalid else {
+            throw TchurchStudioLANRemoteControlError.invalidReceipt
+        }
+        guard boundedRequestLane.finish(.localOBSSceneCommand(command.commandID)) else {
+            throw TchurchStudioLANRemoteControlError.invalidReceipt
+        }
+        localOBSSceneCommandTimeoutWork?.cancel()
+        localOBSSceneCommandTimeoutWork = nil
+        inFlightLocalOBSSceneCommand = nil
+
+        if receiptContext != .connectionBoundary {
+            switch receipt.status {
+            case .accepted:
+                if signedLocalOBS.revision >= receipt.obsRevision {
+                    localOBSReconciliation.clear()
+                } else {
+                    localOBSReconciliation.requireRevision(
+                        receipt.obsRevision,
+                        connectionID: command.connectionID
+                    )
+                }
+            case .rejected:
+                if receipt.rejection == .staleRoute || receipt.rejection == .routeDisabled ||
+                    receipt.rejection == .authorityMismatch {
+                    localOBSReconciliation.clear()
+                    latestControlEnvelope = nil
+                    resetCueCatalog(
+                        publishUnavailable: true,
+                        message: "La ruta local cambió en Studio. Esperando el estado firmado nuevo…"
+                    )
+                } else if signedLocalOBS.revision < receipt.obsRevision {
+                    localOBSReconciliation.requireRevision(
+                        receipt.obsRevision,
+                        connectionID: command.connectionID
+                    )
+                } else {
+                    localOBSReconciliation.clear()
+                }
+            case .unconfirmed:
+                localOBSReconciliation.requireEnvelope(
+                    after: signedEnvelope.sequence,
+                    connectionID: command.connectionID
+                )
+            }
+        }
+
+        let feedbackState: TchurchStudioLANLocalOBSSceneFeedbackState
+        switch receipt.status {
+        case .accepted: feedbackState = .accepted
+        case .rejected: feedbackState = .rejected
+        case .unconfirmed: feedbackState = .unconfirmed
+        }
+        localOBSSceneFeedbackHandler?(TchurchStudioLANLocalOBSSceneFeedback(
+            commandID: command.commandID,
+            action: command.action,
+            state: feedbackState,
+            rejection: receipt.rejection,
+            uncertaintyReason: receipt.uncertaintyReason,
+            obsRevision: receipt.obsRevision
+        ))
+        emitStatus()
+        if let connection {
+            resumeBoundedRequestLane(connection: connection, catalogPriority: true)
+        }
+    }
+
+    private func handleLocalOBSOutputReceipt(
+        _ receipt: TchurchStudioLANLocalOBSOutputReceipt
+    ) throws {
+        guard let inFlight = inFlightLocalOBSOutputCommand,
+              inFlight.isAwaitingReceipt,
+              let subscription = activeSubscription,
+              subscription.payloadVersion == TchurchStudioLANLocalOBSOutputContract.payloadVersion,
+              subscription.deviceGrant?.permissions.contains(.observe) == true,
+              subscription.deviceGrant?.permissions.contains(
+                inFlight.command.action.kind.requiredPermission
+              ) == true else {
+            throw TchurchStudioLANRemoteControlError.invalidReceipt
+        }
+        let command = inFlight.command
+        guard receipt.commandID == command.commandID,
+              receipt.deviceID == command.deviceID,
+              receipt.authority == command.authority,
+              receipt.routeEpoch == command.routeEpoch,
+              receipt.permissionRevision == command.permissionRevision,
+              receipt.connectionID == command.connectionID,
+              receipt.actionKind == command.action.kind,
+              receipt.requestedActive == command.action.active,
+              receipt.expectedCurrentActive == command.action.expectedCurrentActive,
+              receipt.operationsRevision >= command.expectedOperationsRevision,
+              receipt.issuedAtMilliseconds >= command.issuedAtMilliseconds -
+                TchurchStudioLANRemoteControlContract.maximumFutureClockSkewMilliseconds,
+              receipt.issuedAtMilliseconds <= TchurchStudioLANTime.nowMilliseconds() +
+                TchurchStudioLANRemoteControlContract.maximumFutureClockSkewMilliseconds,
+              let signedEnvelope = latestControlEnvelope,
+              signedEnvelope.schemaVersion == TchurchStudioLANLocalOBSOutputContract.payloadVersion,
+              let signedOutputs = signedEnvelope.payload.control?.localOBSOutputs,
+              signedOutputs.isCanonical else {
+            throw TchurchStudioLANRemoteControlError.invalidReceipt
+        }
+        try TchurchStudioLANLocalOBSOutputReceiptCrypto.verify(
+            receipt,
+            studioSigningPublicKey: subscription.signingPublicKey
+        )
+        guard boundedRequestLane.finish(.localOBSOutputCommand(command.commandID)) else {
+            throw TchurchStudioLANRemoteControlError.invalidReceipt
+        }
+        localOBSOutputCommandTimeoutWork?.cancel()
+        localOBSOutputCommandTimeoutWork = nil
+        inFlightLocalOBSOutputCommand = nil
+
+        if signedOutputs.connectionID != command.connectionID {
+            localOBSOutputsReconciliation.clear()
+        } else {
+            switch receipt.status {
+            case .accepted:
+                if signedOutputs.revision >= receipt.operationsRevision {
+                    localOBSOutputsReconciliation.clear()
+                } else {
+                    localOBSOutputsReconciliation.requireRevision(
+                        receipt.operationsRevision,
+                        connectionID: command.connectionID
+                    )
+                }
+            case .rejected:
+                if receipt.rejection == .staleRoute || receipt.rejection == .routeDisabled ||
+                    receipt.rejection == .authorityMismatch {
+                    localOBSOutputsReconciliation.clear()
+                    latestControlEnvelope = nil
+                    resetCueCatalog(
+                        publishUnavailable: true,
+                        message: "La ruta local cambió en Studio. Esperando el estado firmado nuevo…"
+                    )
+                } else if signedOutputs.revision < receipt.operationsRevision {
+                    localOBSOutputsReconciliation.requireRevision(
+                        receipt.operationsRevision,
+                        connectionID: command.connectionID
+                    )
+                } else {
+                    localOBSOutputsReconciliation.clear()
+                }
+            case .unconfirmed:
+                localOBSOutputsReconciliation.requireEnvelope(
+                    after: signedEnvelope.sequence,
+                    connectionID: command.connectionID
+                )
+            }
+        }
+
+        let feedbackState: TchurchStudioLANLocalOBSOutputFeedbackState
+        switch receipt.status {
+        case .accepted: feedbackState = .accepted
+        case .rejected: feedbackState = .rejected
+        case .unconfirmed: feedbackState = .unconfirmed
+        }
+        localOBSOutputFeedbackHandler?(TchurchStudioLANLocalOBSOutputFeedback(
+            commandID: command.commandID,
+            action: command.action,
+            state: feedbackState,
+            rejection: receipt.rejection,
+            uncertaintyReason: receipt.uncertaintyReason,
+            operationsRevision: receipt.operationsRevision
+        ))
+        emitStatus()
+        if let connection {
+            resumeBoundedRequestLane(connection: connection, catalogPriority: true)
+        }
+    }
+
     private func recordVerifiedControlEnvelope(
         _ envelope: TchurchStudioLANSignedEnvelope
     ) {
         guard envelope.channel == .control,
               envelope.schemaVersion == 4 || envelope.schemaVersion == 5 ||
-                envelope.schemaVersion == 6 || envelope.schemaVersion == 7,
+                envelope.schemaVersion == 6 || envelope.schemaVersion == 7 ||
+                envelope.schemaVersion == 8 || envelope.schemaVersion == 9,
               envelope.payload.control?.routeEpoch != nil else { return }
         if envelope.schemaVersion == 4 {
             guard envelope.payload.control?.cueCatalog != nil else { return }
@@ -3908,7 +4854,7 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             } else {
                 guard envelope.payload.control?.operatorTimers == nil else { return }
             }
-            if envelope.schemaVersion == 7 {
+            if envelope.schemaVersion >= 7 {
                 guard envelope.payload.control?.localBroadcastLowerThird?.isCanonical ?? true,
                       envelope.payload.control?.localBroadcastLowerThird == nil ||
                         envelope.payload.control?.routing?.localBroadcast == true else {
@@ -3916,6 +4862,26 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                 }
             } else {
                 guard envelope.payload.control?.localBroadcastLowerThird == nil else { return }
+            }
+            if envelope.schemaVersion >= 8 {
+                guard envelope.payload.control?.localOBS?.isCanonical ?? true,
+                      envelope.payload.control?.localOBS == nil ||
+                        envelope.payload.control?.routing?.localBroadcast == true else {
+                    return
+                }
+            } else {
+                guard envelope.payload.control?.localOBS == nil else { return }
+            }
+            if envelope.schemaVersion == 9 {
+                guard envelope.payload.control?.localOBSOutputs?.isCanonical ?? true,
+                      envelope.payload.control?.routing?.localBroadcast == true,
+                        envelope.payload.control?.routing?.lanRemoteControl == true &&
+                        envelope.payload.control?.routing?.stageAndMusicians == false &&
+                        envelope.payload.control?.routing?.tchurchCloudProgram == false &&
+                        envelope.payload.control?.routing?.lightingAndMIDI == false
+                      else { return }
+            } else {
+                guard envelope.payload.control?.localOBSOutputs == nil else { return }
             }
         }
         latestControlEnvelope = envelope
@@ -3933,6 +4899,14 @@ final class TchurchStudioLANClient: @unchecked Sendable {
            revision >= minimum {
             minimumLowerThirdRevision = nil
         }
+        localOBSReconciliation.observe(
+            envelope.payload.control?.localOBS,
+            envelopeSequence: envelope.sequence
+        )
+        localOBSOutputsReconciliation.observe(
+            envelope.payload.control?.localOBSOutputs,
+            envelopeSequence: envelope.sequence
+        )
         replayAmbiguousRemoteCommandIfReady()
         replayAmbiguousOperatorTimerCommandIfReady()
         replayAmbiguousLocalBroadcastLowerThirdCommandIfReady()
@@ -3949,7 +4923,9 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         if inFlight.recovery.action.kind == .jump,
            (activeSubscription?.payloadVersion == 5 ||
             activeSubscription?.payloadVersion == 6 ||
-            activeSubscription?.payloadVersion == 7) {
+            activeSubscription?.payloadVersion == 7 ||
+            activeSubscription?.payloadVersion == 8 ||
+            activeSubscription?.payloadVersion == 9) {
             guard let envelope = latestControlEnvelope,
                   let control = envelope.payload.control,
                   let routeEpoch = control.routeEpoch,
@@ -4016,7 +4992,11 @@ final class TchurchStudioLANClient: @unchecked Sendable {
               activeSubscription?.payloadVersion ==
                 TchurchStudioLANOperatorTimerContract.payloadVersion ||
                 activeSubscription?.payloadVersion ==
-                    TchurchStudioLANLocalBroadcastLowerThirdContract.payloadVersion,
+                    TchurchStudioLANLocalBroadcastLowerThirdContract.payloadVersion ||
+                activeSubscription?.payloadVersion ==
+                    TchurchStudioLANLocalOBSSceneContract.payloadVersion ||
+                activeSubscription?.payloadVersion ==
+                    TchurchStudioLANLocalOBSOutputContract.payloadVersion,
               latestControlEnvelope?.payload.control?.operatorTimers?.isCanonical == true else {
             return
         }
@@ -4074,7 +5054,11 @@ final class TchurchStudioLANClient: @unchecked Sendable {
               currentPhase == .connected,
               boundedRequestLane.isIdle,
               activeSubscription?.payloadVersion ==
-                TchurchStudioLANLocalBroadcastLowerThirdContract.payloadVersion,
+                TchurchStudioLANLocalBroadcastLowerThirdContract.payloadVersion ||
+                activeSubscription?.payloadVersion ==
+                    TchurchStudioLANLocalOBSSceneContract.payloadVersion ||
+                activeSubscription?.payloadVersion ==
+                    TchurchStudioLANLocalOBSOutputContract.payloadVersion,
               latestControlEnvelope?.payload.control?
                 .localBroadcastLowerThird?.isCanonical == true else {
             return
@@ -4380,6 +5364,74 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         )
     }
 
+    private func armLocalOBSSceneCommandTimeout(
+        commandID: UUID,
+        connection: NWConnection
+    ) {
+        localOBSSceneCommandTimeoutWork?.cancel()
+        let work = DispatchWorkItem { [weak self, weak connection] in
+            guard let self,
+                  let connection,
+                  self.connection === connection,
+                  self.inFlightLocalOBSSceneCommand?.command.commandID == commandID else {
+                return
+            }
+            self.localOBSSceneCommandTimeoutWork = nil
+            self.cancelLocalOBSSceneCommand(
+                state: .unconfirmed,
+                expectedCommandID: commandID
+            )
+            self.handleConnectionEnded(
+                connection,
+                cause: .heartbeatTimeout,
+                recoveryMessage:
+                    "Studio no confirmó la escena OBS. Esperando estado firmado nuevo…"
+            )
+        }
+        localOBSSceneCommandTimeoutWork = work
+        queue.asyncAfter(
+            deadline: .now() + .milliseconds(
+                Int(TchurchStudioLANRemoteControlContract.maximumCommandLifetimeMilliseconds +
+                    3_000)
+            ),
+            execute: work
+        )
+    }
+
+    private func armLocalOBSOutputCommandTimeout(
+        commandID: UUID,
+        connection: NWConnection
+    ) {
+        localOBSOutputCommandTimeoutWork?.cancel()
+        let work = DispatchWorkItem { [weak self, weak connection] in
+            guard let self,
+                  let connection,
+                  self.connection === connection,
+                  self.inFlightLocalOBSOutputCommand?.command.commandID == commandID else {
+                return
+            }
+            self.localOBSOutputCommandTimeoutWork = nil
+            self.cancelLocalOBSOutputCommand(
+                state: .unconfirmed,
+                expectedCommandID: commandID
+            )
+            self.handleConnectionEnded(
+                connection,
+                cause: .heartbeatTimeout,
+                recoveryMessage:
+                    "Studio no confirmó la salida OBS. Esperando estado firmado nuevo…"
+            )
+        }
+        localOBSOutputCommandTimeoutWork = work
+        queue.asyncAfter(
+            deadline: .now() + .milliseconds(
+                Int(TchurchStudioLANRemoteControlContract.maximumCommandLifetimeMilliseconds +
+                    3_000)
+            ),
+            execute: work
+        )
+    }
+
     private func cancelRemoteCommand(
         state: TchurchStudioLANRemoteFeedbackState,
         expectedCommandID: UUID? = nil
@@ -4460,6 +5512,91 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                 wasIdempotentReplay: false
             )
         )
+        emitStatus()
+        if let connection {
+            resumeBoundedRequestLane(connection: connection, catalogPriority: true)
+        }
+    }
+
+    private func cancelLocalOBSSceneCommand(
+        state: TchurchStudioLANLocalOBSSceneFeedbackState,
+        expectedCommandID: UUID? = nil
+    ) {
+        guard let inFlight = inFlightLocalOBSSceneCommand,
+              expectedCommandID.map({ $0 == inFlight.command.commandID }) ?? true else {
+            return
+        }
+        localOBSSceneCommandTimeoutWork?.cancel()
+        localOBSSceneCommandTimeoutWork = nil
+        inFlightLocalOBSSceneCommand = nil
+        boundedRequestLane.cancel(.localOBSSceneCommand(inFlight.command.commandID))
+        let uncertaintyReason: TchurchStudioLANLocalOBSSceneUncertaintyReason? =
+            state == .unconfirmed ? .mutationMayHaveExecuted : nil
+        if state == .unconfirmed {
+            let signedLocalOBS = latestControlEnvelope?.payload.control?.localOBS
+            if TchurchStudioLANLocalOBSReconciliationState.isConnectionBoundary(
+                from: inFlight.command.connectionID,
+                observed: signedLocalOBS
+            ) {
+                localOBSReconciliation.clear()
+            } else if let sequence = latestControlEnvelope?.sequence {
+                localOBSReconciliation.requireEnvelope(
+                    after: sequence,
+                    connectionID: inFlight.command.connectionID
+                )
+            } else {
+                localOBSReconciliation.clear()
+            }
+        }
+        localOBSSceneFeedbackHandler?(TchurchStudioLANLocalOBSSceneFeedback(
+            commandID: inFlight.command.commandID,
+            action: inFlight.command.action,
+            state: state,
+            rejection: nil,
+            uncertaintyReason: uncertaintyReason,
+            obsRevision: nil
+        ))
+        emitStatus()
+        if let connection {
+            resumeBoundedRequestLane(connection: connection, catalogPriority: true)
+        }
+    }
+
+    private func cancelLocalOBSOutputCommand(
+        state: TchurchStudioLANLocalOBSOutputFeedbackState,
+        expectedCommandID: UUID? = nil
+    ) {
+        guard let inFlight = inFlightLocalOBSOutputCommand,
+              expectedCommandID.map({ $0 == inFlight.command.commandID }) ?? true else {
+            return
+        }
+        localOBSOutputCommandTimeoutWork?.cancel()
+        localOBSOutputCommandTimeoutWork = nil
+        inFlightLocalOBSOutputCommand = nil
+        boundedRequestLane.cancel(.localOBSOutputCommand(inFlight.command.commandID))
+        let uncertaintyReason: TchurchStudioLANLocalOBSOutputUncertaintyReason? =
+            state == .unconfirmed ? .mutationMayHaveExecuted : nil
+        if state == .unconfirmed {
+            let outputs = latestControlEnvelope?.payload.control?.localOBSOutputs
+            if let outputs, outputs.connectionID != inFlight.command.connectionID {
+                localOBSOutputsReconciliation.clear()
+            } else if let sequence = latestControlEnvelope?.sequence {
+                localOBSOutputsReconciliation.requireEnvelope(
+                    after: sequence,
+                    connectionID: inFlight.command.connectionID
+                )
+            } else {
+                localOBSOutputsReconciliation.clear()
+            }
+        }
+        localOBSOutputFeedbackHandler?(TchurchStudioLANLocalOBSOutputFeedback(
+            commandID: inFlight.command.commandID,
+            action: inFlight.command.action,
+            state: state,
+            rejection: nil,
+            uncertaintyReason: uncertaintyReason,
+            operationsRevision: nil
+        ))
         emitStatus()
         if let connection {
             resumeBoundedRequestLane(connection: connection, catalogPriority: true)
@@ -4569,6 +5706,18 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             cancelRemoteCommand(state: .interrupted)
             cancelOperatorTimerCommand(state: .interrupted)
             cancelLocalBroadcastLowerThirdCommand(state: .interrupted)
+            if let inFlightLocalOBSSceneCommand {
+                cancelLocalOBSSceneCommand(
+                    state: inFlightLocalOBSSceneCommand.isAwaitingReceipt
+                        ? .unconfirmed : .interrupted
+                )
+            }
+            if let inFlightLocalOBSOutputCommand {
+                cancelLocalOBSOutputCommand(
+                    state: inFlightLocalOBSOutputCommand.isAwaitingReceipt
+                        ? .unconfirmed : .interrupted
+                )
+            }
         } else {
             remoteCommandTimeoutWork?.cancel()
             remoteCommandTimeoutWork = nil
@@ -4600,12 +5749,30 @@ final class TchurchStudioLANClient: @unchecked Sendable {
                 )
             }
             inFlightLocalBroadcastLowerThirdCommand = nil
+            localOBSSceneCommandTimeoutWork?.cancel()
+            localOBSSceneCommandTimeoutWork = nil
+            if let inFlightLocalOBSSceneCommand {
+                boundedRequestLane.cancel(
+                    .localOBSSceneCommand(inFlightLocalOBSSceneCommand.command.commandID)
+                )
+            }
+            inFlightLocalOBSSceneCommand = nil
+            localOBSOutputCommandTimeoutWork?.cancel()
+            localOBSOutputCommandTimeoutWork = nil
+            if let inFlightLocalOBSOutputCommand {
+                boundedRequestLane.cancel(
+                    .localOBSOutputCommand(inFlightLocalOBSOutputCommand.command.commandID)
+                )
+            }
+            inFlightLocalOBSOutputCommand = nil
         }
         activeSubscription = nil
         latestControlEnvelope = nil
         minimumControlEnvelopeRevision = nil
         minimumOperatorTimerRevision = nil
         minimumLowerThirdRevision = nil
+        localOBSReconciliation.clear()
+        localOBSOutputsReconciliation.clear()
         resetCueCatalog(publishUnavailable: true)
     }
 
@@ -4632,6 +5799,20 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         connectionTimeoutWork = nil
         cancelHeartbeat()
         verifier = nil
+        if let inFlightLocalOBSSceneCommand {
+            cancelLocalOBSSceneCommand(
+                state: inFlightLocalOBSSceneCommand.isAwaitingReceipt
+                    ? .unconfirmed : .interrupted,
+                expectedCommandID: inFlightLocalOBSSceneCommand.command.commandID
+            )
+        }
+        if let inFlightLocalOBSOutputCommand {
+            cancelLocalOBSOutputCommand(
+                state: inFlightLocalOBSOutputCommand.isAwaitingReceipt
+                    ? .unconfirmed : .interrupted,
+                expectedCommandID: inFlightLocalOBSOutputCommand.command.commandID
+            )
+        }
         let preserveAmbiguousCommand = !intentionalDisconnect &&
             !suspended &&
             (prepareAmbiguousRemoteCommandRecovery() ||
@@ -4883,7 +6064,8 @@ final class TchurchStudioLANClient: @unchecked Sendable {
         let controlEnvelopeReady = latestControlEnvelope.map { envelope in
             envelope.channel == .control &&
                 (envelope.schemaVersion == 4 || envelope.schemaVersion == 5 ||
-                    envelope.schemaVersion == 6 || envelope.schemaVersion == 7) &&
+                    envelope.schemaVersion == 6 || envelope.schemaVersion == 7 ||
+                    envelope.schemaVersion == 8 || envelope.schemaVersion == 9) &&
                 envelope.payload.control?.routeEpoch != nil &&
                 (envelope.schemaVersion == 4
                     ? envelope.payload.control?.cueCatalog != nil
@@ -4903,17 +6085,25 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             (activeSubscription?.payloadVersion == 4 ||
                 activeSubscription?.payloadVersion == 5 ||
                 activeSubscription?.payloadVersion == 6 ||
-                activeSubscription?.payloadVersion == 7) &&
+                activeSubscription?.payloadVersion == 7 ||
+                activeSubscription?.payloadVersion == 8 ||
+                activeSubscription?.payloadVersion == 9) &&
             controlEnvelopeReady &&
             inFlightRemoteCommand == nil &&
             inFlightOperatorTimerCommand == nil &&
-            inFlightLocalBroadcastLowerThirdCommand == nil
+            inFlightLocalBroadcastLowerThirdCommand == nil &&
+            inFlightLocalOBSSceneCommand == nil &&
+            inFlightLocalOBSOutputCommand == nil
         let operatorTimerEnvelopeReady = latestControlEnvelope.map { envelope in
             envelope.channel == .control &&
                 (envelope.schemaVersion ==
                     TchurchStudioLANOperatorTimerContract.payloadVersion ||
                     envelope.schemaVersion ==
-                        TchurchStudioLANLocalBroadcastLowerThirdContract.payloadVersion) &&
+                        TchurchStudioLANLocalBroadcastLowerThirdContract.payloadVersion ||
+                    envelope.schemaVersion ==
+                        TchurchStudioLANLocalOBSSceneContract.payloadVersion ||
+                    envelope.schemaVersion ==
+                        TchurchStudioLANLocalOBSOutputContract.payloadVersion) &&
                 envelope.payload.control?.routeEpoch != nil &&
                 envelope.payload.control?.routing?.lanRemoteControl == true &&
                 envelope.payload.control?.routing?.tchurchCloudProgram == false &&
@@ -4934,15 +6124,25 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             (activeSubscription?.payloadVersion ==
                 TchurchStudioLANOperatorTimerContract.payloadVersion ||
                 activeSubscription?.payloadVersion ==
-                    TchurchStudioLANLocalBroadcastLowerThirdContract.payloadVersion) &&
+                    TchurchStudioLANLocalBroadcastLowerThirdContract.payloadVersion ||
+                    activeSubscription?.payloadVersion ==
+                        TchurchStudioLANLocalOBSSceneContract.payloadVersion ||
+                    activeSubscription?.payloadVersion ==
+                        TchurchStudioLANLocalOBSOutputContract.payloadVersion) &&
             operatorTimerEnvelopeReady &&
             inFlightRemoteCommand == nil &&
             inFlightOperatorTimerCommand == nil &&
-            inFlightLocalBroadcastLowerThirdCommand == nil
+            inFlightLocalBroadcastLowerThirdCommand == nil &&
+            inFlightLocalOBSSceneCommand == nil &&
+            inFlightLocalOBSOutputCommand == nil
         let lowerThirdEnvelopeReady = latestControlEnvelope.map { envelope in
             envelope.channel == .control &&
-                envelope.schemaVersion ==
-                    TchurchStudioLANLocalBroadcastLowerThirdContract.payloadVersion &&
+                (envelope.schemaVersion ==
+                    TchurchStudioLANLocalBroadcastLowerThirdContract.payloadVersion ||
+                    envelope.schemaVersion ==
+                        TchurchStudioLANLocalOBSSceneContract.payloadVersion ||
+                    envelope.schemaVersion ==
+                        TchurchStudioLANLocalOBSOutputContract.payloadVersion) &&
                 envelope.payload.control?.routeEpoch != nil &&
                 envelope.payload.control?.routing?.lanRemoteControl == true &&
                 envelope.payload.control?.routing?.localBroadcast == true &&
@@ -4961,12 +6161,90 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             trust.permissions.contains(.observe) &&
             trust.permissions.contains(.controlProgram) &&
             activeSubscription?.channel == .control &&
-            activeSubscription?.payloadVersion ==
-                TchurchStudioLANLocalBroadcastLowerThirdContract.payloadVersion &&
+            (activeSubscription?.payloadVersion ==
+                TchurchStudioLANLocalBroadcastLowerThirdContract.payloadVersion ||
+                    activeSubscription?.payloadVersion ==
+                        TchurchStudioLANLocalOBSSceneContract.payloadVersion ||
+                    activeSubscription?.payloadVersion ==
+                        TchurchStudioLANLocalOBSOutputContract.payloadVersion) &&
             lowerThirdEnvelopeReady &&
             inFlightRemoteCommand == nil &&
             inFlightOperatorTimerCommand == nil &&
-            inFlightLocalBroadcastLowerThirdCommand == nil
+            inFlightLocalBroadcastLowerThirdCommand == nil &&
+            inFlightLocalOBSSceneCommand == nil &&
+            inFlightLocalOBSOutputCommand == nil
+        let localOBSEnvelopeReady = latestControlEnvelope.map { envelope in
+            envelope.channel == .control &&
+                (envelope.schemaVersion == TchurchStudioLANLocalOBSSceneContract.payloadVersion ||
+                    envelope.schemaVersion == TchurchStudioLANLocalOBSOutputContract.payloadVersion) &&
+                envelope.payload.control?.routeEpoch != nil &&
+                envelope.payload.control?.routing?.lanRemoteControl == true &&
+                envelope.payload.control?.routing?.localBroadcast == true &&
+                envelope.payload.control?.routing?.tchurchCloudProgram == false &&
+                envelope.payload.control?.localOBS?.isCanonical == true &&
+                envelope.payload.control?.localOBS?.availability == .ready &&
+                (envelope.payload.control?.localOBS.map {
+                    localOBSReconciliation.permits(
+                        $0,
+                        envelopeSequence: envelope.sequence
+                    )
+                } ?? false)
+        } ?? false
+        let localOBSSceneControlAvailable = !privateStateBlocked && !revoked &&
+            currentPhase == .connected &&
+            didAuthenticate &&
+            desired?.channel == .control &&
+            trust.enrollmentState == .approved &&
+            trust.role == .production &&
+            trust.permissions.contains(.observe) &&
+            trust.permissions.contains(.controlLocalOBS) &&
+            activeSubscription?.channel == .control &&
+            (activeSubscription?.payloadVersion ==
+                TchurchStudioLANLocalOBSSceneContract.payloadVersion ||
+                activeSubscription?.payloadVersion ==
+                    TchurchStudioLANLocalOBSOutputContract.payloadVersion) &&
+            localOBSEnvelopeReady &&
+            inFlightRemoteCommand == nil &&
+            inFlightOperatorTimerCommand == nil &&
+            inFlightLocalBroadcastLowerThirdCommand == nil &&
+            inFlightLocalOBSSceneCommand == nil &&
+            inFlightLocalOBSOutputCommand == nil
+        let localOBSOutputsEnvelopeReady = latestControlEnvelope.map { envelope in
+            envelope.channel == .control &&
+                envelope.schemaVersion == TchurchStudioLANLocalOBSOutputContract.payloadVersion &&
+                envelope.payload.control?.routeEpoch != nil &&
+                envelope.payload.control?.routing?.localBroadcast == true &&
+                envelope.payload.control?.routing?.lanRemoteControl == true &&
+                envelope.payload.control?.routing?.stageAndMusicians == false &&
+                envelope.payload.control?.routing?.tchurchCloudProgram == false &&
+                envelope.payload.control?.routing?.lightingAndMIDI == false &&
+                envelope.payload.control?.localOBSOutputs?.isCanonical == true &&
+                envelope.payload.control?.localOBSOutputs?.availability == .ready &&
+                (envelope.payload.control?.localOBSOutputs.map {
+                    localOBSOutputsReconciliation.permits(
+                        $0,
+                        envelopeSequence: envelope.sequence
+                    )
+                } ?? false)
+        } ?? false
+        let outputBaseAvailable = !privateStateBlocked && !revoked &&
+            currentPhase == .connected && didAuthenticate &&
+            desired?.channel == .control &&
+            trust.enrollmentState == .approved && trust.role == .production &&
+            trust.permissions.contains(.observe) &&
+            activeSubscription?.channel == .control &&
+            activeSubscription?.payloadVersion ==
+                TchurchStudioLANLocalOBSOutputContract.payloadVersion &&
+            localOBSOutputsEnvelopeReady &&
+            inFlightRemoteCommand == nil &&
+            inFlightOperatorTimerCommand == nil &&
+            inFlightLocalBroadcastLowerThirdCommand == nil &&
+            inFlightLocalOBSSceneCommand == nil &&
+            inFlightLocalOBSOutputCommand == nil
+        let localOBSStreamControlAvailable = outputBaseAvailable &&
+            trust.permissions.contains(.controlLocalOBSStream)
+        let localOBSRecordingControlAvailable = outputBaseAvailable &&
+            trust.permissions.contains(.controlLocalOBSRecording)
         return TchurchStudioLANClientStatus(
             phase: privateStateBlocked || revoked ? .failed : currentPhase,
             services: services,
@@ -4994,7 +6272,15 @@ final class TchurchStudioLANClient: @unchecked Sendable {
             localBroadcastLowerThirdControlAvailable:
                 localBroadcastLowerThirdControlAvailable,
             localBroadcastLowerThirdCommandInFlight:
-                inFlightLocalBroadcastLowerThirdCommand != nil
+                inFlightLocalBroadcastLowerThirdCommand != nil,
+            localOBSSceneControlAvailable: localOBSSceneControlAvailable,
+            localOBSSceneCommandInFlight: inFlightLocalOBSSceneCommand != nil,
+            localOBSStreamControlAvailable: localOBSStreamControlAvailable,
+            localOBSStreamCommandInFlight: inFlightLocalOBSOutputCommand?.command.action.kind ==
+                .setLocalOBSStreamActive,
+            localOBSRecordingControlAvailable: localOBSRecordingControlAvailable,
+            localOBSRecordingCommandInFlight: inFlightLocalOBSOutputCommand?.command.action.kind ==
+                .setLocalOBSRecordingActive
         )
     }
 }

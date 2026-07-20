@@ -16,6 +16,8 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
             name: "sendLocalBroadcastLowerThirdCommand",
             returnType: CAPPluginReturnPromise
         ),
+        CAPPluginMethod(name: "sendLocalOBSSceneCommand", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "sendLocalOBSOutputCommand", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "requestDeviceReapproval", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "disconnect", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "forgetPairing", returnType: CAPPluginReturnPromise),
@@ -59,6 +61,12 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
             DispatchQueue.main.async { self?.publish(feedback) }
         }
         client?.localBroadcastLowerThirdFeedbackHandler = { [weak self] feedback in
+            DispatchQueue.main.async { self?.publish(feedback) }
+        }
+        client?.localOBSSceneFeedbackHandler = { [weak self] feedback in
+            DispatchQueue.main.async { self?.publish(feedback) }
+        }
+        client?.localOBSOutputFeedbackHandler = { [weak self] feedback in
             DispatchQueue.main.async { self?.publish(feedback) }
         }
         client?.cueCatalogHandler = { [weak self] status in
@@ -287,6 +295,87 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
         }
     }
 
+    @objc public func sendLocalOBSSceneCommand(_ call: CAPPluginCall) {
+        guard let client else {
+            call.reject("El control OBS local no está disponible.", "UNAVAILABLE")
+            return
+        }
+        guard call.getString("kind") ==
+                TchurchStudioLANLocalOBSSceneActionKind.selectLocalOBSScene.rawValue,
+              let sceneID = call.getString("sceneId") else {
+            call.reject("Selecciona una escena OBS firmada.", "INVALID_ACTION")
+            return
+        }
+        let action = TchurchStudioLANLocalOBSSceneAction.select(sceneID: sceneID)
+        guard action.isValid else {
+            call.reject("Selecciona una escena OBS firmada.", "INVALID_ACTION")
+            return
+        }
+        client.sendLocalOBSSceneCommand(action: action) { result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let commandID):
+                    call.resolve([
+                        "accepted": true,
+                        "commandId": commandID.uuidString.lowercased(),
+                    ])
+                case .failure(TchurchStudioLANRemoteControlError.commandInFlight):
+                    call.reject(
+                        "Espera la confirmación del control anterior.",
+                        "COMMAND_IN_FLIGHT"
+                    )
+                case .failure(TchurchStudioLANRemoteControlError.invalidAction):
+                    call.reject("Selecciona una escena OBS firmada.", "INVALID_ACTION")
+                case .failure(TchurchStudioLANRemoteControlError.unauthorized):
+                    call.reject(
+                        "Studio todavía no autorizó el control OBS local.",
+                        "UNAUTHORIZED"
+                    )
+                case .failure:
+                    call.reject("El control OBS local no está disponible.", "UNAVAILABLE")
+                }
+            }
+        }
+    }
+
+    @objc public func sendLocalOBSOutputCommand(_ call: CAPPluginCall) {
+        guard let client,
+              let kindValue = call.getString("kind"),
+              let kind = TchurchStudioLANLocalOBSOutputActionKind(rawValue: kindValue),
+              let active = call.getBool("active"),
+              let expectedCurrentActive = call.getBool("expectedCurrentActive") else {
+            call.reject("El cambio de salida OBS no es válido.", "INVALID_ACTION")
+            return
+        }
+        let action = TchurchStudioLANLocalOBSOutputAction(
+            kind: kind,
+            active: active,
+            expectedCurrentActive: expectedCurrentActive
+        )
+        client.sendLocalOBSOutputCommand(action: action) { result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let commandID):
+                    call.resolve([
+                        "accepted": true,
+                        "commandId": commandID.uuidString.lowercased(),
+                    ])
+                case .failure(TchurchStudioLANRemoteControlError.commandInFlight):
+                    call.reject(
+                        "Espera la confirmación del control anterior.",
+                        "COMMAND_IN_FLIGHT"
+                    )
+                case .failure(TchurchStudioLANRemoteControlError.invalidAction):
+                    call.reject("El estado de OBS cambió. Revisa el estado firmado.", "INVALID_ACTION")
+                case .failure(TchurchStudioLANRemoteControlError.unauthorized):
+                    call.reject("Studio no autorizó esta salida OBS.", "UNAUTHORIZED")
+                case .failure:
+                    call.reject("El control de salida OBS no está disponible.", "UNAVAILABLE")
+                }
+            }
+        }
+    }
+
     @objc public func disconnect(_ call: CAPPluginCall) {
         client?.disconnect()
         call.resolve(["accepted": true])
@@ -474,6 +563,31 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
         ])
     }
 
+    private func publish(_ feedback: TchurchStudioLANLocalOBSSceneFeedback) {
+        notifyListeners("studioLANLocalOBSSceneFeedback", data: [
+            "commandId": feedback.commandID.uuidString.lowercased(),
+            "kind": feedback.action.kind.rawValue,
+            "sceneId": feedback.action.sceneID,
+            "state": feedback.state.rawValue,
+            "rejection": feedback.rejection?.rawValue ?? NSNull(),
+            "uncertaintyReason": feedback.uncertaintyReason?.rawValue ?? NSNull(),
+            "obsRevision": feedback.obsRevision.map(String.init) ?? NSNull(),
+        ])
+    }
+
+    private func publish(_ feedback: TchurchStudioLANLocalOBSOutputFeedback) {
+        notifyListeners("studioLANLocalOBSOutputFeedback", data: [
+            "commandId": feedback.commandID.uuidString.lowercased(),
+            "kind": feedback.action.kind.rawValue,
+            "active": feedback.action.active,
+            "expectedCurrentActive": feedback.action.expectedCurrentActive,
+            "state": feedback.state.rawValue,
+            "rejection": feedback.rejection?.rawValue ?? NSNull(),
+            "uncertaintyReason": feedback.uncertaintyReason?.rawValue ?? NSNull(),
+            "operationsRevision": feedback.operationsRevision.map(String.init) ?? NSNull(),
+        ])
+    }
+
     private func publish(_ status: TchurchStudioLANCueCatalogStatus) {
         notifyListeners("studioLANCueCatalog", data: [
             "phase": status.phase.rawValue,
@@ -514,6 +628,12 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
                 status.localBroadcastLowerThirdControlAvailable,
             "localBroadcastLowerThirdCommandInFlight":
                 status.localBroadcastLowerThirdCommandInFlight,
+            "localOBSSceneControlAvailable": status.localOBSSceneControlAvailable,
+            "localOBSSceneCommandInFlight": status.localOBSSceneCommandInFlight,
+            "localOBSStreamControlAvailable": status.localOBSStreamControlAvailable,
+            "localOBSStreamCommandInFlight": status.localOBSStreamCommandInFlight,
+            "localOBSRecordingControlAvailable": status.localOBSRecordingControlAvailable,
+            "localOBSRecordingCommandInFlight": status.localOBSRecordingCommandInFlight,
         ]
     }
 
@@ -609,6 +729,33 @@ public final class StudioLANClientPlugin: CAPInstancePlugin, CAPBridgedPlugin {
                     if let subtitle = $0.subtitle { payload["subtitle"] = subtitle }
                     return payload
                 } ?? NSNull()
+            controlPayload["localOBS"] = control.localOBS.map {
+                var payload: [String: Any] = [
+                    "schemaVersion": $0.schemaVersion,
+                    "revision": String($0.revision),
+                    "availability": $0.availability.rawValue,
+                    "scenes": $0.scenes.map { scene in
+                        ["sceneId": scene.sceneID, "title": scene.title]
+                    },
+                ]
+                if let connectionID = $0.connectionID {
+                    payload["connectionId"] = connectionID
+                }
+                if let currentSceneID = $0.currentSceneID {
+                    payload["currentSceneId"] = currentSceneID
+                }
+                return payload
+            } ?? NSNull()
+            controlPayload["localOBSOutputs"] = control.localOBSOutputs.map {
+                [
+                    "schemaVersion": $0.schemaVersion,
+                    "revision": String($0.revision),
+                    "connectionId": $0.connectionID ?? NSNull(),
+                    "availability": $0.availability.rawValue,
+                    "streamActive": $0.streamActive,
+                    "recordingActive": $0.recordingActive,
+                ] as [String: Any]
+            } ?? NSNull()
             result["control"] = controlPayload
         } else {
             result["control"] = NSNull()

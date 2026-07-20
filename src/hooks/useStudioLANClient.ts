@@ -8,6 +8,8 @@ import {
   refreshStudioLANDiscovery,
   requestStudioLANDeviceReapproval,
   sendStudioLANLocalBroadcastLowerThirdCommand,
+  sendStudioLANLocalOBSSceneCommand,
+  sendStudioLANLocalOBSOutputCommand,
   sendStudioLANOperatorTimerCommand,
   sendStudioLANRemoteCommand,
   type StudioLANChannel,
@@ -16,6 +18,10 @@ import {
   type StudioLANImageAssetStatus,
   type StudioLANLocalBroadcastLowerThirdAction,
   type StudioLANLocalBroadcastLowerThirdFeedback,
+  type StudioLANLocalOBSSceneAction,
+  type StudioLANLocalOBSSceneFeedback,
+  type StudioLANLocalOBSOutputAction,
+  type StudioLANLocalOBSOutputFeedback,
   type StudioLANOperatorTimerAction,
   type StudioLANOperatorTimerFeedback,
   type StudioLANRemoteAction,
@@ -45,6 +51,12 @@ const INITIAL_STATUS: StudioLANStatus = {
   operatorTimerCommandInFlight: false,
   localBroadcastLowerThirdControlAvailable: false,
   localBroadcastLowerThirdCommandInFlight: false,
+  localOBSSceneControlAvailable: false,
+  localOBSSceneCommandInFlight: false,
+  localOBSStreamControlAvailable: false,
+  localOBSStreamCommandInFlight: false,
+  localOBSRecordingControlAvailable: false,
+  localOBSRecordingCommandInFlight: false,
 };
 
 export function useStudioLANClient() {
@@ -54,6 +66,8 @@ export function useStudioLANClient() {
   const [remoteFeedback, setRemoteFeedback] = useState<StudioLANRemoteFeedback | null>(null);
   const [operatorTimerFeedback, setOperatorTimerFeedback] = useState<StudioLANOperatorTimerFeedback | null>(null);
   const [localBroadcastLowerThirdFeedback, setLocalBroadcastLowerThirdFeedback] = useState<StudioLANLocalBroadcastLowerThirdFeedback | null>(null);
+  const [localOBSSceneFeedback, setLocalOBSSceneFeedback] = useState<StudioLANLocalOBSSceneFeedback | null>(null);
+  const [localOBSOutputFeedback, setLocalOBSOutputFeedback] = useState<StudioLANLocalOBSOutputFeedback | null>(null);
   const [cueCatalog, setCueCatalog] = useState<StudioLANCueCatalogStatus | null>(null);
   const connectedRef = useRef(false);
   const updateRef = useRef<StudioLANUpdate | null>(null);
@@ -75,6 +89,8 @@ export function useStudioLANClient() {
           setRemoteFeedback(null);
           setOperatorTimerFeedback(null);
           setLocalBroadcastLowerThirdFeedback(null);
+          setLocalOBSSceneFeedback(null);
+          setLocalOBSOutputFeedback(null);
         }
       },
       onUpdate(next) {
@@ -100,10 +116,17 @@ export function useStudioLANClient() {
       onLocalBroadcastLowerThirdFeedback(next) {
         if (active) setLocalBroadcastLowerThirdFeedback(next);
       },
+      onLocalOBSSceneFeedback(next) {
+        if (active) setLocalOBSSceneFeedback(next);
+      },
+      onLocalOBSOutputFeedback(next) {
+        if (active) setLocalOBSOutputFeedback(next);
+      },
       onCueCatalog(next) {
         const current = updateRef.current;
         if (!active || !connectedRef.current || (current?.payloadVersion !== 5
-          && current?.payloadVersion !== 6 && current?.payloadVersion !== 7)
+          && current?.payloadVersion !== 6 && current?.payloadVersion !== 7
+          && current?.payloadVersion !== 8 && current?.payloadVersion !== 9)
           || current.control?.cueCatalogManifest?.catalogId !== next.catalogId
           || current.control.routeEpoch !== next.routeEpoch) return;
         setCueCatalog(next);
@@ -121,6 +144,8 @@ export function useStudioLANClient() {
         setRemoteFeedback(null);
         setOperatorTimerFeedback(null);
         setLocalBroadcastLowerThirdFeedback(null);
+        setLocalOBSSceneFeedback(null);
+        setLocalOBSOutputFeedback(null);
         setStatus((current) => ({
           ...current,
           phase: "failed",
@@ -149,6 +174,8 @@ export function useStudioLANClient() {
     setRemoteFeedback(null);
     setOperatorTimerFeedback(null);
     setLocalBroadcastLowerThirdFeedback(null);
+    setLocalOBSSceneFeedback(null);
+    setLocalOBSOutputFeedback(null);
     await connectToStudioLAN(serviceId, channel, pairingCode, requestedRole);
   }, []);
 
@@ -161,6 +188,8 @@ export function useStudioLANClient() {
     setRemoteFeedback(null);
     setOperatorTimerFeedback(null);
     setLocalBroadcastLowerThirdFeedback(null);
+    setLocalOBSSceneFeedback(null);
+    setLocalOBSOutputFeedback(null);
     await disconnectFromStudioLAN();
   }, []);
 
@@ -173,6 +202,8 @@ export function useStudioLANClient() {
     setRemoteFeedback(null);
     setOperatorTimerFeedback(null);
     setLocalBroadcastLowerThirdFeedback(null);
+    setLocalOBSSceneFeedback(null);
+    setLocalOBSOutputFeedback(null);
     await forgetStudioLANPairing(serviceId);
   }, []);
 
@@ -196,6 +227,18 @@ export function useStudioLANClient() {
     await sendStudioLANLocalBroadcastLowerThirdCommand(action);
   }, []);
 
+  const sendLocalOBSSceneCommand = useCallback(async (
+    action: StudioLANLocalOBSSceneAction,
+  ) => {
+    await sendStudioLANLocalOBSSceneCommand(action);
+  }, []);
+
+  const sendLocalOBSOutputCommand = useCallback(async (
+    action: StudioLANLocalOBSOutputAction,
+  ) => {
+    await sendStudioLANLocalOBSOutputCommand(action);
+  }, []);
+
   const requestReapproval = useCallback(async () => {
     connectedRef.current = false;
     updateRef.current = null;
@@ -205,6 +248,8 @@ export function useStudioLANClient() {
     setRemoteFeedback(null);
     setOperatorTimerFeedback(null);
     setLocalBroadcastLowerThirdFeedback(null);
+    setLocalOBSSceneFeedback(null);
+    setLocalOBSOutputFeedback(null);
     await requestStudioLANDeviceReapproval();
   }, []);
 
@@ -215,6 +260,8 @@ export function useStudioLANClient() {
     remoteFeedback,
     operatorTimerFeedback,
     localBroadcastLowerThirdFeedback,
+    localOBSSceneFeedback,
+    localOBSOutputFeedback,
     cueCatalog,
     connect,
     disconnect,
@@ -223,6 +270,8 @@ export function useStudioLANClient() {
     sendRemoteCommand,
     sendOperatorTimerCommand,
     sendLocalBroadcastLowerThirdCommand,
+    sendLocalOBSSceneCommand,
+    sendLocalOBSOutputCommand,
     requestReapproval,
   };
 }

@@ -1123,3 +1123,748 @@ struct TchurchStudioLANLocalBroadcastLowerThirdFeedback: Equatable {
     let lowerThirdRevision: UInt64?
     let wasIdempotentReplay: Bool
 }
+
+enum TchurchStudioLANLocalOBSSceneContract {
+    static let schemaVersion = 1
+    static let payloadVersion = 8
+    static let signatureDomain = "tchurch-studio-lan-local-obs-scene-command-v1"
+    static let receiptSignatureDomain = "tchurch-studio-lan-local-obs-scene-receipt-v1"
+}
+
+enum TchurchStudioLANLocalOBSSceneActionKind: String, Codable, Equatable {
+    case selectLocalOBSScene
+}
+
+/// The only V8 OBS mutation is selecting one scene from Studio's signed
+/// allowlist. The action cannot carry endpoints, credentials, stream/record
+/// operations, routing, Stage, Cloud, lighting, or arbitrary payloads.
+struct TchurchStudioLANLocalOBSSceneAction: Codable, Equatable {
+    let kind: TchurchStudioLANLocalOBSSceneActionKind
+    let sceneID: String
+
+    static func select(sceneID: String) -> Self {
+        Self(kind: .selectLocalOBSScene, sceneID: sceneID)
+    }
+
+    var isValid: Bool {
+        kind == .selectLocalOBSScene &&
+            TchurchStudioLANLocalOBSScene.validSceneID(sceneID)
+    }
+}
+
+extension TchurchStudioLANLocalOBSSceneAction {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case kind, sceneID
+    }
+
+    init(from decoder: Decoder) throws {
+        try TchurchStudioLANExactObject.requireKeys(
+            Set(CodingKeys.allCases.map(\.rawValue)),
+            from: decoder
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try container.decode(TchurchStudioLANLocalOBSSceneActionKind.self, forKey: .kind)
+        sceneID = try container.decode(String.self, forKey: .sceneID)
+        guard isValid else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath,
+                debugDescription: "Invalid local OBS scene action"
+            ))
+        }
+    }
+}
+
+struct TchurchStudioLANLocalOBSSceneCommand: Codable, Equatable {
+    static let schemaVersion = TchurchStudioLANLocalOBSSceneContract.schemaVersion
+    static let payloadVersion = TchurchStudioLANLocalOBSSceneContract.payloadVersion
+
+    let schemaVersion: Int
+    let payloadVersion: Int
+    let commandID: UUID
+    let sessionID: UUID
+    let deviceID: UUID
+    let grantID: UUID
+    let deviceGrantChecksum: String
+    let permissionRevision: UInt64
+    let revocationGeneration: UInt64
+    let authority: TchurchStudioLANAuthority
+    let routeEpoch: UInt64
+    let connectionID: String
+    let expectedOBSRevision: UInt64
+    let issuedAtMilliseconds: Int64
+    let expiresAtMilliseconds: Int64
+    let action: TchurchStudioLANLocalOBSSceneAction
+    let signature: String
+}
+
+extension TchurchStudioLANLocalOBSSceneCommand {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case schemaVersion, payloadVersion, commandID, sessionID, deviceID, grantID
+        case deviceGrantChecksum, permissionRevision, revocationGeneration, authority
+        case routeEpoch, connectionID, expectedOBSRevision, issuedAtMilliseconds
+        case expiresAtMilliseconds
+        case action, signature
+    }
+
+    init(from decoder: Decoder) throws {
+        try TchurchStudioLANExactObject.requireKeys(
+            Set(CodingKeys.allCases.map(\.rawValue)),
+            from: decoder
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        payloadVersion = try container.decode(Int.self, forKey: .payloadVersion)
+        commandID = try container.decode(UUID.self, forKey: .commandID)
+        sessionID = try container.decode(UUID.self, forKey: .sessionID)
+        deviceID = try container.decode(UUID.self, forKey: .deviceID)
+        grantID = try container.decode(UUID.self, forKey: .grantID)
+        deviceGrantChecksum = try container.decode(String.self, forKey: .deviceGrantChecksum)
+        permissionRevision = try container.decode(UInt64.self, forKey: .permissionRevision)
+        revocationGeneration = try container.decode(UInt64.self, forKey: .revocationGeneration)
+        authority = try container.decode(TchurchStudioLANAuthority.self, forKey: .authority)
+        routeEpoch = try container.decode(UInt64.self, forKey: .routeEpoch)
+        connectionID = try container.decode(String.self, forKey: .connectionID)
+        expectedOBSRevision = try container.decode(UInt64.self, forKey: .expectedOBSRevision)
+        issuedAtMilliseconds = try container.decode(Int64.self, forKey: .issuedAtMilliseconds)
+        expiresAtMilliseconds = try container.decode(Int64.self, forKey: .expiresAtMilliseconds)
+        action = try container.decode(TchurchStudioLANLocalOBSSceneAction.self, forKey: .action)
+        signature = try container.decode(String.self, forKey: .signature)
+    }
+}
+
+private struct TchurchStudioLANLocalOBSSceneCommandSigningMaterial: Codable {
+    let schemaVersion: Int
+    let domain: String
+    let payloadVersion: Int
+    let commandID: UUID
+    let sessionID: UUID
+    let deviceID: UUID
+    let grantID: UUID
+    let deviceGrantChecksum: String
+    let permissionRevision: UInt64
+    let revocationGeneration: UInt64
+    let authority: TchurchStudioLANAuthority
+    let routeEpoch: UInt64
+    let connectionID: String
+    let expectedOBSRevision: UInt64
+    let issuedAtMilliseconds: Int64
+    let expiresAtMilliseconds: Int64
+    let action: TchurchStudioLANLocalOBSSceneAction
+}
+
+enum TchurchStudioLANLocalOBSSceneCommandCrypto {
+    static func signingData(for command: TchurchStudioLANLocalOBSSceneCommand) throws -> Data {
+        try TchurchStudioLANCoding.encoder().encode(
+            TchurchStudioLANLocalOBSSceneCommandSigningMaterial(
+                schemaVersion: command.schemaVersion,
+                domain: TchurchStudioLANLocalOBSSceneContract.signatureDomain,
+                payloadVersion: command.payloadVersion,
+                commandID: command.commandID,
+                sessionID: command.sessionID,
+                deviceID: command.deviceID,
+                grantID: command.grantID,
+                deviceGrantChecksum: command.deviceGrantChecksum,
+                permissionRevision: command.permissionRevision,
+                revocationGeneration: command.revocationGeneration,
+                authority: command.authority,
+                routeEpoch: command.routeEpoch,
+                connectionID: command.connectionID,
+                expectedOBSRevision: command.expectedOBSRevision,
+                issuedAtMilliseconds: command.issuedAtMilliseconds,
+                expiresAtMilliseconds: command.expiresAtMilliseconds,
+                action: command.action
+            )
+        )
+    }
+
+    static func verify(
+        _ command: TchurchStudioLANLocalOBSSceneCommand,
+        deviceGrant: StudioLANDeviceGrant
+    ) throws {
+        guard command.schemaVersion == TchurchStudioLANLocalOBSSceneCommand.schemaVersion,
+              command.payloadVersion == TchurchStudioLANLocalOBSSceneCommand.payloadVersion,
+              command.deviceID == deviceGrant.deviceID,
+              command.grantID == deviceGrant.grantID,
+              command.permissionRevision == deviceGrant.permissionRevision,
+              command.revocationGeneration == deviceGrant.revocationGeneration,
+              command.routeEpoch > 0,
+              TchurchStudioLANLocalOBSProjection.validConnectionID(command.connectionID),
+              (1 ... TchurchStudioLANLocalOBSProjection.maximumRevision).contains(
+                command.expectedOBSRevision
+              ),
+              command.action.isValid,
+              let publicKeyData = Data(base64Encoded: deviceGrant.devicePublicKey),
+              publicKeyData.count == 65,
+              let publicKey = try? P256.Signing.PublicKey(x963Representation: publicKeyData),
+              let signatureData = Data(base64Encoded: command.signature),
+              (64 ... 80).contains(signatureData.count),
+              let signature = try? P256.Signing.ECDSASignature(
+                derRepresentation: signatureData
+              ),
+              publicKey.isValidSignature(signature, for: try signingData(for: command)) else {
+            throw TchurchStudioLANRemoteControlError.invalidCommand
+        }
+    }
+}
+
+enum TchurchStudioLANLocalOBSSceneReceiptStatus: String, Codable, Equatable {
+    case accepted
+    case rejected
+    case unconfirmed
+}
+
+enum TchurchStudioLANLocalOBSSceneUncertaintyReason: String, Codable, Equatable {
+    case mutationMayHaveExecuted
+}
+
+struct TchurchStudioLANLocalOBSSceneReceipt: Codable, Equatable {
+    static let schemaVersion = TchurchStudioLANLocalOBSSceneContract.schemaVersion
+    static let payloadVersion = TchurchStudioLANLocalOBSSceneContract.payloadVersion
+
+    let schemaVersion: Int
+    let payloadVersion: Int
+    let commandID: UUID
+    let deviceID: UUID
+    let authority: TchurchStudioLANAuthority
+    let routeEpoch: UInt64
+    let permissionRevision: UInt64
+    let status: TchurchStudioLANLocalOBSSceneReceiptStatus
+    let rejection: TchurchStudioLANRemoteRejection?
+    let uncertaintyReason: TchurchStudioLANLocalOBSSceneUncertaintyReason?
+    let connectionID: String
+    let requestedSceneID: String
+    let obsRevision: UInt64
+    let issuedAtMilliseconds: Int64
+    let studioSigningKeyID: String
+    let signature: String
+}
+
+extension TchurchStudioLANLocalOBSSceneReceipt {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case schemaVersion, payloadVersion, commandID, deviceID, authority, routeEpoch
+        case permissionRevision, status, rejection, uncertaintyReason, connectionID
+        case requestedSceneID, obsRevision
+        case issuedAtMilliseconds, studioSigningKeyID, signature
+    }
+
+    init(from decoder: Decoder) throws {
+        let dynamic = try decoder.container(keyedBy: TchurchStudioLANAnyCodingKey.self)
+        let statusKey = TchurchStudioLANAnyCodingKey(stringValue: CodingKeys.status.rawValue)!
+        let decodedStatus = try dynamic.decode(
+            TchurchStudioLANLocalOBSSceneReceiptStatus.self,
+            forKey: statusKey
+        )
+        var expected = Set(CodingKeys.allCases.map(\.rawValue))
+        if decodedStatus != .rejected { expected.remove(CodingKeys.rejection.rawValue) }
+        if decodedStatus != .unconfirmed {
+            expected.remove(CodingKeys.uncertaintyReason.rawValue)
+        }
+        try TchurchStudioLANExactObject.requireKeys(expected, from: decoder)
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        payloadVersion = try container.decode(Int.self, forKey: .payloadVersion)
+        commandID = try container.decode(UUID.self, forKey: .commandID)
+        deviceID = try container.decode(UUID.self, forKey: .deviceID)
+        authority = try container.decode(TchurchStudioLANAuthority.self, forKey: .authority)
+        routeEpoch = try container.decode(UInt64.self, forKey: .routeEpoch)
+        permissionRevision = try container.decode(UInt64.self, forKey: .permissionRevision)
+        status = decodedStatus
+        rejection = try container.decodeIfPresent(
+            TchurchStudioLANRemoteRejection.self,
+            forKey: .rejection
+        )
+        uncertaintyReason = try container.decodeIfPresent(
+            TchurchStudioLANLocalOBSSceneUncertaintyReason.self,
+            forKey: .uncertaintyReason
+        )
+        connectionID = try container.decode(String.self, forKey: .connectionID)
+        requestedSceneID = try container.decode(String.self, forKey: .requestedSceneID)
+        obsRevision = try container.decode(UInt64.self, forKey: .obsRevision)
+        issuedAtMilliseconds = try container.decode(Int64.self, forKey: .issuedAtMilliseconds)
+        studioSigningKeyID = try container.decode(String.self, forKey: .studioSigningKeyID)
+        signature = try container.decode(String.self, forKey: .signature)
+        guard (status == .rejected) == (rejection != nil),
+              (status == .unconfirmed) == (uncertaintyReason != nil) else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath,
+                debugDescription: "Receipt status and rejection disagree"
+            ))
+        }
+    }
+}
+
+private struct TchurchStudioLANLocalOBSSceneReceiptSigningMaterial: Codable {
+    let schemaVersion: Int
+    let domain: String
+    let payloadVersion: Int
+    let commandID: UUID
+    let deviceID: UUID
+    let authority: TchurchStudioLANAuthority
+    let routeEpoch: UInt64
+    let permissionRevision: UInt64
+    let status: TchurchStudioLANLocalOBSSceneReceiptStatus
+    let rejection: TchurchStudioLANRemoteRejection?
+    let uncertaintyReason: TchurchStudioLANLocalOBSSceneUncertaintyReason?
+    let connectionID: String
+    let requestedSceneID: String
+    let obsRevision: UInt64
+    let issuedAtMilliseconds: Int64
+    let studioSigningKeyID: String
+}
+
+enum TchurchStudioLANLocalOBSSceneReceiptCrypto {
+    static func signingData(for receipt: TchurchStudioLANLocalOBSSceneReceipt) throws -> Data {
+        try TchurchStudioLANCoding.encoder().encode(
+            TchurchStudioLANLocalOBSSceneReceiptSigningMaterial(
+                schemaVersion: receipt.schemaVersion,
+                domain: TchurchStudioLANLocalOBSSceneContract.receiptSignatureDomain,
+                payloadVersion: receipt.payloadVersion,
+                commandID: receipt.commandID,
+                deviceID: receipt.deviceID,
+                authority: receipt.authority,
+                routeEpoch: receipt.routeEpoch,
+                permissionRevision: receipt.permissionRevision,
+                status: receipt.status,
+                rejection: receipt.rejection,
+                uncertaintyReason: receipt.uncertaintyReason,
+                connectionID: receipt.connectionID,
+                requestedSceneID: receipt.requestedSceneID,
+                obsRevision: receipt.obsRevision,
+                issuedAtMilliseconds: receipt.issuedAtMilliseconds,
+                studioSigningKeyID: receipt.studioSigningKeyID
+            )
+        )
+    }
+
+    static func verify(
+        _ receipt: TchurchStudioLANLocalOBSSceneReceipt,
+        studioSigningPublicKey: String
+    ) throws {
+        guard receipt.schemaVersion == TchurchStudioLANLocalOBSSceneReceipt.schemaVersion,
+              receipt.payloadVersion == TchurchStudioLANLocalOBSSceneReceipt.payloadVersion,
+              receipt.routeEpoch > 0,
+              (1 ... TchurchStudioLANLocalOBSProjection.maximumRevision).contains(
+                receipt.obsRevision
+              ),
+              (receipt.status == .rejected) == (receipt.rejection != nil),
+              (receipt.status == .unconfirmed) == (receipt.uncertaintyReason != nil),
+              TchurchStudioLANLocalOBSProjection.validConnectionID(receipt.connectionID),
+              TchurchStudioLANLocalOBSScene.validSceneID(receipt.requestedSceneID),
+              let publicKeyData = Data(base64Encoded: studioSigningPublicKey),
+              publicKeyData.count == 32,
+              publicKeyData.base64EncodedString() == studioSigningPublicKey,
+              String(TchurchStudioLANCrypto.sha256Hex(publicKeyData).prefix(24)) ==
+                receipt.studioSigningKeyID,
+              let signature = Data(base64Encoded: receipt.signature),
+              signature.count == 64,
+              signature.base64EncodedString() == receipt.signature,
+              let key = try? Curve25519.Signing.PublicKey(rawRepresentation: publicKeyData),
+              key.isValidSignature(signature, for: try signingData(for: receipt)) else {
+            throw TchurchStudioLANRemoteControlError.invalidReceipt
+        }
+    }
+}
+
+struct TchurchStudioLANLocalOBSSceneFeedback: Equatable {
+    let commandID: UUID
+    let action: TchurchStudioLANLocalOBSSceneAction
+    let state: TchurchStudioLANLocalOBSSceneFeedbackState
+    let rejection: TchurchStudioLANRemoteRejection?
+    let uncertaintyReason: TchurchStudioLANLocalOBSSceneUncertaintyReason?
+    let obsRevision: UInt64?
+}
+
+enum TchurchStudioLANLocalOBSSceneFeedbackState: String, Equatable {
+    case queued
+    case accepted
+    case rejected
+    case unconfirmed
+    case interrupted
+}
+
+enum TchurchStudioLANLocalOBSOutputContract {
+    static let schemaVersion = 1
+    static let payloadVersion = 9
+    static let signatureDomain = "tchurch-studio-lan-local-obs-output-command-v1"
+    static let receiptSignatureDomain = "tchurch-studio-lan-local-obs-output-receipt-v1"
+}
+
+enum TchurchStudioLANLocalOBSOutputActionKind: String, Codable, Equatable {
+    case setLocalOBSStreamActive
+    case setLocalOBSRecordingActive
+
+    var requiredPermission: StudioLANDevicePermission {
+        switch self {
+        case .setLocalOBSStreamActive: return .controlLocalOBSStream
+        case .setLocalOBSRecordingActive: return .controlLocalOBSRecording
+        }
+    }
+}
+
+struct TchurchStudioLANLocalOBSOutputAction: Codable, Equatable {
+    let kind: TchurchStudioLANLocalOBSOutputActionKind
+    let active: Bool
+    let expectedCurrentActive: Bool
+
+    static func stream(active: Bool, expectedCurrentActive: Bool) -> Self {
+        Self(
+            kind: .setLocalOBSStreamActive,
+            active: active,
+            expectedCurrentActive: expectedCurrentActive
+        )
+    }
+
+    static func recording(active: Bool, expectedCurrentActive: Bool) -> Self {
+        Self(
+            kind: .setLocalOBSRecordingActive,
+            active: active,
+            expectedCurrentActive: expectedCurrentActive
+        )
+    }
+}
+
+extension TchurchStudioLANLocalOBSOutputAction {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case kind, active, expectedCurrentActive
+    }
+
+    init(from decoder: Decoder) throws {
+        try TchurchStudioLANExactObject.requireKeys(
+            Set(CodingKeys.allCases.map(\.rawValue)),
+            from: decoder
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try container.decode(TchurchStudioLANLocalOBSOutputActionKind.self, forKey: .kind)
+        active = try container.decode(Bool.self, forKey: .active)
+        expectedCurrentActive = try container.decode(Bool.self, forKey: .expectedCurrentActive)
+    }
+}
+
+struct TchurchStudioLANLocalOBSOutputCommand: Codable, Equatable {
+    static let schemaVersion = TchurchStudioLANLocalOBSOutputContract.schemaVersion
+    static let payloadVersion = TchurchStudioLANLocalOBSOutputContract.payloadVersion
+
+    let schemaVersion: Int
+    let payloadVersion: Int
+    let commandID: UUID
+    let sessionID: UUID
+    let deviceID: UUID
+    let grantID: UUID
+    let deviceGrantChecksum: String
+    let permissionRevision: UInt64
+    let revocationGeneration: UInt64
+    let authority: TchurchStudioLANAuthority
+    let routeEpoch: UInt64
+    let connectionID: String
+    let expectedOperationsRevision: UInt64
+    let issuedAtMilliseconds: Int64
+    let expiresAtMilliseconds: Int64
+    let action: TchurchStudioLANLocalOBSOutputAction
+    let signature: String
+}
+
+extension TchurchStudioLANLocalOBSOutputCommand {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case schemaVersion, payloadVersion, commandID, sessionID, deviceID, grantID
+        case deviceGrantChecksum, permissionRevision, revocationGeneration, authority
+        case routeEpoch, connectionID, expectedOperationsRevision, issuedAtMilliseconds
+        case expiresAtMilliseconds, action, signature
+    }
+
+    init(from decoder: Decoder) throws {
+        try TchurchStudioLANExactObject.requireKeys(
+            Set(CodingKeys.allCases.map(\.rawValue)),
+            from: decoder
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        payloadVersion = try container.decode(Int.self, forKey: .payloadVersion)
+        commandID = try container.decode(UUID.self, forKey: .commandID)
+        sessionID = try container.decode(UUID.self, forKey: .sessionID)
+        deviceID = try container.decode(UUID.self, forKey: .deviceID)
+        grantID = try container.decode(UUID.self, forKey: .grantID)
+        deviceGrantChecksum = try container.decode(String.self, forKey: .deviceGrantChecksum)
+        permissionRevision = try container.decode(UInt64.self, forKey: .permissionRevision)
+        revocationGeneration = try container.decode(UInt64.self, forKey: .revocationGeneration)
+        authority = try container.decode(TchurchStudioLANAuthority.self, forKey: .authority)
+        routeEpoch = try container.decode(UInt64.self, forKey: .routeEpoch)
+        connectionID = try container.decode(String.self, forKey: .connectionID)
+        expectedOperationsRevision = try container.decode(UInt64.self, forKey: .expectedOperationsRevision)
+        issuedAtMilliseconds = try container.decode(Int64.self, forKey: .issuedAtMilliseconds)
+        expiresAtMilliseconds = try container.decode(Int64.self, forKey: .expiresAtMilliseconds)
+        action = try container.decode(TchurchStudioLANLocalOBSOutputAction.self, forKey: .action)
+        signature = try container.decode(String.self, forKey: .signature)
+    }
+}
+
+private struct TchurchStudioLANLocalOBSOutputCommandSigningMaterial: Codable {
+    let schemaVersion: Int
+    let domain: String
+    let payloadVersion: Int
+    let commandID: UUID
+    let sessionID: UUID
+    let deviceID: UUID
+    let grantID: UUID
+    let deviceGrantChecksum: String
+    let permissionRevision: UInt64
+    let revocationGeneration: UInt64
+    let authority: TchurchStudioLANAuthority
+    let routeEpoch: UInt64
+    let connectionID: String
+    let expectedOperationsRevision: UInt64
+    let issuedAtMilliseconds: Int64
+    let expiresAtMilliseconds: Int64
+    let action: TchurchStudioLANLocalOBSOutputAction
+}
+
+enum TchurchStudioLANLocalOBSOutputCommandCrypto {
+    static func signingData(for command: TchurchStudioLANLocalOBSOutputCommand) throws -> Data {
+        try TchurchStudioLANCoding.encoder().encode(
+            TchurchStudioLANLocalOBSOutputCommandSigningMaterial(
+                schemaVersion: command.schemaVersion,
+                domain: TchurchStudioLANLocalOBSOutputContract.signatureDomain,
+                payloadVersion: command.payloadVersion,
+                commandID: command.commandID,
+                sessionID: command.sessionID,
+                deviceID: command.deviceID,
+                grantID: command.grantID,
+                deviceGrantChecksum: command.deviceGrantChecksum,
+                permissionRevision: command.permissionRevision,
+                revocationGeneration: command.revocationGeneration,
+                authority: command.authority,
+                routeEpoch: command.routeEpoch,
+                connectionID: command.connectionID,
+                expectedOperationsRevision: command.expectedOperationsRevision,
+                issuedAtMilliseconds: command.issuedAtMilliseconds,
+                expiresAtMilliseconds: command.expiresAtMilliseconds,
+                action: command.action
+            )
+        )
+    }
+
+    static func verify(
+        _ command: TchurchStudioLANLocalOBSOutputCommand,
+        deviceGrant: StudioLANDeviceGrant
+    ) throws {
+        guard command.schemaVersion == Self.schemaVersion,
+              command.payloadVersion == TchurchStudioLANLocalOBSOutputContract.payloadVersion,
+              command.deviceID == deviceGrant.deviceID,
+              command.grantID == deviceGrant.grantID,
+              command.permissionRevision == deviceGrant.permissionRevision,
+              command.revocationGeneration == deviceGrant.revocationGeneration,
+              command.permissionRevision > 0,
+              command.authority.authorityEpoch > 0,
+              command.routeEpoch > 0,
+              command.deviceGrantChecksum.hasPrefix("sha256:"),
+              command.deviceGrantChecksum.utf8.count == 71,
+              command.deviceGrantChecksum.dropFirst(7).utf8.allSatisfy({ byte in
+                (byte >= 48 && byte <= 57) || (byte >= 97 && byte <= 102)
+              }),
+              TchurchStudioLANLocalOBSProjection.validConnectionID(command.connectionID),
+              (1 ... TchurchStudioLANLocalOBSOutputsProjection.maximumRevision).contains(
+                command.expectedOperationsRevision
+              ),
+              command.issuedAtMilliseconds > 0,
+              command.expiresAtMilliseconds > command.issuedAtMilliseconds,
+              command.expiresAtMilliseconds - command.issuedAtMilliseconds <=
+                TchurchStudioLANRemoteControlContract.maximumCommandLifetimeMilliseconds,
+              command.action.active != command.action.expectedCurrentActive,
+              deviceGrant.permissions.contains(.observe),
+              deviceGrant.permissions.contains(command.action.kind.requiredPermission),
+              let publicKeyData = Data(base64Encoded: deviceGrant.devicePublicKey),
+              publicKeyData.count == 65,
+              let publicKey = try? P256.Signing.PublicKey(x963Representation: publicKeyData),
+              let signatureData = Data(base64Encoded: command.signature),
+              (64 ... 80).contains(signatureData.count),
+              let signature = try? P256.Signing.ECDSASignature(derRepresentation: signatureData),
+              publicKey.isValidSignature(signature, for: try signingData(for: command)) else {
+            throw TchurchStudioLANRemoteControlError.invalidCommand
+        }
+    }
+
+    private static let schemaVersion = TchurchStudioLANLocalOBSOutputCommand.schemaVersion
+}
+
+enum TchurchStudioLANLocalOBSOutputReceiptStatus: String, Codable, Equatable {
+    case accepted
+    case rejected
+    case unconfirmed
+}
+
+enum TchurchStudioLANLocalOBSOutputUncertaintyReason: String, Codable, Equatable {
+    case mutationMayHaveExecuted
+}
+
+struct TchurchStudioLANLocalOBSOutputReceipt: Codable, Equatable {
+    static let schemaVersion = TchurchStudioLANLocalOBSOutputContract.schemaVersion
+    static let payloadVersion = TchurchStudioLANLocalOBSOutputContract.payloadVersion
+
+    let schemaVersion: Int
+    let payloadVersion: Int
+    let commandID: UUID
+    let deviceID: UUID
+    let authority: TchurchStudioLANAuthority
+    let routeEpoch: UInt64
+    let permissionRevision: UInt64
+    let connectionID: String
+    let actionKind: TchurchStudioLANLocalOBSOutputActionKind
+    let requestedActive: Bool
+    let expectedCurrentActive: Bool
+    let operationsRevision: UInt64
+    let status: TchurchStudioLANLocalOBSOutputReceiptStatus
+    let rejection: TchurchStudioLANRemoteRejection?
+    let uncertaintyReason: TchurchStudioLANLocalOBSOutputUncertaintyReason?
+    let issuedAtMilliseconds: Int64
+    let studioSigningKeyID: String
+    let signature: String
+}
+
+extension TchurchStudioLANLocalOBSOutputReceipt {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case schemaVersion, payloadVersion, commandID, deviceID, authority, routeEpoch
+        case permissionRevision, connectionID, actionKind, requestedActive
+        case expectedCurrentActive, operationsRevision, status
+        case rejection, uncertaintyReason, issuedAtMilliseconds, studioSigningKeyID, signature
+    }
+
+    init(from decoder: Decoder) throws {
+        let dynamic = try decoder.container(keyedBy: TchurchStudioLANAnyCodingKey.self)
+        let statusKey = TchurchStudioLANAnyCodingKey(stringValue: CodingKeys.status.rawValue)!
+        let decodedStatus = try dynamic.decode(
+            TchurchStudioLANLocalOBSOutputReceiptStatus.self,
+            forKey: statusKey
+        )
+        var expected = Set(CodingKeys.allCases.map(\.rawValue))
+        if decodedStatus != .rejected { expected.remove(CodingKeys.rejection.rawValue) }
+        if decodedStatus != .unconfirmed { expected.remove(CodingKeys.uncertaintyReason.rawValue) }
+        try TchurchStudioLANExactObject.requireKeys(expected, from: decoder)
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        payloadVersion = try container.decode(Int.self, forKey: .payloadVersion)
+        commandID = try container.decode(UUID.self, forKey: .commandID)
+        deviceID = try container.decode(UUID.self, forKey: .deviceID)
+        authority = try container.decode(TchurchStudioLANAuthority.self, forKey: .authority)
+        routeEpoch = try container.decode(UInt64.self, forKey: .routeEpoch)
+        permissionRevision = try container.decode(UInt64.self, forKey: .permissionRevision)
+        connectionID = try container.decode(String.self, forKey: .connectionID)
+        actionKind = try container.decode(
+            TchurchStudioLANLocalOBSOutputActionKind.self,
+            forKey: .actionKind
+        )
+        requestedActive = try container.decode(Bool.self, forKey: .requestedActive)
+        expectedCurrentActive = try container.decode(Bool.self, forKey: .expectedCurrentActive)
+        operationsRevision = try container.decode(UInt64.self, forKey: .operationsRevision)
+        status = decodedStatus
+        rejection = try container.decodeIfPresent(TchurchStudioLANRemoteRejection.self, forKey: .rejection)
+        uncertaintyReason = try container.decodeIfPresent(
+            TchurchStudioLANLocalOBSOutputUncertaintyReason.self,
+            forKey: .uncertaintyReason
+        )
+        issuedAtMilliseconds = try container.decode(Int64.self, forKey: .issuedAtMilliseconds)
+        studioSigningKeyID = try container.decode(String.self, forKey: .studioSigningKeyID)
+        signature = try container.decode(String.self, forKey: .signature)
+        guard (status == .rejected) == (rejection != nil),
+              (status == .unconfirmed) == (uncertaintyReason != nil) else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath,
+                debugDescription: "Receipt status fields disagree"
+            ))
+        }
+    }
+}
+
+private struct TchurchStudioLANLocalOBSOutputReceiptSigningMaterial: Codable {
+    let schemaVersion: Int
+    let domain: String
+    let payloadVersion: Int
+    let commandID: UUID
+    let deviceID: UUID
+    let authority: TchurchStudioLANAuthority
+    let routeEpoch: UInt64
+    let permissionRevision: UInt64
+    let connectionID: String
+    let actionKind: TchurchStudioLANLocalOBSOutputActionKind
+    let requestedActive: Bool
+    let expectedCurrentActive: Bool
+    let operationsRevision: UInt64
+    let status: TchurchStudioLANLocalOBSOutputReceiptStatus
+    let rejection: TchurchStudioLANRemoteRejection?
+    let uncertaintyReason: TchurchStudioLANLocalOBSOutputUncertaintyReason?
+    let issuedAtMilliseconds: Int64
+    let studioSigningKeyID: String
+}
+
+enum TchurchStudioLANLocalOBSOutputReceiptCrypto {
+    static func signingData(for receipt: TchurchStudioLANLocalOBSOutputReceipt) throws -> Data {
+        try TchurchStudioLANCoding.encoder().encode(
+            TchurchStudioLANLocalOBSOutputReceiptSigningMaterial(
+                schemaVersion: receipt.schemaVersion,
+                domain: TchurchStudioLANLocalOBSOutputContract.receiptSignatureDomain,
+                payloadVersion: receipt.payloadVersion,
+                commandID: receipt.commandID,
+                deviceID: receipt.deviceID,
+                authority: receipt.authority,
+                routeEpoch: receipt.routeEpoch,
+                permissionRevision: receipt.permissionRevision,
+                connectionID: receipt.connectionID,
+                actionKind: receipt.actionKind,
+                requestedActive: receipt.requestedActive,
+                expectedCurrentActive: receipt.expectedCurrentActive,
+                operationsRevision: receipt.operationsRevision,
+                status: receipt.status,
+                rejection: receipt.rejection,
+                uncertaintyReason: receipt.uncertaintyReason,
+                issuedAtMilliseconds: receipt.issuedAtMilliseconds,
+                studioSigningKeyID: receipt.studioSigningKeyID
+            )
+        )
+    }
+
+    static func verify(
+        _ receipt: TchurchStudioLANLocalOBSOutputReceipt,
+        studioSigningPublicKey: String
+    ) throws {
+        guard receipt.schemaVersion == TchurchStudioLANLocalOBSOutputReceipt.schemaVersion,
+              receipt.payloadVersion == TchurchStudioLANLocalOBSOutputReceipt.payloadVersion,
+              receipt.permissionRevision > 0,
+              receipt.authority.authorityEpoch > 0,
+              receipt.routeEpoch > 0,
+              (1 ... TchurchStudioLANLocalOBSOutputsProjection.maximumRevision).contains(
+                receipt.operationsRevision
+              ),
+              TchurchStudioLANLocalOBSProjection.validConnectionID(receipt.connectionID),
+              receipt.requestedActive != receipt.expectedCurrentActive,
+              receipt.issuedAtMilliseconds > 0,
+              (receipt.status == .rejected) == (receipt.rejection != nil),
+              (receipt.status == .unconfirmed) == (receipt.uncertaintyReason != nil),
+              let publicKeyData = Data(base64Encoded: studioSigningPublicKey),
+              publicKeyData.count == 32,
+              publicKeyData.base64EncodedString() == studioSigningPublicKey,
+              String(TchurchStudioLANCrypto.sha256Hex(publicKeyData).prefix(24)) ==
+                receipt.studioSigningKeyID,
+              let signature = Data(base64Encoded: receipt.signature),
+              signature.count == 64,
+              signature.base64EncodedString() == receipt.signature,
+              let key = try? Curve25519.Signing.PublicKey(rawRepresentation: publicKeyData),
+              key.isValidSignature(signature, for: try signingData(for: receipt)) else {
+            throw TchurchStudioLANRemoteControlError.invalidReceipt
+        }
+    }
+}
+
+struct TchurchStudioLANLocalOBSOutputFeedback: Equatable {
+    let commandID: UUID
+    let action: TchurchStudioLANLocalOBSOutputAction
+    let state: TchurchStudioLANLocalOBSOutputFeedbackState
+    let rejection: TchurchStudioLANRemoteRejection?
+    let uncertaintyReason: TchurchStudioLANLocalOBSOutputUncertaintyReason?
+    let operationsRevision: UInt64?
+}
+
+enum TchurchStudioLANLocalOBSOutputFeedbackState: String, Equatable {
+    case queued
+    case accepted
+    case rejected
+    case unconfirmed
+    case interrupted
+}
