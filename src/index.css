@@ -205,25 +205,25 @@
 }
 
 .sermons-canvas {
-  --background: 250 23% 5%;
-  --foreground: 248 100% 98%;
-  --card: 256 23% 9%;
-  --card-foreground: 248 100% 98%;
-  --popover: 256 23% 9%;
-  --popover-foreground: 248 100% 98%;
+  --background: 0 0% 100%;
+  --foreground: 240 6% 10%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 6% 10%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 240 6% 10%;
   --primary: 245.3 63.7% 57.8%;
   --primary-foreground: 0 0% 100%;
-  --secondary: 257 23% 12%;
-  --secondary-foreground: 234 100% 89%;
-  --muted: 257 23% 12%;
-  --muted-foreground: 258 11% 68%;
-  --accent: 257 23% 12%;
-  --accent-foreground: 234 100% 89%;
-  --border: 257 19% 18%;
-  --input: 257 19% 18%;
-  --ring: 234 94% 74%;
-  background: #0b0a10;
-  color: #f8f7ff;
+  --secondary: 247.5 100% 98.4%;
+  --secondary-foreground: 245.3 63.7% 45%;
+  --muted: 240 33% 96%;
+  --muted-foreground: 240 4% 46%;
+  --accent: 247.5 100% 98.4%;
+  --accent-foreground: 245.3 63.7% 42%;
+  --border: 240 6% 90%;
+  --input: 240 6% 90%;
+  --ring: 245.3 63.7% 57.8%;
+  background: #ffffff;
+  color: #18181b;
 }
 
 .sermon-rail {

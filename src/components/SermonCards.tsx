@@ -24,7 +24,7 @@ export function SermonArtwork({ item, imageUrl, title, eyebrow, className, prior
   }, [source]);
 
   return (
-    <div className={cn("relative aspect-video overflow-hidden bg-[#1C1826]", className)}>
+    <div className={cn("relative aspect-video overflow-hidden bg-[#F8F7FF]", className)}>
       {source && !imageFailed ? (
         <img
           src={source}
@@ -39,8 +39,8 @@ export function SermonArtwork({ item, imageUrl, title, eyebrow, className, prior
         <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
           <TchurchLogo variant="mark" size="lg" className="rounded-2xl bg-[#F8F7FF] p-3" />
           <div>
-            <p className="text-[0.65rem] font-bold uppercase tracking-[0.24em] text-[#818CF8]">Tchurch</p>
-            <p className="mt-1 line-clamp-2 text-base font-semibold leading-tight text-[#F8F7FF]">
+            <p className="text-[0.65rem] font-bold uppercase tracking-[0.24em] text-[#5B4FD8]">Tchurch</p>
+            <p className="mt-1 line-clamp-2 text-base font-semibold leading-tight text-zinc-950">
               {eyebrow || "Sermones"}
             </p>
           </div>
@@ -51,7 +51,7 @@ export function SermonArtwork({ item, imageUrl, title, eyebrow, className, prior
           En vivo
         </span>
       ) : item?.isScheduled ? (
-        <span className="absolute left-3 top-3 rounded-full border border-[#818CF8]/60 bg-[#15121D] px-3 py-1 text-[0.68rem] font-bold uppercase tracking-[0.12em] text-[#C5C9FF]">
+        <span className="absolute left-3 top-3 rounded-full border border-[#5B4FD8]/35 bg-white px-3 py-1 text-[0.68rem] font-bold uppercase tracking-[0.12em] text-[#5B4FD8]">
           Próximo
         </span>
       ) : null}
@@ -70,7 +70,7 @@ export function SermonCard({ item, className }: { item: ServiceMediaEntry; class
       onPointerEnter={() => preloadAppRoute(href)}
       onTouchStart={() => preloadAppRoute(href)}
       className={cn(
-        "group block min-w-0 overflow-hidden rounded-2xl border border-white/10 bg-[#15121D] text-left shadow-[0_16px_40px_rgba(0,0,0,0.2)] transition-colors hover:border-[#818CF8]/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#818CF8] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B0A10]",
+        "group block min-w-0 overflow-hidden rounded-2xl border border-zinc-200 bg-white text-left shadow-[0_14px_36px_rgba(24,24,27,0.08)] transition-colors hover:border-[#5B4FD8]/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5B4FD8] focus-visible:ring-offset-2 focus-visible:ring-offset-white",
         className,
       )}
     >
@@ -79,9 +79,9 @@ export function SermonCard({ item, className }: { item: ServiceMediaEntry; class
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             {item.series ? (
-              <p className="truncate text-[0.68rem] font-bold uppercase tracking-[0.16em] text-[#818CF8]">{item.series}</p>
+              <p className="truncate text-[0.68rem] font-bold uppercase tracking-[0.16em] text-[#5B4FD8]">{item.series}</p>
             ) : null}
-            <h3 className="mt-1 line-clamp-2 text-base font-semibold leading-snug text-[#F8F7FF] group-hover:text-white">
+            <h3 className="mt-1 line-clamp-2 text-base font-semibold leading-snug text-zinc-950 group-hover:text-[#493EC0]">
               {title}
             </h3>
           </div>
@@ -89,7 +89,7 @@ export function SermonCard({ item, className }: { item: ServiceMediaEntry; class
             <Play className="ml-0.5 h-4 w-4 fill-current" />
           </span>
         </div>
-        <p className="mt-3 flex min-w-0 items-center gap-2 text-xs text-[#A9A4B7]">
+        <p className="mt-3 flex min-w-0 items-center gap-2 text-xs text-zinc-600">
           <CalendarDays className="h-3.5 w-3.5 shrink-0" />
           <span className="truncate">{formatMediaDate(item.date)}{item.speaker ? ` · ${item.speaker}` : ""}</span>
         </p>
@@ -108,17 +108,17 @@ export function SermonSeriesCard({ series, onSelect, className }: {
       type="button"
       onClick={onSelect}
       className={cn(
-        "group min-w-0 overflow-hidden rounded-2xl border border-white/10 bg-[#15121D] text-left transition-colors hover:border-[#818CF8]/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#818CF8] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B0A10]",
+        "group min-w-0 overflow-hidden rounded-2xl border border-zinc-200 bg-white text-left shadow-[0_14px_36px_rgba(24,24,27,0.06)] transition-colors hover:border-[#5B4FD8]/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5B4FD8] focus-visible:ring-offset-2 focus-visible:ring-offset-white",
         className,
       )}
     >
       <SermonArtwork imageUrl={series.coverUrl} title={series.label} eyebrow={series.label} />
       <div className="flex min-h-20 items-center gap-3 p-4">
         <div className="min-w-0 flex-1">
-          <h3 className="truncate text-base font-semibold text-[#F8F7FF]">{series.label}</h3>
-          <p className="mt-1 text-xs text-[#A9A4B7]">{series.items.length} mensaje{series.items.length === 1 ? "" : "s"}</p>
+          <h3 className="truncate text-base font-semibold text-zinc-950">{series.label}</h3>
+          <p className="mt-1 text-xs text-zinc-600">{series.items.length} mensaje{series.items.length === 1 ? "" : "s"}</p>
         </div>
-        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-white/10 text-[#C5C9FF]" aria-hidden="true">
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-zinc-200 text-[#5B4FD8]" aria-hidden="true">
           <ChevronRight className="h-5 w-5" />
         </span>
       </div>

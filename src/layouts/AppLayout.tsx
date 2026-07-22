@@ -238,7 +238,7 @@ function AppLayoutInner() {
             "mx-auto flex w-full min-w-0 flex-1 flex-col overflow-x-clip md:max-w-[1120px] xl:max-w-[1320px]",
             isMessagesRoute ? "min-h-0 overflow-hidden p-0 lg:px-6 lg:pb-4 lg:pt-4" : "px-3 pb-4 pt-4 sm:px-4 md:px-5 lg:px-6 xl:px-8",
             showShortcutBar && !isMessagesRoute ? "min-h-0 overflow-y-auto overscroll-y-contain" : "",
-            isSermonsRoute ? "bg-[#0B0A10]" : "",
+            isSermonsRoute ? "bg-white" : "",
           ].join(" ")}
           style={{
             paddingTop: useCompactNavigation ? undefined : "max(var(--app-safe-area-top), 1.5rem)",
@@ -249,12 +249,12 @@ function AppLayoutInner() {
           {!useCompactNavigation ? (
             <div className="mb-4 flex min-w-0 items-center justify-between gap-3">
               <div className="min-w-0">
-                <p className={`truncate text-sm font-semibold ${isSermonsRoute ? "text-[#F8F7FF]" : "text-zinc-950"}`}>
+                <p className="truncate text-sm font-semibold text-zinc-950">
                   {selectedChurch?.name || "Configura tu iglesia"}
                 </p>
-                <p className={`text-xs ${isSermonsRoute ? "text-[#A9A4B7]" : "text-muted-foreground"}`}>Tchurch</p>
+                <p className="text-xs text-muted-foreground">Tchurch</p>
               </div>
-              <div className={isSermonsRoute ? "[&_button]:border-[#302A3B] [&_button]:bg-[#15121D] [&_button]:shadow-none [&_svg]:text-[#F8F7FF]" : ""}>
+              <div>
                 <NotificationBell />
               </div>
             </div>

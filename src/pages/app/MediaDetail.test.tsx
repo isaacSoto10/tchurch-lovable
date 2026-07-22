@@ -106,7 +106,9 @@ describe("MediaDetail", () => {
 
     renderDetail();
 
-    expect(await screen.findByRole("heading", { name: "Esperanza viva" })).toBeInTheDocument();
+    const title = await screen.findByRole("heading", { name: "Esperanza viva" });
+    expect(title).toBeInTheDocument();
+    expect(title.closest("aside")).toHaveClass("border-zinc-200", "bg-white");
     expect(screen.getByTitle("Esperanza viva")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Notas" })).toBeInTheDocument();
     expect(screen.getByText("Notas del mensaje para acompañar la enseñanza.")).toBeInTheDocument();

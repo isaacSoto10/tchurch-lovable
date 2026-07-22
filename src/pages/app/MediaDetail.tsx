@@ -34,11 +34,11 @@ function DetailSkeleton() {
   return (
     <div className={SERMON_CANVAS_CLASS} role="status" aria-label="Cargando sermón">
       <div className="mx-auto max-w-6xl animate-pulse space-y-5">
-        <div className="h-12 rounded-xl border border-white/10 bg-[#15121D]" />
-        <div className="h-11 w-36 rounded-xl bg-[#1C1826]" />
+        <div className="h-12 rounded-xl border border-zinc-200 bg-[#F8F7FF]" />
+        <div className="h-11 w-36 rounded-xl bg-[#F8F7FF]" />
         <div className="grid gap-5 md:grid-cols-[minmax(0,1.5fr)_minmax(18rem,0.85fr)]">
-          <div className="aspect-video rounded-2xl bg-[#15121D]" />
-          <div className="min-h-72 rounded-2xl bg-[#15121D]" />
+          <div className="aspect-video rounded-2xl border border-zinc-200 bg-[#F8F7FF]" />
+          <div className="min-h-72 rounded-2xl border border-zinc-200 bg-white" />
         </div>
       </div>
     </div>
@@ -52,17 +52,17 @@ function DetailFact({ label, value, icon: Icon, href }: {
   href?: string | null;
 }) {
   const content = href ? (
-    <Link to={href} className="inline-flex min-h-11 items-center text-sm font-semibold text-[#C5C9FF] hover:text-white hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#818CF8]">
+    <Link to={href} className="inline-flex min-h-11 items-center text-sm font-semibold text-[#5B4FD8] hover:text-[#493EC0] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5B4FD8]">
       {value}
     </Link>
   ) : (
-    <p className="mt-1 text-sm font-semibold text-[#F8F7FF]">{value}</p>
+    <p className="mt-1 text-sm font-semibold text-zinc-950">{value}</p>
   );
 
   return (
-    <div className="border-t border-white/10 py-3 first:border-t-0 first:pt-0">
-      <p className="flex items-center gap-2 text-[0.68rem] font-bold uppercase tracking-[0.14em] text-[#8F899B]">
-        <Icon className="h-3.5 w-3.5 text-[#818CF8]" />
+    <div className="border-t border-zinc-200 py-3 first:border-t-0 first:pt-0">
+      <p className="flex items-center gap-2 text-[0.68rem] font-bold uppercase tracking-[0.14em] text-zinc-600">
+        <Icon className="h-3.5 w-3.5 text-[#5B4FD8]" />
         {label}
       </p>
       {content}
@@ -175,14 +175,14 @@ export default function MediaDetail() {
       <div className={SERMON_CANVAS_CLASS}>
         <div className="mx-auto max-w-6xl space-y-5">
           <SectionNav section="community" label="Comunidad" />
-          <Button type="button" onClick={returnToLibrary} variant="ghost" size="sm" className="min-h-11 w-fit px-0 text-[#C5C9FF] hover:bg-transparent hover:text-white">
+          <Button type="button" onClick={returnToLibrary} variant="ghost" size="sm" className="min-h-11 w-fit px-0 text-[#5B4FD8] hover:bg-transparent hover:text-[#493EC0]">
             <ArrowLeft className="h-4 w-4" />Sermones
           </Button>
-          <div className="rounded-3xl border border-dashed border-white/15 bg-[#15121D] px-4 py-14 text-center">
-            <Radio className="mx-auto h-10 w-10 text-[#818CF8]" />
-            <p className="mt-4 text-lg font-semibold text-[#F8F7FF]">No se encontró este sermón</p>
-            <p className="mt-1 text-sm text-[#A9A4B7]">Puede que ya no esté disponible o que el enlace haya cambiado.</p>
-            <Button onClick={loadDetail} variant="outline" className="mt-5 min-h-11 border-white/10 bg-[#1C1826] text-[#F8F7FF] hover:bg-[#272132]">Intentar de nuevo</Button>
+          <div className="rounded-3xl border border-dashed border-zinc-300 bg-white px-4 py-14 text-center">
+            <Radio className="mx-auto h-10 w-10 text-[#5B4FD8]" />
+            <p className="mt-4 text-lg font-semibold text-zinc-950">No se encontró este sermón</p>
+            <p className="mt-1 text-sm text-zinc-600">Puede que ya no esté disponible o que el enlace haya cambiado.</p>
+            <Button onClick={loadDetail} variant="outline" className="mt-5 min-h-11 border-zinc-200 bg-white text-zinc-950 hover:bg-[#F8F7FF] hover:text-zinc-950">Intentar de nuevo</Button>
           </div>
         </div>
       </div>
@@ -197,7 +197,7 @@ export default function MediaDetail() {
         <SectionNav section="community" label="Comunidad" />
 
         <div className="flex min-h-11 items-center justify-between gap-3">
-          <Button type="button" onClick={returnToLibrary} variant="ghost" size="sm" className="min-h-11 w-fit px-0 text-[#C5C9FF] hover:bg-transparent hover:text-white">
+          <Button type="button" onClick={returnToLibrary} variant="ghost" size="sm" className="min-h-11 w-fit px-0 text-[#5B4FD8] hover:bg-transparent hover:text-[#493EC0]">
             <ArrowLeft className="h-4 w-4" />Sermones
           </Button>
           <MediaExternalLink item={item} label="Abrir fuente" touchTarget />
@@ -208,14 +208,14 @@ export default function MediaDetail() {
             <MediaEmbed item={item} appearance="sermons" />
           </div>
 
-          <aside className="min-w-0 rounded-3xl border border-white/10 bg-[#15121D] p-5 sm:p-6">
+          <aside className="min-w-0 rounded-3xl border border-zinc-200 bg-white p-5 shadow-[0_14px_36px_rgba(24,24,27,0.06)] sm:p-6">
             <div className="flex flex-wrap items-center gap-2">
               {item.isLive ? <Badge className="bg-red-600 text-white hover:bg-red-600">En vivo</Badge> : null}
-              {item.isScheduled ? <Badge className="border border-[#818CF8]/50 bg-[#1C1826] text-[#C5C9FF] hover:bg-[#1C1826]">Próximo</Badge> : null}
+              {item.isScheduled ? <Badge className="border border-[#5B4FD8]/35 bg-[#F8F7FF] text-[#5B4FD8] hover:bg-[#F8F7FF]">Próximo</Badge> : null}
               <MediaProviderBadge item={item} appearance="sermons" />
             </div>
-            <h1 className="mt-4 break-words text-2xl font-semibold leading-tight tracking-[-0.025em] text-[#F8F7FF] sm:text-3xl">{title}</h1>
-            {item.serviceTitle && item.serviceTitle !== title ? <p className="mt-2 text-sm text-[#A9A4B7]">{item.serviceTitle}</p> : null}
+            <h1 className="mt-4 break-words text-2xl font-semibold leading-tight tracking-[-0.025em] text-zinc-950 sm:text-3xl">{title}</h1>
+            {item.serviceTitle && item.serviceTitle !== title ? <p className="mt-2 text-sm text-zinc-600">{item.serviceTitle}</p> : null}
 
             <div className="mt-6">
               <DetailFact label="Fecha" value={formatMediaDate(item.date)} icon={CalendarDays} />
@@ -225,9 +225,9 @@ export default function MediaDetail() {
             </div>
 
             {item.description ? (
-              <section className="mt-3 border-t border-white/10 pt-5" aria-labelledby="sermon-notes-title">
-                <h2 id="sermon-notes-title" className="text-[0.68rem] font-bold uppercase tracking-[0.14em] text-[#818CF8]">Notas</h2>
-                <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-[#C2BECC]">{item.description}</p>
+              <section className="mt-3 border-t border-zinc-200 pt-5" aria-labelledby="sermon-notes-title">
+                <h2 id="sermon-notes-title" className="text-[0.68rem] font-bold uppercase tracking-[0.14em] text-[#5B4FD8]">Notas</h2>
+                <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-zinc-700">{item.description}</p>
               </section>
             ) : null}
           </aside>
@@ -236,12 +236,12 @@ export default function MediaDetail() {
         {relatedItems.length > 0 ? (
           <section aria-labelledby="related-sermons">
             <div className="mb-3">
-              <h2 id="related-sermons" className="text-xl font-semibold tracking-[-0.02em] text-[#F8F7FF]">
+              <h2 id="related-sermons" className="text-xl font-semibold tracking-[-0.02em] text-zinc-950">
                 {item.series && relatedItems.some((related) => normalizeSeriesKey(related.series) === normalizeSeriesKey(item.series))
                   ? `Más de ${item.series}`
                   : "Mensajes recientes"}
               </h2>
-              <p className="mt-1 text-sm text-[#A9A4B7]">Continúa explorando la biblioteca de tu iglesia.</p>
+              <p className="mt-1 text-sm text-zinc-600">Continúa explorando la biblioteca de tu iglesia.</p>
             </div>
             <div className="sermon-rail -mx-3 flex snap-x snap-mandatory gap-3 overflow-x-auto px-3 pb-2 sm:-mx-4 sm:px-4 md:-mx-1 md:px-1">
               {relatedItems.map((related) => (

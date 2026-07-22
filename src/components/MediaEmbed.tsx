@@ -122,7 +122,7 @@ export function MediaProviderBadge({ item, appearance = "default" }: { item: Ser
       className={cn(
         "gap-1.5",
         appearance === "sermons"
-          ? "border-white/10 bg-[#1C1826] text-[#C5C9FF]"
+          ? "border-zinc-200 bg-[#F8F7FF] text-[#5B4FD8]"
           : "bg-white/85 text-zinc-700",
       )}
     >
@@ -139,7 +139,7 @@ export function MediaEmbed({ item, compact = false, appearance = "default" }: {
 }) {
   const embed = getNativeAwareMediaEmbed(item);
   const frameClassName = appearance === "sermons"
-    ? "overflow-hidden rounded-2xl border border-white/10 bg-zinc-950 shadow-[0_20px_60px_rgba(0,0,0,0.28)]"
+    ? "overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-950 shadow-[0_18px_45px_rgba(24,24,27,0.12)]"
     : "overflow-hidden rounded-lg border border-zinc-200 bg-zinc-950 shadow-sm";
 
   if (embed.kind === "iframe" && embed.embedUrl) {
@@ -177,12 +177,12 @@ export function MediaEmbed({ item, compact = false, appearance = "default" }: {
       <div className={cn(
         "p-4",
         appearance === "sermons"
-          ? "rounded-2xl border border-white/10 bg-[#15121D] shadow-[0_20px_60px_rgba(0,0,0,0.2)]"
+          ? "rounded-2xl border border-zinc-200 bg-white shadow-[0_16px_40px_rgba(24,24,27,0.08)]"
           : "rounded-lg border border-zinc-200 bg-white shadow-sm",
       )}>
         <div className={cn(
           "mb-3 flex items-center gap-2 text-sm font-semibold",
-          appearance === "sermons" ? "text-[#F8F7FF]" : "text-zinc-700",
+          appearance === "sermons" ? "text-zinc-950" : "text-zinc-700",
         )}>
           <Volume2 className="h-4 w-4 text-primary" />
           {item.title}
@@ -197,7 +197,7 @@ export function MediaEmbed({ item, compact = false, appearance = "default" }: {
       className={cn(
         "p-4",
         appearance === "sermons"
-          ? "rounded-2xl border border-white/10 bg-[#15121D] shadow-[0_20px_60px_rgba(0,0,0,0.2)]"
+          ? "rounded-2xl border border-zinc-200 bg-white shadow-[0_16px_40px_rgba(24,24,27,0.08)]"
           : "rounded-lg border border-zinc-200 bg-white shadow-sm",
         compact ? "min-h-32" : "min-h-48",
       )}
@@ -206,12 +206,12 @@ export function MediaEmbed({ item, compact = false, appearance = "default" }: {
         <div className="min-w-0">
           <div className={cn(
             "mb-3 flex h-11 w-11 items-center justify-center rounded-lg",
-            appearance === "sermons" ? "bg-[#1C1826] text-[#C5C9FF]" : "bg-zinc-100 text-zinc-700",
+            appearance === "sermons" ? "bg-[#F8F7FF] text-[#5B4FD8]" : "bg-zinc-100 text-zinc-700",
           )}>
             <ProviderIcon embed={embed} />
           </div>
-          <p className={cn("truncate text-sm font-black", appearance === "sermons" ? "text-[#F8F7FF]" : "text-zinc-950")}>{item.title}</p>
-          <p className={cn("mt-1 truncate text-xs font-semibold", appearance === "sermons" ? "text-[#A9A4B7]" : "text-zinc-500")}>{embed.providerLabel}</p>
+          <p className="truncate text-sm font-black text-zinc-950">{item.title}</p>
+          <p className={cn("mt-1 truncate text-xs font-semibold", appearance === "sermons" ? "text-zinc-600" : "text-zinc-500")}>{embed.providerLabel}</p>
         </div>
         <OpenLink href={embed.sourceUrl} touchTarget={appearance === "sermons"} />
       </div>

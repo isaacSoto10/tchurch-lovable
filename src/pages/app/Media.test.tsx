@@ -122,9 +122,11 @@ describe("Media", () => {
 
     const hero = await screen.findByRole("region", { name: "Sermón destacado" });
     expect(within(hero).getByRole("heading", { name: "En vivo ahora" })).toBeInTheDocument();
+    expect(hero).toHaveClass("border-zinc-200", "bg-white");
     expect(screen.getByRole("heading", { name: "En vivo y próximamente" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Mensajes recientes" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Series" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Vida en Romanos/ })).toHaveClass("border-zinc-200", "bg-white");
 
     fireEvent.change(screen.getByRole("textbox", { name: "Buscar sermones" }), { target: { value: "romanos" } });
 

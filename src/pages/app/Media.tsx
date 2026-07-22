@@ -42,17 +42,17 @@ function MediaSkeleton() {
   return (
     <div className={SERMON_CANVAS_CLASS} role="status" aria-label="Cargando sermones">
       <div className="mx-auto max-w-6xl space-y-5">
-        <div className="h-12 animate-pulse rounded-xl border border-white/10 bg-[#15121D]" />
+        <div className="h-12 animate-pulse rounded-xl border border-zinc-200 bg-[#F8F7FF]" />
         <div className="flex gap-3">
-          <div className="h-11 flex-1 animate-pulse rounded-xl bg-[#1C1826]" />
-          <div className="h-11 w-11 animate-pulse rounded-xl bg-[#1C1826]" />
+          <div className="h-11 flex-1 animate-pulse rounded-xl bg-[#F8F7FF]" />
+          <div className="h-11 w-11 animate-pulse rounded-xl bg-[#F8F7FF]" />
         </div>
-        <div className="grid overflow-hidden rounded-3xl border border-white/10 bg-[#15121D] md:grid-cols-[minmax(0,1.45fr)_minmax(18rem,0.8fr)]">
-          <div className="aspect-video animate-pulse bg-[#1C1826]" />
-          <div className="min-h-64 animate-pulse bg-[#15121D]" />
+        <div className="grid overflow-hidden rounded-3xl border border-zinc-200 bg-white md:grid-cols-[minmax(0,1.45fr)_minmax(18rem,0.8fr)]">
+          <div className="aspect-video animate-pulse bg-[#F8F7FF]" />
+          <div className="min-h-64 animate-pulse bg-white" />
         </div>
         <div className="flex gap-3 overflow-hidden">
-          {[0, 1, 2].map((item) => <div key={item} className="aspect-[4/3] w-[72vw] max-w-[20rem] shrink-0 animate-pulse rounded-2xl bg-[#15121D]" />)}
+          {[0, 1, 2].map((item) => <div key={item} className="aspect-[4/3] w-[72vw] max-w-[20rem] shrink-0 animate-pulse rounded-2xl border border-zinc-200 bg-white" />)}
         </div>
       </div>
     </div>
@@ -66,32 +66,32 @@ function FeaturedSermon({ item }: { item: ServiceMediaEntry }) {
   return (
     <section
       aria-label="Sermón destacado"
-      className="grid overflow-hidden rounded-3xl border border-white/10 bg-[#15121D] shadow-[0_24px_70px_rgba(0,0,0,0.28)] md:grid-cols-[minmax(0,1.45fr)_minmax(18rem,0.8fr)]"
+      className="grid overflow-hidden rounded-3xl border border-zinc-200 bg-white shadow-[0_20px_55px_rgba(24,24,27,0.08)] md:grid-cols-[minmax(0,1.45fr)_minmax(18rem,0.8fr)]"
     >
       <SermonArtwork item={item} title={title} eyebrow={item.series} priority className="md:aspect-auto md:min-h-[21rem]" />
       <div className="flex min-w-0 flex-col justify-center p-5 sm:p-6 md:p-8">
         <div className="flex flex-wrap items-center gap-2">
           <span className={item.isLive
             ? "rounded-full bg-red-600 px-3 py-1 text-[0.68rem] font-bold uppercase tracking-[0.14em] text-white"
-            : "rounded-full border border-[#818CF8]/50 bg-[#1C1826] px-3 py-1 text-[0.68rem] font-bold uppercase tracking-[0.14em] text-[#C5C9FF]"}
+            : "rounded-full border border-[#5B4FD8]/35 bg-[#F8F7FF] px-3 py-1 text-[0.68rem] font-bold uppercase tracking-[0.14em] text-[#5B4FD8]"}
           >
             {status}
           </span>
-          {item.series ? <span className="truncate text-xs font-semibold text-[#A9A4B7]">{item.series}</span> : null}
+          {item.series ? <span className="truncate text-xs font-semibold text-zinc-600">{item.series}</span> : null}
         </div>
-        <h2 className="mt-4 break-words text-2xl font-semibold leading-tight tracking-[-0.025em] text-[#F8F7FF] sm:text-3xl">
+        <h2 className="mt-4 break-words text-2xl font-semibold leading-tight tracking-[-0.025em] text-zinc-950 sm:text-3xl">
           {title}
         </h2>
         {item.serviceTitle && item.serviceTitle !== title ? (
-          <p className="mt-2 line-clamp-1 text-sm text-[#A9A4B7]">{item.serviceTitle}</p>
+          <p className="mt-2 line-clamp-1 text-sm text-zinc-600">{item.serviceTitle}</p>
         ) : null}
-        <p className="mt-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-[#C2BECC]">
-          <CalendarDays className="h-4 w-4 text-[#818CF8]" />
+        <p className="mt-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-zinc-700">
+          <CalendarDays className="h-4 w-4 text-[#5B4FD8]" />
           <span>{formatMediaDate(item.date)}</span>
           {item.speaker ? <><span aria-hidden="true">·</span><span>{item.speaker}</span></> : null}
           {item.scripture ? <><span aria-hidden="true">·</span><span>{item.scripture}</span></> : null}
         </p>
-        {item.description ? <p className="mt-4 line-clamp-3 text-sm leading-6 text-[#A9A4B7]">{item.description}</p> : null}
+        {item.description ? <p className="mt-4 line-clamp-3 text-sm leading-6 text-zinc-600">{item.description}</p> : null}
         <Button asChild className="mt-6 min-h-11 w-full rounded-xl bg-[#5B4FD8] text-white hover:bg-[#685DE0] sm:w-fit">
           <Link to={`/app/media/${item.id}`}>
             <Play className="h-4 w-4 fill-current" />
@@ -107,8 +107,8 @@ function RailHeader({ title, description, id }: { title: string; description?: s
   return (
     <div className="mb-3 flex items-end justify-between gap-4">
       <div>
-        <h2 id={id} className="text-xl font-semibold tracking-[-0.02em] text-[#F8F7FF]">{title}</h2>
-        {description ? <p className="mt-1 text-sm text-[#A9A4B7]">{description}</p> : null}
+        <h2 id={id} className="text-xl font-semibold tracking-[-0.02em] text-zinc-950">{title}</h2>
+        {description ? <p className="mt-1 text-sm text-zinc-600">{description}</p> : null}
       </div>
     </div>
   );
@@ -137,19 +137,19 @@ function SearchResults({ query, items }: { query: string; items: ServiceMediaEnt
   return (
     <section aria-labelledby="sermon-search-results" className="space-y-4">
       <div>
-        <p className="text-[0.68rem] font-bold uppercase tracking-[0.18em] text-[#818CF8]">Búsqueda</p>
-        <h2 id="sermon-search-results" className="mt-1 text-2xl font-semibold text-[#F8F7FF]">Resultados para “{query.trim()}”</h2>
-        <p className="mt-1 text-sm text-[#A9A4B7]">{items.length} resultado{items.length === 1 ? "" : "s"}</p>
+        <p className="text-[0.68rem] font-bold uppercase tracking-[0.18em] text-[#5B4FD8]">Búsqueda</p>
+        <h2 id="sermon-search-results" className="mt-1 text-2xl font-semibold text-zinc-950">Resultados para “{query.trim()}”</h2>
+        <p className="mt-1 text-sm text-zinc-600">{items.length} resultado{items.length === 1 ? "" : "s"}</p>
       </div>
       {items.length > 0 ? (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {items.map((item) => <SermonCard key={item.id} item={item} />)}
         </div>
       ) : (
-        <div className="rounded-2xl border border-dashed border-white/15 bg-[#15121D] px-5 py-12 text-center">
-          <Search className="mx-auto h-8 w-8 text-[#818CF8]" />
-          <p className="mt-3 font-semibold text-[#F8F7FF]">No encontramos coincidencias</p>
-          <p className="mt-1 text-sm text-[#A9A4B7]">Prueba con otro título, serie, predicador o pasaje.</p>
+        <div className="rounded-2xl border border-dashed border-zinc-300 bg-white px-5 py-12 text-center">
+          <Search className="mx-auto h-8 w-8 text-[#5B4FD8]" />
+          <p className="mt-3 font-semibold text-zinc-950">No encontramos coincidencias</p>
+          <p className="mt-1 text-sm text-zinc-600">Prueba con otro título, serie, predicador o pasaje.</p>
         </div>
       )}
     </section>
@@ -159,26 +159,26 @@ function SearchResults({ query, items }: { query: string; items: ServiceMediaEnt
 function SeriesView({ series, onBack }: { series: MediaSeriesGroup | null; onBack: () => void }) {
   return (
     <section className="space-y-4" aria-labelledby="selected-series-title">
-      <Button variant="ghost" onClick={onBack} className="min-h-11 w-fit px-0 text-[#C5C9FF] hover:bg-transparent hover:text-white">
+      <Button variant="ghost" onClick={onBack} className="min-h-11 w-fit px-0 text-[#5B4FD8] hover:bg-transparent hover:text-[#493EC0]">
         <ArrowLeft className="h-4 w-4" />
         Todas las series
       </Button>
       {series ? (
         <>
           <div>
-            <p className="text-[0.68rem] font-bold uppercase tracking-[0.18em] text-[#818CF8]">Serie</p>
-            <h2 id="selected-series-title" className="mt-1 text-3xl font-semibold tracking-[-0.025em] text-[#F8F7FF]">{series.label}</h2>
-            <p className="mt-1 text-sm text-[#A9A4B7]">{series.items.length} mensaje{series.items.length === 1 ? "" : "s"}</p>
+            <p className="text-[0.68rem] font-bold uppercase tracking-[0.18em] text-[#5B4FD8]">Serie</p>
+            <h2 id="selected-series-title" className="mt-1 text-3xl font-semibold tracking-[-0.025em] text-zinc-950">{series.label}</h2>
+            <p className="mt-1 text-sm text-zinc-600">{series.items.length} mensaje{series.items.length === 1 ? "" : "s"}</p>
           </div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {series.items.map((item) => <SermonCard key={item.id} item={item} />)}
           </div>
         </>
       ) : (
-        <div className="rounded-2xl border border-dashed border-white/15 bg-[#15121D] px-5 py-12 text-center">
-          <Radio className="mx-auto h-9 w-9 text-[#818CF8]" />
-          <p id="selected-series-title" className="mt-3 font-semibold text-[#F8F7FF]">No encontramos esta serie</p>
-          <p className="mt-1 text-sm text-[#A9A4B7]">Vuelve a la biblioteca para elegir otra.</p>
+        <div className="rounded-2xl border border-dashed border-zinc-300 bg-white px-5 py-12 text-center">
+          <Radio className="mx-auto h-9 w-9 text-[#5B4FD8]" />
+          <p id="selected-series-title" className="mt-3 font-semibold text-zinc-950">No encontramos esta serie</p>
+          <p className="mt-1 text-sm text-zinc-600">Vuelve a la biblioteca para elegir otra.</p>
         </div>
       )}
     </section>
@@ -280,8 +280,8 @@ export default function Media() {
         <header className="space-y-4">
           <div className="flex items-end justify-between gap-4">
             <div className="min-w-0">
-              <p className="text-[0.68rem] font-bold uppercase tracking-[0.2em] text-[#818CF8]">{selectedChurch?.name || "Tu iglesia"}</p>
-              <h1 className="mt-1 text-3xl font-semibold tracking-[-0.03em] text-[#F8F7FF]">Sermones</h1>
+              <p className="text-[0.68rem] font-bold uppercase tracking-[0.2em] text-[#5B4FD8]">{selectedChurch?.name || "Tu iglesia"}</p>
+              <h1 className="mt-1 text-3xl font-semibold tracking-[-0.03em] text-zinc-950">Sermones</h1>
             </div>
             <div className="flex shrink-0 gap-2">
               <Button
@@ -291,7 +291,7 @@ export default function Media() {
                 aria-label="Actualizar sermones"
                 onClick={() => loadPage({ silent: true, preferSnapshot: false })}
                 disabled={refreshing}
-                className="h-11 w-11 rounded-xl border-white/10 bg-[#15121D] text-[#C5C9FF] hover:bg-[#1C1826] hover:text-white"
+                className="h-11 w-11 rounded-xl border-zinc-200 bg-white text-[#5B4FD8] hover:bg-[#F8F7FF] hover:text-[#493EC0]"
               >
                 {refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
               </Button>
@@ -303,7 +303,7 @@ export default function Media() {
                       variant="outline"
                       size="icon"
                       aria-label="Configuración de transmisión"
-                      className="h-11 w-11 rounded-xl border-white/10 bg-[#15121D] text-[#C5C9FF] hover:bg-[#1C1826] hover:text-white"
+                      className="h-11 w-11 rounded-xl border-zinc-200 bg-white text-[#5B4FD8] hover:bg-[#F8F7FF] hover:text-[#493EC0]"
                     >
                       <Settings2 className="h-4 w-4" />
                     </Button>
@@ -322,19 +322,19 @@ export default function Media() {
 
           <label className="relative block">
             <span className="sr-only">Buscar sermones</span>
-            <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#818CF8]" />
+            <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#5B4FD8]" />
             <Input
               value={search}
               onChange={(event) => updateSearch(event.target.value)}
               placeholder="Buscar serie, predicador o pasaje"
-              className="h-11 rounded-xl border-white/10 bg-[#15121D] pl-10 pr-11 text-base text-[#F8F7FF] placeholder:text-[#8F899B] focus-visible:ring-[#818CF8] sm:text-sm"
+              className="h-11 rounded-xl border-zinc-200 bg-white pl-10 pr-11 text-base text-zinc-950 placeholder:text-zinc-500 focus-visible:ring-[#5B4FD8] sm:text-sm"
             />
             {hasSearch ? (
               <button
                 type="button"
                 onClick={() => updateSearch("")}
                 aria-label="Limpiar búsqueda"
-                className="absolute right-0 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-xl text-[#A9A4B7] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#818CF8]"
+                className="absolute right-0 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-xl text-zinc-500 hover:text-zinc-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5B4FD8]"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -343,10 +343,10 @@ export default function Media() {
         </header>
 
         {error ? (
-          <div className="rounded-2xl border border-red-500/30 bg-[#211116] p-4 text-sm text-red-100" role="alert">
+          <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-950" role="alert">
             <p className="font-semibold">No pudimos cargar los sermones.</p>
-            <p className="mt-1 text-red-200/80">{error}</p>
-            <Button size="sm" variant="outline" className="mt-3 min-h-11 border-red-300/20 bg-transparent text-red-100 hover:bg-red-500/10" onClick={() => loadPage({ preferSnapshot: false })}>
+            <p className="mt-1 text-red-800">{error}</p>
+            <Button size="sm" variant="outline" className="mt-3 min-h-11 border-red-300 bg-white text-red-800 hover:bg-red-100 hover:text-red-900" onClick={() => loadPage({ preferSnapshot: false })}>
               Reintentar
             </Button>
           </div>
@@ -357,10 +357,10 @@ export default function Media() {
         ) : selectedSeriesKey ? (
           <SeriesView series={selectedSeries} onBack={() => selectSeries(null)} />
         ) : allItems.length === 0 ? (
-          <div className="rounded-3xl border border-dashed border-white/15 bg-[#15121D] px-5 py-14 text-center">
-            <Radio className="mx-auto h-10 w-10 text-[#818CF8]" />
-            <p className="mt-4 text-lg font-semibold text-[#F8F7FF]">Aún no hay sermones</p>
-            <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-[#A9A4B7]">Los mensajes, series y transmisiones aparecerán aquí cuando estén disponibles.</p>
+          <div className="rounded-3xl border border-dashed border-zinc-300 bg-white px-5 py-14 text-center">
+            <Radio className="mx-auto h-10 w-10 text-[#5B4FD8]" />
+            <p className="mt-4 text-lg font-semibold text-zinc-950">Aún no hay sermones</p>
+            <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-zinc-600">Los mensajes, series y transmisiones aparecerán aquí cuando estén disponibles.</p>
           </div>
         ) : (
           <>
