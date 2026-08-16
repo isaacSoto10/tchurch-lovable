@@ -8,8 +8,9 @@ import {
   headlessClerk,
   isStandardBrowserRuntime,
 } from "@/lib/clerkClient";
+import { isNativeMobileAuth } from "@/lib/mobileAuth";
 
-export function ClerkProvider({ children }: { children: React.ReactNode }) {
+function WebClerkProvider({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
 
   if (!CLERK_PUBLISHABLE_KEY) {
@@ -45,4 +46,9 @@ export function ClerkProvider({ children }: { children: React.ReactNode }) {
       {children}
     </BaseClerkProvider>
   );
+}
+
+export function ClerkProvider({ children }: { children: React.ReactNode }) {
+  if (isNativeMobileAuth) return <>{children}</>;
+  return <WebClerkProvider>{children}</WebClerkProvider>;
 }

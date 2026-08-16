@@ -1,5 +1,5 @@
 import { useAuth, useClerk, useUser } from "@clerk/clerk-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   clearMobileAuthSession,
   getMobileAuthSession,
@@ -26,43 +26,59 @@ function mobileUser(session: MobileAuthSession | null) {
   };
 }
 
-export function useAppAuth() {
-  const clerkAuth = useAuth();
-  const clerk = useClerk();
-  const { user: clerkUser } = useUser();
+export function useNativeAppAuth() {
   const [mobileSession, setMobileSession] = useState<MobileAuthSession | null>(() => getMobileAuthSession());
 
   useEffect(() => {
-    if (!isNativeMobileAuth) return undefined;
     return onMobileAuthChange(() => setMobileSession(getMobileAuthSession()));
   }, []);
 
-  return useMemo(() => {
-    if (!isNativeMobileAuth) {
-      return {
-        isLoaded: clerkAuth.isLoaded,
-        isSignedIn: clerkAuth.isSignedIn,
-        userId: clerkAuth.userId,
-        user: clerkUser,
-        getToken: clerkAuth.getToken,
-        signOut: async (redirectUrl = "/") => {
-          await studioLANPrivacyCoordinator.signedOut();
-          await clerk.signOut({ redirectUrl });
-        },
-      };
-    }
-
-    return {
+  const mobileGetToken = useCallback(async () => mobileSession?.token ?? null, [mobileSession?.token]);
+  const mobileSignOut = useCallback(async (redirectUrl = "/") => {
+    await studioLANPrivacyCoordinator.signedOut();
+    clearMobileAuthSession();
+    window.location.hash = redirectUrl === "/" ? "#/" : `#${redirectUrl}`;
+  }, []);
+  const mobileAuth = useMemo(
+    () => ({
       isLoaded: true,
       isSignedIn: Boolean(mobileSession),
       userId: mobileSession?.user.id ?? null,
       user: mobileUser(mobileSession),
-      getToken: async () => mobileSession?.token ?? null,
-      signOut: async (redirectUrl = "/") => {
-        await studioLANPrivacyCoordinator.signedOut();
-        clearMobileAuthSession();
-        window.location.hash = redirectUrl === "/" ? "#/" : `#${redirectUrl}`;
-      },
-    };
-  }, [clerk, clerkAuth.getToken, clerkAuth.isLoaded, clerkAuth.isSignedIn, clerkAuth.userId, clerkUser, mobileSession]);
+      getToken: mobileGetToken,
+      signOut: mobileSignOut,
+    }),
+    [mobileGetToken, mobileSession, mobileSignOut],
+  );
+  return mobileAuth;
 }
+
+export function useClerkAppAuth() {
+  const clerkAuth = useAuth();
+  const clerk = useClerk();
+  const { user: clerkUser } = useUser();
+  const clerkSignOut = useCallback(
+    async (redirectUrl = "/") => {
+      await studioLANPrivacyCoordinator.signedOut();
+      await clerk.signOut({ redirectUrl });
+    },
+    [clerk],
+  );
+  const clerkAppAuth = useMemo(
+    () => ({
+      isLoaded: clerkAuth.isLoaded,
+      isSignedIn: clerkAuth.isSignedIn,
+      userId: clerkAuth.userId,
+      user: clerkUser,
+      getToken: clerkAuth.getToken,
+      signOut: clerkSignOut,
+    }),
+    [clerkAuth.getToken, clerkAuth.isLoaded, clerkAuth.isSignedIn, clerkAuth.userId, clerkSignOut, clerkUser],
+  );
+
+  return clerkAppAuth;
+}
+
+// The runtime is fixed for the lifetime of the bundle. Native sessions do not
+// subscribe to Clerk, so Clerk finishing its lifecycle cannot restart API effects.
+export const useAppAuth = isNativeMobileAuth ? useNativeAppAuth : useClerkAppAuth;

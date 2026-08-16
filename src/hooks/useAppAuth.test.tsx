@@ -4,12 +4,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   clearMobileAuthSession: vi.fn(),
   signedOut: vi.fn(),
+  useAuth: vi.fn(() => ({ isLoaded: true, isSignedIn: false, userId: null, getToken: vi.fn() })),
+  useClerk: vi.fn(() => ({ signOut: vi.fn() })),
+  useUser: vi.fn(() => ({ user: null })),
 }));
 
 vi.mock("@clerk/clerk-react", () => ({
-  useAuth: () => ({ isLoaded: true, isSignedIn: false, userId: null, getToken: vi.fn() }),
-  useClerk: () => ({ signOut: vi.fn() }),
-  useUser: () => ({ user: null }),
+  useAuth: mocks.useAuth,
+  useClerk: mocks.useClerk,
+  useUser: mocks.useUser,
 }));
 
 vi.mock("@/lib/mobileAuth", () => ({
@@ -57,5 +60,19 @@ describe("useAppAuth Studio LAN privacy boundary", () => {
     await expect(result.current.signOut("/login")).rejects.toThrow("tombstone-write-failed");
     expect(mocks.clearMobileAuthSession).not.toHaveBeenCalled();
     expect(window.location.hash).toBe("#/app/settings");
+  });
+
+  it("keeps the native auth facade stable across unrelated Clerk renders", () => {
+    const { result, rerender } = renderHook(() => useAppAuth());
+    const nativeAuth = result.current;
+    const nativeGetToken = result.current.getToken;
+
+    rerender();
+
+    expect(result.current).toBe(nativeAuth);
+    expect(result.current.getToken).toBe(nativeGetToken);
+    expect(mocks.useAuth).not.toHaveBeenCalled();
+    expect(mocks.useClerk).not.toHaveBeenCalled();
+    expect(mocks.useUser).not.toHaveBeenCalled();
   });
 });

@@ -169,7 +169,7 @@ describe("Studio LAN application boundary", () => {
     await waitFor(() => expect(mocks.clerkMounted).toHaveBeenCalled());
     expect(mocks.churchMounted).toHaveBeenCalled();
     expect(mocks.analyticsMounted).toHaveBeenCalled();
-    expect(mocks.routePreload).toHaveBeenCalledOnce();
-    expect(mocks.dataWarmup).toHaveBeenCalledOnce();
+    expect(mocks.routePreload).not.toHaveBeenCalled();
+    expect(mocks.dataWarmup).not.toHaveBeenCalled();
   });
 });

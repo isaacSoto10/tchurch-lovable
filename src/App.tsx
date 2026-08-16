@@ -11,8 +11,7 @@ import { UserActionLoggingProvider } from "@/providers/UserActionLoggingProvider
 import { RequireAuth } from "@/components/RequireAuth";
 import { StudioLANLocalPrivacyBoundary } from "@/components/StudioLANLocalPrivacyBoundary";
 import { useNativeDeepLinks } from "@/hooks/useNativeDeepLinks";
-import { scheduleNativeAppDataWarmup } from "@/lib/nativeAppWarmup";
-import { appRouteLoaders, scheduleNativeAppPreload } from "@/lib/appRoutePreloaders";
+import { appRouteLoaders } from "@/lib/appRoutePreloaders";
 
 const Landing = lazy(appRouteLoaders.Landing);
 const Login = lazy(appRouteLoaders.Login);
@@ -107,17 +106,6 @@ function NativeLaunchGate({ children }: { children: ReactNode }) {
 }
 
 function CloudApplication() {
-  useEffect(() => {
-    if (isNativePlatform) {
-      const cancelRoutePreload = scheduleNativeAppPreload();
-      const cancelDataWarmup = scheduleNativeAppDataWarmup();
-      return () => {
-        cancelRoutePreload?.();
-        cancelDataWarmup?.();
-      };
-    }
-  }, []);
-
   return (
     <ClerkProvider>
       <UserActionLoggingProvider>

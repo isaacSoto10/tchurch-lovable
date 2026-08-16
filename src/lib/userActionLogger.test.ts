@@ -27,6 +27,7 @@ describe("user action logger", () => {
     window.fetch = originalFetch;
     vi.restoreAllMocks();
     resetUserActionLoggerForTests();
+    vi.useRealTimers();
   });
 
   it("redacts sensitive paths, query values, and metadata", () => {
@@ -158,6 +159,47 @@ describe("user action logger", () => {
     await flushUserActionLogs();
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables telemetry for the session after an authorization rejection", async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 403 }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    window.fetch = fetchMock as unknown as typeof fetch;
+    configureUserActionLogger({ tokenProvider: async () => "test-auth-token" });
+
+    logUserAction("navigation.changed", { to: "/app" });
+    await flushUserActionLogs();
+    logUserAction("interaction.click", { label: "Do not retry" }, { immediate: true });
+    await flushUserActionLogs();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("backs off transient failures and opens a circuit after four attempts", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const fetchMock = vi.fn(async () => new Response(null, { status: 503 }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    window.fetch = fetchMock as unknown as typeof fetch;
+    configureUserActionLogger({ tokenProvider: async () => "test-auth-token" });
+
+    logUserAction("navigation.changed", { to: "/app" });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(8_000);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+
+    logUserAction("interaction.click", { label: "Circuit is open" });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
   it("preserves queued telemetry without sending it while Studio LAN is active", async () => {

@@ -18,6 +18,9 @@ import type {
 } from "@/types/events";
 
 const CHURCH_ID_KEY = "tchurch_church_id";
+const DEFAULT_GET_TIMEOUT_MS = 15_000;
+const DEFAULT_MUTATION_TIMEOUT_MS = 30_000;
+const inFlightGetRequests = new Map<string, Promise<unknown>>();
 
 export class ApiError extends Error {
   status: number;
@@ -70,6 +73,19 @@ type ClerkTokenWindow = Window & {
     } | null;
   };
 };
+
+function inFlightRequestKey(
+  path: string,
+  token: string | null,
+  churchId: string | null,
+  headers: Record<string, string>,
+  timeoutMs: number,
+) {
+  const stableHeaders = Object.entries(headers)
+    .filter(([key]) => key.toLowerCase() !== "authorization")
+    .sort(([left], [right]) => left.localeCompare(right));
+  return JSON.stringify([path, token, churchId, stableHeaders, timeoutMs]);
+}
 
 export function getChurchId(): string | null {
   return localStorage.getItem(CHURCH_ID_KEY);
@@ -126,101 +142,120 @@ export async function apiFetch<T = unknown>(
 
   const url = `${API_BASE}${path}`;
   const startedAt = actionNow();
-  const transport = apiRequestSignal(requestOptions.signal, timeoutMs);
-  try {
-    let res: Response;
+  const requestTimeoutMs = timeoutMs ?? (method === "GET" ? DEFAULT_GET_TIMEOUT_MS : DEFAULT_MUTATION_TIMEOUT_MS);
+  const shouldDeduplicate = method === "GET" && !requestOptions.signal;
+  const dedupeKey = shouldDeduplicate
+    ? inFlightRequestKey(path, resolvedToken, churchId, headers, requestTimeoutMs)
+    : null;
+  const existingRequest = dedupeKey ? inFlightGetRequests.get(dedupeKey) : null;
+  if (existingRequest) return existingRequest as Promise<T>;
+
+  const request = (async () => {
+    const transport = apiRequestSignal(requestOptions.signal, requestTimeoutMs);
     try {
-      res = await fetch(url, {
-        ...requestOptions,
-        cache: requestOptions.cache ?? (shouldNoStore ? "no-store" : undefined),
-        headers,
-        signal: transport.signal,
-      });
-    } catch (error) {
+      let res: Response;
+      try {
+        res = await fetch(url, {
+          ...requestOptions,
+          cache: requestOptions.cache ?? (shouldNoStore ? "no-store" : undefined),
+          headers,
+          signal: transport.signal,
+        });
+      } catch (error) {
+        logApiRequestSummary({
+          path,
+          method,
+          status: 0,
+          ok: false,
+          durationMs: actionNow() - startedAt,
+          body: sensitiveBody ? undefined : requestOptions.body,
+          source: "apiFetch",
+        });
+        if (nativeCache?.stale) {
+          console.warn("[apiFetch] Using stale native cache after network failure", { path });
+          return nativeCache.value;
+        }
+        console.error("API request failed before receiving a response", { path, url, error });
+        throw new ApiError(
+          "No se pudo conectar con Tchurch. Revisa tu conexión e intenta otra vez.",
+          0,
+          { error: error instanceof Error ? error.message : String(error), path }
+        );
+      }
+
       logApiRequestSummary({
         path,
         method,
-        status: 0,
-        ok: false,
+        status: res.status,
+        ok: res.ok,
         durationMs: actionNow() - startedAt,
         body: sensitiveBody ? undefined : requestOptions.body,
         source: "apiFetch",
       });
-      if (nativeCache?.stale) {
-        console.warn("[apiFetch] Using stale native cache after network failure", { path });
-        return nativeCache.value;
+
+      if (!res.ok) {
+        const text = await res.text();
+        let parsed: unknown = text;
+
+        try {
+          parsed = text ? JSON.parse(text) : null;
+        } catch {
+          parsed = text;
+        }
+
+        const rawMessage =
+          parsed && typeof parsed === "object"
+            ? String(
+                (parsed as { error?: unknown; message?: unknown }).error ||
+                  (parsed as { message?: unknown }).message ||
+                  `API error ${res.status}`
+              )
+            : String(parsed || `API error ${res.status}`);
+        const message = rawMessage.trim().startsWith("<")
+          ? `No se pudo completar la solicitud (${res.status}). Intenta de nuevo en un momento.`
+          : rawMessage;
+
+        if (nativeCache?.stale && res.status >= 500) {
+          console.warn("[apiFetch] Using stale native cache after server error", { path, status: res.status });
+          return nativeCache.value;
+        }
+
+        throw new ApiError(message, res.status, parsed);
       }
-      console.error("API request failed before receiving a response", { path, url, error });
-      throw new ApiError(
-        "No se pudo conectar con Tchurch. Revisa tu conexión e intenta otra vez.",
-        0,
-        { error: error instanceof Error ? error.message : String(error), path }
-      );
-    }
 
-    logApiRequestSummary({
-      path,
-      method,
-      status: res.status,
-      ok: res.ok,
-      durationMs: actionNow() - startedAt,
-      body: sensitiveBody ? undefined : requestOptions.body,
-      source: "apiFetch",
-    });
+      if (method !== "GET") {
+        if (isNativeMobileAuth) clearNativeApiCache();
+        clearMediaSnapshots(churchId);
+      }
 
-    if (!res.ok) {
+      if (res.status === 204) return undefined as T;
+
       const text = await res.text();
-      let parsed: unknown = text;
+      if (!text) return undefined as T;
 
       try {
-        parsed = text ? JSON.parse(text) : null;
+        const data = JSON.parse(text) as T;
+        if (shouldUseNativeCache) writeNativeApiCache(path, data);
+        return data;
       } catch {
-        parsed = text;
+        const data = text as T;
+        if (shouldUseNativeCache) writeNativeApiCache(path, data);
+        return data;
       }
-
-      const rawMessage =
-        parsed && typeof parsed === "object"
-          ? String(
-              (parsed as { error?: unknown; message?: unknown }).error ||
-                (parsed as { message?: unknown }).message ||
-                `API error ${res.status}`
-            )
-          : String(parsed || `API error ${res.status}`);
-      const message = rawMessage.trim().startsWith("<")
-        ? `No se pudo completar la solicitud (${res.status}). Intenta de nuevo en un momento.`
-        : rawMessage;
-
-      if (nativeCache?.stale && res.status >= 500) {
-        console.warn("[apiFetch] Using stale native cache after server error", { path, status: res.status });
-        return nativeCache.value;
-      }
-
-      throw new ApiError(message, res.status, parsed);
+    } finally {
+      // A fetch resolves when headers arrive, not when its body is consumed. Keep
+      // timeout and parent-abort propagation alive until every body path settles.
+      transport.cleanup();
     }
+  })();
 
-    if (method !== "GET") {
-      if (isNativeMobileAuth) clearNativeApiCache();
-      clearMediaSnapshots(churchId);
-    }
-
-    if (res.status === 204) return undefined as T;
-
-    const text = await res.text();
-    if (!text) return undefined as T;
-
-    try {
-      const data = JSON.parse(text) as T;
-      if (shouldUseNativeCache) writeNativeApiCache(path, data);
-      return data;
-    } catch {
-      const data = text as T;
-      if (shouldUseNativeCache) writeNativeApiCache(path, data);
-      return data;
-    }
+  if (dedupeKey) inFlightGetRequests.set(dedupeKey, request);
+  try {
+    return await request;
   } finally {
-    // A fetch resolves when headers arrive, not when its body is consumed. Keep
-    // timeout and parent-abort propagation alive until every body path settles.
-    transport.cleanup();
+    if (dedupeKey && inFlightGetRequests.get(dedupeKey) === request) {
+      inFlightGetRequests.delete(dedupeKey);
+    }
   }
 }
 
@@ -244,12 +279,13 @@ export async function fetchUserChurchSelection<T = unknown>(
   }
 
   const startedAt = actionNow();
+  const transport = apiRequestSignal(options.signal, DEFAULT_GET_TIMEOUT_MS);
   let res: Response;
   try {
     res = await fetch(url, {
       cache: "no-store",
       headers,
-      signal: options.signal,
+      signal: transport.signal,
     });
   } catch (error) {
     logApiRequestSummary({
@@ -260,27 +296,31 @@ export async function fetchUserChurchSelection<T = unknown>(
       durationMs: actionNow() - startedAt,
       source: "church-selection",
     });
+    transport.cleanup();
     throw error;
   }
+  try {
+    logApiRequestSummary({
+      path,
+      method: "GET",
+      status: res.status,
+      ok: res.ok,
+      durationMs: actionNow() - startedAt,
+      source: "church-selection",
+    });
 
-  logApiRequestSummary({
-    path,
-    method: "GET",
-    status: res.status,
-    ok: res.ok,
-    durationMs: actionNow() - startedAt,
-    source: "church-selection",
-  });
+    if (!res.ok) {
+      throw new Error(`Failed to fetch churches: ${res.status}`);
+    }
 
-  if (!res.ok) {
-    throw new Error(`Failed to fetch churches: ${res.status}`);
+    const data = await res.json();
+    return {
+      churches: Array.isArray(data.churches) ? data.churches : [],
+      selectedChurchId: typeof data.selectedChurchId === "string" ? data.selectedChurchId : null,
+    };
+  } finally {
+    transport.cleanup();
   }
-
-  const data = await res.json();
-  return {
-    churches: Array.isArray(data.churches) ? data.churches : [],
-    selectedChurchId: typeof data.selectedChurchId === "string" ? data.selectedChurchId : null,
-  };
 }
 
 export async function fetchUserChurches<T = unknown>(

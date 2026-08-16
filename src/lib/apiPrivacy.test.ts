@@ -143,6 +143,57 @@ describe("apiFetch private request diagnostics", () => {
     expect(fetch).toHaveBeenCalledOnce();
   });
 
+  it("deduplicates identical GET requests while the first response is in flight", async () => {
+    let releaseResponse: (() => void) | undefined;
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => {
+        releaseResponse = () => resolve(new Response(JSON.stringify({ value: "shared" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }));
+      }))
+      .mockResolvedValue(new Response(JSON.stringify({ value: "fresh" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const first = apiFetch<{ value: string }>("/shared-dashboard-data", {}, "test-token");
+    const second = apiFetch<{ value: string }>("/shared-dashboard-data", {}, "test-token");
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    releaseResponse?.();
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      { value: "shared" },
+      { value: "shared" },
+    ]);
+
+    await apiFetch("/shared-dashboard-data", {}, "test-token");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("applies a bounded default timeout to GET requests", async () => {
+    vi.useFakeTimers();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    let transportSignal: AbortSignal | null = null;
+    vi.stubGlobal("fetch", vi.fn((_url: string, request: RequestInit = {}) => {
+      transportSignal = request.signal as AbortSignal;
+      return new Promise<Response>((_resolve, reject) => {
+        transportSignal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+      });
+    }));
+
+    const request = apiFetch("/slow-dashboard-data", {}, "test-token");
+    const rejection = expect(request).rejects.toMatchObject({ status: 0 });
+    await vi.advanceTimersByTimeAsync(14_999);
+    expect(transportSignal?.aborted).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await rejection;
+    expect(transportSignal?.aborted).toBe(true);
+    consoleError.mockRestore();
+  });
+
   it("marks proposal decisions and direct song/arrangement lyrics writes as sensitive", () => {
     const proposalSource = readFileSync(`${process.cwd()}/src/lib/songLyricsProposals.ts`, "utf8");
     const songDetailSource = readFileSync(`${process.cwd()}/src/pages/app/SongDetail.tsx`, "utf8");

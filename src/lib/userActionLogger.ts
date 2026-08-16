@@ -5,7 +5,11 @@ const SESSION_STORAGE_KEY = "tchurch_action_log_session_id";
 const CHURCH_ID_STORAGE_KEY = "tchurch_church_id";
 const MAX_QUEUE_SIZE = 60;
 const MAX_BATCH_SIZE = 20;
-const FLUSH_DELAY_MS = 800;
+const FLUSH_DELAY_MS = 5_000;
+const LOG_REQUEST_TIMEOUT_MS = 8_000;
+const MAX_TRANSIENT_ATTEMPTS = 4;
+const RETRY_BASE_DELAY_MS = 2_000;
+const RETRY_MAX_DELAY_MS = 30_000;
 const MAX_METADATA_DEPTH = 4;
 const MAX_METADATA_KEYS = 24;
 const MAX_STRING_LENGTH = 120;
@@ -110,6 +114,7 @@ let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let flushing = false;
 let transportSuspended = false;
 let activeFlushController: AbortController | null = null;
+let consecutiveTransientFailures = 0;
 
 function getActionLogEndpoint() {
   return configuredEndpoint || import.meta.env.VITE_USER_ACTION_LOG_ENDPOINT || DEFAULT_LOG_ENDPOINT;
@@ -307,13 +312,18 @@ export function sanitizeActionMetadata(metadata: UserActionMetadata = {}) {
   return sanitizeMetadataValue(metadata, "", 0) as Record<string, SanitizedMetadataValue>;
 }
 
-function scheduleFlush() {
+function retryDelayMs(attempt: number) {
+  const exponentialDelay = Math.min(RETRY_MAX_DELAY_MS, RETRY_BASE_DELAY_MS * 2 ** Math.max(0, attempt - 1));
+  return exponentialDelay + Math.floor(Math.random() * 500);
+}
+
+function scheduleFlush(delayMs = FLUSH_DELAY_MS) {
   if (transportDisabled || transportSuspended || queue.length === 0 || flushTimer) return;
 
   flushTimer = setTimeout(() => {
     flushTimer = null;
     void flushUserActionLogs();
-  }, FLUSH_DELAY_MS);
+  }, delayMs);
 }
 
 export function configureUserActionLogger(config: LoggerConfig) {
@@ -348,6 +358,7 @@ export function resetUserActionLoggerForTests() {
   flushTimer = null;
   flushing = false;
   transportSuspended = false;
+  consecutiveTransientFailures = 0;
 }
 
 export function logUserAction(type: string, metadata: UserActionMetadata = {}, options: { immediate?: boolean } = {}) {
@@ -385,20 +396,34 @@ export async function flushUserActionLogs() {
 
   flushing = true;
   const batch = queue.splice(0, MAX_BATCH_SIZE);
-  let shouldRetrySoon = true;
+  let nextFlushDelayMs: number | null = FLUSH_DELAY_MS;
   let flushController: AbortController | null = null;
+  let flushTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  const preserveForTransientRetry = () => {
+    consecutiveTransientFailures += 1;
+    if (consecutiveTransientFailures >= MAX_TRANSIENT_ATTEMPTS) {
+      // Telemetry must never compete indefinitely with product traffic.
+      transportDisabled = true;
+      queue = [];
+      nextFlushDelayMs = null;
+      return;
+    }
+    queue = [...batch, ...queue].slice(-MAX_QUEUE_SIZE);
+    nextFlushDelayMs = retryDelayMs(consecutiveTransientFailures);
+  };
 
   try {
     const token = await tokenProvider?.();
     if (!token) {
       queue = [...batch, ...queue].slice(-MAX_QUEUE_SIZE);
-      shouldRetrySoon = false;
+      nextFlushDelayMs = null;
       return;
     }
 
     if (transportSuspended) {
       queue = [...batch, ...queue].slice(-MAX_QUEUE_SIZE);
-      shouldRetrySoon = false;
+      nextFlushDelayMs = null;
       return;
     }
 
@@ -413,6 +438,7 @@ export async function flushUserActionLogs() {
     const body = JSON.stringify({ events: batch });
     flushController = new AbortController();
     activeFlushController = flushController;
+    flushTimeout = setTimeout(() => flushController?.abort(), LOG_REQUEST_TIMEOUT_MS);
     const response = await fetch(getActionLogEndpoint(), {
       method: "POST",
       headers,
@@ -421,23 +447,43 @@ export async function flushUserActionLogs() {
       signal: flushController.signal,
     });
 
-    if (response.status === 404 || response.status === 405 || response.status === 501) {
+    if (
+      response.status === 401 ||
+      response.status === 403 ||
+      response.status === 404 ||
+      response.status === 405 ||
+      response.status === 501
+    ) {
       transportDisabled = true;
       queue = [];
+      nextFlushDelayMs = null;
       return;
     }
 
     if (!response.ok) {
-      queue = [...batch, ...queue].slice(-MAX_QUEUE_SIZE);
-      shouldRetrySoon = response.status !== 401 && response.status !== 403;
+      if (response.status === 429 || response.status >= 500) {
+        preserveForTransientRetry();
+      } else {
+        consecutiveTransientFailures = 0;
+      }
+      return;
     }
+
+    consecutiveTransientFailures = 0;
   } catch {
-    queue = [...batch, ...queue].slice(-MAX_QUEUE_SIZE);
-    if (transportSuspended) shouldRetrySoon = false;
+    if (transportSuspended) {
+      queue = [...batch, ...queue].slice(-MAX_QUEUE_SIZE);
+      nextFlushDelayMs = null;
+    } else {
+      preserveForTransientRetry();
+    }
   } finally {
+    if (flushTimeout) clearTimeout(flushTimeout);
     if (activeFlushController === flushController) activeFlushController = null;
     flushing = false;
-    if (queue.length > 0 && !transportDisabled && !transportSuspended && shouldRetrySoon) scheduleFlush();
+    if (queue.length > 0 && !transportDisabled && !transportSuspended && nextFlushDelayMs !== null) {
+      scheduleFlush(nextFlushDelayMs);
+    }
   }
 }
 
