@@ -4,9 +4,10 @@ Historical candidate: `4.0.15 (226)` — App Store Connect closed this version;
 build 226 was not accepted for this train.
 
 The candidate was prepared after build 225, but Apple returned errors 90062 and
-90186 because the 4.0.15 version was closed. The release train was moved to
-`4.0.16`; build 226 is retained for that new version. Do not present this file
-as evidence that 4.0.15 accepts build 226.
+90186 because the 4.0.15 version was closed. The attempted build 226 upload
+also failed on inherited framework signatures, and that build number is now
+consumed. The release train moved to `4.0.16` with build 227. Do not present
+this file as evidence that 4.0.15 accepts build 226.
 
 ## Internal release notes
 
