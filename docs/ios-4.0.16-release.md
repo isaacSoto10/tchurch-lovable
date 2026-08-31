@@ -24,8 +24,8 @@ not reuse build 226; this candidate advances to 227.
 - Confirm that the archive's bundle identifier remains
   `app.lovable.e5ddf50ff80d4eb7a86a937f7a9f8a62.tchurch` and that its committed
   Capacitor assets match the generated build.
-- Do not upload or promote until App Store Connect accepts build 227 under
-  version 4.0.16.
+- App Store Connect must accept build 227 under version 4.0.16 before any
+  public App Store or external TestFlight promotion.
 
 ## Verification record
 
@@ -34,3 +34,24 @@ no staging or direct database endpoint is permitted. The 4.0.15/226 candidate
 was not accepted because that App Store version was closed and its upload also
 failed on inherited framework signatures, so this new train must be validated
 independently before TestFlight distribution.
+
+## TestFlight evidence — 2026-08-31
+
+- Source commits `61a23267` (single-backend enforcement) through `fbe81092`
+  (4.0.16 build 227) are on `origin/main`.
+- The signed source archive is
+  `/tmp/tchurch-ios-release/Tchurch-4.0.16-227.xcarchive`.
+- The App Store IPA is
+  `/tmp/tchurch-ios-appstore-227.JpBvqA/Tchurch.ipa`, SHA-256
+  `a036bb1eb18c75e8c999ddb148ea4ad783a6718aa0855da36cc4afe41d48ec0e`.
+- The app plus Capacitor and Cordova frameworks are signed with Apple
+  Distribution. The final app has `get-task-allow=false`, production APNs,
+  `beta-reports-active=true`, arm64 only, and exact metadata `4.0.16 (227)`.
+- The embedded web bundle contains `https://www.tchurchapp.com/api` and no
+  localhost, retired staging-project, or direct InsForge endpoint.
+- Apple's Build Upload API accepted the complete IPA in one chunk, returned no
+  file errors or warnings, and App Store Connect subsequently reported the
+  build as valid.
+- TestFlight reports build 227 available to all existing internal groups
+  (`1/1`). Public App Store submission, external TestFlight beta review, and
+  superseded-build expiration were intentionally not requested.
