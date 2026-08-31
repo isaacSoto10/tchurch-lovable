@@ -1,12 +1,13 @@
 # iOS 4.0.15 release candidate
 
-Release candidate: `4.0.15 (215)`.
+Release candidate: `4.0.15 (226)`.
 
-Build `215` is the next repository build after `origin/main` build `214`.
-It is reserved by both Xcode projects, the package metadata, the release
-consistency check, and the App Store agent workflow. Reconfirm that `215` is
-unused immediately before upload; if it is already occupied, increment every
-release pin together and rerun `npm run check:ios-release`.
+Build `226` is the next repository build after the latest valid App Store
+Connect build `225`. It is reserved by both Xcode projects, the package
+metadata, the release consistency check, and the App Store agent workflow.
+Reconfirm that `226` is unused immediately before upload; if it is already
+occupied, increment every release pin together and rerun
+`npm run check:ios-release`.
 
 ## Internal release notes
 
@@ -25,7 +26,7 @@ release pin together and rerun `npm run check:ios-release`.
   detail, back navigation, bottom tabs, loading/error states, and a scrolled
   state. Record any authentication or simulator automation blocker exactly.
 - Archive and upload through Xcode with App Store Connect provider credentials,
-  then confirm `4.0.15 (215)` reaches a valid processing state before any
+  then confirm `4.0.15 (226)` reaches a valid processing state before any
   TestFlight or App Store promotion.
 
 ## Preparation evidence
