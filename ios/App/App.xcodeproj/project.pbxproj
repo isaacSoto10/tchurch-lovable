@@ -341,7 +341,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 4.0.15;
+				MARKETING_VERSION = 4.0.16;
 				OTHER_SWIFT_FLAGS = "$(inherited) \"-D\" \"COCOAPODS\" \"-DDEBUG\"";
 				PRODUCT_BUNDLE_IDENTIFIER = app.lovable.e5ddf50ff80d4eb7a86a937f7a9f8a62.tchurch;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -365,7 +365,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 4.0.15;
+				MARKETING_VERSION = 4.0.16;
 				PRODUCT_BUNDLE_IDENTIFIER = app.lovable.e5ddf50ff80d4eb7a86a937f7a9f8a62.tchurch;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";

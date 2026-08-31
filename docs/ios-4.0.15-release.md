@@ -1,13 +1,12 @@
-# iOS 4.0.15 release candidate
+# iOS 4.0.15 historical release evidence (closed)
 
-Release candidate: `4.0.15 (226)`.
+Historical candidate: `4.0.15 (226)` — App Store Connect closed this version;
+build 226 was not accepted for this train.
 
-Build `226` is the next repository build after the latest valid App Store
-Connect build `225`. It is reserved by both Xcode projects, the package
-metadata, the release consistency check, and the App Store agent workflow.
-Reconfirm that `226` is unused immediately before upload; if it is already
-occupied, increment every release pin together and rerun
-`npm run check:ios-release`.
+The candidate was prepared after build 225, but Apple returned errors 90062 and
+90186 because the 4.0.15 version was closed. The release train was moved to
+`4.0.16`; build 226 is retained for that new version. Do not present this file
+as evidence that 4.0.15 accepts build 226.
 
 ## Internal release notes
 
@@ -25,9 +24,9 @@ occupied, increment every release pin together and rerun
 - Verify Sermons on an authenticated iPhone and iPad, including the library,
   detail, back navigation, bottom tabs, loading/error states, and a scrolled
   state. Record any authentication or simulator automation blocker exactly.
-- Archive and upload through Xcode with App Store Connect provider credentials,
-  then confirm `4.0.15 (226)` reaches a valid processing state before any
-  TestFlight or App Store promotion.
+- Archive/upload processing for 4.0.15 was not completed because the version
+  was closed. Use [the 4.0.16 candidate](ios-4.0.16-release.md) for the active
+  release train.
 
 ## Preparation evidence
 
