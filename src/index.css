@@ -204,6 +204,41 @@
   @apply rounded-xl border border-border bg-card;
 }
 
+.service-page-hero {
+  @apply rounded-2xl border border-primary/10 bg-primary/[0.045];
+}
+
+.service-toolbar {
+  @apply rounded-2xl border border-zinc-200/80 bg-white/90 p-2;
+}
+
+.service-disclosure {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  visibility: hidden;
+  transition: grid-template-rows 220ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 160ms ease, visibility 220ms;
+}
+
+.service-disclosure > div {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.service-disclosure[data-open="true"] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  visibility: visible;
+}
+
+.service-item-surface {
+  transition: transform 150ms ease, border-color 150ms ease, background-color 150ms ease;
+}
+
+.service-item-surface:active {
+  transform: scale(0.995);
+}
+
 .sermons-canvas {
   --background: 0 0% 100%;
   --foreground: 240 6% 10%;
@@ -284,6 +319,15 @@
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
+  }
+
+  .service-disclosure,
+  .service-item-surface {
+    transition: none;
+  }
+
+  .service-item-surface:active {
+    transform: none;
   }
 
   *,

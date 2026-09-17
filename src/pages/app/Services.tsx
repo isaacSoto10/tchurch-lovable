@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
-import { Plus, Pencil, Trash2, Search, ChevronUp, ChevronDown, Music, FileText, Bell, X, Check, Clock, Users, GripVertical, FileDown, Maximize2, PlayCircle, Loader2, Link2, Radio, Gamepad2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Search, ChevronUp, ChevronDown, Music, FileText, Bell, X, Check, Clock, Users, GripVertical, FileDown, Maximize2, PlayCircle, Loader2, Link2, Radio, Gamepad2, CalendarDays } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
 import { useChurch } from "@/providers/ChurchProvider";
@@ -220,6 +220,30 @@ const TEMPLATE_ITEMS = [
 const MAX_SERVICE_WEEKS = 52;
 const SERVICES_SNAPSHOT_TTL_MS = 2 * 60 * 1000;
 const SERVICES_SNAPSHOT_PREFIX = "tchurch_ios_services_snapshot_v1";
+
+function ServiceListSkeleton() {
+  return (
+    <div className="space-y-3" aria-label="Cargando servicios" role="status">
+      {Array.from({ length: 3 }, (_, index) => (
+        <div key={index} className="app-card overflow-hidden p-4">
+          <div className="flex items-center gap-3">
+            <div className="h-12 w-12 shrink-0 rounded-2xl bg-muted animate-pulse" />
+            <div className="min-w-0 flex-1 space-y-2">
+              <div className="h-4 w-3/5 rounded-full bg-muted animate-pulse" />
+              <div className="h-3 w-2/5 rounded-full bg-muted/80 animate-pulse" />
+            </div>
+            <div className="h-10 w-10 rounded-xl bg-muted/80 animate-pulse" />
+          </div>
+        </div>
+      ))}
+      <span className="sr-only">Cargando la agenda de servicios</span>
+    </div>
+  );
+}
+
+function serviceTypeLabel(type: string) {
+  return SERVICE_TYPES.find((serviceType) => serviceType.value === type)?.label || type;
+}
 
 function normalizeRole(role?: string | null) {
   return String(role || "").toUpperCase();
@@ -1317,11 +1341,11 @@ export default function Services() {
 
   return (
     <div className="mobile-page space-y-5">
-      <div className="app-card-soft p-4">
+      <div className="service-page-hero overflow-hidden p-4 sm:p-5">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="mobile-section-title">Planificación</p>
-            <h1 className="mt-1 text-3xl font-black tracking-tight text-zinc-950">Servicios</h1>
+            <h1 className="mt-1 text-2xl font-black tracking-tight text-zinc-950 sm:text-3xl">Servicios</h1>
             <p className="mt-1 text-sm text-muted-foreground">Organiza el flujo, canciones y equipo de cada reunión.</p>
           </div>
           <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
@@ -1336,22 +1360,36 @@ export default function Services() {
             </Button>}
           </div>
         </div>
+        <p className="mt-3 text-xs font-semibold text-muted-foreground">
+          {services.length} {services.length === 1 ? "servicio" : "servicios"} · {filteredServices.length} en vista
+        </p>
       </div>
 
-      <div className="grid grid-cols-[minmax(0,1fr)_150px] gap-2 sm:grid-cols-[minmax(0,1fr)_180px]">
+      <div className="service-toolbar grid grid-cols-1 gap-2 min-[390px]:grid-cols-[minmax(0,1fr)_150px] sm:grid-cols-[minmax(0,1fr)_180px]">
         <div className="min-w-0">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
+              aria-label="Buscar servicios"
               placeholder="Buscar servicios..."
-              className="h-12 rounded-2xl border-zinc-200 bg-white pl-9 shadow-sm"
+              className="h-11 rounded-xl border-zinc-200 bg-white pl-9 pr-10 shadow-none"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
+            {search && (
+              <button
+                type="button"
+                className="absolute right-1 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-xl text-zinc-600 transition-transform hover:bg-zinc-100 hover:text-zinc-900 active:scale-95 motion-reduce:transition-none motion-reduce:active:scale-100"
+                onClick={() => setSearch("")}
+                aria-label="Limpiar búsqueda"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
           </div>
         </div>
         <Select value={filterType} onValueChange={setFilterType}>
-          <SelectTrigger className="h-12 rounded-2xl border-zinc-200 bg-white shadow-sm">
+          <SelectTrigger aria-label="Filtrar por tipo" className="h-11 rounded-xl border-zinc-200 bg-white shadow-none">
             <SelectValue placeholder="Tipo" />
           </SelectTrigger>
           <SelectContent>
@@ -1801,11 +1839,7 @@ export default function Services() {
       </Dialog>
 
       <div className="grid gap-3">
-        {loading && (
-          <div className="flex items-center justify-center py-8">
-            <div className="animate-spin w-6 h-6 border-2 border-primary border-t-transparent rounded-full" />
-          </div>
-        )}
+        {loading && <ServiceListSkeleton />}
         {!loading && filteredServices.length === 0 && (
           <div className="app-card p-8 text-center">
             <Music className="mx-auto mb-3 h-9 w-9 text-zinc-300" />
@@ -1820,27 +1854,18 @@ export default function Services() {
             return (
               <Card
                 key={svc.id}
-                className="app-card cursor-pointer border-zinc-200/80 transition-all hover:-translate-y-0.5 hover:shadow-md"
-                onClick={() => {
-                  if (suppressNextCardClickRef.current) return;
-                  toggleExpand(svc.id);
-                }}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    toggleExpand(svc.id);
-                  }
-                }}
+                data-expanded={expandedService === svc.id}
+                className="app-card overflow-hidden border-zinc-200/80 transition-[border-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:shadow-md motion-reduce:transition-none"
               >
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className="h-12 w-1.5 rounded-full bg-primary shadow-sm shadow-primary/30" />
-                  <div className="flex-1">
+              <CardContent className="p-2.5 sm:p-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                    <CalendarDays className="h-5 w-5" aria-hidden="true" />
+                  </div>
+                  <div className="min-w-0 flex-1">
                     <button
                       type="button"
-                      className="text-left text-lg font-bold leading-tight text-zinc-950 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 rounded-sm"
+                      className="max-w-full rounded-lg text-left text-base font-bold leading-tight text-zinc-950 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 sm:text-lg"
                       onClick={(event) => {
                         event.stopPropagation();
                         navigate(`/app/services/${svc.id}`);
@@ -1858,32 +1883,40 @@ export default function Services() {
                         : ""}
                       {showServiceTime ? ` · ${serviceTime}` : ""}
                     </p>
+                    <div className="mt-1 flex min-w-0 items-center gap-2 text-[11px] font-medium text-muted-foreground">
+                      <span className="truncate">{serviceTypeLabel(svc.type)}</span>
+                      {serviceItems[svc.id] ? <span className="shrink-0">{serviceItems[svc.id].length} elementos</span> : null}
+                    </div>
                   </div>
-                  <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex shrink-0 items-center gap-1" onClick={(e) => e.stopPropagation()}>
                     <Button
                       variant="ghost"
-                      size="sm"
-                      className="h-10 w-10 rounded-xl text-lg font-bold"
+                      size="icon"
+                      className="h-11 w-11 rounded-xl text-lg font-bold text-muted-foreground hover:bg-primary/10 hover:text-primary"
                       onClick={() => toggleExpand(svc.id)}
+                      aria-expanded={expandedService === svc.id}
+                      aria-controls={`service-preview-${svc.id}`}
                       aria-label={expandedService === svc.id ? "Contraer detalles del servicio" : "Expandir detalles del servicio"}
                     >
-                      {expandedService === svc.id ? "−" : "+"}
+                      {expandedService === svc.id ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
                     </Button>
                     {isAdmin && (
                       <>
                         <Button
                           variant="ghost"
-                          size="sm"
-                          className="h-10 w-10 rounded-xl"
+                          size="icon"
+                          className="hidden h-11 w-11 rounded-xl sm:inline-flex"
                           onClick={() => openEditDialog(svc)}
+                          aria-label={`Editar ${svc.title}`}
                         >
                           <Pencil className="w-4 h-4" />
                         </Button>
                         <Button
                           variant="ghost"
-                          size="sm"
-                          className="h-10 w-10 rounded-xl"
+                          size="icon"
+                          className="hidden h-11 w-11 rounded-xl sm:inline-flex"
                           onClick={() => setDeleteId(svc.id)}
+                          aria-label={`Eliminar ${svc.title}`}
                         >
                           <Trash2 className="w-4 h-4 text-destructive" />
                         </Button>
@@ -1892,8 +1925,14 @@ export default function Services() {
                   </div>
                 </div>
 
-                {expandedService === svc.id && (
-                  <div className="mt-4 space-y-5 border-t border-zinc-100 pt-4 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.42fr)] lg:gap-5 lg:space-y-0" onClick={stopInteractiveTap}>
+                <div
+                  id={`service-preview-${svc.id}`}
+                  className="service-disclosure"
+                  data-open={expandedService === svc.id}
+                  aria-hidden={expandedService !== svc.id}
+                >
+                  <div>
+                  <div className="mt-3 space-y-5 border-t border-zinc-100 pt-4 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.42fr)] lg:gap-5 lg:space-y-0" onClick={stopInteractiveTap}>
                     {svc.notes && (
                       <p className="text-sm text-muted-foreground lg:col-span-2">{svc.notes}</p>
                     )}
@@ -1913,6 +1952,16 @@ export default function Services() {
                           {isPlanner && <Button size="sm" variant="outline" className="h-10 rounded-xl" onClick={() => openAddItemDialog(svc.id)}>
                             <Plus className="w-3 h-3 mr-1" /> Agregar
                           </Button>}
+                          {isAdmin && (
+                            <>
+                              <Button size="sm" variant="ghost" className="h-10 rounded-xl sm:hidden" onClick={() => openEditDialog(svc)}>
+                                <Pencil className="mr-1 h-3 w-3" /> Editar
+                              </Button>
+                              <Button size="sm" variant="ghost" className="h-10 rounded-xl text-destructive sm:hidden" onClick={() => setDeleteId(svc.id)}>
+                                <Trash2 className="mr-1 h-3 w-3" /> Eliminar
+                              </Button>
+                            </>
+                          )}
                         </div>
                       </div>
                       {itemsLoading[svc.id] ? (
@@ -1929,7 +1978,7 @@ export default function Services() {
                             return (
                               <div
                                 key={item.id}
-                                className={`overflow-hidden rounded-2xl border border-zinc-100 bg-zinc-50/80 transition-all ${
+                                className={`service-item-surface overflow-hidden rounded-2xl border border-zinc-100 bg-zinc-50/80 ${
                                   draggingItemId === item.id ? "opacity-50" : ""
                                 } ${dragOverItemId === item.id && draggingItemId !== item.id ? "ring-2 ring-primary ring-offset-2" : ""}`}
                               >
@@ -2047,7 +2096,13 @@ export default function Services() {
                                   </div>
                                 </div>
 
-                                {isSong && expandedSongItems[item.id] && (
+                                {isSong && (
+                                  <div
+                                    className="service-disclosure"
+                                    data-open={Boolean(expandedSongItems[item.id])}
+                                    aria-hidden={!expandedSongItems[item.id]}
+                                  >
+                                    <div>
                                   <div className="space-y-3 border-t border-zinc-100 bg-white p-3" onClick={stopInteractiveTap} onPointerDown={stopInteractiveTap} onTouchStart={stopInteractiveTap}>
                                     <div className="flex flex-wrap items-center gap-2">
                                       {youtubeUrl && (
@@ -2113,7 +2168,7 @@ export default function Services() {
                                           type="button"
                                           variant="ghost"
                                           size="icon"
-                                          className="ml-auto h-9 w-9 rounded-xl text-zinc-400 hover:bg-red-50 hover:text-red-500"
+                                          className="ml-auto h-9 w-9 rounded-xl text-red-700/80 hover:bg-red-50 hover:text-red-800"
                                           aria-label="Eliminar canción del servicio"
                                           onClick={(event) => {
                                             event.stopPropagation();
@@ -2254,6 +2309,8 @@ export default function Services() {
                                       </div>
                                     )}
                                   </div>
+                                  </div>
+                                  </div>
                                 )}
                               </div>
                             );
@@ -2305,7 +2362,8 @@ export default function Services() {
                       </div>
                     </div>
                   </div>
-                )}
+                  </div>
+                </div>
               </CardContent>
               </Card>
             );

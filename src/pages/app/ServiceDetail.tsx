@@ -236,6 +236,36 @@ function getAssignmentStatusLabel(assignment: Assignment) {
   return "Pendiente";
 }
 
+function ServiceDetailSkeleton() {
+  return (
+    <div className="mobile-page space-y-4" aria-label="Cargando servicio" aria-busy="true" role="status">
+      <div className="service-page-hero h-32 animate-pulse p-4">
+        <div className="flex items-center gap-3">
+          <div className="h-11 w-11 rounded-2xl bg-white/70" />
+          <div className="flex-1 space-y-2">
+            <div className="h-5 w-2/3 rounded-full bg-white/70" />
+            <div className="h-3 w-1/3 rounded-full bg-white/50" />
+          </div>
+        </div>
+      </div>
+      <div className="space-y-3">
+        {[0, 1, 2].map((index) => (
+          <div key={index} className="app-card h-24 animate-pulse border-zinc-200/70 bg-white p-4">
+            <div className="flex h-full items-center gap-3">
+              <div className="h-9 w-9 rounded-2xl bg-zinc-100" />
+              <div className="flex-1 space-y-2">
+                <div className="h-4 w-2/3 rounded-full bg-zinc-200" />
+                <div className="h-3 w-1/3 rounded-full bg-zinc-100" />
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+      <span className="sr-only">Cargando los detalles del servicio</span>
+    </div>
+  );
+}
+
 export default function ServiceDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -1233,11 +1263,7 @@ export default function ServiceDetail() {
   }
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
-      </div>
-    );
+    return <ServiceDetailSkeleton />;
   }
 
   if (!service) {
@@ -1257,15 +1283,26 @@ export default function ServiceDetail() {
   return (
     <div className="mobile-page space-y-4">
       {/* Header */}
-      <div className="app-card-soft overflow-hidden">
+      <div className="service-page-hero overflow-hidden">
         <div className="px-4 py-4">
           <div className="flex items-start gap-3">
-            <button onClick={() => navigate("/app/services")} className="-ml-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white shadow-sm hover:bg-zinc-50">
+            <button
+              type="button"
+              onClick={() => navigate("/app/services")}
+              className="-ml-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white shadow-sm transition-transform active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 motion-reduce:transition-none motion-reduce:active:scale-100"
+              aria-label="Volver a servicios"
+            >
               <ArrowLeft className="w-5 h-5 text-zinc-600" />
             </button>
             <div className="flex-1 min-w-0">
               <h1 className="line-clamp-2 text-2xl font-black leading-tight tracking-tight text-zinc-950">{service.title}</h1>
               <p className="mt-0.5 truncate text-sm text-zinc-500">{formatServiceDate(service.date)}</p>
+              <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] font-semibold text-muted-foreground">
+                <Badge variant="secondary" className="rounded-full px-2 py-0.5">{service.type}</Badge>
+                <span>{service.items.length} elementos</span>
+                <span aria-hidden="true">·</span>
+                <span>{service.assignments.length} asignados</span>
+              </div>
             </div>
             {isAdmin && (
               <Button variant="ghost" size="sm" className="h-10 w-10 shrink-0 rounded-2xl text-red-500" onClick={handleDeleteService}>
@@ -1278,14 +1315,14 @@ export default function ServiceDetail() {
               <Button
                 variant="default"
                 size="sm"
-                className="h-10 flex-1 rounded-2xl px-3"
+                className="min-h-11 flex-1 rounded-2xl px-3"
                 onClick={() => navigate(`/app/services/${service.id}/presentation`)}
               >
                 <PlayCircle className="w-4 h-4" />
                 Presentar
               </Button>
             )}
-            <Button variant="outline" size="sm" className="h-10 flex-1 rounded-2xl px-3" onClick={handleGenerateServicePdf}>
+            <Button variant="outline" size="sm" className="min-h-11 flex-1 rounded-2xl px-3" onClick={handleGenerateServicePdf}>
               <FileDown className="w-4 h-4" />
               PDF
             </Button>
@@ -1294,14 +1331,14 @@ export default function ServiceDetail() {
 
         <div className="px-4 pb-3">
           <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as Tab)}>
-            <TabsList className="grid h-11 w-full grid-cols-3 rounded-2xl bg-zinc-100/70 p-1">
-              <TabsTrigger value="flow" className="text-xs flex items-center gap-1">
+            <TabsList className="grid h-12 w-full grid-cols-3 rounded-2xl bg-zinc-100/70 p-1">
+              <TabsTrigger value="flow" className="min-h-10 text-xs flex items-center gap-1">
                 <Music className="w-3 h-3" /> Flujo
               </TabsTrigger>
-              <TabsTrigger value="team" className="text-xs flex items-center gap-1">
+              <TabsTrigger value="team" className="min-h-10 text-xs flex items-center gap-1">
                 <Users className="w-3 h-3" /> Equipo
               </TabsTrigger>
-              <TabsTrigger value="rehearse" className="text-xs flex items-center gap-1">
+              <TabsTrigger value="rehearse" className="min-h-10 text-xs flex items-center gap-1">
                 <PlayCircle className="w-3 h-3" /> Ensayo
               </TabsTrigger>
             </TabsList>
@@ -1312,14 +1349,13 @@ export default function ServiceDetail() {
       <div className="space-y-4">
 
         {/* SERVICE INFO */}
-        <Card className="app-card">
-          <CardContent className="p-4 space-y-2">
-            <div className="flex items-center gap-2 text-xs text-zinc-500">
-              <span className="font-medium">{service.type}</span>
-              {service.notes && <span>· {service.notes}</span>}
-            </div>
-          </CardContent>
-        </Card>
+        {service.notes ? (
+          <Card className="app-card">
+            <CardContent className="p-4">
+              <p className="text-sm leading-5 text-zinc-700">{service.notes}</p>
+            </CardContent>
+          </Card>
+        ) : null}
 
         {/* FLOW TAB */}
         {activeTab === "flow" && (
@@ -1350,7 +1386,7 @@ export default function ServiceDetail() {
                   <Card
                     key={item.id}
                     data-service-item-id={item.id}
-                    className={`app-card overflow-hidden transition-all ${draggingItemId === item.id ? "opacity-50" : ""} ${
+                    className={`app-card service-item-surface overflow-hidden ${draggingItemId === item.id ? "opacity-50" : ""} ${
                       dragOverItemId === item.id && draggingItemId !== item.id ? "ring-2 ring-primary ring-offset-2" : ""
                     }`}
                     onClick={() => {
@@ -1457,7 +1493,7 @@ export default function ServiceDetail() {
                                 {isPlanner && (
                                   <button
                                     onClick={(event) => { event.stopPropagation(); handleDeleteItem(item.id); }}
-                                    className="ml-auto rounded-lg p-1.5 text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-500 sm:p-2"
+                                    className="ml-auto rounded-lg p-1.5 text-red-700/80 transition-colors hover:bg-red-50 hover:text-red-800 sm:p-2"
                                     aria-label="Eliminar elemento"
                                   >
                                     <Trash2 className="w-4 h-4" />
@@ -1686,13 +1722,19 @@ export default function ServiceDetail() {
                         </div>
                       )}
 
-                      {isSongItemType(item.type) && item.song && expandedSongItems[item.id] && (
+                      {isSongItemType(item.type) && item.song && (
                         <div
-                          className="space-y-3 border-t border-zinc-100 bg-gradient-to-br from-white to-zinc-50/80 p-3"
-                          onClick={stopInteractiveTap}
-                          onPointerDown={stopInteractiveTap}
-                          onTouchStart={stopInteractiveTap}
+                          className="service-disclosure"
+                          data-open={Boolean(expandedSongItems[item.id])}
+                          aria-hidden={!expandedSongItems[item.id]}
                         >
+                          <div>
+                          <div
+                            className="space-y-3 border-t border-zinc-100 bg-gradient-to-br from-white to-zinc-50/80 p-3"
+                            onClick={stopInteractiveTap}
+                            onPointerDown={stopInteractiveTap}
+                            onTouchStart={stopInteractiveTap}
+                          >
                           <div className="flex flex-wrap items-center gap-2">
                             {getSongYoutubeUrl(item.song) && (
                               <Button asChild type="button" variant="outline" size="sm" className="rounded-xl">
@@ -1772,7 +1814,7 @@ export default function ServiceDetail() {
                                 type="button"
                                 variant="ghost"
                                 size="icon"
-                                className="ml-auto h-9 w-9 rounded-xl text-zinc-400 hover:bg-red-50 hover:text-red-500"
+                                className="ml-auto h-9 w-9 rounded-xl text-red-700/80 hover:bg-red-50 hover:text-red-800"
                                 aria-label="Eliminar canción del servicio"
                                 onClick={(event) => {
                                   event.stopPropagation();
@@ -1784,6 +1826,8 @@ export default function ServiceDetail() {
                             )}
                           </div>
 
+                          </div>
+                          </div>
                         </div>
                       )}
                     </CardContent>
@@ -1920,7 +1964,7 @@ export default function ServiceDetail() {
                         {isPlanner && (
                           <button
                             onClick={() => handleRemoveAssignment(a.id)}
-                            className="p-1.5 rounded-lg hover:bg-red-50 text-zinc-400 hover:text-red-500 transition-colors"
+                            className="p-1.5 rounded-lg text-red-700/80 transition-colors hover:bg-red-50 hover:text-red-800"
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
