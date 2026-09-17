@@ -11,6 +11,7 @@
 		4D22ABE92AF431CB00220026 /* CapApp-SPM in Frameworks */ = {isa = PBXBuildFile; productRef = 4D22ABE82AF431CB00220026 /* CapApp-SPM */; };
 		50379B232058CBB4000EE86E /* capacitor.config.json in Resources */ = {isa = PBXBuildFile; fileRef = 50379B222058CBB4000EE86E /* capacitor.config.json */; };
 		504EC3081FED79650016851F /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 504EC3071FED79650016851F /* AppDelegate.swift */; };
+		D7A100010000000000000001 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7A100010000000000000002 /* SceneDelegate.swift */; };
 		A4C200010000000000000001 /* PresentationHardwarePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4C200010000000000000002 /* PresentationHardwarePlugin.swift */; };
 		A4C200010000000000000003 /* TchurchBridgeViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4C200010000000000000004 /* TchurchBridgeViewController.swift */; };
 		B4D300010000000000000001 /* PresentationHardwareCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4D300010000000000000002 /* PresentationHardwareCore.swift */; };
@@ -22,6 +23,7 @@
 		C5E40001000000000000000B /* StudioLANDeviceTrust.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5E40001000000000000000C /* StudioLANDeviceTrust.swift */; };
 		C5E40001000000000000000D /* StudioLANRemoteControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5E40001000000000000000E /* StudioLANRemoteControl.swift */; };
 		C5E400010000000000000007 /* StudioLANClientCoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5E400010000000000000008 /* StudioLANClientCoreTests.swift */; };
+		B4D300010000000010 /* SceneManifestTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4D300010000000011 /* SceneManifestTests.swift */; };
 		504EC30D1FED79650016851F /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30B1FED79650016851F /* Main.storyboard */; };
 		504EC30F1FED79650016851F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30E1FED79650016851F /* Assets.xcassets */; };
 		504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC3101FED79650016851F /* LaunchScreen.storyboard */; };
@@ -43,11 +45,13 @@
 		50379B222058CBB4000EE86E /* capacitor.config.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = capacitor.config.json; sourceTree = "<group>"; };
 		504EC3041FED79650016851F /* Tchurch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Tchurch.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		504EC3071FED79650016851F /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		D7A100010000000000000002 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
 		A4C200010000000000000002 /* PresentationHardwarePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresentationHardwarePlugin.swift; sourceTree = "<group>"; };
 		A4C200010000000000000004 /* TchurchBridgeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TchurchBridgeViewController.swift; sourceTree = "<group>"; };
 		B4D300010000000000000002 /* PresentationHardwareCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresentationHardwareCore.swift; sourceTree = "<group>"; };
 		B4D300010000000000000004 /* PresentationHardwareCoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresentationHardwareCoreTests.swift; sourceTree = "<group>"; };
 		B4D300010000000000000005 /* TchurchNativeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TchurchNativeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B4D300010000000011 /* SceneManifestTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneManifestTests.swift; sourceTree = "<group>"; };
 		C5E400010000000000000002 /* StudioLANClientCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioLANClientCore.swift; sourceTree = "<group>"; };
 		C5E400010000000000000004 /* StudioLANClientNetwork.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioLANClientNetwork.swift; sourceTree = "<group>"; };
 		C5E400010000000000000006 /* StudioLANClientPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioLANClientPlugin.swift; sourceTree = "<group>"; };
@@ -106,6 +110,7 @@
 			children = (
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
 				504EC3071FED79650016851F /* AppDelegate.swift */,
+				D7A100010000000000000002 /* SceneDelegate.swift */,
 				B4D300010000000000000002 /* PresentationHardwareCore.swift */,
 				A4C200010000000000000002 /* PresentationHardwarePlugin.swift */,
 				C5E400010000000000000002 /* StudioLANClientCore.swift */,
@@ -130,6 +135,7 @@
 			children = (
 				B4D300010000000000000004 /* PresentationHardwareCoreTests.swift */,
 				C5E400010000000000000008 /* StudioLANClientCoreTests.swift */,
+				B4D300010000000011 /* SceneManifestTests.swift */,
 			);
 			path = TchurchNativeTests;
 			sourceTree = "<group>";
@@ -249,6 +255,7 @@
 			files = (
 				B4D300010000000000000003 /* PresentationHardwareCoreTests.swift in Sources */,
 				C5E400010000000000000007 /* StudioLANClientCoreTests.swift in Sources */,
+				B4D300010000000010 /* SceneManifestTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -257,6 +264,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
+				D7A100010000000000000001 /* SceneDelegate.swift in Sources */,
 				B4D300010000000000000001 /* PresentationHardwareCore.swift in Sources */,
 				A4C200010000000000000001 /* PresentationHardwarePlugin.swift in Sources */,
 				C5E400010000000000000001 /* StudioLANClientCore.swift in Sources */,
