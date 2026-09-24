@@ -36,14 +36,22 @@ function cacheKey(path: string) {
 }
 
 export function isCollaborativeApiPath(path: string) {
-  const lowerPath = path.toLowerCase();
+  const lowerPath = path.toLowerCase().split("?", 1)[0];
   return (
     lowerPath === "/services" ||
     lowerPath.startsWith("/services/") ||
     lowerPath === "/service-assignments" ||
     lowerPath.startsWith("/service-assignments/") ||
     lowerPath === "/service-items" ||
-    lowerPath.startsWith("/service-items/")
+    lowerPath.startsWith("/service-items/") ||
+    lowerPath === "/teams" ||
+    lowerPath.startsWith("/teams/") ||
+    lowerPath === "/team-members" ||
+    lowerPath.startsWith("/team-members/") ||
+    lowerPath === "/members" ||
+    lowerPath.startsWith("/members/") ||
+    lowerPath === "/users" ||
+    lowerPath.startsWith("/users/")
   );
 }
 
