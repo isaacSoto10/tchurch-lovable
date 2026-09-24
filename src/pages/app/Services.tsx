@@ -482,8 +482,8 @@ export default function Services() {
     }
 
     Promise.all([
-      fetchApi("/services"),
-      fetchApi<MyAssignment[]>("/service-assignments/mine").catch(() => []),
+      fetchApi("/services", { cache: "no-store" }),
+      fetchApi<MyAssignment[]>("/service-assignments/mine", { cache: "no-store" }).catch(() => []),
     ])
       .then(([data, assignments]) => {
         const serviceRows = normalizeServicesPayload(data);
@@ -506,12 +506,27 @@ export default function Services() {
     loadServices();
   }, [loadServices]);
 
+  useEffect(() => {
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        loadServices({ silent: true, preferSnapshot: false });
+      }
+    };
+
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    window.addEventListener("pageshow", refreshWhenVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+      window.removeEventListener("pageshow", refreshWhenVisible);
+    };
+  }, [loadServices]);
+
   const loadServiceDetails = useCallback(async (serviceId: string) => {
     if (serviceItems[serviceId] || itemsLoading[serviceId]) return;
 
     setItemsLoading((prev) => ({ ...prev, [serviceId]: true }));
     try {
-      const serviceRes = await fetchApi(`/services/${serviceId}`);
+      const serviceRes = await fetchApi(`/services/${serviceId}`, { cache: "no-store" });
       if (serviceRes && typeof serviceRes === 'object') {
         const items = (serviceRes as Record<string, unknown>).items || [];
         const assignments = (serviceRes as Record<string, unknown>).assignments || [];
@@ -1021,7 +1036,7 @@ export default function Services() {
         toast({ title: `${selectedSongs.length} canción${selectedSongs.length === 1 ? "" : "es"} agregada${selectedSongs.length === 1 ? "" : "s"}` });
         setAddItemDialogOpen(false);
 
-        const serviceRes = await fetchApi(`/services/${selectedServiceId}`);
+        const serviceRes = await fetchApi(`/services/${selectedServiceId}`, { cache: "no-store" });
         if (serviceRes && typeof serviceRes === 'object') {
           const items = (serviceRes as Record<string, unknown>).items || [];
           setServiceItems((prev) => ({ ...prev, [selectedServiceId]: Array.isArray(items) ? items as ServiceItem[] : [] }));
@@ -1061,7 +1076,7 @@ export default function Services() {
       toast({ title: "Elemento agregado" });
       setAddItemDialogOpen(false);
 
-      const serviceRes = await fetchApi(`/services/${selectedServiceId}`);
+      const serviceRes = await fetchApi(`/services/${selectedServiceId}`, { cache: "no-store" });
       if (serviceRes && typeof serviceRes === 'object') {
         const items = (serviceRes as Record<string, unknown>).items || [];
         setServiceItems((prev) => ({ ...prev, [selectedServiceId]: Array.isArray(items) ? items as ServiceItem[] : [] }));
@@ -1250,7 +1265,7 @@ export default function Services() {
         }),
       });
     const refreshSelectedServiceAssignments = async () => {
-      const serviceRes = await fetchApi(`/services/${selectedServiceId}`);
+      const serviceRes = await fetchApi(`/services/${selectedServiceId}`, { cache: "no-store" });
       if (serviceRes && typeof serviceRes === 'object') {
         const assignments = (serviceRes as Record<string, unknown>).assignments || [];
         setServiceAssignments((prev) => ({ ...prev, [selectedServiceId]: Array.isArray(assignments) ? assignments as ServiceAssignment[] : [] }));

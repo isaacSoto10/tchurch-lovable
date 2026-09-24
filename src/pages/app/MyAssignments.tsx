@@ -151,7 +151,7 @@ export default function MyAssignments() {
     setError(null);
 
     try {
-      const data = await fetchApi<Assignment[]>("/service-assignments/mine");
+      const data = await fetchApi<Assignment[]>("/service-assignments/mine", { cache: "no-store" });
       const next = Array.isArray(data) ? data : [];
       setAssignments(next);
       writeSessionSnapshot(snapshotKey, { assignments: next });
@@ -164,6 +164,21 @@ export default function MyAssignments() {
 
   useEffect(() => {
     void loadAssignments();
+  }, [loadAssignments]);
+
+  useEffect(() => {
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        void loadAssignments(false);
+      }
+    };
+
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    window.addEventListener("pageshow", refreshWhenVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+      window.removeEventListener("pageshow", refreshWhenVisible);
+    };
   }, [loadAssignments]);
 
   const groups = useMemo(() => {

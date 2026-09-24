@@ -35,6 +35,18 @@ function cacheKey(path: string) {
   return `${CACHE_PREFIX}:${currentChurchId()}:${path}`;
 }
 
+export function isCollaborativeApiPath(path: string) {
+  const lowerPath = path.toLowerCase();
+  return (
+    lowerPath === "/services" ||
+    lowerPath.startsWith("/services/") ||
+    lowerPath === "/service-assignments" ||
+    lowerPath.startsWith("/service-assignments/") ||
+    lowerPath === "/service-items" ||
+    lowerPath.startsWith("/service-items/")
+  );
+}
+
 export function nativeApiCacheTtlMs(path: string) {
   if (path.startsWith("/service-media") || path.startsWith("/live-destinations")) return SHORT_TTL_MS;
   if (path.startsWith("/channels") || path.includes("/messages")) return SHORT_TTL_MS;
@@ -47,6 +59,10 @@ export function isNativeApiCacheableGet(path: string) {
   if (!path || !path.startsWith("/")) return false;
 
   const lowerPath = path.toLowerCase();
+  // Services, assignments, and service items are shared mutable
+  // state. A device-local response can otherwise hide another user's recent
+  // planning changes for the cache TTL (or for the stale fallback window).
+  if (isCollaborativeApiPath(path)) return false;
   if (lowerPath.includes("credentials")) return false;
   if (lowerPath.includes("token")) return false;
   if (lowerPath.includes("realtime")) return false;

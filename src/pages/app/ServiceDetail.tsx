@@ -439,6 +439,21 @@ export default function ServiceDetail() {
   }, [loadService]);
 
   useEffect(() => {
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        void loadService();
+      }
+    };
+
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    window.addEventListener("pageshow", refreshWhenVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+      window.removeEventListener("pageshow", refreshWhenVisible);
+    };
+  }, [loadService]);
+
+  useEffect(() => {
     apiFetch<{ id: string; email?: string | null }>("/users/me")
       .then((user) => {
         setCurrentUserId(user.id);
@@ -805,7 +820,7 @@ export default function ServiceDetail() {
         method: "PATCH",
         body: JSON.stringify({ items: withPositions.map(({ id, position }) => ({ id, position })) }),
       });
-      const data = await apiFetch<Service>(`/services/${id}`);
+      const data = await apiFetch<Service>(`/services/${id}`, { cache: "no-store" });
       setService({ ...data, items: [...(data.items || [])].sort((a, b) => a.position - b.position) });
     } catch (e) {
       console.error(e);
@@ -916,7 +931,7 @@ export default function ServiceDetail() {
       }),
     });
     const finishAssignment = async () => {
-      const data = await apiFetch<Service>(`/services/${id}`);
+      const data = await apiFetch<Service>(`/services/${id}`, { cache: "no-store" });
       setService(data);
       setShowAssign(false);
       resetAssignForm();
