@@ -21,6 +21,8 @@ delete, or modify the separate Swift native work.
   after navigation, replace the current service, or dismiss/reset its new form.
   An identity-based scope epoch now guards reads and completion effects;
   mutations in the changed flows pin their original church.
+- A failed read after navigating to another service kept displaying the old
+  service. Scope transitions now clear that old view before loading the new one.
 
 Behavioral transport and rendered-page tests reproduced the stale results before
 the fixes. Reads now carry a mutation generation, old responses cannot repopulate
@@ -38,6 +40,8 @@ Incident verification must compare the same actor, church, service, and operatio
 
 - Final full test suite: 86 files, 671 tests passed, including delayed previous-
   service mutations and preservation of the new service's open song form.
+- After the failed-new-service-view regression was added, all 19 targeted
+  transport/privacy/page tests, TypeScript, production build, and sync passed.
 - TypeScript, Vite production build, Capacitor iOS sync, and Xcode simulator build passed.
 - Signed iPhone 17 Pro and iPad Pro 13-inch simulator builds authenticated through
   the normal production email-code flow and read GraciaSoberana's September 27

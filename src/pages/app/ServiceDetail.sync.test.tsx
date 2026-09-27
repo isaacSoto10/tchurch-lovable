@@ -125,4 +125,16 @@ describe("service detail authoritative refresh", () => {
     expect(mocks.toast).not.toHaveBeenCalledWith(expect.objectContaining({ title: "1 canción agregada" }));
     expect(mocks.fetch.mock.calls.filter(([path]) => path.startsWith("/services/service-a"))).toHaveLength(1);
   });
+
+  it("does not show the previous service when a new service read fails", async () => {
+    mocks.fetch.mockImplementation((path: string) => path.startsWith("/services/service-b")
+      ? Promise.reject(new Error("Service not found"))
+      : Promise.resolve(path.startsWith("/services/") ? service("Previous service") : []));
+    render(<MemoryRouter initialEntries={["/app/services/service-a"]}><ServiceRouteSwitch /><Routes><Route path="/app/services/:id" element={<ServiceDetail />} /></Routes></MemoryRouter>);
+    await screen.findByText("Previous service");
+    fireEvent.click(screen.getByRole("button", { name: "Other service" }));
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith(expect.objectContaining({ title: "No se pudo actualizar el servicio" })));
+    expect(screen.queryByText("Previous service")).not.toBeInTheDocument();
+    expect(screen.getByText("Servicio no encontrado")).toBeInTheDocument();
+  });
 });

@@ -451,6 +451,7 @@ export default function ServiceDetail() {
   }, [id, navigate, selectedChurchId, toast, isCurrentServiceScope]);
 
   useEffect(() => {
+    setService(null);
     setShowAssign(false);
     setShowAddItem(false);
     setDetailsEditingId(null);
