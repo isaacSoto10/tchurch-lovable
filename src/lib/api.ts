@@ -21,6 +21,9 @@ const CHURCH_ID_KEY = "tchurch_church_id";
 const DEFAULT_GET_TIMEOUT_MS = 15_000;
 const DEFAULT_MUTATION_TIMEOUT_MS = 30_000;
 const inFlightGetRequests = new Map<string, Promise<unknown>>();
+// A successful write separates pre-write reads from subsequent readback.
+// Clearing the cache alone cannot prevent a pending GET from being reused.
+let mutationRevision = 0;
 
 export class ApiError extends Error {
   status: number;
@@ -143,9 +146,10 @@ export async function apiFetch<T = unknown>(
   const url = `${API_BASE}${path}`;
   const startedAt = actionNow();
   const requestTimeoutMs = timeoutMs ?? (method === "GET" ? DEFAULT_GET_TIMEOUT_MS : DEFAULT_MUTATION_TIMEOUT_MS);
+  const requestRevision = mutationRevision;
   const shouldDeduplicate = method === "GET" && !requestOptions.signal;
   const dedupeKey = shouldDeduplicate
-    ? inFlightRequestKey(path, resolvedToken, churchId, headers, requestTimeoutMs)
+    ? `${requestRevision}:${inFlightRequestKey(path, resolvedToken, churchId, headers, requestTimeoutMs)}`
     : null;
   const existingRequest = dedupeKey ? inFlightGetRequests.get(dedupeKey) : null;
   if (existingRequest) return existingRequest as Promise<T>;
@@ -224,6 +228,7 @@ export async function apiFetch<T = unknown>(
       }
 
       if (method !== "GET") {
+        mutationRevision += 1;
         if (isNativeMobileAuth) clearNativeApiCache();
         clearMediaSnapshots(churchId);
       }
@@ -235,11 +240,11 @@ export async function apiFetch<T = unknown>(
 
       try {
         const data = JSON.parse(text) as T;
-        if (shouldUseNativeCache) writeNativeApiCache(path, data);
+        if (shouldUseNativeCache && requestRevision === mutationRevision) writeNativeApiCache(path, data);
         return data;
       } catch {
         const data = text as T;
-        if (shouldUseNativeCache) writeNativeApiCache(path, data);
+        if (shouldUseNativeCache && requestRevision === mutationRevision) writeNativeApiCache(path, data);
         return data;
       }
     } finally {

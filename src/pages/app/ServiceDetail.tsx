@@ -275,6 +275,7 @@ export default function ServiceDetail() {
 
   const [service, setService] = useState<Service | null>(null);
   const [loading, setLoading] = useState(true);
+  const serviceReadRevision = useRef(0);
   const [activeTab, setActiveTab] = useState<Tab>("flow");
   const [showAddItem, setShowAddItem] = useState(false);
   const [showAssign, setShowAssign] = useState(false);
@@ -420,22 +421,33 @@ export default function ServiceDetail() {
   }
 
   const loadService = useCallback(async (options: { showLoading?: boolean } = {}) => {
-    if (!id) return;
+    if (!id || !selectedChurchId) {
+      setService(null);
+      setLoading(false);
+      return;
+    }
+    const revision = ++serviceReadRevision.current;
     if (options.showLoading) setLoading(true);
     try {
-      const data = await apiFetch<ServiceResponse>(`/services/${id}?fresh=${Date.now()}`, { cache: "no-store" });
+      const data = await apiFetch<ServiceResponse>(`/services/${id}?fresh=${Date.now()}`, { cache: "no-store", churchId: selectedChurchId });
+      if (revision !== serviceReadRevision.current) return;
       if (data.error) { navigate("/app/services"); return; }
       const sorted = { ...data, items: [...(data.items || [])].sort((a, b) => a.position - b.position) };
       setService(sorted);
+      return sorted;
     } catch (e) {
       console.error(e);
+      if (revision === serviceReadRevision.current) {
+        toast({ title: "No se pudo actualizar el servicio", description: "Revisa tu conexión y vuelve a abrir el servicio para confirmar los cambios.", variant: "destructive" });
+      }
     } finally {
-      if (options.showLoading) setLoading(false);
+      if (revision === serviceReadRevision.current) setLoading(false);
     }
-  }, [id, navigate]);
+  }, [id, navigate, selectedChurchId, toast]);
 
   useEffect(() => {
     void loadService({ showLoading: true });
+    return () => { serviceReadRevision.current += 1; };
   }, [loadService]);
 
   useEffect(() => {
@@ -533,15 +545,16 @@ export default function ServiceDetail() {
       })
     ));
 
-    await loadService();
-    toast({
-      title: `${songs.length} canción${songs.length === 1 ? "" : "es"} agregada${songs.length === 1 ? "" : "s"}`,
-    });
-
+    const refreshed = await loadService();
     if (!options.keepDialogOpen) {
       resetItemForm();
       setShowAddItem(false);
     }
+    if (!refreshed) return;
+    toast({
+      title: `${songs.length} canción${songs.length === 1 ? "" : "es"} agregada${songs.length === 1 ? "" : "s"}`,
+    });
+
   }
 
   async function handleAddItem(e: React.FormEvent) {
@@ -931,8 +944,7 @@ export default function ServiceDetail() {
       }),
     });
     const finishAssignment = async () => {
-      const data = await apiFetch<Service>(`/services/${id}`, { cache: "no-store" });
-      setService(data);
+      await loadService();
       setShowAssign(false);
       resetAssignForm();
     };
@@ -1127,13 +1139,9 @@ export default function ServiceDetail() {
         body: JSON.stringify({ duration, details: nextDetails }),
       });
 
-      setService((prev) => prev ? {
-        ...prev,
-        items: prev.items.map((serviceItem) =>
-          serviceItem.id === item.id ? { ...serviceItem, duration, details: nextDetails } : serviceItem
-        ),
-      } : prev);
+      const refreshed = await loadService();
       setDetailsEditingId(null);
+      if (!refreshed) return;
       toast({ title: "Detalles guardados" });
     } catch (error) {
       console.error("No se pudieron guardar los detalles:", error);
