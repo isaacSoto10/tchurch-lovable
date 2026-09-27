@@ -13,6 +13,10 @@ delete, or modify the separate Swift native work.
 - A pre-write request failing offline or with HTTP 5xx could still return its
   captured stale snapshot after another request had committed an edit.
 - A delayed service refresh could overwrite a more recent foreground response.
+- A rejected service-song tone write left its optimistic tone displayed as if
+  saved. The client now rolls back only the still-current rejected edit and
+  reloads the service after success. Both clients use `details.serviceKey` in
+  the canonical service-item PUT; existing notes are preserved.
 
 Behavioral transport and rendered-page tests reproduced the stale results before
 the fixes. Reads now carry a mutation generation, old responses cannot repopulate
@@ -29,7 +33,8 @@ Incident verification must compare the same actor, church, service, and operatio
 ## Verification
 
 - Full test suite: 86 files, 665 tests passed. After adding both failing-fallback
-  cases, the focused transport/privacy/page suite passed all 14 tests.
+  cases and tone-save scenarios, the focused transport/privacy/page suite passed
+  all 16 tests.
 - TypeScript, Vite production build, Capacitor iOS sync, and Xcode simulator build passed.
 - Signed iPhone 17 Pro and iPad Pro 13-inch simulator builds authenticated through
   the normal production email-code flow and read GraciaSoberana's September 27

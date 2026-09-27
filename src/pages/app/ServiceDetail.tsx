@@ -1238,19 +1238,26 @@ export default function ServiceDetail() {
 
   async function handleSaveItemKey(item: ServiceItem, key: string) {
     const nextDetails = { ...(item.details || {}), serviceKey: key };
-    setService((prev) => prev ? {
-      ...prev,
-      items: prev.items.map((serviceItem) =>
-        serviceItem.id === item.id ? { ...serviceItem, details: nextDetails } : serviceItem
-      ),
-    } : prev);
-
+    setService((previous) => previous ? {
+      ...previous,
+      items: previous.items.map((current) => current.id === item.id ? { ...current, details: nextDetails } : current),
+    } : previous);
     try {
       await apiFetch(`/service-items/${item.id}`, {
         method: "PUT",
+        churchId: selectedChurchId,
         body: JSON.stringify({ details: nextDetails }),
       });
+      await loadService();
     } catch (error) {
+      // Roll back only this edit. A newer edit or authoritative refresh must
+      // not be undone by an older request failing later.
+      setService((previous) => previous ? {
+        ...previous,
+        items: previous.items.map((current) => current.id === item.id && current.details === nextDetails
+          ? { ...current, details: item.details }
+          : current),
+      } : previous);
       console.error("No se pudo guardar el tono del servicio:", error);
       toast({ title: "No se pudo guardar el tono", variant: "destructive" });
     }
