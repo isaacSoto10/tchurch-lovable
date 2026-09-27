@@ -74,4 +74,21 @@ describe("service collaborative transport", () => {
     expect(await apiFetch("/songs?limit=30")).toEqual([{ id: "song-a", title: "Updated" }]);
     expect(gets).toBe(2);
   });
+
+  it.each(["network", "server"])("does not fall back to a pre-write snapshot after a concurrent write and %s failure", async (failure) => {
+    const cacheKey = "tchurch_native_api_cache_v1:church-a:/songs?limit=30";
+    sessionStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now() - 180_000, value: [{ title: "Old" }] }));
+    let rejectRead!: (error: Error) => void;
+    let completeRead!: (response: Response) => void;
+    vi.stubGlobal("fetch", vi.fn((_url: string, options: RequestInit) => options.method === "PUT"
+      ? Promise.resolve(reply({ title: "Updated" }))
+      : new Promise<Response>((resolve, reject) => { completeRead = resolve; rejectRead = reject; })));
+    const pending = apiFetch("/songs?limit=30");
+    const rejected = expect(pending).rejects.toMatchObject({ status: failure === "network" ? 0 : 503 });
+    await vi.waitFor(() => expect(completeRead).toBeTypeOf("function"));
+    await apiFetch("/songs/song-a", { method: "PUT", body: JSON.stringify({ title: "Updated" }) });
+    if (failure === "network") rejectRead(new Error("Offline"));
+    else completeRead(reply({ error: "Unavailable" }, 503));
+    await rejected;
+  });
 });

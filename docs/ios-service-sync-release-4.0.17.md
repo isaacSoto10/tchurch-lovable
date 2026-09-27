@@ -10,6 +10,8 @@ delete, or modify the separate Swift native work.
   initiated before the write, displaying the old assignment collection.
 - A pending song GET could repopulate the device cache after a successful edit
   had cleared it.
+- A pre-write request failing offline or with HTTP 5xx could still return its
+  captured stale snapshot after another request had committed an edit.
 - A delayed service refresh could overwrite a more recent foreground response.
 
 Behavioral transport and rendered-page tests reproduced the stale results before
@@ -17,7 +19,8 @@ the fixes. Reads now carry a mutation generation, old responses cannot repopulat
 the cache after a write, and the service page admits only its latest refresh.
 Assignment and song-detail saves reload authoritative service data; a failed
 refresh produces a visible warning rather than claiming verified updated state.
-Service reads explicitly retain the selected church scope.
+Service reads explicitly retain the selected church scope. Settings now displays
+the native version and build from Capacitor rather than a hardcoded `1.0.0`.
 
 These reproduce real client defects. They do not, by themselves, establish why
 the originally reported phone action differed from a browser observation.
@@ -25,8 +28,8 @@ Incident verification must compare the same actor, church, service, and operatio
 
 ## Verification
 
-- Final full test suite: 86 files, 665 tests passed, including all 5 focused
-  transport/page regression tests.
+- Full test suite: 86 files, 665 tests passed. After adding both failing-fallback
+  cases, the focused transport/privacy/page suite passed all 14 tests.
 - TypeScript, Vite production build, Capacitor iOS sync, and Xcode simulator build passed.
 - Signed iPhone 17 Pro and iPad Pro 13-inch simulator builds authenticated through
   the normal production email-code flow and read GraciaSoberana's September 27

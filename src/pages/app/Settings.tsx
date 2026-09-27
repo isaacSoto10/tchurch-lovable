@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { App as CapacitorApp } from "@capacitor/app";
+import { Capacitor } from "@capacitor/core";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -87,6 +89,18 @@ export default function Settings() {
   const isPlanner = selectedChurch?.role === "PLANNER" || isAdmin;
 
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [appVersion, setAppVersion] = useState("—");
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) {
+      setAppVersion("Web");
+      return;
+    }
+    let active = true;
+    void CapacitorApp.getInfo().then((info) => {
+      if (active) setAppVersion(`${info.version} (${info.build})`);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, []);
   const [loading, setLoading] = useState(true);
   const [savingPrefs, setSavingPrefs] = useState(false);
   const [prefs, setPrefs] = useState({
@@ -477,7 +491,7 @@ export default function Settings() {
               <Separator />
               <div className="flex items-center justify-between">
                 <p className="font-medium text-sm">Versión</p>
-                <p className="text-sm text-muted-foreground">1.0.0</p>
+                <p className="text-sm text-muted-foreground">{appVersion}</p>
               </div>
               <Separator />
               <div className="flex items-center justify-between">

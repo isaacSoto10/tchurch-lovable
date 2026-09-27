@@ -175,7 +175,7 @@ export async function apiFetch<T = unknown>(
           body: sensitiveBody ? undefined : requestOptions.body,
           source: "apiFetch",
         });
-        if (nativeCache?.stale) {
+        if (nativeCache?.stale && requestRevision === mutationRevision) {
           console.warn("[apiFetch] Using stale native cache after network failure", { path });
           return nativeCache.value;
         }
@@ -219,7 +219,7 @@ export async function apiFetch<T = unknown>(
           ? `No se pudo completar la solicitud (${res.status}). Intenta de nuevo en un momento.`
           : rawMessage;
 
-        if (nativeCache?.stale && res.status >= 500) {
+        if (nativeCache?.stale && res.status >= 500 && requestRevision === mutationRevision) {
           console.warn("[apiFetch] Using stale native cache after server error", { path, status: res.status });
           return nativeCache.value;
         }
