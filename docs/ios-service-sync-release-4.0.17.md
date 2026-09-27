@@ -1,4 +1,4 @@
-# iOS 4.0.17 (235): service read-after-write consistency
+# iOS 4.0.17: service read-after-write consistency
 
 This release targets the existing Tchurch App Store application, ID `6762327867`,
 bundle `app.lovable.e5ddf50ff80d4eb7a86a937f7a9f8a62.tchurch`. It does not replace,
@@ -17,6 +17,10 @@ delete, or modify the separate Swift native work.
   saved. The client now rolls back only the still-current rejected edit and
   reloads the service after success. Both clients use `details.serviceKey` in
   the canonical service-item PUT; existing notes are preserved.
+- A delayed mutation from a previous service/church could start a fresh read
+  after navigation, replace the current service, or dismiss/reset its new form.
+  An identity-based scope epoch now guards reads and completion effects;
+  mutations in the changed flows pin their original church.
 
 Behavioral transport and rendered-page tests reproduced the stale results before
 the fixes. Reads now carry a mutation generation, old responses cannot repopulate
@@ -32,9 +36,8 @@ Incident verification must compare the same actor, church, service, and operatio
 
 ## Verification
 
-- Full test suite: 86 files, 665 tests passed. After adding both failing-fallback
-  cases and tone-save scenarios, the focused transport/privacy/page suite passed
-  all 16 tests.
+- Final full test suite: 86 files, 671 tests passed, including delayed previous-
+  service mutations and preservation of the new service's open song form.
 - TypeScript, Vite production build, Capacitor iOS sync, and Xcode simulator build passed.
 - Signed iPhone 17 Pro and iPad Pro 13-inch simulator builds authenticated through
   the normal production email-code flow and read GraciaSoberana's September 27
@@ -52,10 +55,16 @@ simulator signing restored the existing authenticated session and church data.
 
 ## Delivery
 
-Both Xcode projects and the package metadata target `4.0.17 (235)`. The binary
+Both Xcode projects and the package metadata target `4.0.17` (local build `235`). The binary
 must be archived/uploaded with Xcode and verified in the existing public App
 Store application. Local build success is not delivery. The obsolete GitHub
 release workflow was removed from main on September 17 and is not recreated.
 
-Archive, upload, processing, review, and public availability are pending until
-recorded from their respective downstream surfaces.
+Both Xcode Cloud post-clone scripts override the build number with
+`CI_BUILD_NUMBER` (or `XCODE_CLOUD_BUILD_NUMBER`). Main pushes have produced
+higher App Store Connect build numbers without a manual upload. Select a Cloud
+build only after matching its source revision to the final tested commit;
+earlier builds and locally exported intermediate IPAs lack the final scope fix.
+
+Processing, review, and public availability must be recorded from their
+respective downstream surfaces; a pushed source commit alone is not delivery.

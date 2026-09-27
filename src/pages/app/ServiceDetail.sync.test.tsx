@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ fetch: vi.fn(), toast: vi.fn(), church: { id: "church-a", role: "ADMIN" } as { id: string; role: string } | null }));
@@ -7,9 +7,14 @@ vi.mock("@/lib/api", async (original) => ({ ...await original<typeof import("@/l
 vi.mock("@/providers/ChurchProvider", () => ({ useChurch: () => ({ selectedChurch: mocks.church }) }));
 vi.mock("@/components/ui/use-toast", () => ({ useToast: () => ({ toast: mocks.toast }) }));
 vi.mock("@/components/ChordProPreview", () => ({ ChordProPreview: ({ selectedKey, onSelectedKeyChange }: { selectedKey: string; onSelectedKeyChange: (key: string) => void }) => <div><span>Selected key {selectedKey}</span><button onClick={() => onSelectedKeyChange("G")}>Change key</button></div> }));
+vi.mock("@/components/ServiceSongPicker", () => ({ ServiceSongPicker: ({ selectedSongs, onToggleSong }: { selectedSongs: unknown[]; onToggleSong: (song: { id: string; title: string }) => void }) => <div><span>Selected songs {selectedSongs.length}</span><button type="button" onClick={() => onToggleSong({ id: "song-new", title: "New song" })}>Select fixture song</button></div> }));
 import ServiceDetail from "./ServiceDetail";
 
 const service = (title: string) => ({ id: "service-a", title, date: "2026-10-04T16:00:00Z", type: "Sunday", status: "DRAFT", items: [], assignments: [] });
+function ServiceRouteSwitch() {
+  const navigate = useNavigate();
+  return <button onClick={() => navigate("/app/services/service-b")}>Other service</button>;
+}
 
 describe("service detail authoritative refresh", () => {
   beforeEach(() => { mocks.fetch.mockReset(); mocks.toast.mockReset(); mocks.church = { id: "church-a", role: "ADMIN" }; });
@@ -73,5 +78,51 @@ describe("service detail authoritative refresh", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Change key" }));
     expect(await screen.findByText("Selected key G")).toBeInTheDocument();
     expect(reads).toBe(2);
+  });
+
+  it("ignores a previous service mutation completing after navigation to another service", async () => {
+    let finishWrite!: (value: unknown) => void;
+    mocks.fetch.mockImplementation((path: string, options?: RequestInit) => {
+      if (options?.method === "PUT") return new Promise((resolve) => { finishWrite = resolve; });
+      if (path.startsWith("/services/service-a")) return Promise.resolve({ ...service("Previous service"), items: [{ id: "item-a", title: "Test song", type: "song", position: 0, duration: 5, details: {}, song: { id: "song-a", title: "Test song", key: "C", lyrics: "[C]Test", arrangements: [] } }] });
+      if (path.startsWith("/services/service-b")) return Promise.resolve({ ...service("Next service"), id: "service-b" });
+      return Promise.resolve(path === "/users/me" ? { id: "actor-a" } : []);
+    });
+    render(<MemoryRouter initialEntries={["/app/services/service-a"]}><ServiceRouteSwitch /><Routes><Route path="/app/services/:id" element={<ServiceDetail />} /></Routes></MemoryRouter>);
+    await screen.findByText("Test song");
+    fireEvent.click(screen.getByRole("button", { name: "Expandir detalles de canción" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ver acordes" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Change key" }));
+    await waitFor(() => expect(finishWrite).toBeTypeOf("function"));
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Other service" }));
+    await screen.findByText("Next service");
+    await act(async () => { finishWrite({ id: "item-a" }); });
+    expect(screen.getByText("Next service")).toBeInTheDocument();
+    expect(mocks.fetch.mock.calls.filter(([path]) => path.startsWith("/services/service-a"))).toHaveLength(1);
+  });
+
+  it("keeps a new service form open when an old song POST completes", async () => {
+    let finishWrite!: (value: unknown) => void;
+    mocks.fetch.mockImplementation((path: string, options?: RequestInit) => {
+      if (options?.method === "POST") return new Promise((resolve) => { finishWrite = resolve; });
+      if (path.startsWith("/services/")) return Promise.resolve(service(path.includes("service-b") ? "Next service" : "Previous service"));
+      return Promise.resolve(path === "/users/me" ? { id: "actor-a" } : []);
+    });
+    render(<MemoryRouter initialEntries={["/app/services/service-a"]}><ServiceRouteSwitch /><Routes><Route path="/app/services/:id" element={<ServiceDetail />} /></Routes></MemoryRouter>);
+    await screen.findByText("Previous service");
+    fireEvent.click(screen.getByRole("button", { name: "Agregar" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Select fixture song" }));
+    fireEvent.click(screen.getByRole("button", { name: "Agregar" }));
+    await waitFor(() => expect(finishWrite).toBeTypeOf("function"));
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Other service" }));
+    await screen.findByText("Next service");
+    fireEvent.click(screen.getByRole("button", { name: "Agregar" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Select fixture song" }));
+    await act(async () => { finishWrite({ id: "created-in-previous-service" }); });
+    expect(screen.getByText("Selected songs 1")).toBeInTheDocument();
+    expect(mocks.toast).not.toHaveBeenCalledWith(expect.objectContaining({ title: "1 canción agregada" }));
+    expect(mocks.fetch.mock.calls.filter(([path]) => path.startsWith("/services/service-a"))).toHaveLength(1);
   });
 });

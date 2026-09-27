@@ -272,6 +272,10 @@ export default function ServiceDetail() {
   const { selectedChurch } = useChurch();
   const selectedChurchId = selectedChurch?.id ?? null;
   const { toast } = useToast();
+  const serviceScope = useMemo(() => ({ id, churchId: selectedChurchId }), [id, selectedChurchId]);
+  const activeServiceScope = useRef<typeof serviceScope | null>(serviceScope);
+  activeServiceScope.current = serviceScope;
+  const isCurrentServiceScope = useCallback(() => activeServiceScope.current === serviceScope, [serviceScope]);
 
   const [service, setService] = useState<Service | null>(null);
   const [loading, setLoading] = useState(true);
@@ -421,6 +425,7 @@ export default function ServiceDetail() {
   }
 
   const loadService = useCallback(async (options: { showLoading?: boolean } = {}) => {
+    if (!isCurrentServiceScope()) return;
     if (!id || !selectedChurchId) {
       setService(null);
       setLoading(false);
@@ -430,25 +435,39 @@ export default function ServiceDetail() {
     if (options.showLoading) setLoading(true);
     try {
       const data = await apiFetch<ServiceResponse>(`/services/${id}?fresh=${Date.now()}`, { cache: "no-store", churchId: selectedChurchId });
-      if (revision !== serviceReadRevision.current) return;
+      if (!isCurrentServiceScope() || revision !== serviceReadRevision.current) return;
       if (data.error) { navigate("/app/services"); return; }
       const sorted = { ...data, items: [...(data.items || [])].sort((a, b) => a.position - b.position) };
       setService(sorted);
       return sorted;
     } catch (e) {
       console.error(e);
-      if (revision === serviceReadRevision.current) {
+      if (isCurrentServiceScope() && revision === serviceReadRevision.current) {
         toast({ title: "No se pudo actualizar el servicio", description: "Revisa tu conexión y vuelve a abrir el servicio para confirmar los cambios.", variant: "destructive" });
       }
     } finally {
-      if (revision === serviceReadRevision.current) setLoading(false);
+      if (isCurrentServiceScope() && revision === serviceReadRevision.current) setLoading(false);
     }
-  }, [id, navigate, selectedChurchId, toast]);
+  }, [id, navigate, selectedChurchId, toast, isCurrentServiceScope]);
 
   useEffect(() => {
+    setShowAssign(false);
+    setShowAddItem(false);
+    setDetailsEditingId(null);
+    setSubmitting(false);
+    setSavingDetails(false);
+    resetAssignForm();
+    resetItemForm();
+  }, [serviceScope]);
+
+  useEffect(() => {
+    activeServiceScope.current = serviceScope;
     void loadService({ showLoading: true });
-    return () => { serviceReadRevision.current += 1; };
-  }, [loadService]);
+    return () => {
+      if (activeServiceScope.current === serviceScope) activeServiceScope.current = null;
+      serviceReadRevision.current += 1;
+    };
+  }, [loadService, serviceScope]);
 
   useEffect(() => {
     const refreshWhenVisible = () => {
@@ -526,13 +545,14 @@ export default function ServiceDetail() {
   }, [showAddItem, songSearch, itemType, id, service?.items]);
 
   async function addSongsToService(songs: SongOption[], options: { keepDialogOpen?: boolean } = {}) {
-    if (!id || songs.length === 0) return;
+    if (!isCurrentServiceScope() || !id || songs.length === 0) return;
     const startPosition = service?.items.length || 0;
     const duration = itemDuration ? parseInt(itemDuration) : null;
 
     await Promise.all(songs.map((song, index) =>
       apiFetch(`/service-items`, {
         method: "POST",
+        churchId: selectedChurchId,
         body: JSON.stringify({
           serviceId: id,
           title: song.title,
@@ -546,6 +566,7 @@ export default function ServiceDetail() {
     ));
 
     const refreshed = await loadService();
+    if (!isCurrentServiceScope()) return;
     if (!options.keepDialogOpen) {
       resetItemForm();
       setShowAddItem(false);
@@ -572,6 +593,7 @@ export default function ServiceDetail() {
       } else {
         await apiFetch(`/service-items`, {
           method: "POST",
+          churchId: selectedChurchId,
           body: JSON.stringify({
             serviceId: id,
             title: itemTitle,
@@ -583,12 +605,13 @@ export default function ServiceDetail() {
           }),
         });
         await loadService();
+        if (!isCurrentServiceScope()) return;
         toast({ title: "Elemento agregado" });
         resetItemForm();
         setShowAddItem(false);
       }
     } catch (e) { console.error(e); }
-    finally { setSubmitting(false); }
+    finally { if (isCurrentServiceScope()) setSubmitting(false); }
   }
 
   function clearChordLookupState() {
@@ -740,6 +763,7 @@ export default function ServiceDetail() {
       }
 
       if (!createdSong?.id) throw new Error("No se pudo crear la canción.");
+      if (!isCurrentServiceScope()) return;
 
       if (isAdmin && quickLookupOnCreate) {
         try {
@@ -749,6 +773,7 @@ export default function ServiceDetail() {
             body: JSON.stringify({ action: "search" }),
           });
           const candidates = Array.isArray(lookup.candidates) ? lookup.candidates.slice(0, 5) : [];
+          if (!isCurrentServiceScope()) return;
           if (candidates.length > 0) {
             setQuickLookupSong(createdSong);
             setQuickLookupCandidates(candidates);
@@ -756,16 +781,18 @@ export default function ServiceDetail() {
           }
           setQuickLookupError("No encontramos acordes; la canción se agregará sin acordes.");
         } catch (error) {
+          if (!isCurrentServiceScope()) return;
           setQuickLookupError(error instanceof Error ? error.message : "No se pudieron buscar acordes; puedes agregar sin acordes.");
         }
       }
 
       await addSongsToService([createdSong]);
     } catch (error) {
+      if (!isCurrentServiceScope()) return;
       console.error(error);
       toast({ title: error instanceof Error ? error.message : "No se pudo crear la canción", variant: "destructive" });
     } finally {
-      setSubmitting(false);
+      if (isCurrentServiceScope()) setSubmitting(false);
     }
   }
 
@@ -780,6 +807,7 @@ export default function ServiceDetail() {
         body: JSON.stringify({ candidate }),
       });
       const arrangement = data.arrangement;
+      if (!isCurrentServiceScope()) return;
       if (!arrangement) {
         throw new Error(data.error || "No se pudo importar la versión seleccionada.");
       }
@@ -793,9 +821,10 @@ export default function ServiceDetail() {
       };
       await addSongsToService([updatedSong]);
     } catch (error) {
+      if (!isCurrentServiceScope()) return;
       setQuickLookupError(error instanceof Error ? error.message : "No se pudo importar la versión seleccionada.");
     } finally {
-      setQuickSelectingId(null);
+      if (isCurrentServiceScope()) setQuickSelectingId(null);
     }
   }
 
@@ -805,7 +834,7 @@ export default function ServiceDetail() {
     try {
       await addSongsToService([quickLookupSong]);
     } finally {
-      setSubmitting(false);
+      if (isCurrentServiceScope()) setSubmitting(false);
     }
   }
 
@@ -938,6 +967,7 @@ export default function ServiceDetail() {
     const assignmentPayload = { userId: assignUserId, serviceId: id, position };
     const submitAssignment = (overrideBlock = false) => apiFetch(`/service-assignments`, {
       method: "POST",
+      churchId: selectedChurchId,
       body: JSON.stringify({
         ...assignmentPayload,
         ...(overrideBlock ? { overrideBlock: true } : {}),
@@ -945,6 +975,7 @@ export default function ServiceDetail() {
     });
     const finishAssignment = async () => {
       await loadService();
+      if (!isCurrentServiceScope()) return;
       setShowAssign(false);
       resetAssignForm();
     };
@@ -953,9 +984,11 @@ export default function ServiceDetail() {
       await submitAssignment();
       await finishAssignment();
     } catch (e) {
+      if (!isCurrentServiceScope()) return;
       let error = e as { blocked?: boolean; message?: string };
       if (error?.blocked && service?.date) {
         const blockouts = await apiFetch<ServiceBlockoutLike[]>(`/blockouts?userId=${assignUserId}`).catch(() => null);
+        if (!isCurrentServiceScope()) return;
 
         if (Array.isArray(blockouts) && !hasLocalServiceBlockoutConflict(service.date, blockouts)) {
           try {
@@ -963,6 +996,7 @@ export default function ServiceDetail() {
             await finishAssignment();
             return;
           } catch (retryError: unknown) {
+            if (!isCurrentServiceScope()) return;
             error = retryError as { blocked?: boolean; message?: string };
           }
         }
@@ -976,7 +1010,7 @@ export default function ServiceDetail() {
         variant: "destructive",
       });
     }
-    finally { setSubmitting(false); }
+    finally { if (isCurrentServiceScope()) setSubmitting(false); }
   }
 
   async function handleRemoveAssignment(assignmentId: string) {
@@ -1136,18 +1170,21 @@ export default function ServiceDetail() {
     try {
       await apiFetch(`/service-items/${item.id}`, {
         method: "PUT",
+        churchId: selectedChurchId,
         body: JSON.stringify({ duration, details: nextDetails }),
       });
 
       const refreshed = await loadService();
+      if (!isCurrentServiceScope()) return;
       setDetailsEditingId(null);
       if (!refreshed) return;
       toast({ title: "Detalles guardados" });
     } catch (error) {
+      if (!isCurrentServiceScope()) return;
       console.error("No se pudieron guardar los detalles:", error);
       toast({ title: "No se pudieron guardar los detalles", variant: "destructive" });
     } finally {
-      setSavingDetails(false);
+      if (isCurrentServiceScope()) setSavingDetails(false);
     }
   }
 
@@ -1250,6 +1287,7 @@ export default function ServiceDetail() {
       });
       await loadService();
     } catch (error) {
+      if (!isCurrentServiceScope()) return;
       // Roll back only this edit. A newer edit or authoritative refresh must
       // not be undone by an older request failing later.
       setService((previous) => previous ? {
