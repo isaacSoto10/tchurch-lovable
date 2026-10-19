@@ -2,6 +2,8 @@
 
 Release candidate: `4.0.18 (243)`.
 
+Final verified status: `WAITING_FOR_REVIEW`, submitted to Apple on October 19, 2026 at `19:04:42.382Z`.
+
 This release carries the ChordPro/presentation changes already committed and verified in the 4.0.17 (242) candidate. There are no new feature changes in this version update.
 
 ## Why the version changed
@@ -32,14 +34,25 @@ The exact 4.0.18/243 promotion plan was inspected in dry-run mode before prepari
 
 ## Prepared public draft
 
-App Store version `4.0.18` exists as `PREPARE_FOR_SUBMISSION`, ID `fcd46dd4-3ef4-40f9-bb60-a09a3c6c3ec2`, with build 243 attached and independently verified. The release type is `AFTER_APPROVAL`.
+App Store version `4.0.18` is now `WAITING_FOR_REVIEW`, ID `fcd46dd4-3ef4-40f9-bb60-a09a3c6c3ec2`, with build 243 attached and independently verified. The release type is `AFTER_APPROVAL`.
 
 The draft preserves the approved description, keywords, support/marketing URLs, copyright, review-contact information and existing complete screenshots (four iPhone 6.5-inch screenshots and one iPad 12.9-inch screenshot). Inherited demo-account credential presence was checked as booleans only; no credential values were logged or stored. Approved What's New notes were saved to the new `es-MX` and `en-US` localizations and read back to verify an exact match.
 
-## Remaining Account Holder action
+## Public submission confirmed
 
-The live App Store Connect UI displayed an updated Apple Developer Program License Agreement requiring review and acceptance by the Account Holder before apps can be updated or submitted. The human Account Holder was asked to review and accept it.
+After the user confirmed the Account Holder action, the native Developer account UI showed the Program License Agreement accepted and membership active. No agreement was accepted by automation.
 
-No final public review submission was attempted, and no agreement was accepted by automation. The draft remains prepared while this legal gate is pending. External beta review, DSA trader status and territory availability were not changed.
+The older `/appStoreVersionSubmissions` resource rejected a normal submission attempt with 403 because it no longer allows `CREATE`. The normal App Store Connect UI then added the exact 4.0.18/243 version for review. A fresh read verified one review submission with one item and the intended version/build. One [documented Modify a Review Submission](https://developer.apple.com/documentation/appstoreconnectapi/patch-v1-reviewsubmissions-_id_) request set `submitted=true` on that submission.
 
-Sanitized live evidence is saved under `/Users/isaacsoto/Tchurch/output/chordpro-2026-10-19/` in `ios-4.0.18-243-asc.json` and `ios-4.0.18-243-review-readiness.json`. The final receipt was checked at `2026-10-19T14:02:48.727Z`.
+Independent readback at `2026-10-19T19:05:19.552Z` confirmed:
+
+- App Store version `fcd46dd4-3ef4-40f9-bb60-a09a3c6c3ec2`: `WAITING_FOR_REVIEW`, still attached to reviewed build 243 (`dde1ffac-dada-4a9d-b386-5ae26d9350d4`).
+- Review submission `d7a72fa4-bad2-4dd7-b79a-e6daac39f9f7`: `WAITING_FOR_REVIEW`.
+- Submitted date: `2026-10-19T19:04:42.382Z`.
+- Review submission target remains the exact 4.0.18 App Store version; it contains one review item.
+
+Build 244 also exists because Xcode Cloud automatically built release commit `cda27df0ca5b582b91efc18b27212a0851fb28a2`. A direct CI-run-to-build API read confirmed this provenance; it is the same feature/version source as the reviewed 243 candidate. The review deliberately retained build 243. No build replacement, deletion, expiration, external beta review, DSA trader-status or territory-availability change was performed.
+
+Submission is complete; App Store approval and public availability remain pending Apple's review.
+
+Sanitized live evidence is saved under `/Users/isaacsoto/Tchurch/output/chordpro-2026-10-19/`, including `ios-4.0.18-243-asc.json`, `ios-4.0.18-243-review-readiness.json`, `ios-4.0.18-243-modern-submission-receipt.json`, `ios-4.0.18-243-modern-review-state.json` and `ios-244-ci-build-link.json`.
