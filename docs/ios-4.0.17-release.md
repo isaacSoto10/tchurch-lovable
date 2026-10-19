@@ -39,3 +39,7 @@ Both single-song and service PDF exports use the same paired rows. Exceptionally
 Final validation: 90 Vitest files / 690 tests passed, including exact chord and lyric token preservation across widths 8–64, dense phone/tablet presentation and compact/full-height previews. TypeScript passed. Actual production PDF functions generated both synthetic exports, and Poppler renders were visually reviewed. PDF text geometry confirms intact `Em/C` aligns with `Dios,` at the same x coordinate and all text remains within the page, including an indivisible 126-character word. Evidence: `/tmp/tchurch-chordpro-ios-evidence/paired-wrapping-qa.pdf`, `paired-wrapping-qa.png`, `paired-service-qa-acordes.pdf`, `paired-service-qa.png`.
 
 The 242 Release archive was regenerated after this follow-up. The earlier archive is retained as `Tchurch-4.0.17-242-before-wrap.xcarchive`. The established App Store Connect upload credential blocker remains unchanged; no additional upload attempt was made.
+
+## Superseded release train
+
+After the user signed in to Xcode, the normal Organizer upload authenticated successfully. Apple then rejected candidate 242 because 4.0.17 is already approved (90062) and its train is closed (90186). Candidate 242 was never successfully uploaded. Its verified code is carried forward as `4.0.18 (243)`; see `docs/ios-4.0.18-release.md`. The earlier CLI provider error and archive remain historical evidence, not the current release target.
