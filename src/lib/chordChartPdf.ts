@@ -1,4 +1,5 @@
-import { chordProToDisplayLines } from "@/lib/songDisplay";
+import { wrapChartLine } from "@/lib/chartLineWrap";
+import { chordProToDisplayLines, type ChordProDisplayLine } from "@/lib/songDisplay";
 import { Capacitor } from "@capacitor/core";
 
 type GenerateChordChartPdfParams = {
@@ -105,8 +106,9 @@ export async function generateChordChartPdf({
   doc.line(margin, y, pageWidth - margin, y);
   y += 28;
 
-  const lines = chordProToDisplayLines(chordPro);
   doc.setFont("courier", "normal");
+  const chartColumns = Math.floor(contentWidth / (12 * doc.getStringUnitWidth("M")));
+  const lines = chordProToDisplayLines(chordPro).flatMap<ChordProDisplayLine>((line) => line.kind === "line" ? wrapChartLine(line, chartColumns) : [line]);
 
   for (const line of lines) {
     if (line.kind === "blank") {
@@ -133,15 +135,16 @@ export async function generateChordChartPdf({
       continue;
     }
 
-    const chordRows = line.chords ? doc.splitTextToSize(line.chords, contentWidth) : [];
-    const lyricRows = line.lyrics ? doc.splitTextToSize(line.lyrics, contentWidth) : [];
+    const chordRows = line.chords ? [line.chords] : [];
+    const lyricRows = line.lyrics ? [line.lyrics] : [];
+    const chartFontSize = Math.min(12, contentWidth / (Math.max(1, line.chords.length, line.lyrics.length) * 0.6));
     const rowHeight = 15;
     const needed = (chordRows.length + lyricRows.length) * rowHeight + 8;
     addPageIfNeeded(needed);
 
     if (line.chords) {
       doc.setFont("courier", "bold");
-      doc.setFontSize(12);
+      doc.setFontSize(chartFontSize);
       doc.setTextColor(accent);
       for (const row of chordRows) {
         doc.text(row, margin, y);
@@ -151,7 +154,7 @@ export async function generateChordChartPdf({
 
     if (line.lyrics) {
       doc.setFont("courier", "normal");
-      doc.setFontSize(12);
+      doc.setFontSize(chartFontSize);
       doc.setTextColor(ink);
       for (const row of lyricRows) {
         doc.text(row, margin, y);
@@ -256,7 +259,8 @@ export async function generateServiceChordChartsPdf({
 
     writeHeader(item.title, item.artist, item.key);
     doc.setFont("courier", "normal");
-    const lines = chordProToDisplayLines(item.chordPro);
+    const chartColumns = Math.floor(contentWidth / (12 * doc.getStringUnitWidth("M")));
+    const lines = chordProToDisplayLines(item.chordPro).flatMap<ChordProDisplayLine>((line) => line.kind === "line" ? wrapChartLine(line, chartColumns) : [line]);
 
     for (const line of lines) {
       if (line.kind === "blank") {
@@ -283,14 +287,15 @@ export async function generateServiceChordChartsPdf({
         continue;
       }
 
-      const chordRows = line.chords ? doc.splitTextToSize(line.chords, contentWidth) : [];
-      const lyricRows = line.lyrics ? doc.splitTextToSize(line.lyrics, contentWidth) : [];
+      const chordRows = line.chords ? [line.chords] : [];
+      const lyricRows = line.lyrics ? [line.lyrics] : [];
+      const chartFontSize = Math.min(12, contentWidth / (Math.max(1, line.chords.length, line.lyrics.length) * 0.6));
       const rowHeight = 15;
       addPageIfNeeded((chordRows.length + lyricRows.length) * rowHeight + 8);
 
       if (line.chords) {
         doc.setFont("courier", "bold");
-        doc.setFontSize(12);
+        doc.setFontSize(chartFontSize);
         doc.setTextColor(accent);
         for (const row of chordRows) {
           doc.text(row, margin, y);
@@ -300,7 +305,7 @@ export async function generateServiceChordChartsPdf({
 
       if (line.lyrics) {
         doc.setFont("courier", "normal");
-        doc.setFontSize(12);
+        doc.setFontSize(chartFontSize);
         doc.setTextColor(ink);
         for (const row of lyricRows) {
           doc.text(row, margin, y);

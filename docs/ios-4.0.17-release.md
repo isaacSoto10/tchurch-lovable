@@ -29,3 +29,13 @@ The signed Xcode Release archive succeeded: `/tmp/tchurch-ios-release/Tchurch-4.
 The normal Xcode account-based upload failed with `exportArchive App Store Connect Credentials Error`. The available individual API key successfully reads App Store Connect over REST, but installed Xcode requires the key path, key ID and issuer ID for API-key export authentication. No issuer is configured. A read-only `altool --list-providers` attempt with the individual key and subject `user` failed because it requires issuer/key or username/app-password/provider credentials.
 
 Build 242 is archived locally and has not been verified in App Store Connect. The latest observed App Store Connect build remains 241. Upload is blocked on resolving the Xcode App Store Connect account/provider or supplying the complete team API-key issuer through the existing secure configuration.
+
+## Atomic wrapping follow-up
+
+A dense chart could place the old arbitrary wrap boundary inside `Em/C` and `Dios`. Presentation and compact/full-height preview now search the whole earlier range for a shared safe boundary, then search forward if a word/chord overlap is indivisible. Oversized native rows remain reachable with horizontal scrolling. No padding is inserted into the stored words.
+
+Both single-song and service PDF exports use the same paired rows. Exceptionally wide indivisible pairs scale both Courier chord and lyric fonts together to fit the page.
+
+Final validation: 90 Vitest files / 690 tests passed, including exact chord and lyric token preservation across widths 8–64, dense phone/tablet presentation and compact/full-height previews. TypeScript passed. Actual production PDF functions generated both synthetic exports, and Poppler renders were visually reviewed. PDF text geometry confirms intact `Em/C` aligns with `Dios,` at the same x coordinate and all text remains within the page, including an indivisible 126-character word. Evidence: `/tmp/tchurch-chordpro-ios-evidence/paired-wrapping-qa.pdf`, `paired-wrapping-qa.png`, `paired-service-qa-acordes.pdf`, `paired-service-qa.png`.
+
+The 242 Release archive was regenerated after this follow-up. The earlier archive is retained as `Tchurch-4.0.17-242-before-wrap.xcarchive`. The established App Store Connect upload credential blocker remains unchanged; no additional upload attempt was made.

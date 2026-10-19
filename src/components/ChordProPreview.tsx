@@ -1,3 +1,4 @@
+import { findChartLineSplitColumn } from "@/lib/chartLineWrap";
 import { useEffect, useMemo, useState, type SyntheticEvent } from "react";
 import { chordProToDisplayLines, hasChordPro, type ChordProDisplayLine } from "@/lib/songDisplay";
 import { ALL_KEYS, normalizeKey, shiftKey, transposeChordPro } from "@/lib/musicUtils";
@@ -28,15 +29,7 @@ function splitWideDisplayLine(line: ChordProDisplayLine, maxColumns: number): Ch
   let start = 0;
 
   while (start < width) {
-    let end = Math.min(start + maxColumns, width);
-
-    if (end < width) {
-      const lyricWindow = line.lyrics.slice(start, end);
-      const lastSpace = Math.max(lyricWindow.lastIndexOf(" "), lyricWindow.lastIndexOf("\t"));
-      if (lastSpace > Math.floor(maxColumns * 0.58)) {
-        end = start + lastSpace + 1;
-      }
-    }
+    const end = findChartLineSplitColumn(line, start, width, maxColumns);
 
     const chords = line.chords.slice(start, end).trimEnd();
     const lyrics = line.lyrics.slice(start, end).trimEnd();
@@ -140,9 +133,9 @@ export function ChordProPreview({
       ? "flex shrink-0 flex-col gap-1.5 border-b border-zinc-100 bg-zinc-50 px-2 py-1.5 sm:flex-row sm:items-center sm:justify-between sm:px-4 sm:py-2"
       : "flex flex-col gap-2 border-b border-zinc-100 bg-zinc-50 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-4";
   const bodyClassName = compact
-    ? "max-h-[58svh] overflow-auto overflow-x-hidden px-1.5 py-2 font-mono text-[9px] leading-4 sm:max-h-[28rem] sm:px-3 sm:text-[12px] sm:leading-5"
+    ? "max-h-[58svh] overflow-auto px-1.5 py-2 font-mono text-[9px] leading-4 sm:max-h-[28rem] sm:px-3 sm:text-[12px] sm:leading-5"
     : fullHeight
-      ? "min-h-0 flex-1 overflow-auto overflow-x-hidden px-1.5 py-2 pb-[calc(1rem+env(safe-area-inset-bottom))] font-mono text-[8.5px] leading-4 sm:px-4 sm:py-3 sm:pb-6 sm:text-[12px] sm:leading-5"
+      ? "min-h-0 flex-1 overflow-auto px-1.5 py-2 pb-[calc(1rem+env(safe-area-inset-bottom))] font-mono text-[8.5px] leading-4 sm:px-4 sm:py-3 sm:pb-6 sm:text-[12px] sm:leading-5"
     : "max-h-[32rem] overflow-auto px-3 py-3 font-mono text-[12px] leading-6 sm:px-4 sm:text-[13px]";
   const controlButtonClassName = compact
     ? "flex h-11 w-11 items-center justify-center rounded-xl text-zinc-700 hover:bg-zinc-100 active:scale-95"

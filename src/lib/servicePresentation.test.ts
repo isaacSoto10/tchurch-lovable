@@ -62,6 +62,17 @@ function estimateRenderedRows(slide: ReturnType<typeof buildServicePresentationS
 }
 
 describe("buildServicePresentationSlides", () => {
+  it("keeps dense slash chords and lyric words intact across phone and tablet wraps", () => {
+    const chart = "Cas[C]tillo [G/C]fuerte es [Am/C]nuestro [Em/C]Dios, es[F/C]pada y [C]arma[Dm7/C]du ------ [C]ra";
+    for (const layout of ["phone", "tablet"] as const) {
+      const slides = buildServicePresentationSlides(buildService(chart), { layout });
+      const rows = slides.flatMap((slide) => slide.kind === "song" ? slide.lines : []).filter((line) => line.kind === "line");
+      expect(rows.flatMap((row) => row.chords.split(/\s+/).filter(Boolean))).toEqual(["C", "G/C", "Am/C", "Em/C", "F/C", "C", "Dm7/C", "C"]);
+      expect(rows.some((row) => row.lyrics.includes("Dios,"))).toBe(true);
+      expect(rows.some((row) => row.lyrics.includes("Castillo"))).toBe(true);
+    }
+  });
+
   it("detects real chord content in both sheet and slide modes", () => {
     const service = buildService("{verse}\n[F#m]Con acordes\n[E]Otra línea");
     const sheet = buildServicePresentationSlides(service, { layout: "phone", songMode: "scroll" })[0];

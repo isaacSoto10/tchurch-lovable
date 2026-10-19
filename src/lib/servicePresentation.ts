@@ -1,3 +1,4 @@
+import { findChartLineSplitColumn } from "./chartLineWrap";
 import {
   getPrimaryArrangement,
   getSongChordPro,
@@ -259,48 +260,6 @@ function splitSongLines(lines: PresentationDisplayLine[], layout: PresentationLa
   return chunks.length ? chunks : [[{ kind: "line", chords: "", lyrics: "Esta canción todavía no tiene acordes guardados." }]];
 }
 
-function isInsideToken(value: string, index: number) {
-  const before = value[index - 1];
-  const after = value[index];
-  return Boolean(before && after && !/\s/.test(before) && !/\s/.test(after));
-}
-
-function isSafeSplitColumn(line: Extract<ChordProDisplayLine, { kind: "line" }>, index: number) {
-  return !isInsideToken(line.chords, index) && !isInsideToken(line.lyrics, index);
-}
-
-function isBreakAfterWhitespace(value: string, index: number) {
-  return /\s/.test(value[index - 1] || "");
-}
-
-function findSplitColumn(line: Extract<ChordProDisplayLine, { kind: "line" }>, start: number, width: number, maxColumns: number) {
-  const remaining = width - start;
-  if (remaining <= maxColumns) return width;
-
-  let target = Math.min(start + maxColumns, width);
-  const shortTail = width - target;
-
-  if (shortTail > 0 && shortTail < maxColumns * 0.45) {
-    target = start + Math.ceil(remaining / 2);
-  }
-
-  const minSplit = start + Math.max(6, Math.floor(maxColumns * 0.58));
-  for (let index = target; index >= minSplit; index -= 1) {
-    if (
-      isSafeSplitColumn(line, index) &&
-      (isBreakAfterWhitespace(line.lyrics, index) || isBreakAfterWhitespace(line.chords, index))
-    ) {
-      return index;
-    }
-  }
-
-  for (let index = target; index >= minSplit; index -= 1) {
-    if (isSafeSplitColumn(line, index)) return index;
-  }
-
-  return target;
-}
-
 function firstContentColumn(value: string) {
   const index = value.search(/\S/);
   return index === -1 ? Number.POSITIVE_INFINITY : index;
@@ -327,7 +286,7 @@ function splitWideDisplayLine(line: PresentationDisplayLine, maxColumns = CHART_
   let start = 0;
 
   while (start < width) {
-    const end = Math.max(start + 1, findSplitColumn(line, start, width, maxColumns));
+    const end = Math.max(start + 1, findChartLineSplitColumn(line, start, width, maxColumns));
 
     const { chords, lyrics } = trimSharedLeadingColumns(
       line.chords.slice(start, end).trimEnd(),
