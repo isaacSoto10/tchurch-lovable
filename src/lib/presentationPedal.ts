@@ -578,6 +578,16 @@ export function isPresentationHardwareBlockedTarget(target: EventTarget | null |
   ].join(", ")));
 }
 
+// Arrow navigation remains available after clicking an ordinary transport button.
+// Space and Enter continue to activate the focused control normally.
+function canNavigateFromPresentationTarget(event: PresentationKeyLike) {
+  if (!["ArrowLeft", "ArrowRight", "PageUp", "PageDown"].includes(presentationKeyCode(event))) return false;
+  const target = event.target;
+  if (!(target instanceof Element) || isPresentationEditableTarget(target)) return false;
+  if (target.closest("[role=dialog], [aria-haspopup], [data-presentation-hardware-block=true]")) return false;
+  return Boolean(target.matches("button:not([role]), button[role=button], [data-presentation-song-chart]"));
+}
+
 export function createPresentationInputDeduper(windowMs = PRESENTATION_HARDWARE_DEDUPE_MS): PresentationInputDeduper {
   const acceptedAt = new Map<string, number>();
   return {
@@ -627,7 +637,7 @@ export function resolvePresentationHardwareInput(
     || event.ctrlKey
     || event.metaKey
     || event.shiftKey
-    || isPresentationHardwareBlockedTarget(event.target)
+    || (isPresentationHardwareBlockedTarget(event.target) && !canNavigateFromPresentationTarget(event))
   ) return { action: null, consume: false };
 
   const code = presentationKeyCode(event);

@@ -188,6 +188,15 @@ describe("buildServicePresentationSlides", () => {
     expect(lines.every((line) => Math.max(line.chords.length, line.lyrics.length) <= TABLET_PRESENTATION_WRAP_COLUMNS)).toBe(true);
   });
 
+  it("defaults phone and tablet to a complete sheet without the old source limit", () => {
+    const chart = Array.from({ length: 850 }, (_, i) => `[C/G]Línea ${i + 1}`).join("\n");
+    for (const layout of ["phone", "tablet"] as const) {
+      const slides = buildServicePresentationSlides(buildService(chart), { layout });
+      expect(slides).toHaveLength(1);
+      expect(slides[0].kind === "song" && slides[0].lines.some((line) => line.kind === "line" && line.lyrics === "Línea 850")).toBe(true);
+    }
+  });
+
   it("can render a full song as one scrollable phone slide", () => {
     const slides = buildServicePresentationSlides(buildService(makeLongSong()), {
       layout: "phone",

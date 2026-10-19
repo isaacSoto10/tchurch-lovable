@@ -1,4 +1,5 @@
-import { inferChordProKey } from "./musicUtils";
+import { normalizeChordProText } from "./chordProText";
+import { inferChordProKey, parseChordProgressionLine } from "./musicUtils";
 
 export type SongArrangement = {
   id: string;
@@ -228,11 +229,11 @@ function splitChordProContentLine(rawLine: string): { chords: string; lyrics: st
   };
 }
 
-export function chordProToDisplayLines(value: string | null | undefined, maxLines = 80): ChordProDisplayLine[] {
+export function chordProToDisplayLines(value: string | null | undefined, maxLines = Number.POSITIVE_INFINITY): ChordProDisplayLine[] {
   if (!value) return [];
 
   const lines: ChordProDisplayLine[] = [];
-  for (const rawLine of value.replace(/\r\n?/g, "\n").split("\n")) {
+  for (const rawLine of normalizeChordProText(value).split("\n")) {
     if (lines.length >= maxLines) break;
 
     const contentLine = rawLine.trimEnd();
@@ -285,6 +286,13 @@ export function chordProToDisplayLines(value: string | null | undefined, maxLine
         lines.push({ kind: "section", label: sectionLabel });
         continue;
       }
+    }
+
+    const progression = parseChordProgressionLine(contentLine);
+    if (progression) {
+      if (progression.label) lines.push({ kind: "section", label: getDirectiveLabel(progression.label) || progression.label });
+      lines.push({ kind: "line", chords: progression.chords, lyrics: "" });
+      continue;
     }
 
     const { chords, lyrics } = splitChordProContentLine(contentLine);

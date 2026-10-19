@@ -160,8 +160,8 @@ const TABLET_CHART_WRAP_COLUMNS = 64;
 const MAX_PHONE_RENDERED_ROWS_PER_SONG_SLIDE = 15;
 const MAX_TABLET_RENDERED_ROWS_PER_SONG_SLIDE = 23;
 
-export function getDefaultPresentationSongMode(layout: PresentationLayout): PresentationSongMode {
-  return layout === "tablet" ? "scroll" : "paged";
+export function getDefaultPresentationSongMode(_layout: PresentationLayout): PresentationSongMode {
+  return "scroll";
 }
 
 function getPlanningDetails(item: PresentationServiceItem) {

@@ -105,7 +105,7 @@ export async function generateChordChartPdf({
   doc.line(margin, y, pageWidth - margin, y);
   y += 28;
 
-  const lines = chordProToDisplayLines(chordPro, 1000);
+  const lines = chordProToDisplayLines(chordPro);
   doc.setFont("courier", "normal");
 
   for (const line of lines) {
@@ -256,7 +256,7 @@ export async function generateServiceChordChartsPdf({
 
     writeHeader(item.title, item.artist, item.key);
     doc.setFont("courier", "normal");
-    const lines = chordProToDisplayLines(item.chordPro, 1200);
+    const lines = chordProToDisplayLines(item.chordPro);
 
     for (const line of lines) {
       if (line.kind === "blank") {

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type SyntheticEvent } from "react";
 import { chordProToDisplayLines, hasChordPro, type ChordProDisplayLine } from "@/lib/songDisplay";
-import { ALL_KEYS, normalizeKey, transposeChordPro } from "@/lib/musicUtils";
+import { ALL_KEYS, normalizeKey, shiftKey, transposeChordPro } from "@/lib/musicUtils";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
 import { FileDown, Minus, Plus } from "lucide-react";
@@ -51,7 +51,7 @@ function splitWideDisplayLine(line: ChordProDisplayLine, maxColumns: number): Ch
 
 export function ChordProPreview({
   value,
-  maxLines = 48,
+  maxLines = Number.POSITIVE_INFINITY,
   emptyText = "Todavía no hay letras ChordPro guardadas.",
   originalKey,
   selectedKey: controlledSelectedKey,
@@ -87,17 +87,7 @@ export function ChordProPreview({
 
   function changeKey(direction: -1 | 1) {
     if (!normalizedOriginalKey) return;
-    setTransposeKey((current) => {
-      const currentKey = normalizeKey(current) || selectedKey || normalizedOriginalKey;
-      const currentIndex = ALL_KEYS.findIndex((key) => normalizeKey(key) === currentKey);
-      const fallbackIndex = ALL_KEYS.findIndex((key) => normalizeKey(key) === normalizedOriginalKey);
-      const safeIndex = currentIndex >= 0 ? currentIndex : fallbackIndex;
-      if (safeIndex < 0) return current;
-      const nextIndex = (safeIndex + direction + ALL_KEYS.length) % ALL_KEYS.length;
-      const nextKey = ALL_KEYS[nextIndex];
-      void onSelectedKeyChange?.(nextKey);
-      return nextKey;
-    });
+    updateKey(shiftKey(selectedKey || normalizedOriginalKey, direction));
   }
 
   async function handlePdf() {
@@ -155,11 +145,11 @@ export function ChordProPreview({
       ? "min-h-0 flex-1 overflow-auto overflow-x-hidden px-1.5 py-2 pb-[calc(1rem+env(safe-area-inset-bottom))] font-mono text-[8.5px] leading-4 sm:px-4 sm:py-3 sm:pb-6 sm:text-[12px] sm:leading-5"
     : "max-h-[32rem] overflow-auto px-3 py-3 font-mono text-[12px] leading-6 sm:px-4 sm:text-[13px]";
   const controlButtonClassName = compact
-    ? "flex h-8 w-8 items-center justify-center rounded-xl text-zinc-700 hover:bg-zinc-100 active:scale-95"
-    : "flex h-9 w-9 items-center justify-center rounded-xl text-zinc-700 hover:bg-zinc-100 active:scale-95";
+    ? "flex h-11 w-11 items-center justify-center rounded-xl text-zinc-700 hover:bg-zinc-100 active:scale-95"
+    : "flex h-11 w-11 items-center justify-center rounded-xl text-zinc-700 hover:bg-zinc-100 active:scale-95";
   const selectClassName = compact
-    ? "h-8 rounded-xl border-0 bg-primary/10 px-2 text-xs font-bold text-primary outline-none"
-    : "h-9 rounded-xl border-0 bg-primary/10 px-2 text-sm font-bold text-primary outline-none";
+    ? "h-11 rounded-xl border-0 bg-primary/10 px-2 text-xs font-bold text-primary outline-none"
+    : "h-11 rounded-xl border-0 bg-primary/10 px-2 text-sm font-bold text-primary outline-none";
 
   return (
     <div className={containerClassName}>
@@ -185,6 +175,7 @@ export function ChordProPreview({
                 <Minus className="h-3.5 w-3.5" />
               </button>
               <select
+                aria-label="Tonalidad"
                 value={selectedKey || normalizedOriginalKey}
                 onChange={(event) => updateKey(event.target.value)}
                 onClick={stopCardToggle}

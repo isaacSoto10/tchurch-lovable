@@ -834,6 +834,24 @@ describe("ServicePresentation load authority", () => {
     expect(mocks.liveSend).not.toHaveBeenCalledWith("jump", expect.anything(), expect.anything());
   });
 
+  it("advances a local presentation with keyboard after a button click and leaves sheet Up/Down for scrolling", async () => {
+    mocks.apiFetch.mockImplementation((path: string) => path === "/users/me"
+      ? Promise.resolve({ id: mocks.accountId })
+      : Promise.resolve(stageService()));
+    render(<ServicePresentation />);
+    await screen.findByText("Stage fixture");
+    const next = screen.getByRole("button", { name: "Siguiente" });
+    next.focus();
+    const scrollKey = new KeyboardEvent("keydown", { key: "ArrowDown", code: "ArrowDown", bubbles: true, cancelable: true });
+    next.dispatchEvent(scrollKey);
+    expect(scrollKey.defaultPrevented).toBe(false);
+    expect(next).not.toBeDisabled();
+    fireEvent.keyDown(next, { key: "ArrowRight", code: "ArrowRight" });
+    await waitFor(() => expect(next).toBeDisabled());
+    expect(mocks.liveSend).not.toHaveBeenCalled();
+    expect(mocks.rehearsalSend).not.toHaveBeenCalled();
+  });
+
   it("advances the live session from the iPad stage only while this device owns the lease", async () => {
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
     Object.defineProperty(window, "innerHeight", { configurable: true, value: 1366 });

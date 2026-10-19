@@ -1461,7 +1461,6 @@ export default function Services() {
                   }}
                   title={chartItem.song.title}
                   artist={chartItem.song.author}
-                  maxLines={500}
                   emptyText="Esta canción todavía no tiene acordes guardados."
                   fullHeight
                 />

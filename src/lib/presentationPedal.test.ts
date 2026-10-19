@@ -370,6 +370,16 @@ describe("presentation hardware execution gates", () => {
     dialog.remove();
   });
 
+  it("allows navigation arrows after a transport click but leaves Space to the focused control", () => {
+    const button = document.createElement("button");
+    expect(resolvePresentationHardwareInput({ code: "ArrowRight", target: button }, DEFAULT_PRESENTATION_HARDWARE_SETTINGS, readyContext)).toEqual({ action: "next", consume: true });
+    expect(resolvePresentationHardwareInput({ code: "Space", target: button }, DEFAULT_PRESENTATION_HARDWARE_SETTINGS, readyContext)).toEqual({ action: null, consume: false });
+    const menu = document.createElement("div");
+    menu.setAttribute("role", "dialog");
+    menu.appendChild(button);
+    expect(resolvePresentationHardwareInput({ code: "ArrowRight", target: button }, DEFAULT_PRESENTATION_HARDWARE_SETTINGS, readyContext)).toEqual({ action: null, consume: false });
+  });
+
   it("never consumes accessibility widgets or unbound/system keys", () => {
     const button = document.createElement("button");
     const link = document.createElement("a");

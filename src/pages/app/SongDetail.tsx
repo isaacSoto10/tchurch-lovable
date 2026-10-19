@@ -486,7 +486,6 @@ export default function SongDetail() {
                 <p className="text-sm font-medium text-zinc-600">{activeArrangement?.name || "Canción principal"} — Hoja de acordes</p>
                 <ChordProPreview
                   value={previewLyrics}
-                  maxLines={120}
                   originalKey={activeArrangement?.key || song.key || inferChordProKey(previewLyrics)}
                   title={song.title}
                   artist={song.author}

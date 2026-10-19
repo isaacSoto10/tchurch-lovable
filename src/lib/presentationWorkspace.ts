@@ -139,7 +139,7 @@ export function derivePresentationSections(
   arrangementId: string | null,
   chordPro: string | null | undefined,
 ): DerivedPresentationSection[] {
-  const displayLines = chordProToDisplayLines(chordPro, 800);
+  const displayLines = chordProToDisplayLines(chordPro);
   const groups: Array<{ label: string; lines: ChordProDisplayLine[] }> = [];
 
   for (const line of displayLines) {

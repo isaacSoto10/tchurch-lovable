@@ -237,13 +237,6 @@ function useMeasuredElement<T extends HTMLElement>() {
   return [ref, size] as const;
 }
 
-function getChordTokens(chords: string) {
-  return [...chords.matchAll(/\S+/g)].map((match) => ({
-    chord: match[0],
-    column: match.index ?? 0,
-  }));
-}
-
 function firstContentColumn(value: string) {
   const index = value.search(/\S/);
   return index === -1 ? Number.POSITIVE_INFINITY : index;
@@ -289,11 +282,6 @@ function formatLiveDuration(value: number | null | undefined) {
   return `${minutes}:${String(total % 60).padStart(2, "0")}`;
 }
 
-function getChordTokenLeft(column: number, columns: number) {
-  if (columns <= 1) return 0;
-  return Math.min(92, Math.max(0, (column / columns) * 100));
-}
-
 function getSongZoomScale(level: number) {
   return 1 + level * SONG_ZOOM_STEP;
 }
@@ -317,14 +305,13 @@ function SongSlide({
   stageMode: PresentationStageMode;
   expandedStage: boolean;
 }) {
-  const isTabletLayout = layout === "tablet";
-  const allowsVerticalScroll = songMode === "scroll" || zoomScale > 1 || !isTabletLayout;
+  const allowsVerticalScroll = true;
   const [chartBodyRef, chartSize] = useMeasuredElement<HTMLDivElement>();
   const displayLines = useMemo(() => {
-    if (stageMode !== "confidence" || !activeSequenceId) return slide.lines;
+    if (songMode === "scroll" || stageMode !== "confidence" || !activeSequenceId) return slide.lines;
     const confidenceLines = slide.lines.filter((line) => line.sectionSequenceId === activeSequenceId);
     return confidenceLines.length ? confidenceLines : slide.lines;
-  }, [activeSequenceId, slide.lines, stageMode]);
+  }, [activeSequenceId, slide.lines, songMode, stageMode]);
   useEffect(() => {
     if (!activeSequenceId || songMode !== "scroll") return;
     const root = chartBodyRef.current;
@@ -332,7 +319,7 @@ function SongSlide({
       .find((element) => element.dataset.presentationSequence === activeSequenceId);
     if (!target) return;
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    target.scrollIntoView({ block: "start", behavior: reduceMotion ? "auto" : "smooth" });
+    root?.scrollTo?.({ top: target.offsetTop - root.offsetTop, behavior: reduceMotion ? "auto" : "smooth" });
   }, [activeSequenceId, chartBodyRef, songMode]);
   const chartMetrics = useMemo(() => {
     return displayLines.reduce(
@@ -358,7 +345,7 @@ function SongSlide({
   const fallbackHeight = typeof window === "undefined" ? 620 : Math.max(window.innerHeight - 118, 420);
   const chartWidth = chartSize.width || fallbackWidth;
   const chartHeight = chartSize.height || fallbackHeight;
-  const { lyricFontSize, chordFontSize } = resolvePresentationSongTypography({
+  const { lyricFontSize } = resolvePresentationSongTypography({
     layout,
     songMode,
     expandedStage,
@@ -398,6 +385,10 @@ function SongSlide({
       <div className="min-h-0 flex-1 overflow-hidden rounded-2xl border border-white/[0.15] bg-black/25 p-4 shadow-2xl shadow-black/[0.35] sm:rounded-[1.75rem] sm:p-7">
         <div
           ref={chartBodyRef}
+          role="region"
+          aria-label="Canción completa"
+          data-presentation-song-chart
+          tabIndex={0}
           className={`h-full w-full min-w-0 ${allowsVerticalScroll ? "touch-pan-y overflow-y-auto overscroll-contain pb-4 pr-1" : "overflow-hidden"}`}
           style={allowsVerticalScroll ? { WebkitOverflowScrolling: "touch" } : undefined}
           onClick={songMode === "scroll" ? (event) => event.stopPropagation() : undefined}
@@ -424,71 +415,18 @@ function SongSlide({
 
             if (!showChords && !line.lyrics.trim()) return null;
 
-            if (isTabletLayout) {
-              const chartLine = trimSharedChartIndent(line.chords, line.lyrics);
-
-              return (
-                <div
-                  key={index}
-                  className="min-w-0 overflow-x-auto pb-3 leading-none last:pb-0"
-                  style={{ fontVariantLigatures: "none" }}
-                >
-                  {showChords && chartLine.chords.trim().length > 0 && (
-                    <pre
-                      className="w-max min-w-full whitespace-pre font-mono font-black leading-none text-violet-300"
-                      style={{ fontSize: chordFontSize, textShadow: "0 0 18px rgba(196,181,253,0.24)" }}
-                    >
-                      {chartLine.chords}
-                    </pre>
-                  )}
-                  {chartLine.lyrics.trim().length > 0 && (
-                    <pre
-                      className="w-max min-w-full whitespace-pre font-mono font-black leading-[1.12] text-white"
-                      style={{ fontSize: lyricFontSize, textShadow: "0 2px 18px rgba(0,0,0,0.34)" }}
-                    >
-                      {chartLine.lyrics}
-                    </pre>
-                  )}
-                </div>
-              );
-            }
-
-            const chordTokens = getChordTokens(line.chords);
-            const lineColumns = Math.max(18, slide.maxColumns, line.chords.length, line.lyrics.length);
-            const hasLyrics = line.lyrics.trim().length > 0;
-
+            const chartLine = trimSharedChartIndent(line.chords, line.lyrics);
             return (
-              <div
-                key={index}
-                className="min-w-0 overflow-hidden pb-2 leading-none last:pb-0"
-                style={{ fontVariantLigatures: "none" }}
-              >
-                {showChords && chordTokens.length > 0 && (
-                  <div className="relative h-[1.12em] min-w-0 overflow-visible" style={{ fontSize: chordFontSize }}>
-                    {chordTokens.map((token, tokenIndex) => (
-                      <span
-                        key={`${token.chord}-${token.column}-${tokenIndex}`}
-                        className="absolute top-0 whitespace-nowrap font-black leading-none text-violet-300"
-                        style={{
-                          left: `${getChordTokenLeft(token.column, lineColumns)}%`,
-                          textShadow: "0 0 18px rgba(196,181,253,0.24)",
-                        }}
-                      >
-                        {token.chord}
-                      </span>
-                    ))}
-                  </div>
+              <div key={index} className="min-w-0 overflow-x-auto pb-3 leading-none last:pb-0" style={{ fontVariantLigatures: "none" }}>
+                {showChords && chartLine.chords.trim().length > 0 && (
+                  <pre className="w-max min-w-full whitespace-pre font-mono font-black leading-[1.12] text-violet-300" style={{ fontSize: lyricFontSize }}>
+                    {chartLine.chords}
+                  </pre>
                 )}
-                {hasLyrics && (
-                  <p
-                    className="min-w-0 whitespace-pre-wrap break-words font-sans font-black leading-[1.12] text-white"
-                    style={{
-                      fontSize: lyricFontSize,
-                      textShadow: "0 2px 18px rgba(0,0,0,0.34)",
-                    }}
-                  >
-                    {line.lyrics.trimStart()}
-                  </p>
+                {chartLine.lyrics.trim().length > 0 && (
+                  <pre className="w-max min-w-full whitespace-pre font-mono font-black leading-[1.12] text-white" style={{ fontSize: lyricFontSize }}>
+                    {chartLine.lyrics}
+                  </pre>
                 )}
               </div>
             );
@@ -1326,13 +1264,13 @@ export default function ServicePresentation() {
   };
 
   const hardwareInputRuntime = usePresentationHardwareInputs({
-    settings: hardwareSettings,
+    settings: songMode === "scroll" ? { ...hardwareSettings, bindings: hardwareSettings.bindings.filter((binding) => binding.source !== "keyboard" || !["ArrowUp", "ArrowDown"].includes(binding.code)) } : hardwareSettings,
     scope: [authenticatedUserId || "signed-out", selectedChurch?.id || "no-church", id || "no-service", runMode, runtimeSession?.id || "no-session"].join("::"),
     context: {
       mode: runMode,
-      controllerOwned: liveControllerOwned,
+      controllerOwned: !runtimeSession || liveControllerOwned,
       commandPending: runtimeCommandPending,
-      appActive: presentationAppActive && (runMode === "rehearsal" || live.authoritativeReady),
+      appActive: presentationAppActive && (!runtimeSession || runMode === "rehearsal" || live.authoritativeReady),
       modalOpen: showRundown || showOutputManager || showProductionHub || Boolean(pendingRunMode),
       editorOpen: showEditor,
       captureActive: hardwareCaptureActive,

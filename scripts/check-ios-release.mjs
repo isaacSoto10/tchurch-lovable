@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 
-const EXPECTED_MARKETING_VERSION = "4.0.16";
-const EXPECTED_BUILD_NUMBER = "227";
+const EXPECTED_MARKETING_VERSION = "4.0.17";
+const EXPECTED_BUILD_NUMBER = "242";
 const projectPaths = [
   "ios/App/App.xcodeproj/project.pbxproj",
   "ios/App/Tchurch.xcodeproj/project.pbxproj",
@@ -31,10 +31,8 @@ for (const projectPath of projectPaths) {
   assert(marketingVersions.every((value) => value === EXPECTED_MARKETING_VERSION), `${projectPath} must use marketing version ${EXPECTED_MARKETING_VERSION}.`);
 }
 
-const workflow = await readFile(".github/workflows/ios-appstore-agent.yml", "utf8");
-assert(valuesFor(workflow, /ASC_TARGET_BUILD_NUMBER:\s*"([^"]+)"/g).join(",") === EXPECTED_BUILD_NUMBER, "App Store workflow build pin is inconsistent.");
-assert(valuesFor(workflow, /ASC_TARGET_MARKETING_VERSION:\s*"([^"]+)"/g).join(",") === EXPECTED_MARKETING_VERSION, "App Store workflow marketing pin is inconsistent.");
-
+// This checkout releases directly through Xcode; there is no checked-in
+// promotion workflow. Validate the native projects and documented commands.
 const releaseAgentDocs = await readFile("docs/ios-appstore-agent.md", "utf8");
 const documentedBuildNumbers = valuesFor(releaseAgentDocs, /ASC_TARGET_BUILD_NUMBER=([0-9]+)/g);
 const documentedMarketingVersions = valuesFor(releaseAgentDocs, /ASC_TARGET_MARKETING_VERSION=([0-9.]+)/g);
