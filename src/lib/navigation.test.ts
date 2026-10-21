@@ -30,6 +30,8 @@ describe("mobile app navigation helpers", () => {
   });
 
   it("preserves church invite query deep links", () => {
+    expect(routeFromAppUrl("https://www.tchurchapp.com/join-church?invite=Mixed_token%2F%2B")).toBe("/join-church?invite=Mixed_token%2F%2B");
+    expect(routeFromAppUrl("tchurchapp://join-church?token=Mixed_token%2F%2B")).toBe("/join-church?token=Mixed_token%2F%2B");
     expect(routeFromAppUrl("tchurchapp://tchurchapp.com?code=ABC12345")).toBe("/join-church?code=ABC12345");
     expect(routeFromAppUrl("https://www.tchurchapp.com?code=ABC12345")).toBe("/join-church?code=ABC12345");
   });

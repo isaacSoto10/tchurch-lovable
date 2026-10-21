@@ -1,3 +1,5 @@
+import { ChurchInvitationHandoff } from "@/components/ChurchInvitationHandoff";
+import { getChurchInvitationToken } from "@/lib/churchInvitationHandoff";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowLeft, CheckCircle2, Loader2, Mail, ShieldCheck, XCircle } from "lucide-react";
@@ -62,6 +64,13 @@ function getMobileJoinError(error: unknown, fallback: string) {
 }
 
 export default function JoinChurch() {
+  const [searchParams] = useSearchParams();
+  const inviteToken = getChurchInvitationToken(searchParams);
+  if (inviteToken) return <ChurchInvitationHandoff key={inviteToken} token={inviteToken} />;
+  return <JoinChurchWithCode />;
+}
+
+function JoinChurchWithCode() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { isLoaded, isSignedIn } = useAppAuth();
