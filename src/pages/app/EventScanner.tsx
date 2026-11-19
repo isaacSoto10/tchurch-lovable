@@ -30,7 +30,7 @@ export default function EventScanner() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { selectedChurch } = useChurch();
-  const { getToken } = useAppAuth();
+  const { getToken, userId } = useAppAuth();
   const { toast } = useToast();
 
   const [event, setEvent] = useState<ChurchEvent | null>(null);
@@ -50,11 +50,11 @@ export default function EventScanner() {
   const loadQueueCount = useCallback(async () => {
     if (!id) return;
     try {
-      setQueue(await listQueuedEventCheckIns(id));
+      setQueue(await listQueuedEventCheckIns(id, userId ?? undefined));
     } catch (error) {
       console.warn("Could not read check-in queue:", error);
     }
-  }, [id]);
+  }, [id, userId]);
 
   const loadEvent = useCallback(async () => {
     if (!id) return;
@@ -75,7 +75,7 @@ export default function EventScanner() {
       setQueueFlushing(true);
       try {
         const token = await getToken();
-        const result = await flushQueuedEventCheckIns(token, id);
+        const result = await flushQueuedEventCheckIns(token, id, userId ?? undefined);
         await loadQueueCount();
         if (result.sent > 0) {
           if (notify) toast({ title: "Cola sincronizada", description: `${result.sent} check-in(s) enviados.` });
@@ -87,7 +87,7 @@ export default function EventScanner() {
         setQueueFlushing(false);
       }
     },
-    [getToken, id, loadQueueCount, queueFlushing, toast]
+    [getToken, id, loadQueueCount, queueFlushing, toast, userId]
   );
 
   useEffect(() => {
@@ -126,7 +126,8 @@ export default function EventScanner() {
           scannedAt: new Date().toISOString(),
           source,
         },
-        token
+        token,
+        userId ?? undefined,
       );
 
       if (result.queued) {

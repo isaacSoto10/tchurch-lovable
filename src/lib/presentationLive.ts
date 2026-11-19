@@ -1661,6 +1661,28 @@ export function clearPresentationLiveCache() {
   return reset;
 }
 
+export function purgeAccountPresentationCache(accountId: string) {
+  const reset = presentationLiveCacheReset.catch(() => undefined).then(async () => {
+    const identity = localStorage.getItem(ACTIVE_CACHE_IDENTITY_KEY);
+    if (identity?.startsWith(`${accountId}::`)) localStorage.removeItem(ACTIVE_CACHE_IDENTITY_KEY);
+    for (const [store, fallback] of [[PACKAGE_STORE, FALLBACK_PACKAGES_KEY], [OFFLINE_STORE, FALLBACK_OFFLINE_KEY]]) {
+      const fallbackRecords = readFallbackRecords<StoredPresentationPackage | PresentationOfflineState>(fallback);
+      const remaining = fallbackRecords.filter((record) => record.accountId !== accountId);
+      if (remaining.length !== fallbackRecords.length) {
+        if (remaining.length) localStorage.setItem(fallback, JSON.stringify(remaining));
+        else localStorage.removeItem(fallback);
+      }
+      if (!hasIndexedDb()) continue;
+      const records = await getAllLiveRecords<StoredPresentationPackage | PresentationOfflineState>(store, fallback);
+      for (const record of records) {
+        if (record.accountId === accountId) await deleteLiveRecord(store, fallback, record.key);
+      }
+    }
+  });
+  presentationLiveCacheReset = reset.catch(() => undefined);
+  return reset;
+}
+
 export async function purgePresentationCacheForViewerDowngrade(scope: PresentationCacheScope) {
   await activatePresentationCacheIdentity(scope.accountId, scope.churchId);
   const expectedRoleFingerprint = presentationRoleFingerprint(scope.roles);

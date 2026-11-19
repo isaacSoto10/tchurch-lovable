@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -166,6 +166,9 @@ export default function Onboarding() {
             </Card>
           )}
 
+          <Button asChild variant="ghost" className="min-h-11 w-full">
+            <Link to="/app/settings">Ajustes de mi cuenta</Link>
+          </Button>
         </div>
       </div>
     </div>

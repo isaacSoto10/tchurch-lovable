@@ -230,6 +230,7 @@ export interface EventCheckInResponse {
 
 export interface QueuedEventCheckIn {
   id: string;
+  ownerId?: string;
   eventId: string;
   endpoint: "scan" | "manual";
   payload: EventCheckInPayload | EventManualCheckInPayload;

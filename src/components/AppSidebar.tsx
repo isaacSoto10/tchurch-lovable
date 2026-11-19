@@ -127,7 +127,7 @@ const navItems: NavItem[] = [
 ];
 
 export function AppSidebar() {
-  const { isMobile, state } = useSidebar();
+  const { isMobile, state, setOpenMobile } = useSidebar();
   const collapsed = !isMobile && state === "collapsed";
   const { signOut, user } = useAppAuth();
   const { selectedChurch } = useChurch();
@@ -183,6 +183,7 @@ export function AppSidebar() {
                   <SidebarMenuButton asChild tooltip={item.title} className="min-h-11 group-data-[collapsible=icon]:!size-11">
                     <NavLink
                       to={item.url}
+                      onClick={isMobile && item.url === "/app/settings" ? () => setOpenMobile(false) : undefined}
                       end={item.url === "/app"}
                       className="hover:bg-muted/50"
                       activeClassName="bg-primary text-primary-foreground font-medium hover:bg-primary/90"

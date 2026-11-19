@@ -9,11 +9,13 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useApi } from "@/hooks/useApi";
+import { useAppAuth } from "@/hooks/useAppAuth";
 import { useChurch } from "@/providers/ChurchProvider";
 import { User, Bell, Church, LogOut, Settings as SettingsIcon, Loader2, Check, X, Shield, MessageCircle, Radio } from "lucide-react";
 import { getChurchId } from "@/lib/api";
 import { readSessionSnapshot, sessionSnapshotKey, writeSessionSnapshot } from "@/lib/sessionSnapshots";
 import { LiveDestinationSetup } from "@/components/LiveDestinationSetup";
+import { AccountDeletion } from "@/components/AccountDeletion";
 
 type PendingMember = {
   id: string;
@@ -85,6 +87,7 @@ function isSettingsSnapshot(data: unknown): data is SettingsSnapshot {
 export default function Settings() {
   const { selectedChurch, churches, switchChurch } = useChurch();
   const { fetchApi } = useApi();
+  const { user } = useAppAuth();
   const isAdmin = selectedChurch?.role === "ADMIN";
   const isPlanner = selectedChurch?.role === "PLANNER" || isAdmin;
 
@@ -130,6 +133,8 @@ export default function Settings() {
   const snapshotKey = sessionSnapshotKey(SETTINGS_SNAPSHOT_PREFIX, selectedChurch?.id || getChurchId());
 
   useEffect(() => {
+    if (!selectedChurch?.id) return;
+    const controller = new AbortController();
     async function load() {
       const snapshot = readSessionSnapshot<SettingsSnapshot>(snapshotKey, { validate: isSettingsSnapshot });
       if (snapshot) {
@@ -141,20 +146,23 @@ export default function Settings() {
       }
 
       try {
-        const data = await fetchApi<Profile>("/users/me");
+        const data = await fetchApi<Profile>("/users/me", { signal: controller.signal, churchId: selectedChurch.id });
+        if (controller.signal.aborted) return;
         setProfile(data);
         loadedOnceRef.current = true;
         writeSessionSnapshot(snapshotKey, { profile: data });
       } catch (e) {
-        console.error("Failed to load profile:", e);
+        if (!controller.signal.aborted) console.error("Failed to load profile:", e);
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     }
-    load();
-  }, [fetchApi, snapshotKey]);
+    void load();
+    return () => controller.abort();
+  }, [fetchApi, selectedChurch?.id, snapshotKey]);
 
   const loadWhatsAppSettings = useCallback(async () => {
+    if (!selectedChurch?.id) return;
     setLoadingWhatsApp(true);
     try {
       const data = await fetchApi<WhatsAppSettings>("/whatsapp/settings");
@@ -164,7 +172,7 @@ export default function Settings() {
     } finally {
       setLoadingWhatsApp(false);
     }
-  }, [fetchApi]);
+  }, [fetchApi, selectedChurch?.id]);
 
   useEffect(() => {
     loadWhatsAppSettings();
@@ -337,15 +345,13 @@ export default function Settings() {
     }
   }
 
-  const initials = `${profile?.firstName?.[0] || ""}${profile?.lastName?.[0] || ""}`.toUpperCase() || "?";
-
-  if (loading && !profile) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
+  const profileInfo = profile ?? (user ? {
+    firstName: user.firstName,
+    lastName: user.lastName,
+    imageUrl: user.imageUrl,
+    email: user.primaryEmailAddress?.emailAddress,
+  } : null);
+  const initials = `${profileInfo?.firstName?.[0] || ""}${profileInfo?.lastName?.[0] || ""}`.toUpperCase() || "?";
 
   return (
     <div className="mobile-page mx-auto max-w-2xl space-y-5">
@@ -359,10 +365,10 @@ export default function Settings() {
         <TabsList className="flex h-auto w-full justify-start gap-1 overflow-x-auto rounded-2xl bg-muted p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <TabsTrigger value="profile" className="shrink-0 rounded-xl">Perfil</TabsTrigger>
           <TabsTrigger value="notifications" className="shrink-0 rounded-xl">Notificaciones</TabsTrigger>
-          <TabsTrigger value="whatsapp" className="shrink-0 rounded-xl">
+          {selectedChurch && <TabsTrigger value="whatsapp" className="shrink-0 rounded-xl">
             <MessageCircle className="w-4 h-4 mr-1.5" />
             WhatsApp
-          </TabsTrigger>
+          </TabsTrigger>}
           {isPlanner && (
             <TabsTrigger value="streaming" className="shrink-0 rounded-xl">
               <Radio className="w-4 h-4 mr-1.5" />
@@ -395,28 +401,38 @@ export default function Settings() {
             </CardHeader>
             <CardContent>
               <div className="flex items-center gap-4">
-                <Avatar className="h-16 w-16">
-                  <AvatarImage src={profile?.imageUrl} />
-                  <AvatarFallback className="bg-primary text-primary-foreground text-lg font-semibold">
-                    {initials}
-                  </AvatarFallback>
-                </Avatar>
-                <div>
-                  <p className="font-semibold text-lg">
-                    {profile?.firstName} {profile?.lastName}
-                  </p>
-                  <p className="text-sm text-muted-foreground">{profile?.email}</p>
-                  {selectedChurch && (
-                    <Badge variant="secondary" className="mt-1 capitalize">
-                      {selectedChurch.role?.toLowerCase()} in {selectedChurch.name}
-                    </Badge>
-                  )}
-                </div>
+                {loading && selectedChurch && !profileInfo ? (
+                  <p role="status" className="text-sm text-muted-foreground">Cargando perfil…</p>
+                ) : profileInfo ? (
+                  <>
+                    <Avatar className="h-16 w-16">
+                      <AvatarImage src={profileInfo.imageUrl ?? undefined} />
+                      <AvatarFallback className="bg-primary text-primary-foreground text-lg font-semibold">
+                        {initials}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div>
+                      <p className="text-lg font-semibold">{profileInfo.firstName} {profileInfo.lastName}</p>
+                      <p className="text-sm text-muted-foreground">{profileInfo.email}</p>
+                      {selectedChurch && (
+                        <Badge variant="secondary" className="mt-1 capitalize">
+                          {selectedChurch.role?.toLowerCase()} in {selectedChurch.name}
+                        </Badge>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No pudimos cargar los datos del perfil.</p>
+                )}
               </div>
             </CardContent>
           </Card>
 
-          <Card className="app-card mt-5">
+          <div className="mt-5">
+            <AccountDeletion />
+          </div>
+
+          {selectedChurch && <Card className="app-card mt-5">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Church className="w-5 h-5" />
@@ -456,7 +472,7 @@ export default function Settings() {
                 </>
               )}
             </CardContent>
-          </Card>
+          </Card>}
 
           <Card className="app-card mt-5">
             <CardHeader>

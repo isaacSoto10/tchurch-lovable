@@ -173,6 +173,13 @@ export async function purgeSongLyricsProposalOutbox(scope?: SongLyricsProposalOu
   await removeMany(records.filter((record) => !scope || belongsTo(record, scope)).map((record) => record.id));
 }
 
+export async function purgeAccountSongLyricsProposals(userId: string) {
+  if (typeof indexedDB === "undefined") return;
+  const { ownerHash } = await songLyricsProposalOutboxScope("account-deletion", userId);
+  const records = await allRecords();
+  await removeMany(records.filter((record) => record.ownerHash === ownerHash).map((record) => record.id));
+}
+
 async function trimScope(scope: SongLyricsProposalOutboxScope) {
   const records = await listSongLyricsProposalOutbox(scope);
   if (records.length < MAX_SCOPE_RECORDS) return;

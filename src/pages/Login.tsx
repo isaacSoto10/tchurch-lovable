@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, Navigate, useNavigate } from "react-router-dom";
+import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { TchurchLogo } from "@/components/TchurchLogo";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,7 @@ import { useAppAuth } from "@/hooks/useAppAuth";
 import { ensureHeadlessClerkLoaded } from "@/lib/clerkClient";
 import { getClerkErrorMessage } from "@/lib/clerkErrors";
 import { logUserAction } from "@/lib/userActionLogger";
+import type { AccountDeletionResult } from "@/lib/accountDeletion";
 import {
   isNativeMobileAuth,
   MobileAuthApiError,
@@ -42,6 +43,8 @@ function authFailureMetadata(err: unknown) {
 function LoginInner() {
   const { isLoaded: authLoaded, isSignedIn } = useAppAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const deletionReceipt = location.state as { accountDeletion?: AccountDeletionResult; localCleanupFailed?: boolean } | null;
   const [step, setStep] = useState<Step>("email");
   const [email, setEmail] = useState("");
   const [emailAddressId, setEmailAddressId] = useState("");
@@ -221,6 +224,19 @@ function LoginInner() {
       </Link>
       <Card className="w-full max-w-md border-slate-200 shadow-xl shadow-indigo-100/50">
         <CardHeader className="space-y-3 text-center">
+          {deletionReceipt?.accountDeletion && (
+            <div role="status" className="space-y-1 rounded-xl border border-indigo-200 bg-indigo-50 p-3 text-left text-sm text-indigo-950">
+              <p className="font-semibold">
+                {deletionReceipt.accountDeletion === "completed" ? "Tu cuenta se eliminó" : "Tu eliminación quedó registrada"}
+              </p>
+              <p>
+                {deletionReceipt.accountDeletion === "completed"
+                  ? "Cerramos tu sesión en este dispositivo."
+                  : "Cerramos tu sesión en este dispositivo. La eliminación suele completarse en unos minutos y puede tardar más si hay archivos o pagos pendientes. Te enviaremos la confirmación a tu correo verificado."}
+              </p>
+              {deletionReceipt.localCleanupFailed && <p>El dispositivo no pudo borrar todos los datos guardados en la app.</p>}
+            </div>
+          )}
           <TchurchLogo variant="stacked" size="sm" wordPurple className="mx-auto" />
           <div className="space-y-1">
             <CardTitle>Inicia sesión en Tchurch</CardTitle>

@@ -317,7 +317,7 @@ export default function EventDetail() {
   const location = useLocation();
   const navigate = useNavigate();
   const { selectedChurch } = useChurch();
-  const { getToken, user } = useAppAuth();
+  const { getToken, user, userId } = useAppAuth();
   const { toast } = useToast();
 
   const [activeTab, setActiveTab] = useState<TabValue>(() => routeTab(location.pathname));
@@ -379,11 +379,11 @@ export default function EventDetail() {
   const loadQueueCount = useCallback(async () => {
     if (!id) return;
     try {
-      setPendingCount(await getQueuedEventCheckInCount(id));
+      setPendingCount(await getQueuedEventCheckInCount(id, userId ?? undefined));
     } catch (error) {
       console.warn("Could not read check-in queue:", error);
     }
-  }, [id]);
+  }, [id, userId]);
 
   const loadEvent = useCallback(
     async (showSpinner = true) => {
@@ -478,7 +478,7 @@ export default function EventDetail() {
       setQueueFlushing(true);
       try {
         const token = await getToken();
-        const result = await flushQueuedEventCheckIns(token, id);
+        const result = await flushQueuedEventCheckIns(token, id, userId ?? undefined);
         setPendingCount(result.pending);
         if (result.sent > 0) {
           await loadEvent(false);
@@ -495,7 +495,7 @@ export default function EventDetail() {
         setQueueFlushing(false);
       }
     },
-    [canCheckIn, getToken, id, loadEvent, queueFlushing, toast]
+    [canCheckIn, getToken, id, loadEvent, queueFlushing, toast, userId]
   );
 
   useEffect(() => {
@@ -818,7 +818,8 @@ export default function EventDetail() {
           notes: note || undefined,
           checkedInAt: new Date().toISOString(),
         },
-        token
+        token,
+        userId ?? undefined,
       );
 
       if (result.queued) {

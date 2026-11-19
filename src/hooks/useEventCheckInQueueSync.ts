@@ -4,19 +4,19 @@ import { useAppAuth } from "@/hooks/useAppAuth";
 import { flushQueuedEventCheckIns } from "@/lib/eventCheckInQueue";
 
 export function useEventCheckInQueueSync() {
-  const { getToken, isSignedIn } = useAppAuth();
+  const { getToken, isSignedIn, userId } = useAppAuth();
   const { toast } = useToast();
   const flushingRef = useRef(false);
 
   const flushQueue = useCallback(
     async (notify = false) => {
-      if (!isSignedIn || flushingRef.current) return;
+      if (!isSignedIn || !userId || flushingRef.current) return;
       if (typeof navigator !== "undefined" && navigator.onLine === false) return;
 
       flushingRef.current = true;
       try {
         const token = await getToken();
-        const result = await flushQueuedEventCheckIns(token);
+        const result = await flushQueuedEventCheckIns(token, undefined, userId);
         if (notify && result.sent > 0) {
           toast({ title: "Check-ins sincronizados", description: `${result.sent} check-in(s) enviados.` });
         }
@@ -26,7 +26,7 @@ export function useEventCheckInQueueSync() {
         flushingRef.current = false;
       }
     },
-    [getToken, isSignedIn, toast]
+    [getToken, isSignedIn, toast, userId]
   );
 
   useEffect(() => {

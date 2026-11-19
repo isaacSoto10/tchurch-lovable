@@ -413,6 +413,11 @@ function JoinChurchWithCode() {
             ) : null}
           </CardContent>
         </Card>
+        {isSignedIn && (
+          <Button asChild variant="ghost" className="mx-auto mt-4 min-h-11">
+            <Link to="/app/settings">Ajustes de mi cuenta</Link>
+          </Button>
+        )}
       </main>
     </div>
   );

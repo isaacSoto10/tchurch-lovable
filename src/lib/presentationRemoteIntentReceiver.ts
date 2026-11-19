@@ -294,6 +294,14 @@ export function clearPresentationRemoteIntentReceiverStorage(storage?: Storage) 
   target?.removeItem(PRESENTATION_REMOTE_INTENT_RECEIPT_IDENTITY_KEY);
 }
 
+export function purgeAccountRemoteIntentReceipts(accountId: string) {
+  const target = activeStorage();
+  const identity = target?.getItem(PRESENTATION_REMOTE_INTENT_RECEIPT_IDENTITY_KEY);
+  if (identity?.startsWith(`[${JSON.stringify(accountId)},`)) {
+    clearPresentationRemoteIntentReceiverStorage(target);
+  }
+}
+
 export function presentationRemoteIntentReceiverBindingScope(authority: PresentationRemoteIntentReceiverAuthority) {
   return JSON.stringify([
     authority.accountId || "signed-out",

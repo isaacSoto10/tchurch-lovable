@@ -122,7 +122,7 @@ async function sendQueuedItem(item: QueuedEventCheckIn, token?: string | null) {
   return scanEventCheckIn(item.eventId, item.payload as EventCheckInPayload, token);
 }
 
-export async function listQueuedEventCheckIns(eventId?: string): Promise<QueuedEventCheckIn[]> {
+export async function listQueuedEventCheckIns(eventId?: string, ownerId?: string): Promise<QueuedEventCheckIn[]> {
   const db = await openQueueDb();
   try {
     const transaction = db.transaction(STORE_NAME, "readonly");
@@ -131,15 +131,15 @@ export async function listQueuedEventCheckIns(eventId?: string): Promise<QueuedE
     const records = await requestAsPromise<QueuedEventCheckIn[]>(store.getAll());
     await done;
     return records
-      .filter((item) => !eventId || item.eventId === eventId)
+      .filter((item) => (!eventId || item.eventId === eventId) && (!item.ownerId || item.ownerId === ownerId))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   } finally {
     db.close();
   }
 }
 
-export async function getQueuedEventCheckInCount(eventId?: string) {
-  const items = await listQueuedEventCheckIns(eventId);
+export async function getQueuedEventCheckInCount(eventId?: string, ownerId?: string) {
+  const items = await listQueuedEventCheckIns(eventId, ownerId);
   return items.length;
 }
 
@@ -147,11 +147,12 @@ export async function enqueueEventCheckIn(
   eventId: string,
   endpoint: CheckInEndpoint,
   payload: EventCheckInPayload | EventManualCheckInPayload,
-  lastError?: string | null
+  lastError?: string | null,
+  ownerId?: string,
 ): Promise<QueuedEventCheckIn> {
   const existingKey = getQueuedEventCheckInDedupeKey(endpoint, payload);
   if (existingKey) {
-    const existing = (await listQueuedEventCheckIns(eventId)).find(
+    const existing = (await listQueuedEventCheckIns(eventId, ownerId)).find(
       (item) => getQueuedEventCheckInDedupeKey(item.endpoint, item.payload) === existingKey
     );
     if (existing) return existing;
@@ -165,6 +166,7 @@ export async function enqueueEventCheckIn(
   };
   const item: QueuedEventCheckIn = {
     id,
+    ownerId,
     eventId,
     endpoint,
     payload: payloadWithOfflineClientId,
@@ -196,16 +198,35 @@ export async function removeQueuedEventCheckIn(id: string) {
   }
 }
 
+export async function purgeAccountEventCheckIns(ownerId: string) {
+  if (!hasIndexedDb()) return;
+  const db = await openQueueDb();
+  try {
+    const transaction = db.transaction(STORE_NAME, "readwrite");
+    const done = transactionDone(transaction);
+    const store = transaction.objectStore(STORE_NAME);
+    const records = await requestAsPromise<QueuedEventCheckIn[]>(store.getAll());
+    for (const record of records) {
+      if (record.ownerId === ownerId || ("userId" in record.payload && record.payload.userId === ownerId)) {
+        store.delete(record.id);
+      }
+    }
+    await done;
+  } finally {
+    db.close();
+  }
+}
+
 async function markQueuedEventCheckInFailed(item: QueuedEventCheckIn, error: unknown) {
   const db = await openQueueDb();
   try {
     const transaction = db.transaction(STORE_NAME, "readwrite");
     const done = transactionDone(transaction);
-    transaction.objectStore(STORE_NAME).put({
-      ...item,
-      attempts: item.attempts + 1,
-      lastError: errorMessage(error),
-    });
+    const store = transaction.objectStore(STORE_NAME);
+    const current = await requestAsPromise<QueuedEventCheckIn | undefined>(store.get(item.id));
+    if (current) {
+      store.put({ ...current, attempts: current.attempts + 1, lastError: errorMessage(error) });
+    }
     await done;
   } finally {
     db.close();
@@ -216,10 +237,11 @@ export async function submitEventCheckInOnlineFirst(
   eventId: string,
   endpoint: CheckInEndpoint,
   payload: EventCheckInPayload | EventManualCheckInPayload,
-  token?: string | null
+  token?: string | null,
+  ownerId?: string,
 ): Promise<QueueSubmitResult> {
   if (typeof navigator !== "undefined" && navigator.onLine === false) {
-    const queueItem = await enqueueEventCheckIn(eventId, endpoint, payload, "Offline");
+    const queueItem = await enqueueEventCheckIn(eventId, endpoint, payload, "Offline", ownerId);
     return { queued: true, queueItem };
   }
 
@@ -231,13 +253,13 @@ export async function submitEventCheckInOnlineFirst(
     return { queued: false, response };
   } catch (error) {
     if (!isOfflineRetryable(error)) throw error;
-    const queueItem = await enqueueEventCheckIn(eventId, endpoint, payload, errorMessage(error));
+    const queueItem = await enqueueEventCheckIn(eventId, endpoint, payload, errorMessage(error), ownerId);
     return { queued: true, queueItem };
   }
 }
 
-export async function flushQueuedEventCheckIns(token?: string | null, eventId?: string): Promise<QueueFlushResult> {
-  const pending = await listQueuedEventCheckIns(eventId);
+export async function flushQueuedEventCheckIns(token?: string | null, eventId?: string, ownerId?: string): Promise<QueueFlushResult> {
+  const pending = await listQueuedEventCheckIns(eventId, ownerId);
 
   if (typeof navigator !== "undefined" && navigator.onLine === false) {
     return { sent: 0, failed: 0, pending: pending.length };
@@ -258,6 +280,6 @@ export async function flushQueuedEventCheckIns(token?: string | null, eventId?: 
     }
   }
 
-  const remaining = await listQueuedEventCheckIns(eventId);
+  const remaining = await listQueuedEventCheckIns(eventId, ownerId);
   return { sent, failed, pending: remaining.length };
 }

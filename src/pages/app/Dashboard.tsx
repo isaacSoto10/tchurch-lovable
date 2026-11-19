@@ -495,6 +495,7 @@ export default function Dashboard() {
                 </Button>
               )}
             </div>
+            <Button variant="ghost" className="min-h-11" onClick={() => navigate("/app/settings")}>Ajustes de mi cuenta</Button>
           </CardContent>
         </Card>
       </div>
