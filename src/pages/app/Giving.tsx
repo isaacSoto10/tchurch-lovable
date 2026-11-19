@@ -1,9 +1,10 @@
+import { GivingControls, type RecurringGift } from "@/components/GivingControls";
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Browser } from "@capacitor/browser";
 import { Capacitor } from "@capacitor/core";
 import QRCode from "qrcode";
-import { Copy, Download, Heart, Loader2, ExternalLink, QrCode, Receipt, ShieldCheck } from "lucide-react";
+import { Copy, Download, FileText, Heart, Loader2, ExternalLink, QrCode, Receipt, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -12,8 +13,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { useApi } from "@/hooks/useApi";
+import { useAppAuth } from "@/hooks/useAppAuth";
 import { useToast } from "@/components/ui/use-toast";
 import { useChurch } from "@/providers/ChurchProvider";
+import { API_BASE } from "@/lib/apiConfig";
+import { getChurchId } from "@/lib/api";
 
 type Fund = {
   id: string;
@@ -28,6 +32,7 @@ type Donation = {
   amountCents: number;
   status: string;
   frequency: string;
+  receiptUrl?: string | null;
   paidAt?: string | null;
   createdAt?: string | null;
 };
@@ -39,7 +44,18 @@ type Transaction = Donation & {
   paymentProvider?: string | null;
 };
 
+type GivingMeResponse = {
+  recurring?: RecurringGift[];
+  donations?: Donation[];
+  attempts?: Donation[];
+  summary?: {
+    totalCents?: number;
+    gifts?: number;
+  };
+};
+
 type GivingConfig = {
+  mercadoPagoUrl?: string | null;
   enabled?: boolean;
   connected?: boolean;
   provider?: "tchurch_stripe" | "church_center" | "external_url";
@@ -48,11 +64,28 @@ type GivingConfig = {
   externalInstructions?: string | null;
 };
 
+type GivingSummary = {
+  totalCents: number;
+  gifts: number;
+};
+
+const confirmedStatus = "succeeded";
+
 const frequencyLabels: Record<string, string> = {
   one_time: "Una vez",
   weekly: "Semanal",
   biweekly: "Quincenal",
   monthly: "Mensual",
+};
+
+const statusLabels: Record<string, string> = {
+  succeeded: "Confirmada",
+  pending: "Pendiente",
+  pending_review: "En revisión",
+  failed: "Fallida",
+  expired: "Expirada",
+  canceled: "Cancelada",
+  rejected: "Rechazada",
 };
 
 function money(cents: number) {
@@ -68,8 +101,56 @@ function sanitizeFileName(value: string) {
     .toLowerCase() || "donaciones";
 }
 
+function isSucceeded(status?: string | null) {
+  return String(status || "").toLowerCase() === confirmedStatus;
+}
+
+function donationTime(donation: Donation) {
+  const time = new Date(donation.paidAt || donation.createdAt || Date.now()).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function formatDonationDate(donation: Donation) {
+  return new Date(donation.paidAt || donation.createdAt || Date.now()).toLocaleDateString("es-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function pdfFileNameFromHeaders(headers: Headers, fallback: string) {
+  const disposition = headers.get("content-disposition") || "";
+  const named = disposition.match(/filename\*=UTF-8''([^;]+)|filename="?([^"]+)"?/i);
+  const raw = named?.[1] || named?.[2];
+  if (!raw) return fallback;
+
+  try {
+    return decodeURIComponent(raw).replace(/[^\w.-]+/g, "-") || fallback;
+  } catch {
+    return raw.replace(/[^\w.-]+/g, "-") || fallback;
+  }
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+  return btoa(binary);
+}
+
 export default function Giving() {
+  const { selectedChurch, loading } = useChurch();
+  if (loading && !selectedChurch) return <div role="status" className="p-5">Cargando iglesia…</div>;
+  if (!selectedChurch) return <div className="p-5">Selecciona una iglesia para dar.</div>;
+  return <ChurchGiving key={selectedChurch.id} />;
+}
+
+function ChurchGiving() {
   const { fetchApi } = useApi();
+  const { getToken } = useAppAuth();
   const { toast } = useToast();
   const { selectedChurch } = useChurch();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -79,10 +160,14 @@ export default function Giving() {
   const [givingConfig, setGivingConfig] = useState<GivingConfig>({});
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [recurring, setRecurring] = useState<RecurringGift[]>([]);
   const [donations, setDonations] = useState<Donation[]>([]);
+  const [paymentAttempts, setPaymentAttempts] = useState<Donation[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [summary, setSummary] = useState({ totalCents: 0, gifts: 0 });
+  const [personalSummary, setPersonalSummary] = useState<GivingSummary>({ totalCents: 0, gifts: 0 });
   const [canViewFinance, setCanViewFinance] = useState(false);
+  const [downloadingPdf, setDownloadingPdf] = useState<string | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState("");
   const [qrLoading, setQrLoading] = useState(false);
   const [form, setForm] = useState({
@@ -99,8 +184,16 @@ export default function Giving() {
   const externalGivingUrl = givingConfig.externalUrl?.trim() || "";
   const usesExternalGiving = Boolean(externalGivingUrl);
   const externalGivingLabel = givingConfig.externalLabel || "Church Center";
-  const publicGivingUrl = externalGivingUrl || (selectedChurch?.slug ? `https://www.tchurchapp.com/give/${selectedChurch.slug}` : "");
+  const publicGivingUrl = selectedChurch?.slug && (givingConfig.mercadoPagoUrl || !externalGivingUrl)
+    ? `https://www.tchurchapp.com/give/${selectedChurch.slug}` : externalGivingUrl;
   const qrFileName = `tchurch-${sanitizeFileName(selectedChurch?.slug || selectedChurch?.name || "donaciones")}-qr-donaciones.png`;
+  const annualStatementYear = new Date().getFullYear();
+  const confirmedDonations = donations
+    .filter((donation) => isSucceeded(donation.status))
+    .sort((a, b) => donationTime(b) - donationTime(a));
+  const recentAttempts = [...donations.filter((donation) => !isSucceeded(donation.status)), ...paymentAttempts]
+    .sort((a, b) => donationTime(b) - donationTime(a))
+    .slice(0, 8);
 
   function getCheckoutReturnUrl(status: "success" | "canceled") {
     if (Capacitor.isNativePlatform()) {
@@ -178,19 +271,125 @@ export default function Giving() {
     }
   }
 
+  async function downloadAuthenticatedPdf(path: string, fallbackFileName: string, label: string) {
+    setDownloadingPdf(label);
+    try {
+      const token = await getToken();
+      const headers: Record<string, string> = {
+        Accept: "application/pdf",
+      };
+      if (token) {
+        headers.Authorization = `Bearer ${token}`;
+      }
+
+      const churchId = getChurchId();
+      if (churchId) {
+        headers["x-church-id"] = churchId;
+      }
+
+      const response = await fetch(`${API_BASE}${path}`, {
+        method: "GET",
+        headers,
+        cache: "no-store",
+      });
+
+      if (!response.ok) {
+        let message = response.status === 401 || response.status === 403
+          ? "No tienes permiso para ver este recibo."
+          : "No se pudo descargar el PDF.";
+
+        const text = await response.text().catch(() => "");
+        if (text) {
+          try {
+            const data = JSON.parse(text) as { error?: string; message?: string };
+            message = String(data.error || data.message || message);
+          } catch {
+            message = text;
+          }
+        }
+
+        throw new Error(message);
+      }
+
+      const fileName = pdfFileNameFromHeaders(response.headers, fallbackFileName);
+      const blob = await response.blob();
+
+      if (Capacitor.isNativePlatform()) {
+        const [{ Filesystem, Directory }, { Share }] = await Promise.all([
+          import("@capacitor/filesystem"),
+          import("@capacitor/share"),
+        ]);
+        const saved = await Filesystem.writeFile({
+          path: fileName,
+          data: arrayBufferToBase64(await blob.arrayBuffer()),
+          directory: Directory.Cache,
+          recursive: true,
+        });
+
+        await Share.share({
+          title: "PDF de donación",
+          text: "Recibo de donación de Tchurch",
+          url: saved.uri,
+          dialogTitle: "Abrir, guardar o compartir PDF",
+        });
+        return;
+      }
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    } catch (error) {
+      toast({
+        title: "No se pudo descargar el PDF",
+        description: error instanceof Error ? error.message : undefined,
+        variant: "destructive",
+      });
+    } finally {
+      setDownloadingPdf(null);
+    }
+  }
+
+  function downloadReceipt(donation: Donation) {
+    return downloadAuthenticatedPdf(
+      `/giving/transactions/${donation.id}/invoice`,
+      `tchurch-recibo-${donation.id}.pdf`,
+      `receipt:${donation.id}`,
+    );
+  }
+
+  function downloadAnnualStatement() {
+    return downloadAuthenticatedPdf(
+      `/giving/annual-statement?year=${annualStatementYear}`,
+      `tchurch-reporte-anual-${annualStatementYear}.pdf`,
+      `annual:${annualStatementYear}`,
+    );
+  }
+
   const loadGiving = useCallback(async () => {
     setLoading(true);
     try {
       const [fundData, meData] = await Promise.all([
-        fetchApi<{ funds: Fund[]; giving?: GivingConfig }>("/giving/funds"),
-        fetchApi<{ donations: Donation[] }>("/giving/me").catch(() => ({ donations: [] })),
+        fetchApi<{ funds: Fund[]; giving?: GivingConfig }>("/giving/funds", {cache: "no-store", churchId: selectedChurch?.id}),
+        fetchApi<GivingMeResponse>("/giving/me", {cache: "no-store", churchId: selectedChurch?.id}).catch(() => ({ recurring: [], donations: [], attempts: [], summary: { totalCents: 0, gifts: 0 } })),
       ]);
       const activeFunds = (fundData.funds || []).filter((fund) => fund.active);
+      const confirmed = (meData.donations || []).filter((donation) => isSucceeded(donation.status));
       setFunds(activeFunds);
       setGivingConfig(fundData.giving || {});
       setEnabled(Boolean(fundData.giving?.enabled));
       setConnected(Boolean(fundData.giving?.connected));
+      setRecurring(meData.recurring || []);
       setDonations(meData.donations || []);
+      setPaymentAttempts(meData.attempts || []);
+      setPersonalSummary({
+        totalCents: Number(meData.summary?.totalCents ?? confirmed.reduce((total, donation) => total + Number(donation.amountCents || 0), 0)),
+        gifts: Number(meData.summary?.gifts ?? confirmed.length),
+      });
       setForm((current) => ({ ...current, fundId: current.fundId || activeFunds[0]?.id || "" }));
 
       try {
@@ -206,7 +405,7 @@ export default function Giving() {
     } finally {
       setLoading(false);
     }
-  }, [fetchApi, toast]);
+  }, [fetchApi, selectedChurch?.id, toast]);
 
   useEffect(() => {
     loadGiving();
@@ -399,6 +598,9 @@ export default function Giving() {
         </Card>
       ) : null}
 
+      <GivingControls key={selectedChurch?.id + (givingConfig.mercadoPagoUrl || "")}
+        url={givingConfig.mercadoPagoUrl || ""} gifts={recurring} admin={isAdmin}
+        request={(path, options) => fetchApi(path, { ...options, churchId: selectedChurch!.id })} reload={loadGiving} openPaymentLink={openCheckoutUrl} />
       {usesExternalGiving ? (
         <Card className="app-card border-emerald-200 bg-emerald-50">
           <CardHeader>
@@ -420,7 +622,7 @@ export default function Giving() {
             </p>
           </CardContent>
         </Card>
-      ) : !enabled || !connected ? (
+      ) : (!enabled || !connected) && givingConfig.mercadoPagoUrl ? null : !enabled || !connected ? (
         <Card className="app-card border-amber-200 bg-amber-50">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-amber-900">
@@ -501,32 +703,66 @@ export default function Giving() {
       )}
 
       {!usesExternalGiving && <Card className="app-card">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Receipt className="h-5 w-5" />
-            Mi historial
-          </CardTitle>
-          <CardDescription>Donaciones registradas en esta iglesia.</CardDescription>
+        <CardHeader className="gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Receipt className="h-5 w-5" />
+                Mi historial
+              </CardTitle>
+              <CardDescription>
+                {personalSummary.gifts} donaciones confirmadas · {money(personalSummary.totalCents)} para taxes.
+              </CardDescription>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-10 rounded-2xl"
+              onClick={() => void downloadAnnualStatement()}
+              disabled={downloadingPdf === `annual:${annualStatementYear}`}
+            >
+              {downloadingPdf === `annual:${annualStatementYear}` ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <FileText className="mr-2 h-4 w-4" />
+              )}
+              Reporte anual
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
-          {donations.filter((donation) => ["succeeded", "paid", "confirmed"].includes(donation.status)).length === 0 ? (
+          {confirmedDonations.length === 0 ? (
             <p className="py-4 text-sm text-muted-foreground">Todavía no tienes donaciones registradas.</p>
           ) : (
             <div className="divide-y">
-              {donations
-                .filter((donation) => ["succeeded", "paid", "confirmed"].includes(donation.status))
-                .slice(0, 8)
-                .map((donation) => (
-                <div key={donation.id} className="flex items-center justify-between gap-3 py-3">
-                  <div>
+              {confirmedDonations.slice(0, 8).map((donation) => (
+                <div key={donation.id} className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
                     <p className="font-semibold">{donation.fundName || "Fondo"}</p>
                     <p className="text-xs text-muted-foreground">
-                      {new Date(donation.paidAt || donation.createdAt || Date.now()).toLocaleDateString()} · {frequencyLabels[donation.frequency] || donation.frequency}
+                      {formatDonationDate(donation)} · {frequencyLabels[donation.frequency] || donation.frequency}
                     </p>
                   </div>
-                  <div className="text-right">
-                    <p className="font-black">{money(donation.amountCents)}</p>
-                    <Badge variant={donation.status === "succeeded" ? "secondary" : "outline"}>{donation.status}</Badge>
+                  <div className="flex shrink-0 items-center justify-between gap-3 sm:justify-end">
+                    <div className="text-right">
+                      <p className="font-black">{money(donation.amountCents)}</p>
+                      <Badge variant="secondary">Confirmada</Badge>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-9 rounded-xl"
+                      onClick={() => void downloadReceipt(donation)}
+                      disabled={downloadingPdf === `receipt:${donation.id}`}
+                    >
+                      {downloadingPdf === `receipt:${donation.id}` ? (
+                        <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Download className="mr-1.5 h-3.5 w-3.5" />
+                      )}
+                      Recibo PDF
+                    </Button>
                   </div>
                 </div>
               ))}
@@ -534,6 +770,35 @@ export default function Giving() {
           )}
         </CardContent>
       </Card>}
+
+      {!usesExternalGiving && recentAttempts.length > 0 && (
+        <Card className="app-card">
+          <CardHeader>
+            <CardTitle>Intentos recientes</CardTitle>
+            <CardDescription>
+              Pagos pendientes, expirados, cancelados o en revisión. Estos no cuentan como donaciones confirmadas.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="divide-y">
+              {recentAttempts.map((attempt) => (
+                <div key={`${attempt.id}-${attempt.status}`} className="flex items-center justify-between gap-3 py-3">
+                  <div className="min-w-0">
+                    <p className="truncate font-semibold">{attempt.fundName || "Fondo"}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {formatDonationDate(attempt)} · {frequencyLabels[attempt.frequency] || attempt.frequency}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-black">{money(attempt.amountCents)}</p>
+                    <Badge variant="outline">{statusLabels[attempt.status] || attempt.status}</Badge>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {!usesExternalGiving && (canViewFinance || isAdmin) && (
         <Card className="app-card">

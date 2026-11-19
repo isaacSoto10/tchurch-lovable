@@ -83,7 +83,7 @@ function AppLayoutInner() {
   const routeKey = `${location.pathname}${location.search}`;
   const isMessagesRoute = location.pathname === "/app/messages";
   const isSermonsRoute = location.pathname === "/app/media" || location.pathname.startsWith("/app/media/");
-  const contentRouteKey = isSermonsRoute ? location.pathname : routeKey;
+  const contentRouteKey = isSermonsRoute || location.pathname === "/app/ministries" ? location.pathname : routeKey;
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [visualHeight, setVisualHeight] = useState<number | null>(null);
   const touchStartX = useRef<number | null>(null);

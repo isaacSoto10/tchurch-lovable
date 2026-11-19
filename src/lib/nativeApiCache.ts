@@ -71,6 +71,8 @@ export function isNativeApiCacheableGet(path: string) {
   // state. A device-local response can otherwise hide another user's recent
   // planning changes for the cache TTL (or for the stale fallback window).
   if (isCollaborativeApiPath(path)) return false;
+  // Event reads include the signed-in attendee’s RSVP, commitments and personal QR.
+  if (/^\/events(?:[/?]|$)/.test(lowerPath)) return false;
   if (lowerPath.includes("credentials")) return false;
   if (lowerPath.includes("token")) return false;
   if (lowerPath.includes("realtime")) return false;

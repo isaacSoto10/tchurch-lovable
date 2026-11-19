@@ -22,7 +22,13 @@ import { useChurch } from "@/providers/ChurchProvider";
 type PrayerFilter = "all" | "mine" | "answered";
 type PrayerSnapshot = { requests: PrayerRequest[] };
 
-const PRAYER_SNAPSHOT_PREFIX = "tchurch_ios_prayer_snapshot_v2";
+const PRAYER_SNAPSHOT_PREFIX = "tchurch_ios_prayer_snapshot_v3";
+
+const PRAYER_AUDIENCE: Record<PrayerPrivacy, string> = {
+  public: "Tu iglesia verá la petición con tu nombre.",
+  anonymous: "Tu iglesia verá la petición sin tu nombre.",
+  private: "Solo tú podrás ver esta petición.",
+};
 
 const PRIVACY_OPTIONS: Array<{
   value: PrayerPrivacy;
@@ -53,7 +59,7 @@ function formatPrayerDate(value: string) {
 
 function requestPath(filter: PrayerFilter) {
   if (filter === "answered") return "/prayer-requests?status=answered&mine=false";
-  if (filter === "mine") return "/prayer-requests?status=active&mine=true";
+  if (filter === "mine") return "/prayer-requests?mine=true";
   return "/prayer-requests?status=active&mine=false";
 }
 
@@ -121,6 +127,7 @@ function PrayerComposer({
         </div>
       </fieldset>
 
+      <p className="text-sm text-muted-foreground" aria-live="polite">{PRAYER_AUDIENCE[privacy]}</p>
       <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
         {onCancel && <Button type="button" variant="outline" onClick={onCancel}>Cancelar</Button>}
         <Button type="submit" disabled={submitting || !content.trim()}>
@@ -243,8 +250,10 @@ export default function Prayer() {
   async function handleAnswer(request: PrayerRequest) {
     setAnsweringId(request.id);
     try {
-      await fetchApi(`/prayer-requests/${request.id}/answer`, { method: "PUT" });
-      setRequests((current) => current.filter((item) => item.id !== request.id));
+      const { answeredAt } = await fetchApi<{ answeredAt: string }>(`/prayer-requests/${request.id}/answer`, { method: "PUT" });
+      setRequests((current) => filter === "mine"
+        ? current.map((item) => item.id === request.id ? { ...item, answeredAt } : item)
+        : current.filter((item) => item.id !== request.id));
       toast({ title: "Petición marcada como respondida" });
     } catch (answerError) {
       toast({ title: "No se pudo actualizar la petición", variant: "destructive" });
@@ -285,7 +294,7 @@ export default function Prayer() {
           <div className="grid grid-cols-3 gap-1 rounded-xl border border-border bg-card p-1" role="tablist" aria-label="Filtrar peticiones">
             {([
               ["all", "Todas"],
-              ["mine", "Mías"],
+              ["mine", "Mis peticiones"],
               ["answered", "Respondidas"],
             ] as const).map(([value, label]) => (
               <button

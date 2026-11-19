@@ -37,7 +37,6 @@ import { useToast } from "@/components/ui/use-toast";
 import { useAppAuth } from "@/hooks/useAppAuth";
 import {
   apiFetch,
-  claimEventSignupItem,
   createEventSignupItem,
   deleteEvent,
   deleteEventSignupItem,
@@ -124,7 +123,7 @@ function isEventDetailSnapshot(data: unknown): data is EventDetailSnapshot {
 
 function routeTab(pathname: string): TabValue {
   if (pathname.endsWith("/rsvp")) return "rsvp";
-  if (pathname.endsWith("/my-qr") || pathname.endsWith("/qr")) return "qr";
+  if (pathname.endsWith("/qr")) return "qr";
   if (pathname.endsWith("/participation")) return "participation";
   if (pathname.endsWith("/scanner") || pathname.endsWith("/check-in") || pathname.endsWith("/admin")) return "admin";
   return "details";
@@ -351,9 +350,10 @@ export default function EventDetail() {
   const canManage = selectedChurch?.role === "ADMIN" || selectedChurch?.role === "PLANNER";
   const userEmail = user?.primaryEmailAddress?.emailAddress || null;
   const checkInEnabled = event?.requiresCheckIn !== false;
+  const canCheckIn = Boolean(event && checkInEnabled && (event.canCheckIn ?? canManage));
   const rsvpQuestions = useMemo(() => event?.registrationConfig?.questions || [], [event?.registrationConfig?.questions]);
   const reminderOptInEnabled = Boolean(event?.reminderConfig?.enabled);
-  const snapshotKey = sessionSnapshotKey(EVENT_DETAIL_SNAPSHOT_PREFIX, `${selectedChurch?.id || getChurchId()}:${id || "unknown"}`);
+  const snapshotKey = sessionSnapshotKey(EVENT_DETAIL_SNAPSHOT_PREFIX, `${user?.id}:${selectedChurch?.id || getChurchId()}:${id || "unknown"}`);
 
   const applyEventSnapshot = useCallback((snapshot: EventDetailSnapshot) => {
     setEvent(snapshot.event);
@@ -410,7 +410,7 @@ export default function EventDetail() {
         const detailRsvp = rsvpFromEventPayload(eventData);
         const [rsvpData, attendeeData, signupData] = await Promise.all([
           detailRsvp ? Promise.resolve(detailRsvp) : fetchEventRsvp(id).catch(() => null),
-          Array.isArray(eventData.attendees) || !canManage
+          Array.isArray(eventData.attendees) || !(eventData.canCheckIn ?? canManage)
             ? Promise.resolve([])
             : apiFetch<EventAttendee[]>(`/events/${id}/rsvps`).catch(() => []),
           Array.isArray(eventData.signupItems) ? Promise.resolve(eventData.signupItems) : fetchEventSignupItems(id).catch(() => []),
@@ -474,7 +474,7 @@ export default function EventDetail() {
 
   const flushQueue = useCallback(
     async (notify = false) => {
-      if (!id || queueFlushing) return;
+      if (!id || !canCheckIn || queueFlushing) return;
       setQueueFlushing(true);
       try {
         const token = await getToken();
@@ -495,7 +495,7 @@ export default function EventDetail() {
         setQueueFlushing(false);
       }
     },
-    [getToken, id, loadEvent, queueFlushing, toast]
+    [canCheckIn, getToken, id, loadEvent, queueFlushing, toast]
   );
 
   useEffect(() => {
@@ -601,9 +601,9 @@ export default function EventDetail() {
 
     setRsvpLoading(true);
     try {
-      await updateEventRsvp(id, payload);
+      const saved = await updateEventRsvp(id, payload);
       setMyRsvp(status);
-      toast({ title: "RSVP actualizado" });
+      toast({ title: status === "yes" ? `Asistencia confirmada · ${saved.partySize ?? payload.partySize} persona(s)` : "RSVP actualizado" });
       await loadEvent(false);
       setRsvpForm((current) => ({
         ...current,
@@ -640,7 +640,8 @@ export default function EventDetail() {
 
   async function handleClaimSignupItem(item: EventSignupItem) {
     if (!id) return;
-    if (!myRsvp || myRsvp === "no") {
+    const release = Boolean(item.currentUserQuantity || item.mySignup || item.signedUp);
+    if (!release && (!myRsvp || myRsvp === "no")) {
       toast({
         title: "Confirma tu RSVP primero",
         description: "Marca Sí o Tal vez antes de anotarte en comida o participación.",
@@ -651,13 +652,16 @@ export default function EventDetail() {
 
     setSignupClaimingId(item.id);
     try {
-      await claimEventSignupItem(id, item.id);
-      toast({ title: "Te anotaste", description: item.title || item.name || "Participación actualizada." });
+      await apiFetch(`/events/${id}/signup-items`, {
+        method: "POST",
+        body: JSON.stringify({ action: release ? "release" : "claim", itemId: item.id, quantity: 1 }),
+      });
+      toast({ title: release ? "Compromiso liberado" : "Te anotaste", description: item.title || item.name || "Participación actualizada." });
       await reloadSignupItems();
     } catch (error) {
       console.error("Failed to claim signup item:", error);
       toast({
-        title: "No se pudo anotar",
+        title: "No se pudo actualizar tu compromiso",
         description: error instanceof Error ? error.message : "Intenta otra vez.",
         variant: "destructive",
       });
@@ -792,7 +796,7 @@ export default function EventDetail() {
 
   async function handleManualCheckIn(formEvent: React.FormEvent) {
     formEvent.preventDefault();
-    if (!id) return;
+    if (!id || !canCheckIn) return;
     const name = manualName.trim();
     const email = manualEmail.trim();
     const note = manualNote.trim();
@@ -966,7 +970,7 @@ export default function EventDetail() {
             {signupItems.map((item) => {
               const counts = signupItemCounts(item);
               const isFull = counts.remaining === 0;
-              const isMine = Boolean(item.mySignup || item.signedUp);
+              const isMine = Boolean(item.currentUserQuantity || item.mySignup || item.signedUp);
               const isClaiming = signupClaimingId === item.id;
               const claimedQuantity = Number(counts.claimed || 0);
               const canDeleteItem = claimedQuantity === 0;
@@ -1025,10 +1029,10 @@ export default function EventDetail() {
                       className="mt-3 h-10 w-full"
                       variant={isMine ? "secondary" : "outline"}
                       onClick={() => handleClaimSignupItem(item)}
-                      disabled={isClaiming || isFull}
+                      disabled={isClaiming || (!isMine && isFull)}
                     >
                       {isClaiming ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-                      {isFull ? "Completo" : isMine ? "Actualizar mi lugar" : "Anotarme"}
+                      {isMine ? "Liberar mi compromiso" : isFull ? "Completo" : "Anotarme"}
                     </Button>
                   )}
                 </div>
@@ -1083,32 +1087,37 @@ export default function EventDetail() {
       </div>
 
       <div className="space-y-4 p-4">
-        {checkInEnabled && pendingCount > 0 && (
+        {canCheckIn && pendingCount > 0 && (
           <Alert className="border-amber-200 bg-amber-50 text-amber-900">
             <WifiOff className="h-4 w-4" />
             <AlertTitle>Check-ins pendientes</AlertTitle>
             <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <span>{pendingCount} check-in(s) esperando sincronización.</span>
-              {canManage && (
-                <Button size="sm" variant="outline" onClick={() => flushQueue(true)} disabled={queueFlushing}>
+              <Button size="sm" variant="outline" onClick={() => flushQueue(true)} disabled={queueFlushing}>
                   {queueFlushing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                  Sincronizar
-                </Button>
-              )}
+                Sincronizar
+              </Button>
             </AlertDescription>
           </Alert>
         )}
 
         <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-4">
-          <TabsList className={`grid h-auto w-full grid-cols-2 gap-1 rounded-lg bg-zinc-200/70 p-1 ${checkInEnabled ? "sm:grid-cols-5" : "sm:grid-cols-4"}`}>
+          <TabsList className={`grid h-auto w-full grid-cols-2 gap-1 rounded-lg bg-zinc-200/70 p-1 ${canCheckIn ? "sm:grid-cols-5" : "sm:grid-cols-4"}`}>
             <TabsTrigger value="details" className="h-10 whitespace-normal text-xs">Detalles</TabsTrigger>
             <TabsTrigger value="rsvp" className="h-10 whitespace-normal text-xs">RSVP</TabsTrigger>
             <TabsTrigger value="qr" className="h-10 whitespace-normal text-xs">QR registro</TabsTrigger>
             <TabsTrigger value="participation" className="h-10 whitespace-normal text-xs">Participación</TabsTrigger>
-            {checkInEnabled && <TabsTrigger value="admin" className="h-10 whitespace-normal text-xs">Check-in/Admin</TabsTrigger>}
+            {canCheckIn && <TabsTrigger value="admin" className="h-10 whitespace-normal text-xs">Asistencia</TabsTrigger>}
           </TabsList>
 
           <TabsContent value="details" className="space-y-4">
+            {myRsvp === "yes" && event.requiresCheckIn !== false ? (
+              <Button className="min-h-11 w-full" onClick={() => navigate(`/app/events/${event.id}/my-qr`)}>Mostrar mi QR de entrada</Button>
+            ) : event.registrationEnabled !== false ? (
+              <Button className="min-h-11 w-full" onClick={() => handleTabChange("rsvp")}>
+                {myRsvp ? "Revisar mi respuesta" : event.capacity && (event.registrationSummary?.totalPeople ?? 0) >= event.capacity ? "Ver cupo y opciones" : "Confirmar mi asistencia"}
+              </Button>
+            ) : null}
             <Card>
               <CardContent className="space-y-4 p-4">
                 <div className="flex flex-wrap items-center gap-2">
@@ -1330,11 +1339,11 @@ export default function EventDetail() {
           </TabsContent>
 
           <TabsContent value="admin" className="space-y-4">
-            {!canManage ? (
+            {!canCheckIn ? (
               <Alert>
                 <AlertCircle className="h-4 w-4" />
                 <AlertTitle>Solo equipo autorizado</AlertTitle>
-                <AlertDescription>El check-in y el scanner están disponibles para administradores o planners.</AlertDescription>
+                <AlertDescription>El registro de asistencia requiere autorización para este evento.</AlertDescription>
               </Alert>
             ) : (
               <>

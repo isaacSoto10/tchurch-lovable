@@ -39,6 +39,7 @@ export interface EventCheckInSummary {
 export type EventSignupItemType = "food" | "participation" | (string & {});
 
 export interface EventSignupItem {
+  currentUserQuantity?: number;
   id: string;
   eventId?: string;
   type?: EventSignupItemType | null;
@@ -106,6 +107,8 @@ export interface EventReminderConfig {
 }
 
 export interface ChurchEvent {
+  myRegistration?: { status: string; partySize: number } | null;
+  registrationSummary?: { totalPeople?: number };
   id: string;
   title: string;
   description?: string | null;
@@ -128,6 +131,7 @@ export interface ChurchEvent {
   registrationEnabled?: boolean;
   allowGuests?: boolean;
   requiresCheckIn?: boolean;
+  canCheckIn?: boolean;
   capacity?: number | null;
   registrationConfig?: EventRegistrationConfig | null;
   reminderConfig?: EventReminderConfig | null;

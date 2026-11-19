@@ -123,6 +123,7 @@ export default function Calendar() {
   const [selectedDate, setSelectedDate] = useState(() => new Date());
   const [items, setItems] = useState<AgendaItem[]>([]);
   const [filter, setFilter] = useState<AgendaFilter>("all");
+  const [view, setView] = useState<"month" | "today" | "list">("month");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const year = currentMonth.getFullYear();
@@ -184,6 +185,11 @@ export default function Calendar() {
     () => filter === "all" ? items : items.filter((item) => item.kind === filter),
     [filter, items],
   );
+  const todayKey = localDateKey(new Date());
+  const agendaItems = filteredItems.filter((item) => {
+    const day = itemDateKey(item);
+    return day && (view === "today" ? day === todayKey : day >= todayKey);
+  });
   const groupedItems = useMemo(() => {
     const groups = new Map<string, AgendaItem[]>();
     for (const item of filteredItems) {
@@ -196,6 +202,7 @@ export default function Calendar() {
   const selectedItems = filteredItems.filter((item) => itemDateKey(item) === localDateKey(selectedDate));
 
   function changeMonth(offset: number) {
+    if (view === "today") setView("list");
     const next = new Date(year, month + offset, 1);
     setCurrentMonth(next);
     setSelectedDate(next);
@@ -220,6 +227,12 @@ export default function Calendar() {
         </div>
       </header>
 
+      <div className="flex flex-wrap gap-2" aria-label="Vista de agenda">
+        {(["month", "today", "list"] as const).map((mode) => <Button key={mode} aria-pressed={view === mode} variant={view === mode ? "default" : "outline"} onClick={() => {
+          setView(mode);
+          if (mode === "today") { setCurrentMonth(new Date()); setSelectedDate(new Date()); }
+        }}>{mode === "today" ? "Hoy" : mode === "list" ? "Lista" : "Mes"}</Button>)}
+      </div>
       <div className="flex items-center gap-2 overflow-x-auto pb-1" aria-label="Filtrar agenda">
         <ListFilter className="h-4 w-4 shrink-0 text-muted-foreground" />
         {([
@@ -245,6 +258,16 @@ export default function Calendar() {
         <div className="space-y-3" role="status" aria-label="Cargando agenda">
           {[0, 1, 2].map((item) => <div key={item} className="h-24 animate-pulse rounded-xl border border-border bg-card" />)}
         </div>
+      ) : view !== "month" ? (
+        <section className="space-y-3">
+          <h2 className="text-lg font-semibold">{view === "today" ? "Actividades de hoy" : "Próximas actividades"}</h2>
+          {agendaItems.length ? agendaItems.map((item) => (
+            <div key={`${item.kind}-${item.id}`} className="space-y-1">
+              <p className="text-sm font-semibold capitalize">{formatItemDate(item, { weekday: "long", month: "long", day: "numeric" })}</p>
+              <AgendaRow key={`${item.kind}-${item.id}`} item={item} onOpen={() => navigate(itemHref(item))} />
+            </div>
+          )) : <p className="rounded-xl border p-4 text-sm">No hay actividades para este período.</p>}
+        </section>
       ) : !responsive.isPhone ? (
         <div className="grid min-w-0 gap-4 md:grid-cols-[minmax(0,1fr)_18rem]">
           <Card className="app-card min-w-0">

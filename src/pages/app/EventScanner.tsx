@@ -17,13 +17,14 @@ import { useAppAuth } from "@/hooks/useAppAuth";
 import { fetchEvent } from "@/lib/api";
 import {
   flushQueuedEventCheckIns,
-  getQueuedEventCheckInCount,
+  listQueuedEventCheckIns,
+  removeQueuedEventCheckIn,
   submitEventCheckInOnlineFirst,
 } from "@/lib/eventCheckInQueue";
 import { scannerErrorNotice } from "@/lib/barcodeScannerErrors";
 import { extractSignedEventQrValue } from "@/lib/eventQr";
 import { useChurch } from "@/providers/ChurchProvider";
-import type { ChurchEvent } from "@/types/events";
+import type { ChurchEvent, QueuedEventCheckIn } from "@/types/events";
 
 export default function EventScanner() {
   const { id } = useParams<{ id: string }>();
@@ -37,16 +38,19 @@ export default function EventScanner() {
   const [scanning, setScanning] = useState(false);
   const [manualCode, setManualCode] = useState("");
   const [manualSubmitting, setManualSubmitting] = useState(false);
-  const [pendingCount, setPendingCount] = useState(0);
+  const [queue, setQueue] = useState<QueuedEventCheckIn[]>([]);
+  const pendingCount = queue.length;
   const [queueFlushing, setQueueFlushing] = useState(false);
   const [lastMessage, setLastMessage] = useState<string | null>(null);
 
   const canManage = selectedChurch?.role === "ADMIN" || selectedChurch?.role === "PLANNER";
 
+  const canCheckIn = Boolean(event && event.requiresCheckIn !== false && (event.canCheckIn ?? canManage));
+
   const loadQueueCount = useCallback(async () => {
     if (!id) return;
     try {
-      setPendingCount(await getQueuedEventCheckInCount(id));
+      setQueue(await listQueuedEventCheckIns(id));
     } catch (error) {
       console.warn("Could not read check-in queue:", error);
     }
@@ -72,9 +76,8 @@ export default function EventScanner() {
       try {
         const token = await getToken();
         const result = await flushQueuedEventCheckIns(token, id);
-        setPendingCount(result.pending);
+        await loadQueueCount();
         if (result.sent > 0) {
-          setLastMessage(`${result.sent} check-in(s) sincronizados.`);
           if (notify) toast({ title: "Cola sincronizada", description: `${result.sent} check-in(s) enviados.` });
         }
       } catch (error) {
@@ -84,10 +87,12 @@ export default function EventScanner() {
         setQueueFlushing(false);
       }
     },
-    [getToken, id, queueFlushing, toast]
+    [getToken, id, loadQueueCount, queueFlushing, toast]
   );
 
   useEffect(() => {
+    setLastMessage(null);
+    setQueue([]);
     loadEvent();
     loadQueueCount();
   }, [loadEvent, loadQueueCount]);
@@ -102,6 +107,7 @@ export default function EventScanner() {
     if (!id) return false;
     const qrCode = extractSignedEventQrValue(code);
     if (!qrCode) {
+      setLastMessage("QR inválido. Usa el QR personal de entrada.");
       toast({
         title: "QR inválido",
         description: "Este scanner solo acepta códigos personales firmados de Tchurch.",
@@ -127,13 +133,14 @@ export default function EventScanner() {
         setLastMessage("Check-in guardado offline. Se sincronizará automáticamente.");
         toast({ title: "Guardado offline", description: "Se enviará cuando vuelva la conexión." });
       } else {
-        setLastMessage(result.response?.message || "Check-in registrado.");
+        setLastMessage(result.response?.duplicate ? "Esta entrada ya estaba registrada." : result.response?.message || "Check-in registrado.");
         toast({ title: "Check-in registrado" });
       }
 
       await loadQueueCount();
       return true;
     } catch (error) {
+      setLastMessage("No se pudo registrar esta lectura.");
       console.error("Event QR check-in failed:", error);
       toast({
         title: "No se pudo registrar el check-in",
@@ -145,7 +152,7 @@ export default function EventScanner() {
   }
 
   async function startScanner() {
-    if (!canManage) return;
+    if (!canCheckIn) return;
     setScanning(true);
     try {
       const result = await CapacitorBarcodeScanner.scanBarcode({
@@ -201,11 +208,11 @@ export default function EventScanner() {
           <div className="flex justify-center py-20">
             <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
           </div>
-        ) : !canManage ? (
+        ) : !canCheckIn ? (
           <Alert>
             <AlertCircle className="h-4 w-4" />
             <AlertTitle>Acceso restringido</AlertTitle>
-            <AlertDescription>Necesitas rol de administrador o planner para registrar check-ins.</AlertDescription>
+            <AlertDescription>Necesitas permiso de registro para este evento.</AlertDescription>
           </Alert>
         ) : (
           <>
@@ -220,11 +227,24 @@ export default function EventScanner() {
                     Sincronizar
                   </Button>
                 </AlertDescription>
+                <ul className="mt-3 space-y-2">
+                  {queue.map((entry) => (
+                    <li key={entry.id} className="rounded-lg border bg-white p-3 text-sm">
+                      <p className="font-semibold">{entry.endpoint === "manual" ? "Check-in manual" : "Lectura de QR personal"}</p>
+                      <p>{new Date(entry.createdAt).toLocaleString("es-US")} · Intentos: {entry.attempts}</p>
+                      {entry.lastError && <p>{entry.lastError}</p>}
+                      <Button size="sm" variant="outline" disabled={queueFlushing} onClick={async () => {
+                        try { await removeQueuedEventCheckIn(entry.id); await loadQueueCount(); }
+                        catch { toast({ title: "No se pudo quitar la lectura", variant: "destructive" }); }
+                      }}>Quitar de la cola</Button>
+                    </li>
+                  ))}
+                </ul>
               </Alert>
             )}
 
             {lastMessage && (
-              <Alert className="border-emerald-200 bg-emerald-50 text-emerald-900">
+              <Alert role="status">
                 <CheckCircle2 className="h-4 w-4" />
                 <AlertTitle>Última lectura</AlertTitle>
                 <AlertDescription>{lastMessage}</AlertDescription>
@@ -244,7 +264,7 @@ export default function EventScanner() {
                 </div>
                 <Button className="h-12 w-full" onClick={startScanner} disabled={scanning}>
                   {scanning ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanLine className="h-4 w-4" />}
-                  {scanning ? "Escaneando..." : "Abrir cámara"}
+                  {scanning ? "Escaneando..." : lastMessage ? "Escanear siguiente" : "Abrir cámara"}
                 </Button>
               </CardContent>
             </Card>

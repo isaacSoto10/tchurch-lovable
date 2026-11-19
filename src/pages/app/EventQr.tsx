@@ -1,3 +1,5 @@
+import { Capacitor } from "@capacitor/core";
+import { useToast } from "@/components/ui/use-toast";
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Calendar, Clock, Loader2, QrCode, RefreshCw } from "lucide-react";
@@ -24,6 +26,7 @@ function formatTime(value: string) {
 
 export default function EventQr() {
   const { id } = useParams<{ id: string }>();
+  const { toast } = useToast();
   const navigate = useNavigate();
   const [event, setEvent] = useState<ChurchEvent | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
@@ -64,8 +67,53 @@ export default function EventQr() {
     loadPage();
   }, [loadPage]);
 
+  async function shareRegistration() {
+    if (!registrationUrl) return;
+    try {
+      if (Capacitor.isNativePlatform()) {
+        const { Share } = await import("@capacitor/share");
+        await Share.share({ title: event?.title, url: registrationUrl });
+      } else {
+        await navigator.share({ title: event?.title, url: registrationUrl });
+      }
+    } catch (error) {
+      if (error instanceof Error && (error.name === "AbortError" || /cancel/i.test(error.message))) return;
+      toast({ title: "No se pudo compartir el enlace", variant: "destructive" });
+    }
+  }
+
+  async function copyRegistration() {
+    if (!registrationUrl) return;
+    try {
+      await navigator.clipboard.writeText(registrationUrl);
+      toast({ title: "Enlace copiado" });
+    } catch {
+      toast({ title: "No se pudo copiar el enlace", variant: "destructive" });
+    }
+  }
+
+  async function savePng() {
+    if (!qrDataUrl) return;
+    const filename = `tchurch-evento-${id}.png`;
+    try {
+      if (Capacitor.isNativePlatform()) {
+        const [{ Filesystem, Directory }, { Share }] = await Promise.all([import("@capacitor/filesystem"), import("@capacitor/share")]);
+        const saved = await Filesystem.writeFile({ path: filename, data: qrDataUrl.split(",")[1], directory: Directory.Documents });
+        await Share.share({ title: filename, files: [saved.uri], dialogTitle: "Guardar PNG" });
+      } else {
+        const link = document.createElement("a");
+        link.href = qrDataUrl;
+        link.download = filename;
+        link.click();
+      }
+    } catch (error) {
+      if (error instanceof Error && (error.name === "AbortError" || /cancel/i.test(error.message))) return;
+      toast({ title: "No se pudo guardar el PNG", variant: "destructive" });
+    }
+  }
+
   return (
-    <div className="min-h-screen bg-zinc-950 text-white">
+    <div className="rounded-xl bg-zinc-950 text-white">
       <div className="sticky top-0 z-10 border-b border-white/10 bg-zinc-950/95">
         <div className="flex items-center gap-3 px-4 py-3">
           <button onClick={() => navigate(id ? `/app/events/${id}` : "/app/events")} className="-ml-2 rounded-lg p-2 hover:bg-white/10">
@@ -81,7 +129,7 @@ export default function EventQr() {
         </div>
       </div>
 
-      <main className="mx-auto flex min-h-[calc(100svh-65px)] max-w-md flex-col justify-center gap-5 p-4">
+      <main className="mx-auto flex max-w-md flex-col gap-4 px-4 py-5">
         {event && (
           <div className="space-y-3 text-center">
             <Badge variant="secondary" className="mx-auto w-fit">{getEventTypeLabel(event.type)}</Badge>
@@ -99,7 +147,7 @@ export default function EventQr() {
           </div>
         )}
 
-        <Card className="border-white/10 bg-white text-zinc-950">
+        <Card className="mx-auto w-full max-w-[17rem] border-white/10 bg-white text-zinc-950">
           <CardContent className="p-5">
             <div className="flex aspect-square items-center justify-center rounded-lg border border-zinc-200 bg-white p-4">
               {loading ? (
@@ -120,6 +168,13 @@ export default function EventQr() {
           </Alert>
         )}
 
+        {!loading && registrationUrl && qrDataUrl && (
+          <div className="grid gap-2">
+            {(Capacitor.isNativePlatform() || typeof navigator.share === "function") && <Button variant="secondary" onClick={shareRegistration}>Compartir registro</Button>}
+            <Button variant="secondary" onClick={copyRegistration}>Copiar enlace</Button>
+            <Button variant="secondary" onClick={savePng}>Descargar PNG</Button>
+          </div>
+        )}
         {registrationUrl && (
           <p className="break-all text-center text-xs text-white/60">{registrationUrl}</p>
         )}

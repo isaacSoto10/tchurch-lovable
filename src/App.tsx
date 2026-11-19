@@ -35,6 +35,7 @@ const Ministries = lazy(appRouteLoaders.Ministries);
 const MinistryDetail = lazy(appRouteLoaders.MinistryDetail);
 const Events = lazy(appRouteLoaders.Events);
 const EventDetail = lazy(appRouteLoaders.EventDetail);
+const PersonalEventQr = lazy(() => import("@/pages/app/PersonalEventQr"));
 const EventQr = lazy(appRouteLoaders.EventQr);
 const EventScanner = lazy(appRouteLoaders.EventScanner);
 const Teams = lazy(appRouteLoaders.Teams);
@@ -133,7 +134,7 @@ function CloudApplication() {
                 <Route path="ministries/:id" element={<MinistryDetail />} />
                 <Route path="events" element={<Events />} />
                 <Route path="events/:id/rsvp" element={<EventDetail />} />
-                <Route path="events/:id/my-qr" element={<EventDetail />} />
+                <Route path="events/:id/my-qr" element={<PersonalEventQr />} />
                 <Route path="events/:id/participation" element={<EventDetail />} />
                 <Route path="events/:id/check-in" element={<EventDetail />} />
                 <Route path="events/:id/admin" element={<EventDetail />} />

@@ -11,6 +11,6 @@ export function canManageAnnouncements(apiRole?: string | null, churchRole?: str
   return role === "ADMIN";
 }
 
-export function canDeleteAnnouncement(status: "PENDING" | "PUBLISHED" | "REJECTED", canManage: boolean) {
+export function canDeleteAnnouncement(status: "PENDING" | "PUBLISHED" | "REJECTED" | "SCHEDULED", canManage: boolean) {
   return canManage || status === "PENDING";
 }

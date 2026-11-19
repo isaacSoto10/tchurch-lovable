@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { MINISTRY_LIST_FILTERS, ministryListFilter, ministryListQuery } from "@/lib/ministryListNavigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -135,7 +136,10 @@ export default function Ministries() {
   const [myMinistryIds, setMyMinistryIds] = useState<string[]>([]);
   const [pendingMinistryIds, setPendingMinistryIds] = useState<string[]>([]);
   const [ministryRoles, setMinistryRoles] = useState<Record<string, string>>({});
-  const [search, setSearch] = useState("");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const search = searchParams.get("q") ?? "";
+  const filter = ministryListFilter(searchParams.get("filter"));
+  const listQuery = ministryListQuery(search, filter);
   const [loading, setLoading] = useState(true);
 
   const [selectedMinistry, setSelectedMinistry] = useState<Ministry | null>(null);
@@ -248,8 +252,14 @@ export default function Ministries() {
     if (!query) return true;
     return [m.name, m.description].some((value) => (value || "").toLowerCase().includes(query));
   });
-  const myMinistries = filtered.filter((m) => myMinistryIds.includes(m.id));
-  const exploreMinistries = filtered.filter((m) => !myMinistryIds.includes(m.id));
+  const pendingMinistries = filter === "mine" ? [] : filtered.filter((ministry) =>
+    !myMinistryIds.includes(ministry.id) && pendingMinistryIds.includes(ministry.id)
+  );
+  const myMinistries = filter === "pending" ? [] : filtered.filter((ministry) => myMinistryIds.includes(ministry.id));
+  const exploreMinistries = filter === "all" ? filtered.filter((ministry) =>
+    !myMinistryIds.includes(ministry.id) && !pendingMinistryIds.includes(ministry.id)
+  ) : [];
+  const hasVisibleMinistries = myMinistries.length + pendingMinistries.length + exploreMinistries.length > 0;
   const totalMembers = ministries.reduce((sum, ministry) => sum + (ministry.memberCount ?? ministry.members?.length ?? 0), 0);
   const totalLeaders = ministries.reduce((sum, ministry) => sum + (ministry.leaderCount ?? 0), 0);
 
@@ -734,7 +744,7 @@ export default function Ministries() {
     const memberCount = m.memberCount ?? m.members?.length ?? 0;
     const leaderCount = m.leaderCount ?? 0;
     const isMine = myMinistryIds.includes(m.id);
-    const isPending = pendingMinistryIds.includes(m.id);
+    const isPending = !isMine && pendingMinistryIds.includes(m.id);
     const role = formatRole(ministryRoles[m.id]);
 
     return (
@@ -744,11 +754,11 @@ export default function Ministries() {
         tabIndex={0}
         aria-label={`Abrir ministerio ${m.name}`}
         className="group relative cursor-pointer overflow-hidden border-zinc-200 bg-white shadow-[0_1px_2px_rgba(24,24,27,0.04)] transition hover:border-primary/30 hover:shadow-[0_10px_28px_rgba(24,24,27,0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-        onClick={() => navigate(`/app/ministries/${m.id}`)}
+        onClick={() => navigate(`/app/ministries/${m.id}${listQuery}`)}
         onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") {
+          if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) {
             event.preventDefault();
-            navigate(`/app/ministries/${m.id}`);
+            navigate(`/app/ministries/${m.id}${listQuery}`);
           }
         }}
         onFocus={() => preloadAppRoute(`/app/ministries/${m.id}`)}
@@ -787,7 +797,7 @@ export default function Ministries() {
               {isPending && (
                 <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1 text-amber-700">
                   <Clock className="h-3.5 w-3.5" />
-                  Waiting approval
+                  Esperando aprobación
                 </span>
               )}
             </div>
@@ -867,7 +877,7 @@ export default function Ministries() {
             <p className="text-[0.7rem] font-medium text-muted-foreground">Personas</p>
           </div>
           <div className="rounded-xl border border-white/80 bg-white px-2 py-3 shadow-sm">
-            <p className="text-lg font-semibold text-zinc-950">{myMinistries.length}</p>
+            <p className="text-lg font-semibold text-zinc-950">{myMinistryIds.length}</p>
             <p className="text-[0.7rem] font-medium text-muted-foreground">Mis equipos</p>
           </div>
         </div>
@@ -877,19 +887,34 @@ export default function Ministries() {
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             placeholder="Buscar ministerios…"
+            aria-label="Buscar ministerios"
             className="h-11 pl-9"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => setSearchParams(ministryListQuery(e.target.value, filter), { replace: true })}
           />
         </div>
+      </div>
+
+      <div className="flex flex-wrap gap-2" aria-label="Filtrar ministerios">
+        {MINISTRY_LIST_FILTERS.map((option) => (
+          <Button
+            key={option.value}
+            variant={filter === option.value ? "default" : "outline"}
+            size="sm"
+            aria-pressed={filter === option.value}
+            onClick={() => setSearchParams(ministryListQuery(search, option.value), { replace: true })}
+          >
+            {option.label}
+          </Button>
+        ))}
       </div>
 
       <div className="space-y-6">
         {myMinistries.length > 0 && (
           <section className="space-y-3">
             <div>
-              <h2 className="text-sm font-semibold text-zinc-950">My ministries</h2>
-              <p className="text-xs text-muted-foreground">Teams where you are a member or leader.</p>
+              <h2 className="text-sm font-semibold text-zinc-950">Mis ministerios</h2>
+              <p className="text-xs text-muted-foreground">Equipos donde participas o lideras.</p>
             </div>
             <div className="grid gap-3">
               {myMinistries.map(renderMinistryCard)}
@@ -897,20 +922,25 @@ export default function Ministries() {
           </section>
         )}
 
-        <section className="space-y-3">
-          <div>
-            <h2 className="text-sm font-semibold text-zinc-950">Explore ministries</h2>
-            <p className="text-xs text-muted-foreground">Open a ministry to learn more or send a join request.</p>
-          </div>
-          <div className="grid gap-3">
-            {exploreMinistries.map(renderMinistryCard)}
-            {filtered.length === 0 && (
-              <p className="rounded-xl border border-dashed border-zinc-200 bg-white px-4 py-6 text-center text-sm text-muted-foreground">
-                No ministries found.
-              </p>
-            )}
-          </div>
-        </section>
+        {pendingMinistries.length > 0 && (
+          <section className="space-y-3" aria-labelledby="pending-ministries">
+            <h2 id="pending-ministries" className="text-sm font-semibold text-zinc-950">Esperando aprobación</h2>
+            <div className="grid gap-3">{pendingMinistries.map(renderMinistryCard)}</div>
+          </section>
+        )}
+
+        {exploreMinistries.length > 0 && (
+          <section className="space-y-3">
+            <h2 className="text-sm font-semibold text-zinc-950">Ministerios disponibles</h2>
+            <div className="grid gap-3">{exploreMinistries.map(renderMinistryCard)}</div>
+          </section>
+        )}
+
+        {!hasVisibleMinistries && (
+          <p className="rounded-xl border border-dashed border-zinc-200 bg-white px-4 py-6 text-center text-sm text-muted-foreground">
+            {filter === "pending" && !search.trim() ? "No tienes solicitudes pendientes." : "No se encontraron ministerios."}
+          </p>
+        )}
       </div>
     </div>
   );

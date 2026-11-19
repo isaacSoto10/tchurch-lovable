@@ -1,3 +1,4 @@
+import { ReadingPlans } from "./ReadingPlans";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BookOpen, CheckCircle, ChevronLeft, ChevronRight, Loader2, Pencil, PlayCircle, Plus, Trash2 } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
@@ -119,6 +120,8 @@ export default function Devotionals() {
   const { toast } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
   const page = parseDevotionalsPage(searchParams.get("page"));
+  const [openReading, setOpenReading] = useState<{id: string} | null>(null);
+  const [readRevision, setReadRevision] = useState(0);
   const [devotionals, setDevotionals] = useState<Devotional[]>([]);
   const [ministries, setMinistries] = useState<Ministry[]>([]);
   const [canManage, setCanManage] = useState(false);
@@ -301,6 +304,7 @@ export default function Devotionals() {
     setMarkingId(id);
     try {
       const data = await fetchApi<{ readAt?: string }>(`/devotionals/${id}/read`, { method: "POST" });
+      setReadRevision(value => value + 1);
       setDevotionals((current) => {
         const nextDevotionals = current.map((devotional) =>
           devotional.id === id ? { ...devotional, readAt: data.readAt || new Date().toISOString() } : devotional
@@ -382,6 +386,9 @@ export default function Devotionals() {
           <h2 className={`${featured ? "mt-4 text-2xl" : "mt-3 text-lg"} font-black leading-tight tracking-tight text-zinc-950`}>
             {devotional.title}
           </h2>
+          {devotional.status === "published" && <button type="button" className="min-h-10 rounded-lg border px-3 text-sm font-semibold"
+            onClick={() => setOpenReading({ id: devotional.id })}>{"Abrir lectura"}</button>}
+
           {devotional.scriptureRef && (
             <p className="mt-1 text-sm font-bold text-primary">{devotional.scriptureRef}</p>
           )}
@@ -450,6 +457,9 @@ export default function Devotionals() {
         )}
       </div>
 
+      <ReadingPlans request={fetchApi} es={true} canManage={canManage}
+        choices={devotionals} open={openReading} revision={readRevision}
+        onRead={() => void loadDevotionals(page)} />
       {canManage && showForm && (
         <Card className="app-card">
           <CardContent className="p-4">

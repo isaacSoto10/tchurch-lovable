@@ -65,7 +65,7 @@ describe("mobile nav layout", () => {
     expect(source).toContain('viewport.addEventListener("resize", update)');
     expect(source).toContain("showShortcutBar && !keyboardOpen");
     expect(source).toContain('const isSermonsRoute = location.pathname === "/app/media"');
-    expect(source).toContain("const contentRouteKey = isSermonsRoute ? location.pathname : routeKey");
+    expect(source).toContain('const contentRouteKey = isSermonsRoute || location.pathname === "/app/ministries" ? location.pathname : routeKey');
     expect(source).toContain("key={contentRouteKey}");
     expect(source).toContain("<ChatDock keyboardOpen={keyboardOpen} hasBottomNav={showShortcutBar} />");
     expect(source).toContain("!isSermonsRoute ? <ChatDock keyboardOpen={keyboardOpen} hasBottomNav={showShortcutBar} /> : null");

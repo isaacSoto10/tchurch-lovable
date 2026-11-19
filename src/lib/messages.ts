@@ -18,6 +18,7 @@ export type MessageReaction = {
 export type MessageDeliveryStatus = "sending" | "sent" | "failed";
 
 export type MessageRecord = {
+  replyTo?: { id: string; authorName: string; content: string } | null;
   id: string;
   channelId: string | null;
   content: string;
@@ -226,6 +227,9 @@ export function normalizeMessage(value: unknown): MessageRecord {
 
   return {
     id: asString(raw.id),
+    replyTo: raw.replyTo && asString(asRecord(raw.replyTo).id) ? {
+      id: asString(asRecord(raw.replyTo).id), authorName: asString(asRecord(raw.replyTo).authorName), content: asString(asRecord(raw.replyTo).content),
+    } : null,
     channelId: asNullableString(raw.channelId),
     content: asString(raw.content),
     userId: asString(raw.userId, asString(raw.authorId)),

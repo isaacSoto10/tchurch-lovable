@@ -1,3 +1,4 @@
+import { useSermonSearch } from "@/lib/useSermonSearch";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { ArrowLeft, CalendarDays, Loader2, Play, Radio, RefreshCw, Search, Settings2, X } from "lucide-react";
@@ -247,9 +248,13 @@ export default function Media() {
     ...sortMediaByDate(response.scheduled, "ascending"),
   ], [response.live, response.scheduled]);
   const seriesGroups = useMemo(() => groupMediaBySeries(response.previous), [response.previous]);
-  const searchResults = useMemo(() => searchServiceMedia(response, search), [response, search]);
+  const searchRequest = useCallback((path: string, signal: AbortSignal) =>
+    fetchApi<{ items: ServiceMediaEntry[]; nextOffset: number | null }>(path, { signal, cache: "no-store" }), [fetchApi]);
+  const remote = useSermonSearch(search, selectedChurchId || "", searchRequest);
+  const cachedResults = useMemo(() => searchServiceMedia(response, search), [response, search]);
   const selectedSeriesKey = normalizeSeriesKey(searchParams.get("series"));
   const selectedSeries = seriesGroups.find((series) => series.key === selectedSeriesKey) || null;
+  const searchResults = remote.items ?? cachedResults;
   const hasSearch = search.trim().length > 0;
 
   function selectSeries(series: MediaSeriesGroup | null) {
@@ -352,6 +357,11 @@ export default function Media() {
           </div>
         ) : null}
 
+        {hasSearch && <div className="flex items-center gap-3" aria-live="polite">
+          {remote.state === "loading" && <span>Buscando en toda la biblioteca…</span>}
+          {remote.state === "error" && <button type="button" className="min-h-11 underline" onClick={remote.retry}>Búsqueda incompleta · Reintentar</button>}
+          {remote.state === "ready" && remote.more && <button type="button" className="min-h-11 underline" onClick={remote.loadMore}>Ver más resultados</button>}
+        </div>}
         {hasSearch ? (
           <SearchResults query={search} items={searchResults} />
         ) : selectedSeriesKey ? (

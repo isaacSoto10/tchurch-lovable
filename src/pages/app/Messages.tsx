@@ -1,3 +1,5 @@
+import { ThreadHistory, type Quote, restorePosition, rememberPosition, rememberChannel, savedPosition, savedChannel } from "./ThreadHistory";
+import { useAppAuth } from "@/hooks/useAppAuth";
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type RefObject } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
@@ -39,7 +41,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/use-toast";
 import { useApi } from "@/hooks/useApi";
-import { ApiError, getChurchId } from "@/lib/api";
+import { ApiError } from "@/lib/api";
 import { API_BASE } from "@/lib/apiConfig";
 import {
   buildMessagesRealtimeUrl,
@@ -193,6 +195,12 @@ function updateChannelFromMessage(channel: MessageChannel, message: MessageRecor
 }
 
 export default function Messages() {
+  const { userId } = useAppAuth();
+  const { selectedChurch } = useChurch();
+  const scope = userId && selectedChurch?.id ? [userId, selectedChurch.id].map(encodeURIComponent).join("/") : null;
+  return <ScopedMessages key={scope} scope={scope} />;
+}
+function ScopedMessages({ scope }: { scope: string | null }) {
   const { fetchApi } = useApi();
   const { selectedChurch } = useChurch();
   const { toast } = useToast();
@@ -200,6 +208,12 @@ export default function Messages() {
   const requestedChannelId = searchParams.get("channelId");
   const requestedMinistryId = searchParams.get("ministryId");
   const locale = useMemo(selectedLocale, []);
+  const [quote, setQuote] = useState<Quote | null>(null);
+  const [historic, setHistoric] = useState(false);
+  const restoreRef = useRef<ReturnType<typeof savedPosition>>(null);
+  const historicalChannel = useRef<string | null>(null);
+  const bypassBookmark = useRef(false);
+  const backedOut = useRef(false);
   const [channels, setChannels] = useState<MessageChannel[]>([]);
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
   const [messagesByChannel, setMessagesByChannel] = useState<Record<string, MessageRecord[]>>({});
@@ -230,14 +244,14 @@ export default function Messages() {
   const previousMessageCountRef = useRef(0);
   const typingStopTimerRef = useRef<number | null>(null);
   const typingStartedAtRef = useRef(0);
-  const failedMessagesRef = useRef(new Map<string, { channelId: string; content: string; files: File[]; clientId: string }>());
+  const failedMessagesRef = useRef(new Map<string, { channelId: string; content: string; files: File[]; clientId: string; replyToId?: string }>());
   const requestedChannelRef = useRef<string | null>(
     requestedChannelId || requestedParamFromLocation("channelId") || requestedParamFromLocation("channel")
   );
   const requestedMinistryRef = useRef<string | null>(
     requestedMinistryId || requestedParamFromLocation("ministryId")
   );
-  const snapshotKey = sessionSnapshotKey(MESSAGES_SNAPSHOT_PREFIX, selectedChurch?.id || getChurchId());
+  const snapshotKey = sessionSnapshotKey(MESSAGES_SNAPSHOT_PREFIX, scope);
 
   const selectedChannel = useMemo(
     () => channels.find((channel) => channel.id === selectedChannelId) || null,
@@ -274,13 +288,13 @@ export default function Messages() {
 
   const applyMessagesSnapshot = useCallback((snapshot: MessagesSnapshot) => {
     setChannels(snapshot.channels);
-    setSelectedChannelId((current) => current || snapshot.selectedChannelId || snapshot.channels[0]?.id || null);
-  }, []);
+    setSelectedChannelId((current) => current || resolveRequestedChannelId(snapshot.channels, null, requestedChannelRef.current, requestedMinistryRef.current) || savedChannel(scope) || null);
+  }, [scope]);
 
   const loadChannels = useCallback(
     async (silent = false) => {
       if (!silent) {
-        const snapshot = readSessionSnapshot<MessagesSnapshot>(snapshotKey, { validate: isMessagesSnapshot });
+        const snapshot = scope ? readSessionSnapshot<MessagesSnapshot>(snapshotKey, { validate: isMessagesSnapshot }) : null;
         if (snapshot) {
           applyMessagesSnapshot(snapshot.data);
           setLoadingChannels(false);
@@ -295,10 +309,11 @@ export default function Messages() {
         const nextChannels = normalizeChannels(data);
         setChannels(nextChannels);
         setSelectedChannelId((current) => {
+          if (backedOut.current && !current) return null;
           return resolveRequestedChannelId(
             nextChannels,
             current,
-            requestedChannelRef.current,
+            requestedChannelRef.current || (requestedMinistryRef.current ? null : savedChannel(scope)),
             requestedMinistryRef.current,
           );
         });
@@ -307,7 +322,7 @@ export default function Messages() {
           selectedChannelId: resolveRequestedChannelId(
             nextChannels,
             null,
-            requestedChannelRef.current,
+            requestedChannelRef.current || (requestedMinistryRef.current ? null : savedChannel(scope)),
             requestedMinistryRef.current,
           ),
         });
@@ -321,7 +336,7 @@ export default function Messages() {
         if (!silent) setLoadingChannels(false);
       }
     },
-    [applyMessagesSnapshot, fetchApi, snapshotKey],
+    [applyMessagesSnapshot, fetchApi, snapshotKey, scope],
   );
 
   const loadMessages = useCallback(
@@ -332,7 +347,18 @@ export default function Messages() {
       }
 
       try {
-        const data = await fetchApi<unknown>(`/channels/${encodeURIComponent(channelId)}/messages?limit=50`);
+        if (silent && historicalChannel.current === channelId) return;
+        const bookmark = !silent && !bypassBookmark.current ? savedPosition(scope, channelId) : null;
+        if (!silent) {
+          bypassBookmark.current = false; restoreRef.current = bookmark;
+          historicalChannel.current = bookmark ? channelId : null; setHistoric(Boolean(bookmark));
+        }
+        const path = `/channels/${encodeURIComponent(channelId)}/messages?limit=50`;
+        let data = await fetchApi<unknown>(path + (bookmark ? `&around=${encodeURIComponent(bookmark.id)}` : ""));
+        if (bookmark && Array.isArray(data) && !data.length) {
+          data = await fetchApi<unknown>(path);
+          restoreRef.current = null; historicalChannel.current = null; setHistoric(false);
+        }
         setMessagesByChannel((current) => ({ ...current, [channelId]: normalizeMessages(data) }));
       } catch (error) {
         if (!silent) setMessageError(errorMessage(error));
@@ -340,7 +366,7 @@ export default function Messages() {
         if (!silent) setLoadingMessages(false);
       }
     },
-    [fetchApi],
+    [fetchApi, scope],
   );
 
   const markChannelRead = useCallback(
@@ -376,6 +402,8 @@ export default function Messages() {
 
   useEffect(() => {
     if (!selectedChannelId) return;
+    rememberChannel(scope, selectedChannelId);
+    setQuote(null);
     setComposer("");
     setPendingFiles([]);
     setEditingMessage(null);
@@ -391,6 +419,12 @@ export default function Messages() {
     if (loadingMessages) return;
     const scrollport = messageScrollRef.current;
     if (!scrollport) return;
+    if (restorePosition(messageScrollRef.current, restoreRef.current)) {
+      restoreRef.current = null;
+      wasNearBottomRef.current = false; initialLoadChannelRef.current = null;
+      return;
+    }
+    if (historicalChannel.current) return;
     const previousCount = previousMessageCountRef.current;
     const addedCount = Math.max(0, messages.length - previousCount);
     previousMessageCountRef.current = messages.length;
@@ -617,6 +651,7 @@ export default function Messages() {
   }
 
   function handleSelectChannel(channel: MessageChannel) {
+    backedOut.current = false;
     setSelectedChannelId(channel.id);
     writeSessionSnapshot(snapshotKey, { channels, selectedChannelId: channel.id });
     setMessageError("");
@@ -650,6 +685,7 @@ export default function Messages() {
     files: File[];
     clientId: string;
     temporaryId: string;
+    replyToId?: string;
   }) {
     setSending(true);
     setMessageError("");
@@ -663,6 +699,7 @@ export default function Messages() {
         method: "POST",
         body: JSON.stringify({
           content: pending.content,
+          replyToId: pending.replyToId,
           clientId: pending.clientId,
           attachments: registeredAttachments.map((attachment) => attachment.id),
         }),
@@ -751,7 +788,8 @@ export default function Messages() {
       setComposer("");
       setPendingFiles([]);
       websocketRef.current?.send(JSON.stringify({ type: "typing.stop", channelId: selectedChannel.id }));
-      void deliverPendingMessage({ channelId: selectedChannel.id, content, files, clientId, temporaryId });
+      void deliverPendingMessage({ channelId: selectedChannel.id, content, files, clientId, temporaryId, replyToId: quote?.id });
+      setQuote(null);
     } catch (error) {
       if (optionalEndpointUnavailable(error) && editingMessage) {
         setMessageError("Editing messages is not available from the API yet.");
@@ -934,7 +972,7 @@ export default function Messages() {
                 locale={locale}
                 onlineCount={onlineCount}
                 typingNames={typingParticipants.map((participant) => participant.displayName)}
-                onBack={() => setSelectedChannelId(null)}
+                onBack={() => { backedOut.current = true; setSelectedChannelId(null); }}
               />
               {selectedChannel.type === "announcement" && !selectedChannel.canPost && (
                 <div className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">
@@ -942,10 +980,17 @@ export default function Messages() {
                   {readOnlyReason}
                 </div>
               )}
+              <ThreadHistory key={selectedChannel.id} channelId={selectedChannel.id} request={fetchApi} es={locale === "es"}
+                canPost={selectedChannel.canPost} quote={quote} onQuote={setQuote} onClear={() => setQuote(null)} />
+              {historic && <button type="button" className="shrink-0 border-b py-2 text-sm font-semibold" onClick={() => {
+                bypassBookmark.current = true;
+                initialLoadChannelRef.current = selectedChannel.id; void loadMessages(selectedChannel.id);
+              }}>{locale === "es" ? "Ir a los mensajes recientes" : "Go to latest messages"}</button>}
               <div
                 ref={messageScrollRef}
                 onScroll={(event) => {
                   const scrollport = event.currentTarget;
+                  if (!restoreRef.current) rememberPosition(scope, selectedChannelId, event.currentTarget);
                   const distance = scrollport.scrollHeight - scrollport.scrollTop - scrollport.clientHeight;
                   wasNearBottomRef.current = distance <= 96;
                   if (wasNearBottomRef.current) setNewMessagesBelow(0);
@@ -962,8 +1007,8 @@ export default function Messages() {
                 ) : messages.length ? (
                   <div className="space-y-3">
                     {messages.map((message) => (
+                      <div key={message.id} data-reading-id={message.id}>
                       <MessageBubble
-                        key={message.id}
                         message={message}
                         locale={locale}
                         canModerate={canModerateSelected}
@@ -972,6 +1017,9 @@ export default function Messages() {
                         onReact={handleReaction}
                         onRetry={retryMessage}
                       />
+                        {!message.deletedAt && selectedChannel.canPost && <button type="button" className="px-2 py-1 text-xs underline"
+                          onClick={() => setQuote(message)}>{locale === "es" ? "Responder" : "Reply"}</button>}
+                      </div>
                     ))}
                   </div>
                 ) : (
@@ -1359,7 +1407,10 @@ function MessageBubble({
               <p className="italic">This message was deleted.</p>
             ) : (
               <>
-                {message.content && <p className="whitespace-pre-wrap break-words">{message.content}</p>}
+                {message.replyTo && <blockquote className="mb-2 border-l-2 pl-2 text-sm opacity-80">
+                <strong>{message.replyTo.authorName}</strong><p className="line-clamp-3">{message.replyTo.content}</p>
+              </blockquote>}
+              {message.content && <p className="whitespace-pre-wrap break-words">{message.content}</p>}
                 {message.attachments.length > 0 && (
                   <div className="mt-3 space-y-2">
                     {message.attachments.map((attachment) => <AttachmentLink key={attachment.id} attachment={attachment} mine={mine} />)}

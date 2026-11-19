@@ -18,6 +18,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useApi } from "@/hooks/useApi";
+import { useAppAuth } from "@/hooks/useAppAuth";
 import { useChurch } from "@/providers/ChurchProvider";
 import { useToast } from "@/components/ui/use-toast";
 import { Clock, Loader2, MapPin, Plus, Trash2, UserRound } from "lucide-react";
@@ -163,6 +164,7 @@ function initialSignupItems(form: typeof emptyForm) {
 
 export default function Events() {
   const navigate = useNavigate();
+  const { userId } = useAppAuth();
   const { selectedChurch } = useChurch();
   const { fetchApi } = useApi();
   const { toast } = useToast();
@@ -175,6 +177,7 @@ export default function Events() {
   const [editingEvent, setEditingEvent] = useState<EventItem | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [mineOnly, setMineOnly] = useState(false);
   const [typeFilter, setTypeFilter] = useState("");
   const loadedOnceRef = useRef(false);
   const [form, setForm] = useState(() => {
@@ -184,7 +187,9 @@ export default function Events() {
 
   const canManage = selectedChurch?.role === "ADMIN" || selectedChurch?.role === "PLANNER";
   const now = Date.now();
-  const filteredEvents = typeFilter ? events.filter((event) => event.type === typeFilter) : events;
+  const filteredEvents = events.filter((event) =>
+    (!typeFilter || event.type === typeFilter) && (!mineOnly || ["yes", "maybe"].includes(event.myRegistration?.status || "")),
+  );
   const upcoming = filteredEvents
     .filter((event) => new Date(event.endDate || event.date).getTime() >= now)
     .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
@@ -194,7 +199,7 @@ export default function Events() {
   const leaderOptions = useMemo(() => [...users].sort((a, b) => displayName(a).localeCompare(displayName(b))), [users]);
   const selectedMinistry = ministries.find((ministry) => ministry.id === form.ministryId);
   const selectedLeader = users.find((user) => user.id === form.leaderId);
-  const snapshotKey = sessionSnapshotKey(EVENTS_SNAPSHOT_PREFIX, selectedChurch?.id || getChurchId());
+  const snapshotKey = sessionSnapshotKey(EVENTS_SNAPSHOT_PREFIX, `${userId}:${selectedChurch?.id || getChurchId()}`);
 
   const applyPageData = useCallback((snapshot: EventsSnapshot) => {
     setEvents(snapshot.events);
@@ -423,6 +428,7 @@ export default function Events() {
         )}
       </header>
 
+      <Button aria-pressed={mineOnly} variant={mineOnly ? "default" : "outline"} onClick={() => setMineOnly(!mineOnly)}>Mis eventos</Button>
       <label className="block max-w-sm space-y-1.5">
         <span className="text-sm font-semibold text-foreground">Tipo de evento</span>
         <select
@@ -801,6 +807,7 @@ function EventCard({
           <div className="h-12 w-1 rounded-full bg-primary" />
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap gap-2">
+              <Badge variant="outline">{event.myRegistration?.status === "yes" ? "Confirmado" : new Date(event.endDate || event.date).getTime() < Date.now() ? "Finalizado" : event.registrationEnabled === false ? "Registro cerrado" : event.capacity && (event.registrationSummary?.totalPeople ?? 0) >= event.capacity ? "Cupo agotado" : "Abierto"}</Badge>
               <Badge variant="secondary">{getEventTypeLabel(event.type)}</Badge>
               {event.ministryName && (
                 <Badge variant="outline" className="gap-1">

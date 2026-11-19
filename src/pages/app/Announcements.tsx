@@ -20,12 +20,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/use-toast";
 import { useApi } from "@/hooks/useApi";
-import { getChurchId } from "@/lib/api";
+import { useAppAuth } from "@/hooks/useAppAuth";
 import { canDeleteAnnouncement, canManageAnnouncements, resolveAnnouncementRole } from "@/lib/announcements";
 import { readSessionSnapshot, sessionSnapshotKey, writeSessionSnapshot } from "@/lib/sessionSnapshots";
 import { useChurch } from "@/providers/ChurchProvider";
 
-type AnnouncementStatus = "PENDING" | "PUBLISHED" | "REJECTED";
+type AnnouncementStatus = "PENDING" | "PUBLISHED" | "REJECTED" | "SCHEDULED";
 type Locale = "en" | "es";
 
 interface Announcement {
@@ -36,6 +36,9 @@ interface Announcement {
   ministryId?: string | null;
   ministryName?: string | null;
   status: AnnouncementStatus;
+  scheduledAt?: string | null;
+  reviewReason?: string | null;
+  canResubmit?: boolean;
   createdAt: string;
   publishedAt?: string | null;
   creatorFirstName?: string | null;
@@ -77,6 +80,7 @@ function statusClasses(status: AnnouncementStatus) {
 }
 
 function statusLabel(status: AnnouncementStatus) {
+  if (status === "SCHEDULED") return "Programado";
   if (status === "PUBLISHED") return "Publicado";
   if (status === "REJECTED") return "Rechazado";
   return "Pendiente";
@@ -158,6 +162,7 @@ function AnnouncementCard({ announcement, onDelete, actions }: AnnouncementCardP
 
 export default function Announcements() {
   const { fetchApi } = useApi();
+  const { userId } = useAppAuth();
   const { toast } = useToast();
   const { selectedChurch } = useChurch();
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
@@ -175,6 +180,8 @@ export default function Announcements() {
   const [audience, setAudience] = useState<"general" | "ministry">("general");
   const [ministryId, setMinistryId] = useState("");
   const [title, setTitle] = useState("");
+  const [schedule, setSchedule] = useState("");
+  const [reasons, setReasons] = useState<Record<string, string>>({});
   const [content, setContent] = useState("");
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const currentChurchId = selectedChurch?.id || null;
@@ -194,8 +201,9 @@ export default function Announcements() {
   const selectedMinistry = currentMinistries.find((ministry) => ministry.id === ministryId);
   const pending = currentAnnouncements.filter((announcement) => announcement.status === "PENDING");
   const published = currentAnnouncements.filter((announcement) => announcement.status === "PUBLISHED");
+  const scheduled = currentAnnouncements.filter((announcement) => announcement.status === "SCHEDULED");
   const rejected = currentAnnouncements.filter((announcement) => announcement.status === "REJECTED");
-  const snapshotKey = sessionSnapshotKey(ANNOUNCEMENTS_SNAPSHOT_PREFIX, currentChurchId || getChurchId() || "default");
+  const snapshotKey = sessionSnapshotKey(ANNOUNCEMENTS_SNAPSHOT_PREFIX, userId && currentChurchId ? JSON.stringify([userId, currentChurchId]) : null);
 
   const applyPageData = useCallback((snapshot: AnnouncementsSnapshot, churchId: string | null) => {
     setAnnouncements(snapshot.announcements);
@@ -206,7 +214,7 @@ export default function Announcements() {
   }, []);
 
   const loadPage = useCallback(async (preferSnapshot = true) => {
-    const snapshot = preferSnapshot
+    const snapshot = preferSnapshot && userId && currentChurchId
       ? readSessionSnapshot<AnnouncementsSnapshot>(snapshotKey, { validate: isAnnouncementsSnapshot })
       : null;
     if (snapshot) {
@@ -243,7 +251,7 @@ export default function Announcements() {
       };
       if (selectedChurchIdRef.current !== currentChurchId) return;
       applyPageData(nextSnapshot, currentChurchId);
-      writeSessionSnapshot(snapshotKey, nextSnapshot);
+      if (userId && currentChurchId) writeSessionSnapshot(snapshotKey, nextSnapshot);
     } catch (error) {
       if (selectedChurchIdRef.current === currentChurchId) {
         setLoadError(error instanceof Error ? error.message : "No se pudieron cargar los anuncios.");
@@ -251,7 +259,7 @@ export default function Announcements() {
     } finally {
       if (selectedChurchIdRef.current === currentChurchId) setLoading(false);
     }
-  }, [applyPageData, currentChurchId, fetchApi, selectedChurch?.role, snapshotKey]);
+  }, [applyPageData, currentChurchId, fetchApi, selectedChurch?.role, snapshotKey, userId]);
 
   useEffect(() => {
     void loadPage();
@@ -270,6 +278,7 @@ export default function Announcements() {
       const created = await fetchApi<Announcement>("/announcements", {
         method: "POST",
         body: JSON.stringify({
+          scheduledAt: schedule ? new Date(schedule).toISOString() : null,
           title: title.trim(),
           content: content.trim(),
           imageUrl,
@@ -278,11 +287,12 @@ export default function Announcements() {
       });
       setTitle("");
       setContent("");
+      setSchedule("");
       setImageUrl(null);
       setComposerOpen(false);
       toast({
-        title: created.status === "PENDING" ? "Enviado para aprobación" : "Anuncio publicado",
-        description: created.status === "PENDING" ? "Un administrador lo revisará antes de publicarlo." : "Los miembros ya pueden verlo.",
+        title: created.status === "SCHEDULED" ? "Anuncio programado" : created.status === "PENDING" ? "Enviado para aprobación" : "Anuncio publicado",
+        description: created.status === "SCHEDULED" ? new Date(created.scheduledAt!).toLocaleString() : created.status === "PENDING" ? "Un administrador lo revisará antes de publicarlo." : "Los miembros ya pueden verlo.",
       });
       await loadPage(false);
     } catch (error) {
@@ -293,9 +303,11 @@ export default function Announcements() {
   }
 
   async function handleReview(id: string, action: "approve" | "reject") {
+    const reason = reasons[id]?.trim() || "";
+    if (action === "reject" && !reason) return;
     setProcessingId(id);
     try {
-      await fetchApi(`/announcements/${id}`, { method: "PATCH", body: JSON.stringify({ action }) });
+      await fetchApi(`/announcements/${id}`, { method: "PATCH", body: JSON.stringify({ action, reason }) });
       toast({ title: action === "approve" ? "Anuncio aprobado" : "Anuncio rechazado" });
       await loadPage(false);
     } catch (error) {
@@ -365,7 +377,11 @@ export default function Announcements() {
                     ))}
                   </div>
                 </div>
-                <AnnouncementAiImageField
+                <label className="block text-sm font-medium">
+                {"Programar publicación (opcional)"}
+                <input className="mt-1 block w-full rounded-xl border p-2" type="datetime-local" value={schedule} onChange={event => setSchedule(event.target.value)} />
+              </label>
+              <AnnouncementAiImageField
                   title={title}
                   content={content}
                   audience={audience}
@@ -411,8 +427,10 @@ export default function Announcements() {
                   onDelete={() => setDeleteId(announcement.id)}
                   actions={(
                     <>
+                    <input className="min-w-0 rounded-lg border px-2 text-sm" aria-label={"Motivo para devolver"} placeholder={"Motivo para devolver"}
+                      maxLength={2000} value={reasons[announcement.id] || ""} onChange={event => setReasons({ ...reasons, [announcement.id]: event.target.value })} />
                       <Button size="sm" onClick={() => handleReview(announcement.id, "approve")} disabled={processingId === announcement.id}><Check className="h-4 w-4" /> Aprobar</Button>
-                      <Button size="sm" variant="outline" onClick={() => handleReview(announcement.id, "reject")} disabled={processingId === announcement.id}><X className="h-4 w-4" /> Rechazar</Button>
+                      <Button size="sm" variant="outline" onClick={() => handleReview(announcement.id, "reject")} disabled={processingId === announcement.id || !reasons[announcement.id]?.trim()}><X className="h-4 w-4" /> Rechazar</Button>
                     </>
                   )}
                 />
@@ -423,6 +441,8 @@ export default function Announcements() {
           {!canManage && pending.length > 0 && (
             <section className="space-y-3">
               <div className="flex items-center justify-between gap-3">
+
+
                 <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-amber-700">En revisión</h2>
                 <Badge className="bg-amber-100 text-amber-800 hover:bg-amber-100">{pending.length}</Badge>
               </div>
@@ -452,10 +472,15 @@ export default function Announcements() {
             ))}
           </section>
 
-          {!canManage && rejected.length > 0 && (
+          {scheduled.length > 0 && <section className="space-y-2"><h2 className="font-semibold">{"Programados"}</h2>
+        {scheduled.map(item => <p key={item.id}>{item.title} · {item.scheduledAt && new Date(item.scheduledAt).toLocaleString()}</p>)}</section>}
+      {rejected.length > 0 && (
             <section className="space-y-3">
               <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-red-700">Requieren cambios</h2>
-              {rejected.map((announcement) => <AnnouncementCard key={announcement.id} announcement={announcement} />)}
+              {rejected.map((announcement) => <AnnouncementCard key={announcement.id} announcement={announcement} actions={<ReturnedAnnouncement announcement={announcement} es={true} onResubmit={async (title, content) => {
+                  await fetchApi(`/announcements/${announcement.id}`, { method: "PUT", body: JSON.stringify({ action: "resubmit", title, content }) });
+                  await loadPage(false);
+                }} />} />)}
             </section>
           )}
         </div>
@@ -475,4 +500,28 @@ export default function Announcements() {
       </AlertDialog>
     </div>
   );
+}
+
+function ReturnedAnnouncement({ announcement, es, onResubmit }: {
+  announcement: Announcement; es: boolean; onResubmit: (title: string, content: string) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState(announcement.title);
+  const [content, setContent] = useState(announcement.content);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  return <div className="w-full space-y-2 text-sm">
+    {announcement.reviewReason && <p><strong>{es ? "Motivo" : "Review reason"}</strong> · {announcement.reviewReason}</p>}
+    {announcement.canResubmit && (editing ? <form className="grid gap-2" onSubmit={async event => {
+      event.preventDefault(); setBusy(true); setError("");
+      try { await onResubmit(title, content); setEditing(false); }
+      catch (failure) { setError(failure instanceof Error ? failure.message : (es ? "No se pudo guardar" : "Could not save")); }
+      finally { setBusy(false); }
+    }}>
+      <input required aria-label={es ? "Título" : "Title"} className="rounded-lg border p-2" value={title} onChange={event => setTitle(event.target.value)} />
+      <textarea required aria-label={es ? "Contenido" : "Content"} className="rounded-lg border p-2" value={content} onChange={event => setContent(event.target.value)} />
+      <button disabled={busy} className="rounded-lg border p-2 font-semibold">{es ? "Reenviar para revisión" : "Resubmit for review"}</button>
+      {error && <p role="alert">{error}</p>}
+    </form> : <button type="button" className="rounded-lg border p-2" onClick={() => setEditing(true)}>{es ? "Editar y reenviar" : "Edit and resubmit"}</button>)}
+  </div>;
 }

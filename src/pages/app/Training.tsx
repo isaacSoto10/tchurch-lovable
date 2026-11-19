@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Browser } from "@capacitor/browser";
+import { Capacitor } from "@capacitor/core";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { BookOpen, CheckCircle } from "lucide-react";
+import { BookOpen, CheckCircle, ExternalLink } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { getChurchId } from "@/lib/api";
 import { readSessionSnapshot, sessionSnapshotKey, writeSessionSnapshot } from "@/lib/sessionSnapshots";
@@ -12,6 +14,7 @@ interface TrainingMaterial {
   title: string;
   description?: string;
   category?: string;
+  url?: string | null;
   completed: boolean;
   progress?: number;
 }
@@ -41,6 +44,26 @@ const CATEGORY_COLORS: Record<string, string> = {
   worship: "bg-amber-100 text-amber-800",
   general: "bg-gray-100 text-gray-800",
 };
+
+function trainingMaterialUrl(value?: string | null) {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+async function openTrainingMaterial(event: React.MouseEvent<HTMLAnchorElement>, url: string) {
+  if (!Capacitor.isNativePlatform()) return;
+  event.preventDefault();
+  try {
+    await Browser.open({ url });
+  } catch {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+}
 
 export default function Training() {
   const { fetchApi } = useApi();
@@ -150,43 +173,61 @@ export default function Training() {
         {filteredMaterials.length === 0 && (
           <p className="text-sm text-muted-foreground">No training materials{selectedCategory !== "all" ? ` in ${selectedCategory}` : ""}.</p>
         )}
-        {filteredMaterials.map((material) => (
-          <Card key={material.id} className={material.completed ? "opacity-60" : ""}>
-            <CardContent className="p-4 flex items-start gap-4">
-              <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${material.completed ? "bg-green-100" : "bg-primary/10"}`}>
-                {material.completed ? (
-                  <CheckCircle className="w-5 h-5 text-green-600" />
-                ) : (
-                  <BookOpen className="w-5 h-5 text-primary" />
-                )}
-              </div>
-              <div className="flex-1 min-w-0">
-                <h3 className="font-medium">{material.title}</h3>
-                {material.description && (
-                  <p className="text-sm text-muted-foreground mt-0.5 line-clamp-2">{material.description}</p>
-                )}
-                {material.category && (
-                  <span className={`text-xs px-2 py-0.5 rounded mt-1 inline-block ${CATEGORY_COLORS[material.category.toLowerCase()] || "bg-gray-100 text-gray-800"}`}>
-                    {material.category}
-                  </span>
-                )}
-                {!material.completed && material.progress !== undefined && (
-                  <Progress value={material.progress} className="h-1 mt-2" />
-                )}
-              </div>
-              {!material.completed && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleMarkComplete(material.id)}
-                  className="shrink-0"
-                >
-                  Mark Complete
-                </Button>
-              )}
-            </CardContent>
-          </Card>
-        ))}
+        {filteredMaterials.map((material) => {
+          const materialUrl = trainingMaterialUrl(material.url);
+          return (
+            <Card key={material.id}>
+              <CardContent className="flex flex-wrap items-start gap-3 p-4 sm:gap-4">
+                <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${material.completed ? "bg-green-100" : "bg-primary/10"}`}>
+                  {material.completed ? (
+                    <CheckCircle className="w-5 h-5 text-green-600" />
+                  ) : (
+                    <BookOpen className="w-5 h-5 text-primary" />
+                  )}
+                </div>
+                <div className="min-w-0 flex-1 basis-[calc(100%-4rem)] sm:basis-0">
+                  <h3 className="font-medium">{material.title}</h3>
+                  {material.description && (
+                    <p className="text-sm text-muted-foreground mt-0.5 line-clamp-2">{material.description}</p>
+                  )}
+                  {material.category && (
+                    <span className={`text-xs px-2 py-0.5 rounded mt-1 inline-block ${CATEGORY_COLORS[material.category.toLowerCase()] || "bg-gray-100 text-gray-800"}`}>
+                      {material.category}
+                    </span>
+                  )}
+                  {!material.completed && material.progress !== undefined && (
+                    <Progress value={material.progress} className="h-1 mt-2" />
+                  )}
+                </div>
+                <div className="flex w-full flex-wrap gap-2 sm:w-auto sm:flex-col">
+                  {materialUrl && (
+                    <Button variant="outline" size="sm" className="min-h-11" asChild>
+                      <a
+                        href={materialUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(event) => void openTrainingMaterial(event, materialUrl)}
+                      >
+                        <ExternalLink className="h-4 w-4" />
+                        Abrir material
+                      </a>
+                    </Button>
+                  )}
+                  {!material.completed && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleMarkComplete(material.id)}
+                      className="min-h-11 shrink-0"
+                    >
+                      Mark Complete
+                    </Button>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })}
       </div>
     </div>
   );
