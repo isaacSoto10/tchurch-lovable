@@ -36,3 +36,12 @@ __pycache__/
 opencode.json
 opencode.jsonc
 opencode.local.json
+
+# Local signing keys and provider credentials
+*.p8
+*.p12
+*.jks
+*.keystore
+*.mobileprovision
+service-account*.json
+google-play-service-account*.json
