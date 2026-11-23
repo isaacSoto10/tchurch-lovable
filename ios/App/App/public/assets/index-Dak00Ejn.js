@@ -1,0 +1,1 @@
+import{r as t}from"./index-2-wEN-PQ.js";var o=Object.defineProperty,n=(e,r)=>o(e,"name",{value:r,configurable:!0}),i={LTR:"ltr"},a=t.createContext(void 0);function c(e){const r=t.useContext(a);return e||r||i.LTR}n(c,"useDirection");export{c as u};

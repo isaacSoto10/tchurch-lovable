@@ -87,7 +87,7 @@ function isSettingsSnapshot(data: unknown): data is SettingsSnapshot {
 export default function Settings() {
   const { selectedChurch, churches, switchChurch } = useChurch();
   const { fetchApi } = useApi();
-  const { user } = useAppAuth();
+  const { user, signOut } = useAppAuth();
   const isAdmin = selectedChurch?.role === "ADMIN";
   const isPlanner = selectedChurch?.role === "PLANNER" || isAdmin;
 
@@ -512,7 +512,7 @@ export default function Settings() {
               <Separator />
               <div className="flex items-center justify-between">
                 <p className="font-medium text-sm">Cerrar sesión</p>
-                <Button variant="outline" size="sm" className="text-red-500 hover:text-red-600">
+                <Button variant="outline" size="sm" className="text-red-500 hover:text-red-600" onClick={() => void signOut()}>
                   <LogOut className="w-4 h-4 mr-1" />
                   Salir
                 </Button>

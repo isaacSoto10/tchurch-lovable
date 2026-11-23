@@ -1,1 +1,0 @@
-import{r as t}from"./index-B0oLOBIK.js";var o=Object.defineProperty,n=(e,r)=>o(e,"name",{value:r,configurable:!0}),i={LTR:"ltr"},a=t.createContext(void 0);function c(e){const r=t.useContext(a);return e||r||i.LTR}n(c,"useDirection");export{c as u};
