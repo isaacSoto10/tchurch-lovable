@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({
   baseProvider: vi.fn(({ children }: { children: React.ReactNode }) => children),
 }));
 
-vi.mock("@clerk/clerk-react", () => ({ ClerkProvider: mocks.baseProvider }));
+vi.mock("@clerk/react", () => ({ ClerkProvider: mocks.baseProvider }));
 vi.mock("@/lib/mobileAuth", () => ({ isNativeMobileAuth: true }));
 vi.mock("@/lib/clerkClient", () => ({
   CLERK_PUBLISHABLE_KEY: "test-key",

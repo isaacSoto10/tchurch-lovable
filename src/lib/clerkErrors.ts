@@ -1,4 +1,4 @@
-import { isClerkAPIResponseError } from "@clerk/clerk-react/errors";
+import { isClerkAPIResponseError } from "@clerk/react/errors";
 
 export function getClerkErrorMessage(error: unknown, fallback: string) {
   if (!isClerkAPIResponseError(error)) {

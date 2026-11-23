@@ -39,7 +39,7 @@ describe("session snapshots", () => {
 
     expect(readSessionSnapshot<TestSnapshot>(key, { nativeOnly: false, validate: isTestSnapshot, ttlMs: 60_000 })).toBeNull();
 
-    window.sessionStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), data: { items: "not-array" } }));
+    window.sessionStorage.setItem(key!, JSON.stringify({ savedAt: Date.now(), data: { items: "not-array" } }));
 
     expect(readSessionSnapshot<TestSnapshot>(key, { nativeOnly: false, validate: isTestSnapshot })).toBeNull();
   });

@@ -13,6 +13,7 @@
 		504EC3081FED79650016851F /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 504EC3071FED79650016851F /* AppDelegate.swift */; };
 		D7A100010000000000000001 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7A100010000000000000002 /* SceneDelegate.swift */; };
 		A4C200010000000000000001 /* PresentationHardwarePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4C200010000000000000002 /* PresentationHardwarePlugin.swift */; };
+		B39AB34F0B01B90900129D43 /* MobileSessionVaultPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = B39AB34F0B01B90900129D44 /* MobileSessionVaultPlugin.swift */; };
 		A4C200010000000000000003 /* TchurchBridgeViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4C200010000000000000004 /* TchurchBridgeViewController.swift */; };
 		B4D300010000000000000001 /* PresentationHardwareCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4D300010000000000000002 /* PresentationHardwareCore.swift */; };
 		B4D300010000000000000003 /* PresentationHardwareCoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4D300010000000000000004 /* PresentationHardwareCoreTests.swift */; };
@@ -47,6 +48,7 @@
 		504EC3071FED79650016851F /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		D7A100010000000000000002 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
 		A4C200010000000000000002 /* PresentationHardwarePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresentationHardwarePlugin.swift; sourceTree = "<group>"; };
+		B39AB34F0B01B90900129D44 /* MobileSessionVaultPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileSessionVaultPlugin.swift; sourceTree = "<group>"; };
 		A4C200010000000000000004 /* TchurchBridgeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TchurchBridgeViewController.swift; sourceTree = "<group>"; };
 		B4D300010000000000000002 /* PresentationHardwareCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresentationHardwareCore.swift; sourceTree = "<group>"; };
 		B4D300010000000000000004 /* PresentationHardwareCoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresentationHardwareCoreTests.swift; sourceTree = "<group>"; };
@@ -113,6 +115,7 @@
 				D7A100010000000000000002 /* SceneDelegate.swift */,
 				B4D300010000000000000002 /* PresentationHardwareCore.swift */,
 				A4C200010000000000000002 /* PresentationHardwarePlugin.swift */,
+				B39AB34F0B01B90900129D44 /* MobileSessionVaultPlugin.swift */,
 				C5E400010000000000000002 /* StudioLANClientCore.swift */,
 				C5E400010000000000000004 /* StudioLANClientNetwork.swift */,
 				C5E400010000000000000006 /* StudioLANClientPlugin.swift */,
@@ -267,6 +270,7 @@
 				D7A100010000000000000001 /* SceneDelegate.swift in Sources */,
 				B4D300010000000000000001 /* PresentationHardwareCore.swift in Sources */,
 				A4C200010000000000000001 /* PresentationHardwarePlugin.swift in Sources */,
+				B39AB34F0B01B90900129D43 /* MobileSessionVaultPlugin.swift in Sources */,
 				C5E400010000000000000001 /* StudioLANClientCore.swift in Sources */,
 				C5E400010000000000000003 /* StudioLANClientNetwork.swift in Sources */,
 				C5E400010000000000000005 /* StudioLANClientPlugin.swift in Sources */,
@@ -466,7 +470,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 248;
+				CURRENT_PROJECT_VERSION = 249;
 				DEVELOPMENT_TEAM = LGLQM6AAZM;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
@@ -474,7 +478,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 4.0.20;
+				MARKETING_VERSION = 4.0.21;
 				OTHER_SWIFT_FLAGS = "$(inherited) \"-D\" \"COCOAPODS\" \"-DDEBUG\"";
 				PRODUCT_BUNDLE_IDENTIFIER = app.lovable.e5ddf50ff80d4eb7a86a937f7a9f8a62.tchurch;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -490,7 +494,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 248;
+				CURRENT_PROJECT_VERSION = 249;
 				DEVELOPMENT_TEAM = LGLQM6AAZM;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
@@ -498,7 +502,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 4.0.20;
+				MARKETING_VERSION = 4.0.21;
 				PRODUCT_BUNDLE_IDENTIFIER = app.lovable.e5ddf50ff80d4eb7a86a937f7a9f8a62.tchurch;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";

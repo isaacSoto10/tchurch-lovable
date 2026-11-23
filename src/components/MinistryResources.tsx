@@ -23,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
+import { normalizeMediaUrl } from "@/lib/media";
 import {
   Download,
   ExternalLink,
@@ -117,14 +118,14 @@ function isLinkResource(resource: Resource): boolean {
 }
 
 function sanitizeDownloadName(value: string): string {
-  return (
-    value
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .replace(/[\\/:*?"<>|]/g, "-")
-      .replace(/\s+/g, " ")
-      .trim() || `recurso-${Date.now()}`
-  );
+  const name = value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[\\/:*?"<>|]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^\.+/, "");
+  return name || `recurso-${Date.now()}`;
 }
 
 function dataUrlToBase64(dataUrl: string): string {
@@ -405,8 +406,11 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
 
   async function handleAddLink(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const url = newLinkUrl.trim();
-    if (!url) return;
+    const url = normalizeMediaUrl(newLinkUrl);
+    if (!url) {
+      toast({ title: "Ingresa un enlace HTTP o HTTPS válido.", variant: "destructive" });
+      return;
+    }
 
     setAddingLink(true);
     try {
@@ -437,21 +441,31 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
   }
 
   function openResource(resource: Resource) {
-    if (!resource.url) return;
-
-    if (Capacitor.isNativePlatform()) {
-      window.open(resource.url, "_system", "noopener,noreferrer");
+    const url = normalizeMediaUrl(resource.url);
+    if (!url) {
+      toast({ title: "Este recurso requiere un enlace HTTP o HTTPS válido.", variant: "destructive" });
       return;
     }
 
-    const opened = window.open(resource.url, "_blank", "noopener,noreferrer");
+    if (Capacitor.isNativePlatform()) {
+      window.open(url, "_system", "noopener,noreferrer");
+      return;
+    }
+
+    const opened = window.open(url, "_blank", "noopener,noreferrer");
     if (!opened) {
-      window.location.href = resource.url;
+      window.location.href = url;
     }
   }
 
   async function downloadResource(resource: Resource) {
     if (!resource.url || isLinkResource(resource)) return;
+    const inlineFile = resource.url.startsWith("data:");
+    const url = inlineFile ? resource.url : normalizeMediaUrl(resource.url);
+    if (!url) {
+      toast({ title: "No se pudo abrir la dirección del archivo.", variant: "destructive" });
+      return;
+    }
 
     const filename = sanitizeDownloadName(resource.originalName || resource.title || "recurso");
 
@@ -463,8 +477,8 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
         ]);
         let fileUri: string;
 
-        if (resource.url.startsWith("data:")) {
-          const blob = await fetchResourceAsBlob(resource.url);
+        if (inlineFile) {
+          const blob = await fetchResourceAsBlob(url);
           const base64 = await blobToBase64(blob);
           const saved = await Filesystem.writeFile({
             path: filename,
@@ -475,7 +489,7 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
           fileUri = saved.uri;
         } else {
           await Filesystem.downloadFile({
-            url: resource.url,
+            url,
             path: filename,
             directory: Directory.Cache,
             recursive: true,
@@ -495,7 +509,7 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
         return;
       }
 
-      const blob = await fetchResourceAsBlob(resource.url);
+      const blob = await fetchResourceAsBlob(url);
       const objectUrl = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = objectUrl;
@@ -597,8 +611,11 @@ export function MinistryResources({ ministryId, canManage }: { ministryId: strin
 
     const title = editingTitle.trim();
     if (!title) return;
-    const url = editingUrl.trim();
-    if (editingResource && isLinkResource(editingResource) && !url) return;
+    const url = normalizeMediaUrl(editingUrl);
+    if (isLinkResource(editingResource) && !url) {
+      toast({ title: "Ingresa un enlace HTTP o HTTPS válido.", variant: "destructive" });
+      return;
+    }
 
     const nextFolderId = editingFolderId || null;
     setUpdatingResourceId(editingResource.id);

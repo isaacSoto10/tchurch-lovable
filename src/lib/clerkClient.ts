@@ -1,5 +1,5 @@
 import { Capacitor } from "@capacitor/core";
-import { Clerk as HeadlessClerk } from "@clerk/clerk-js/headless";
+import { Clerk as HeadlessClerk } from "@clerk/clerk-js";
 
 export const CLERK_PUBLISHABLE_KEY =
   import.meta.env.VITE_CLERK_PUBLISHABLE_KEY ||
@@ -42,7 +42,6 @@ let loadPromise: Promise<typeof headlessClerk> | null = null;
 
 function getRuntimeDiagnostics() {
   return {
-    href: window.location.href,
     origin: runtimeOrigin,
     platform: Capacitor.getPlatform(),
     standardBrowser: isStandardBrowserRuntime,
@@ -70,7 +69,7 @@ export async function ensureHeadlessClerkLoaded() {
     })
     .then(() => headlessClerk)
     .catch((error) => {
-      console.error("[TchurchAuth] Clerk load failed", { ...getRuntimeDiagnostics(), error });
+      console.error("[TchurchAuth] Clerk load failed", getRuntimeDiagnostics());
       loadPromise = null;
       throw error;
     });

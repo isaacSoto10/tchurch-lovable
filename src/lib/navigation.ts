@@ -52,7 +52,8 @@ export function normalizeAppRoute(value: unknown): string | null {
   if (!raw) return null;
 
   const withoutHash = raw.startsWith("#/") ? raw.slice(1) : raw;
-  if (!withoutHash.startsWith("/")) return null;
+  // eslint-disable-next-line no-control-regex -- Reject literal control characters before parsing app routes.
+  if (!withoutHash.startsWith("/") || withoutHash.startsWith("//") || /[\\\u0000-\u001f\u007f]/.test(withoutHash)) return null;
   if ((withoutHash === "/" || withoutHash.startsWith("/?")) && withoutHash.includes("code=")) {
     return `/join-church${withoutHash.slice(1)}`;
   }
@@ -68,7 +69,7 @@ export function normalizeAppRoute(value: unknown): string | null {
 function normalizeMaybeRelativeRoute(value: string) {
   const trimmed = value.trim();
   if (!trimmed) return null;
-  if (trimmed.startsWith("/")) return normalizeAppRoute(trimmed);
+  if (trimmed.startsWith("/") || trimmed.startsWith("#/")) return normalizeAppRoute(trimmed);
   if (/^(app|events?|login|join|join-church|onboarding|create-church)(\/|\?|$)/.test(trimmed)) {
     return normalizeAppRoute(`/${trimmed}`);
   }
@@ -82,21 +83,22 @@ export function routeFromAppUrl(value: unknown): string | null {
 
   try {
     const url = new URL(raw);
-    if (url.hash.startsWith("#/")) {
-      return normalizeAppRoute(url.hash.slice(1));
-    }
+    if (url.username || url.password || url.port) return null;
+    const trustedHost = TRUSTED_LINK_HOSTS.includes(url.hostname);
 
-    if (url.protocol === "https:" && TRUSTED_LINK_HOSTS.includes(url.hostname)) {
+    if (url.protocol === "https:" && trustedHost) {
       // `/present#token` is intentionally web-only and excluded from AASA. Never
       // normalize its secret-bearing fragment into an authenticated app route.
-      if (url.pathname === "/present") return null;
+      if (/^\/present\/*$/i.test(url.pathname)) return null;
+      if (url.hash.startsWith("#/")) return normalizeAppRoute(url.hash.slice(1));
       return normalizeAppRoute(`${url.pathname}${url.search}`);
     }
 
     if (url.protocol === "tchurchapp:") {
       const host = url.hostname;
       const path = `${url.pathname}${url.search}`;
-      if (!host || TRUSTED_LINK_HOSTS.includes(host)) {
+      if (!host || trustedHost) {
+        if (url.hash.startsWith("#/")) return normalizeAppRoute(url.hash.slice(1));
         if ((!url.pathname || url.pathname === "/") && url.search) {
           return normalizeAppRoute(`/${url.search}`);
         }

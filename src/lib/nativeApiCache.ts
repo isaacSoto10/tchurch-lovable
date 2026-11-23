@@ -1,7 +1,7 @@
 import { isNativeMobileAuth } from "@/lib/mobileAuth";
 
-const CHURCH_ID_KEY = "tchurch_church_id";
-const CACHE_PREFIX = "tchurch_native_api_cache_v1";
+const CACHE_PREFIX = "tchurch_native_api_cache_";
+const SCOPED_CACHE_PREFIX = `${CACHE_PREFIX}v2`;
 const DEFAULT_TTL_MS = 2 * 60 * 1000;
 const SHORT_TTL_MS = 20 * 1000;
 const MEMBER_TTL_MS = 60 * 1000;
@@ -19,20 +19,17 @@ export type NativeApiCacheHit<T> = {
   stale: boolean;
 };
 
+export type NativeApiCacheScope = {
+  userId: string;
+  churchId: string | null;
+};
+
 function storageAvailable() {
   return isNativeMobileAuth && typeof window !== "undefined" && typeof window.sessionStorage !== "undefined";
 }
 
-function currentChurchId() {
-  try {
-    return window.localStorage.getItem(CHURCH_ID_KEY) || "no-church";
-  } catch {
-    return "no-church";
-  }
-}
-
-function cacheKey(path: string) {
-  return `${CACHE_PREFIX}:${currentChurchId()}:${path}`;
+function cacheKey(path: string, { userId, churchId }: NativeApiCacheScope) {
+  return `${SCOPED_CACHE_PREFIX}:${JSON.stringify([userId, churchId, path])}`;
 }
 
 export function isCollaborativeApiPath(path: string) {
@@ -84,11 +81,11 @@ export function isNativeApiCacheableGet(path: string) {
   return true;
 }
 
-export function readNativeApiCache<T>(path: string): NativeApiCacheHit<T> | null {
+export function readNativeApiCache<T>(path: string, scope: NativeApiCacheScope): NativeApiCacheHit<T> | null {
   if (!isNativeApiCacheableGet(path)) return null;
 
   try {
-    const raw = window.sessionStorage.getItem(cacheKey(path));
+    const raw = window.sessionStorage.getItem(cacheKey(path, scope));
     if (!raw) return null;
 
     const entry = JSON.parse(raw) as CacheEntry<T>;
@@ -108,11 +105,11 @@ export function readNativeApiCache<T>(path: string): NativeApiCacheHit<T> | null
   }
 }
 
-export function writeNativeApiCache<T>(path: string, value: T) {
+export function writeNativeApiCache<T>(path: string, value: T, scope: NativeApiCacheScope) {
   if (!isNativeApiCacheableGet(path)) return;
 
   try {
-    window.sessionStorage.setItem(cacheKey(path), JSON.stringify({ savedAt: Date.now(), value } satisfies CacheEntry<T>));
+    window.sessionStorage.setItem(cacheKey(path, scope), JSON.stringify({ savedAt: Date.now(), value } satisfies CacheEntry<T>));
   } catch {
     // Cache storage is best-effort and must never block app data.
   }

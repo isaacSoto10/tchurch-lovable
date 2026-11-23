@@ -111,19 +111,22 @@ export async function apiFetch<T = unknown>(
   const isFormData = typeof FormData !== "undefined" && requestOptions.body instanceof FormData;
   const method = (requestOptions.method || "GET").toUpperCase();
   const shouldNoStore = method === "GET" || method === "POST" || method === "PUT" || method === "PATCH" || method === "DELETE";
-  const resolvedToken =
-    token ??
-    (isNativeMobileAuth ? getMobileAuthSession()?.token : null) ??
-    (await (window as ClerkTokenWindow).Clerk?.session?.getToken?.()) ??
-    null;
-  const shouldUseNativeCache =
+  const mobileSession = isNativeMobileAuth ? getMobileAuthSession() : null;
+  const resolvedToken = token === undefined
+    ? mobileSession?.token ?? (await (window as ClerkTokenWindow).Clerk?.session?.getToken?.()) ?? null
+    : token;
+  const churchId = churchIdOverride === undefined ? getChurchId() : churchIdOverride;
+  const nativeCacheScope =
     method === "GET" &&
-    Boolean(resolvedToken) &&
+    mobileSession && resolvedToken === mobileSession.token &&
+    !requestOptions.headers &&
     requestOptions.cache !== "no-store" &&
     requestOptions.cache !== "reload" &&
     requestOptions.cache !== "no-cache" &&
-    isNativeApiCacheableGet(path);
-  const nativeCache = shouldUseNativeCache ? readNativeApiCache<T>(path) : null;
+    isNativeApiCacheableGet(path)
+      ? { userId: mobileSession.user.id, churchId }
+      : null;
+  const nativeCache = nativeCacheScope ? readNativeApiCache<T>(path, nativeCacheScope) : null;
 
   if (nativeCache?.fresh) {
     return nativeCache.value;
@@ -138,7 +141,6 @@ export async function apiFetch<T = unknown>(
     headers["Authorization"] = `Bearer ${resolvedToken}`;
   }
 
-  const churchId = churchIdOverride === undefined ? getChurchId() : churchIdOverride;
   if (churchId) {
     headers["x-church-id"] = churchId;
   }
@@ -147,6 +149,9 @@ export async function apiFetch<T = unknown>(
   const startedAt = actionNow();
   const requestTimeoutMs = timeoutMs ?? (method === "GET" ? DEFAULT_GET_TIMEOUT_MS : DEFAULT_MUTATION_TIMEOUT_MS);
   const requestRevision = mutationRevision;
+  const cacheScopeStillActive = () =>
+    requestRevision === mutationRevision &&
+    getMobileAuthSession()?.token === resolvedToken;
   const shouldDeduplicate = method === "GET" && !requestOptions.signal;
   const dedupeKey = shouldDeduplicate
     ? `${requestRevision}:${inFlightRequestKey(path, resolvedToken, churchId, headers, requestTimeoutMs)}`
@@ -175,7 +180,7 @@ export async function apiFetch<T = unknown>(
           body: sensitiveBody ? undefined : requestOptions.body,
           source: "apiFetch",
         });
-        if (nativeCache?.stale && requestRevision === mutationRevision) {
+        if (nativeCache?.stale && cacheScopeStillActive()) {
           console.warn("[apiFetch] Using stale native cache after network failure", { path });
           return nativeCache.value;
         }
@@ -219,7 +224,7 @@ export async function apiFetch<T = unknown>(
           ? `No se pudo completar la solicitud (${res.status}). Intenta de nuevo en un momento.`
           : rawMessage;
 
-        if (nativeCache?.stale && res.status >= 500 && requestRevision === mutationRevision) {
+        if (nativeCache?.stale && res.status >= 500 && cacheScopeStillActive()) {
           console.warn("[apiFetch] Using stale native cache after server error", { path, status: res.status });
           return nativeCache.value;
         }
@@ -238,15 +243,14 @@ export async function apiFetch<T = unknown>(
       const text = await res.text();
       if (!text) return undefined as T;
 
+      let data: T;
       try {
-        const data = JSON.parse(text) as T;
-        if (shouldUseNativeCache && requestRevision === mutationRevision) writeNativeApiCache(path, data);
-        return data;
+        data = JSON.parse(text) as T;
       } catch {
-        const data = text as T;
-        if (shouldUseNativeCache && requestRevision === mutationRevision) writeNativeApiCache(path, data);
-        return data;
+        data = text as T;
       }
+      if (nativeCacheScope && cacheScopeStillActive()) writeNativeApiCache(path, data, nativeCacheScope);
+      return data;
     } finally {
       // A fetch resolves when headers arrive, not when its body is consumed. Keep
       // timeout and parent-abort propagation alive until every body path settles.

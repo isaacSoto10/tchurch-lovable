@@ -36,7 +36,7 @@ function Receipt() {
 function openDeletion() {
   render(
     <QueryClientProvider client={new QueryClient()}>
-      <MemoryRouter initialEntries={["/app/settings"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+    <MemoryRouter initialEntries={["/app/settings"]}>
         <Routes>
           <Route path="/app/settings" element={<AccountDeletion />} />
           <Route path="/login" element={<Receipt />} />

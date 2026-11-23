@@ -1,4 +1,4 @@
-import { isNativeMobileAuth } from "@/lib/mobileAuth";
+import { getMobileAuthSession, isNativeMobileAuth } from "@/lib/mobileAuth";
 
 export const APP_PAGE_SNAPSHOT_TTL_MS = 2 * 60 * 1000;
 
@@ -21,16 +21,28 @@ function canUseSessionSnapshots(nativeOnly = true) {
   );
 }
 
-export function sessionSnapshotKey(prefix: string, scope?: string | null) {
-  const safeScope = String(scope || "default").replace(/[^a-zA-Z0-9_-]/g, "_");
-  return `${prefix}:${safeScope}`;
+function nativeSnapshotScope() {
+  const userId = getMobileAuthSession()?.user.id;
+  return userId ? `${encodeURIComponent(userId)}:` : null;
+}
+
+export function sessionSnapshotKey(prefix: string, scope?: string | null): string | null {
+  const principal = isNativeMobileAuth ? nativeSnapshotScope() : "";
+  if (principal === null) return null;
+  return `${prefix}:${principal}${encodeURIComponent(scope || "default")}`;
+}
+
+function isCurrentSnapshotKey(key: string) {
+  if (!isNativeMobileAuth) return true;
+  const principal = nativeSnapshotScope();
+  return Boolean(principal && key.slice(key.indexOf(":") + 1).startsWith(principal));
 }
 
 export function readSessionSnapshot<T>(
-  key: string,
+  key: string | null,
   options: SnapshotOptions<T> = {},
 ): StoredSnapshot<T> | null {
-  if (!canUseSessionSnapshots(options.nativeOnly)) return null;
+  if (!key || !canUseSessionSnapshots(options.nativeOnly) || !isCurrentSnapshotKey(key)) return null;
 
   try {
     const raw = window.sessionStorage.getItem(key);
@@ -47,8 +59,8 @@ export function readSessionSnapshot<T>(
   }
 }
 
-export function writeSessionSnapshot<T>(key: string, data: T, options: Pick<SnapshotOptions<T>, "nativeOnly"> = {}) {
-  if (!canUseSessionSnapshots(options.nativeOnly)) return;
+export function writeSessionSnapshot<T>(key: string | null, data: T, options: Pick<SnapshotOptions<T>, "nativeOnly"> = {}) {
+  if (!key || !canUseSessionSnapshots(options.nativeOnly) || !isCurrentSnapshotKey(key)) return;
 
   try {
     window.sessionStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), data } satisfies StoredSnapshot<T>));

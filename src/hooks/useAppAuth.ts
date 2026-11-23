@@ -1,4 +1,4 @@
-import { useAuth, useClerk, useUser } from "@clerk/clerk-react";
+import { useAuth, useClerk, useUser } from "@clerk/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   clearMobileAuthSession,
@@ -33,10 +33,13 @@ export function useNativeAppAuth() {
     return onMobileAuthChange(() => setMobileSession(getMobileAuthSession()));
   }, []);
 
-  const mobileGetToken = useCallback(async () => mobileSession?.token ?? null, [mobileSession?.token]);
+  const mobileGetToken = useCallback(async () => {
+    const token = getMobileAuthSession()?.token;
+    return token === mobileSession?.token ? token ?? null : null;
+  }, [mobileSession?.token]);
   const mobileSignOut = useCallback(async (redirectUrl = "/") => {
     await studioLANPrivacyCoordinator.signedOut();
-    clearMobileAuthSession();
+    await clearMobileAuthSession();
     window.location.hash = redirectUrl === "/" ? "#/" : `#${redirectUrl}`;
   }, []);
   const mobileAuth = useMemo(

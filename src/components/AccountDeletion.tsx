@@ -69,8 +69,8 @@ export function AccountDeletion() {
     if (!isCurrentAccount) return;
     if (isNativeMobileAuth) {
       if (getMobileAuthPrincipalId() !== accountId) return;
-      clearMobileAuthSession();
-      navigate("/login", { replace: true, state: { accountDeletion, localCleanupFailed } });
+      const clearedSession = await clearMobileAuthSession();
+      navigate("/login", { replace: true, state: { accountDeletion, localCleanupFailed: localCleanupFailed || clearedSession === false } });
     } else {
       await signOut("/login");
     }

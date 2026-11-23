@@ -100,6 +100,15 @@ function destination(overrides: Partial<LiveDestination>): LiveDestination {
 }
 
 describe("service media helpers", () => {
+  it("does not expose non-web media links, embeds, or sources", () => {
+    for (const url of ["data:application/octet-stream,", "file:///tmp/video", "tchurchapp://local/video", "https://user@example.com/video", "https://"]) {
+      expect(normalizeMediaUrl(url)).toBeNull();
+      expect(getMediaEmbed(entry({ externalUrl: url, embedUrl: url, videoUrl: url })).sourceUrl).toBeNull();
+      expect(getMediaEmbed(entry({ audioUrl: url })).embedUrl).toBeNull();
+      expect(getMediaEmbed(entry({ videoUrl: url })).embedUrl).toBeNull();
+    }
+  });
+
   it("normalizes bare URLs and detects livestream providers", () => {
     expect(normalizeMediaUrl("facebook.com/church/videos/12345")).toBe("https://facebook.com/church/videos/12345");
     expect(getMediaProvider("https://embed.resi.io/webplayer/video.html?id=abc")).toBe("resi");

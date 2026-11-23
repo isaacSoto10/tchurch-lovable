@@ -7,6 +7,7 @@ import { useChurch } from "@/providers/ChurchProvider";
 import { useNavigate } from "react-router-dom";
 import { formatServiceDate, formatServiceTime, parseServiceDate } from "@/lib/serviceDates";
 import { isNativeMobileAuth } from "@/lib/mobileAuth";
+import { sessionSnapshotKey } from "@/lib/sessionSnapshots";
 import { getEventTypeLabel } from "@/types/events";
 import { formatMediaDate, isServiceMediaResponse, type ServiceMediaEntry, type ServiceMediaResponse } from "@/lib/media";
 
@@ -82,15 +83,11 @@ type DashboardSnapshot = {
   mediaShortcut?: ServiceMediaEntry | null;
 };
 
-function dashboardSnapshotKey(churchId: string) {
-  return `${DASHBOARD_SNAPSHOT_PREFIX}:${churchId}`;
-}
-
-function readDashboardSnapshot(churchId: string): DashboardSnapshot | null {
-  if (!isNativeMobileAuth) return null;
+function readDashboardSnapshot(key: string | null): DashboardSnapshot | null {
+  if (!isNativeMobileAuth || !key) return null;
 
   try {
-    const raw = window.sessionStorage.getItem(dashboardSnapshotKey(churchId));
+    const raw = window.sessionStorage.getItem(key);
     if (!raw) return null;
 
     const snapshot = JSON.parse(raw) as DashboardSnapshot;
@@ -104,12 +101,12 @@ function readDashboardSnapshot(churchId: string): DashboardSnapshot | null {
   }
 }
 
-function saveDashboardSnapshot(churchId: string, snapshot: Omit<DashboardSnapshot, "savedAt">) {
+function saveDashboardSnapshot(key: string, snapshot: Omit<DashboardSnapshot, "savedAt">) {
   if (!isNativeMobileAuth) return;
 
   try {
     window.sessionStorage.setItem(
-      dashboardSnapshotKey(churchId),
+      key,
       JSON.stringify({ ...snapshot, savedAt: Date.now() } satisfies DashboardSnapshot),
     );
   } catch {
@@ -329,7 +326,8 @@ export default function Dashboard() {
         return;
       }
 
-      const cachedSnapshot = readDashboardSnapshot(selectedChurch.id);
+      const snapshotKey = sessionSnapshotKey(DASHBOARD_SNAPSHOT_PREFIX, selectedChurch.id);
+      const cachedSnapshot = readDashboardSnapshot(snapshotKey);
       if (cachedSnapshot) {
         setStats(cachedSnapshot.stats);
         setTimeline(cachedSnapshot.timeline);
@@ -422,14 +420,16 @@ export default function Dashboard() {
         setMinistries(nextMinistries);
         const nextMediaShortcut = getDashboardMediaShortcut(mediaData);
         setMediaShortcut(nextMediaShortcut);
-        saveDashboardSnapshot(selectedChurch.id, {
-          stats: nextStats,
-          timeline: nextTimeline,
-          announcements: nextAnnouncements,
-          ministries: nextMinistries,
-          assignments: assignmentList,
-          mediaShortcut: nextMediaShortcut,
-        });
+        if (snapshotKey && snapshotKey === sessionSnapshotKey(DASHBOARD_SNAPSHOT_PREFIX, selectedChurch.id)) {
+          saveDashboardSnapshot(snapshotKey, {
+            stats: nextStats,
+            timeline: nextTimeline,
+            announcements: nextAnnouncements,
+            ministries: nextMinistries,
+            assignments: assignmentList,
+            mediaShortcut: nextMediaShortcut,
+          });
+        }
       } catch (e) {
         console.error("No se pudo cargar el panel:", e);
       } finally {

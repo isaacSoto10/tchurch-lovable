@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
   useUser: vi.fn(() => ({ user: null })),
 }));
 
-vi.mock("@clerk/clerk-react", () => ({
+vi.mock("@clerk/react", () => ({
   useAuth: mocks.useAuth,
   useClerk: mocks.useClerk,
   useUser: mocks.useUser,

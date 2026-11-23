@@ -164,13 +164,16 @@ function chooseMinistryFund(funds: Fund[], ministryId: string, ministryName: str
   );
 }
 
-function buildCsv(rows: string[][]) {
+function buildCsv(rows: Array<Array<string | number>>) {
   return rows
     .map((row) =>
       row
         .map((cell) => {
-          const value = String(cell ?? "");
-          return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+          const text = String(cell ?? "");
+          const value = typeof cell === "string" && (/^\s*[=+@-]/.test(text) || /^[\t\r\n]/.test(text))
+            ? `'${text}`
+            : text;
+          return /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
         })
         .join(",")
     )
@@ -615,7 +618,7 @@ export function MinistryFinance({ ministryId, ministryName, canManage }: Ministr
           transaction.fundName || fund?.name || "",
           transaction.status || "",
           transaction.note || transaction.manualMethod || transaction.paymentProvider || "",
-          String((Number(transaction.amountCents) || 0) / 100),
+          (Number(transaction.amountCents) || 0) / 100,
         ]),
         ...expenses.map((expense) => [
           "Gasto",
@@ -624,7 +627,7 @@ export function MinistryFinance({ ministryId, ministryName, canManage }: Ministr
           expense.category || "",
           "",
           expense.note || "",
-          String(((Number(expense.amountCents) || 0) / 100) * -1),
+          ((Number(expense.amountCents) || 0) / 100) * -1,
         ]),
       ];
       const csv = buildCsv(rows);

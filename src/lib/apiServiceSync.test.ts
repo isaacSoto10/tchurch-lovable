@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@capacitor/core", () => ({ Capacitor: { isNativePlatform: () => true } }));
 vi.mock("@/lib/userActionLogger", () => ({ actionNow: () => 0, logApiRequestSummary: vi.fn() }));
 vi.mock("@/lib/media", () => ({ clearMediaSnapshots: vi.fn() }));
+vi.mock("./mobileSessionVault", () => ({ mobileSessionVault: { save: async () => undefined } }));
 
 import { apiFetch, setChurchId } from "./api";
 import { saveMobileAuthSession } from "./mobileAuth";
@@ -10,11 +11,11 @@ import { saveMobileAuthSession } from "./mobileAuth";
 const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 
 describe("service collaborative transport", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     localStorage.clear();
     sessionStorage.clear();
     setChurchId("church-a");
-    saveMobileAuthSession({ token: "tm_test-service", expiresAt: "2099-01-01T00:00:00Z", user: { id: "actor-a", email: "fixture@example.org" } });
+    await saveMobileAuthSession({ token: "tm_test-service", expiresAt: "2099-01-01T00:00:00Z", user: { id: "actor-a", email: "fixture@example.org" } });
   });
   afterEach(() => vi.unstubAllGlobals());
 

@@ -131,15 +131,19 @@ export function normalizeMediaUrl(value: string | null | undefined): string | nu
   const raw = trimmedUrl(value);
   if (!raw) return null;
 
-  try {
-    if (/^https?:\/\//i.test(raw)) return new URL(raw).toString();
-    if (/^\/\//.test(raw)) return new URL(`https:${raw}`).toString();
-    if (/^[\w.-]+\.[a-z]{2,}(?:[/:?#].*)?$/i.test(raw)) return new URL(`https://${raw}`).toString();
-  } catch {
-    return raw;
-  }
+  const candidate = raw.startsWith("//")
+    ? `https:${raw}`
+    : /^[\w.-]+\.[a-z]{2,}(?:[/:?#].*)?$/i.test(raw)
+      ? `https://${raw}`
+      : raw;
 
-  return raw;
+  if (!/^https?:\/\//i.test(candidate)) return null;
+  try {
+    const url = new URL(candidate);
+    return url.username || url.password ? null : url.href;
+  } catch {
+    return null;
+  }
 }
 
 function parseMediaUrl(value: string | null | undefined): URL | null {
@@ -420,11 +424,13 @@ export function getMediaEmbed(item: ServiceMediaEntry | null | undefined, option
     }
   }
   if (apiEmbedUrl) return embed("iframe", provider, iframeSourceUrl, apiEmbedUrl);
-  if (item.audioUrl && !item.videoUrl && !item.playbackUrl) return embed("audio", provider, sourceUrl, item.audioUrl);
+  const audioUrl = normalizeMediaUrl(item.audioUrl);
+  const videoUrl = normalizeMediaUrl(item.videoUrl);
+  if (audioUrl && !videoUrl && !normalizeMediaUrl(item.playbackUrl)) return embed("audio", provider, sourceUrl, audioUrl);
 
   const fallback = getUrlMediaEmbed(sourceUrl, provider);
   if (fallback.embedUrl) return fallback;
-  if (item.videoUrl) return embed("video", provider, sourceUrl, item.videoUrl);
+  if (videoUrl) return embed("video", provider, sourceUrl, videoUrl);
   return fallback;
 }
 

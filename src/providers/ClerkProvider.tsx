@@ -1,4 +1,4 @@
-import { ClerkProvider as BaseClerkProvider } from "@clerk/clerk-react";
+import { ClerkProvider as BaseClerkProvider } from "@clerk/react";
 import { useNavigate } from "react-router-dom";
 import {
   CLERK_PUBLISHABLE_KEY,

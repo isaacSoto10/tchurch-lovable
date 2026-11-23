@@ -94,6 +94,7 @@ type UserActionPayload = {
 type LoggerConfig = {
   tokenProvider?: TokenProvider | null;
   endpoint?: string | null;
+  principalId?: string | null;
 };
 
 type ApiRequestSummaryInput = {
@@ -115,9 +116,15 @@ let flushing = false;
 let transportSuspended = false;
 let activeFlushController: AbortController | null = null;
 let consecutiveTransientFailures = 0;
+let principalId: string | null | undefined;
+let principalRevision = 0;
 
 function getActionLogEndpoint() {
-  return configuredEndpoint || import.meta.env.VITE_USER_ACTION_LOG_ENDPOINT || DEFAULT_LOG_ENDPOINT;
+  const endpoint = configuredEndpoint || import.meta.env.VITE_USER_ACTION_LOG_ENDPOINT;
+  if (endpoint && /^https:\/\/(?:www\.)?tchurchapp\.com\/api\/user-action-logs\/?$/.test(endpoint)) {
+    return normalizeEndpoint(endpoint);
+  }
+  return DEFAULT_LOG_ENDPOINT;
 }
 
 function normalizeEndpoint(endpoint: string) {
@@ -327,8 +334,20 @@ function scheduleFlush(delayMs = FLUSH_DELAY_MS) {
 }
 
 export function configureUserActionLogger(config: LoggerConfig) {
-  tokenProvider = config.tokenProvider ?? tokenProvider;
+  if ("tokenProvider" in config) tokenProvider = config.tokenProvider ?? null;
   configuredEndpoint = config.endpoint === null ? null : config.endpoint ? normalizeEndpoint(config.endpoint) : configuredEndpoint;
+  if ("principalId" in config && principalId !== config.principalId) {
+    principalId = config.principalId;
+    principalRevision += 1;
+    queue = [];
+    consecutiveTransientFailures = 0;
+    activeFlushController?.abort();
+    try {
+      window.sessionStorage.removeItem(SESSION_STORAGE_KEY);
+    } catch {
+      // Logging is optional in environments without session storage.
+    }
+  }
 }
 
 /**
@@ -359,10 +378,12 @@ export function resetUserActionLoggerForTests() {
   flushing = false;
   transportSuspended = false;
   consecutiveTransientFailures = 0;
+  principalId = undefined;
+  principalRevision += 1;
 }
 
 export function logUserAction(type: string, metadata: UserActionMetadata = {}, options: { immediate?: boolean } = {}) {
-  if (transportDisabled || transportSuspended || typeof window === "undefined") return;
+  if (transportDisabled || transportSuspended || principalId === null || typeof window === "undefined") return;
 
   const route = getCurrentActionRoute();
   queue.push({
@@ -396,6 +417,7 @@ export async function flushUserActionLogs() {
 
   flushing = true;
   const batch = queue.splice(0, MAX_BATCH_SIZE);
+  const scopeRevision = principalRevision;
   let nextFlushDelayMs: number | null = FLUSH_DELAY_MS;
   let flushController: AbortController | null = null;
   let flushTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -415,6 +437,7 @@ export async function flushUserActionLogs() {
 
   try {
     const token = await tokenProvider?.();
+    if (scopeRevision !== principalRevision) return;
     if (!token) {
       queue = [...batch, ...queue].slice(-MAX_QUEUE_SIZE);
       nextFlushDelayMs = null;
@@ -444,8 +467,10 @@ export async function flushUserActionLogs() {
       headers,
       body,
       keepalive: body.length < 60000,
+      redirect: "error",
       signal: flushController.signal,
     });
+    if (scopeRevision !== principalRevision) return;
 
     if (
       response.status === 401 ||
@@ -471,6 +496,7 @@ export async function flushUserActionLogs() {
 
     consecutiveTransientFailures = 0;
   } catch {
+    if (scopeRevision !== principalRevision) return;
     if (transportSuspended) {
       queue = [...batch, ...queue].slice(-MAX_QUEUE_SIZE);
       nextFlushDelayMs = null;

@@ -11,11 +11,11 @@ if (!existsSync(outDir)) {
 }
 
 const runtimeFiles = readdirSync(clerkDist).filter(
-  (file) => /_clerk\.headless_[^/]+_5\.\d+\.\d+\.js$/.test(file) || file === "clerk.headless.js",
+  (file) => /_clerk\.browser_[^/]+_6\.\d+\.\d+\.js$/.test(file) || file === "clerk.browser.js",
 );
 
 for (const file of runtimeFiles) {
   copyFileSync(join(clerkDist, file), join(outDir, file));
 }
 
-console.log(`Copied ${runtimeFiles.length} Clerk headless runtime files.`);
+console.log(`Copied ${runtimeFiles.length} Clerk browser runtime files.`);

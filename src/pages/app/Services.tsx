@@ -11,6 +11,7 @@ import { useApi } from "@/hooks/useApi";
 import { useToast } from "@/components/ui/use-toast";
 import { useChurch } from "@/providers/ChurchProvider";
 import { isNativeMobileAuth } from "@/lib/mobileAuth";
+import { sessionSnapshotKey } from "@/lib/sessionSnapshots";
 import { ChordProPreview } from "@/components/ChordProPreview";
 import { ServiceSongPicker } from "@/components/ServiceSongPicker";
 import {
@@ -255,10 +256,6 @@ function getServiceWeeksToCreate(value: string) {
   return Math.min(Math.max(parsed, 1), MAX_SERVICE_WEEKS);
 }
 
-function servicesSnapshotKey(churchId: string) {
-  return `${SERVICES_SNAPSHOT_PREFIX}:${churchId}`;
-}
-
 function isServicePayload(value: unknown): value is ServiceListPayload {
   if (!value || typeof value !== "object") return false;
 
@@ -317,11 +314,11 @@ function serviceFromPayload(base: Service, payload: ServiceFormPayload) {
   };
 }
 
-function readServicesSnapshot(churchId: string): ServicesSnapshot | null {
-  if (!isNativeMobileAuth) return null;
+function readServicesSnapshot(key: string | null): ServicesSnapshot | null {
+  if (!isNativeMobileAuth || !key) return null;
 
   try {
-    const raw = window.sessionStorage.getItem(servicesSnapshotKey(churchId));
+    const raw = window.sessionStorage.getItem(key);
     if (!raw) return null;
 
     const snapshot = JSON.parse(raw) as ServicesSnapshot;
@@ -338,12 +335,12 @@ function readServicesSnapshot(churchId: string): ServicesSnapshot | null {
   }
 }
 
-function saveServicesSnapshot(churchId: string, snapshot: Omit<ServicesSnapshot, "savedAt">) {
+function saveServicesSnapshot(key: string, snapshot: Omit<ServicesSnapshot, "savedAt">) {
   if (!isNativeMobileAuth) return;
 
   try {
     window.sessionStorage.setItem(
-      servicesSnapshotKey(churchId),
+      key,
       JSON.stringify({ ...snapshot, savedAt: Date.now() } satisfies ServicesSnapshot),
     );
   } catch {
@@ -470,8 +467,9 @@ export default function Services() {
   }, []);
 
   const loadServices = useCallback((options?: { silent?: boolean; preferSnapshot?: boolean }) => {
+    const snapshotKey = sessionSnapshotKey(SERVICES_SNAPSHOT_PREFIX, selectedChurchId);
     const snapshot = selectedChurchId && options?.preferSnapshot !== false
-      ? readServicesSnapshot(selectedChurchId)
+      ? readServicesSnapshot(snapshotKey)
       : null;
 
     if (snapshot && !options?.silent) {
@@ -489,8 +487,8 @@ export default function Services() {
         const serviceRows = normalizeServicesPayload(data);
         const assignmentRows = Array.isArray(assignments) ? assignments : [];
         applyServicesPayload(serviceRows, assignmentRows);
-        if (selectedChurchId) {
-          saveServicesSnapshot(selectedChurchId, {
+        if (selectedChurchId && snapshotKey && snapshotKey === sessionSnapshotKey(SERVICES_SNAPSHOT_PREFIX, selectedChurchId)) {
+          saveServicesSnapshot(snapshotKey, {
             services: serviceRows,
             myAssignments: assignmentRows,
           });

@@ -77,6 +77,28 @@ describe("user action logger", () => {
     });
   });
 
+  it("sends telemetry only to Tchurch and drops the prior account's records", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 204 }));
+    configureUserActionLogger({
+      tokenProvider: async () => "test-account-a",
+      principalId: "account-a",
+      endpoint: "https://example.com/api/user-action-logs",
+    });
+    logUserAction("account-a action");
+    configureUserActionLogger({
+      tokenProvider: async () => "test-account-b",
+      principalId: "account-b",
+    });
+    logUserAction("account-b action");
+    await flushUserActionLogs();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, request] = fetchMock.mock.calls[0];
+    expect(url).toBe(`${API_BASE}/user-action-logs`);
+    expect(request?.redirect).toBe("error");
+    expect(JSON.parse(String(request?.body)).events.map((event: { type: string }) => event.type)).toEqual(["account-b action"]);
+  });
+
   it("describes form and click metadata without field values or visible text", () => {
     document.body.innerHTML = `
       <form id="login-form" method="post" action="/login?code=123456">

@@ -3,6 +3,7 @@ import { API_BASE } from "./apiConfig";
 import {
   clearMobileAuthSession,
   getMobileAuthPrincipalId,
+  getMobileAuthSession,
   MobileAuthApiError,
   requestMobileJoinAuthCode,
   saveMobileAuthSession,
@@ -13,12 +14,24 @@ vi.mock("@capacitor/core", () => ({
   Capacitor: { isNativePlatform: () => true },
 }));
 
+const vault = vi.hoisted(() => ({
+  load: vi.fn<() => Promise<{ session?: string }>>().mockResolvedValue({}),
+  save: vi.fn<(options: { session: string }) => Promise<void>>().mockResolvedValue(undefined),
+  clear: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+}));
+vi.mock("./mobileSessionVault", () => ({ mobileSessionVault: vault }));
+
 describe("mobile auth join flow", () => {
   const originalFetch = globalThis.fetch;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    vault.load.mockResolvedValue({});
+    vault.save.mockResolvedValue(undefined);
+    vault.clear.mockResolvedValue(undefined);
+    await clearMobileAuthSession();
     localStorage.clear();
     sessionStorage.clear();
+    vi.clearAllMocks();
   });
 
   afterEach(() => {
@@ -89,8 +102,8 @@ describe("mobile auth join flow", () => {
     });
   });
 
-  it("keeps a non-secret principal hint for verified offline LAN after token expiry", () => {
-    saveMobileAuthSession({
+  it("keeps a non-secret principal hint for verified offline LAN after token expiry", async () => {
+    await saveMobileAuthSession({
       token: "tm_expired-token",
       expiresAt: "2020-01-01T00:00:00.000Z",
       user: { id: "user_offline", email: "person@example.com" },
@@ -100,16 +113,82 @@ describe("mobile auth join flow", () => {
     expect(localStorage.getItem("tchurch_mobile_auth_session")).toBeNull();
   });
 
-  it("removes both the bearer session and offline principal hint on explicit logout", () => {
-    saveMobileAuthSession({
+  it("removes both the bearer session and offline principal hint on explicit logout", async () => {
+    await saveMobileAuthSession({
       token: "tm_test-token",
       expiresAt: "2099-01-01T00:00:00.000Z",
       user: { id: "user_1", email: "person@example.com" },
     });
 
-    clearMobileAuthSession();
+    await clearMobileAuthSession();
 
     expect(getMobileAuthPrincipalId()).toBeNull();
+    expect(getMobileAuthSession()).toBeNull();
+    expect(vault.clear).toHaveBeenCalledTimes(1);
     expect(localStorage.getItem("tchurch_mobile_auth_session")).toBeNull();
+  });
+
+  it("clears private snapshots on logout and account changes", async () => {
+    const signIn = (id: string) => saveMobileAuthSession({
+      token: `tm_test-${id}`,
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      user: { id, email: "person@example.com" },
+    });
+    const keys = [
+      "tchurch_native_api_cache_v1:church:path",
+      "tchurch_ios_dashboard_snapshot_v4:church",
+      "tchurch_service_media_snapshot_v1:church",
+      "tchurch_action_log_session_id",
+    ];
+    await signIn("user_1");
+    keys.forEach((key) => sessionStorage.setItem(key, "fixture"));
+    await signIn("user_2");
+    keys.forEach((key) => expect(sessionStorage.getItem(key)).toBeNull());
+    keys.forEach((key) => sessionStorage.setItem(key, "fixture"));
+    await clearMobileAuthSession();
+    keys.forEach((key) => expect(sessionStorage.getItem(key)).toBeNull());
+  });
+
+  it("treats invalid session expiration as expired", async () => {
+    await saveMobileAuthSession({
+      token: "tm_test-token",
+      expiresAt: "invalid",
+      user: { id: "user_1", email: "person@example.com" },
+    });
+    expect(getMobileAuthSession()).toBeNull();
+  });
+
+  it("moves a legacy session into secure storage before restoring it", async () => {
+    vi.resetModules();
+    const auth = await import("./mobileAuth");
+    const legacy = { token: "fixture-token", expiresAt: "2099-01-01T00:00:00Z", user: { id: "account-a" } };
+    localStorage.setItem("tchurch_mobile_auth_session", JSON.stringify(legacy));
+
+    await auth.initializeMobileAuthSession();
+
+    expect(auth.getMobileAuthSession()).toEqual(legacy);
+    expect(vault.save).toHaveBeenCalledWith({ session: JSON.stringify(legacy) });
+    expect(localStorage.getItem("tchurch_mobile_auth_session")).toBeNull();
+  });
+
+  it("does not restore a session when prior secure sign-out still needs cleanup", async () => {
+    vi.resetModules();
+    const auth = await import("./mobileAuth");
+    await auth.saveMobileAuthSession({
+      token: "fixture-token",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      user: { id: "user_1", email: "person@example.com" },
+    });
+    vault.clear.mockRejectedValueOnce(new Error("unavailable"));
+    expect(await auth.clearMobileAuthSession()).toBe(false);
+
+    vi.resetModules();
+    const relaunched = await import("./mobileAuth");
+    await relaunched.initializeMobileAuthSession();
+
+    expect(vault.load).not.toHaveBeenCalled();
+    expect(vault.clear).toHaveBeenCalledTimes(2);
+    expect(relaunched.getMobileAuthSession()).toBeNull();
+    expect(localStorage.getItem("tchurch_mobile_auth_pending_clear")).toBeNull();
   });
 });

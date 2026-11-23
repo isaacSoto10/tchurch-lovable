@@ -14,7 +14,7 @@ import {
 
 export function UserActionLoggingProvider({ children }: { children: ReactNode }) {
   const location = useLocation();
-  const { getToken, isLoaded, isSignedIn } = useAppAuth();
+  const { getToken, isLoaded, isSignedIn, userId } = useAppAuth();
   const previousRoute = useRef<string | null>(null);
   const previousAuthState = useRef<string | null>(null);
   const route = useMemo(
@@ -23,8 +23,8 @@ export function UserActionLoggingProvider({ children }: { children: ReactNode })
   );
 
   useEffect(() => {
-    configureUserActionLogger({ tokenProvider: getToken });
-  }, [getToken]);
+    configureUserActionLogger({ tokenProvider: getToken, principalId: userId ?? null });
+  }, [getToken, userId]);
 
   useEffect(() => {
     if (!route || previousRoute.current === route) return;

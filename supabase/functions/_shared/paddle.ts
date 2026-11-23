@@ -6,10 +6,14 @@ export type PaddleEnv = 'sandbox' | 'live';
 
 const GATEWAY_BASE_URL = 'https://connector-gateway.lovable.dev/paddle';
 
+export function parsePaddleEnvironment(value: unknown): PaddleEnv | null {
+  return value === 'sandbox' || value === 'live' ? value : null;
+}
+
 export function getConnectionApiKey(env: PaddleEnv): string {
-  return env === 'sandbox'
-    ? Deno.env.get('PADDLE_SANDBOX_API_KEY')!
-    : Deno.env.get('PADDLE_LIVE_API_KEY')!;
+  const key = Deno.env.get(env === 'sandbox' ? 'PADDLE_SANDBOX_API_KEY' : 'PADDLE_LIVE_API_KEY');
+  if (!key) throw new Error('Paddle API key is not configured');
+  return key;
 }
 
 export function getPaddleClient(env: PaddleEnv): Paddle {
@@ -30,6 +34,7 @@ export async function gatewayFetch(env: PaddleEnv, path: string, init?: RequestI
   const lovableApiKey = Deno.env.get('LOVABLE_API_KEY')!;
   return fetch(`${GATEWAY_BASE_URL}${path}`, {
     ...init,
+    redirect: 'error',
     headers: {
       'Content-Type': 'application/json',
       'X-Connection-Api-Key': connectionApiKey,
@@ -40,9 +45,11 @@ export async function gatewayFetch(env: PaddleEnv, path: string, init?: RequestI
 }
 
 export function getWebhookSecret(env: PaddleEnv): string {
-  return env === 'sandbox'
-    ? Deno.env.get('PAYMENTS_SANDBOX_WEBHOOK_SECRET')!
-    : Deno.env.get('PAYMENTS_LIVE_WEBHOOK_SECRET')!;
+  const secret = Deno.env.get(
+    env === 'sandbox' ? 'PAYMENTS_SANDBOX_WEBHOOK_SECRET' : 'PAYMENTS_LIVE_WEBHOOK_SECRET',
+  );
+  if (!secret) throw new Error('Paddle webhook secret is not configured');
+  return secret;
 }
 
 export async function verifyWebhook(req: Request, env: PaddleEnv) {

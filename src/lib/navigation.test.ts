@@ -40,6 +40,19 @@ describe("mobile app navigation helpers", () => {
     const token = "A".repeat(48);
     expect(routeFromAppUrl(`https://tchurchapp.com/present#${token}`)).toBeNull();
     expect(routeFromAppUrl(`https://www.tchurchapp.com/present#${token}`)).toBeNull();
+    expect(routeFromAppUrl("https://www.tchurchapp.com/present/#/app/events/demo")).toBeNull();
+  });
+
+  it("accepts hash routes only on supported app URLs and local route strings", () => {
+    expect(routeFromAppUrl("tchurchapp://tchurchapp.com/#/app/giving?success=true")).toBe("/app/giving?success=true");
+    expect(routeFromAppUrl("https://www.tchurchapp.com/#/app/events/demo")).toBe("/app/events/demo");
+    expect(routeFromAppUrl("#/app/events/demo")).toBe("/app/events/demo");
+    expect(routeFromAppUrl("https://example.com/#/app/events/demo")).toBeNull();
+    expect(routeFromAppUrl("https://www.tchurchapp.com:8443/#/app/events/demo")).toBeNull();
+    expect(routeFromAppUrl("https://name@www.tchurchapp.com/#/app/events/demo")).toBeNull();
+    expect(routeFromAppUrl("http://www.tchurchapp.com/#/app/events/demo")).toBeNull();
+    expect(routeFromAppUrl("https://www.tchurchapp.com/#//example.com")).toBeNull();
+    expect(routeFromNotificationData({ route: "https://example.com/#/app/events/demo" })).toBeNull();
   });
 
   it("builds event routes from push notification payloads", () => {
