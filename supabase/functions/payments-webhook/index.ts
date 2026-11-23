@@ -1,5 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { verifyWebhook, EventName, parsePaddleEnvironment, type PaddleEnv } from '../_shared/paddle.ts';
+import { deliverSubscriptionNotice, type VerifiedSubscriptionNotice } from './subscription-mirror.ts';
 
 const supabase = createClient(
   Deno.env.get('SUPABASE_URL')!,
@@ -7,7 +8,7 @@ const supabase = createClient(
 );
 
 const TCHURCH_WEBHOOK_URL = 'https://www.tchurchapp.com/api/webhooks/paddle';
-type PaddleRelay = (data: Record<string, unknown>) => Promise<void>;
+type PaddleRelay = (data: Omit<VerifiedSubscriptionNotice, 'eventId' | 'occurredAt'>) => Promise<void>;
 
 function getSubscriptionPlan(items: unknown) {
   const item = Array.isArray(items) && items.length === 1 ? items[0] : null;
@@ -51,11 +52,11 @@ Deno.serve(async (req) => {
 
   const relaySecret = Deno.env.get('PADDLE_WEBHOOK_RELAY_SECRET');
   if (!relaySecret || relaySecret.length < 32) return new Response('Webhook unavailable', { status: 503 });
-  const relay: PaddleRelay = (data) => forwardToTchurch(relaySecret, {
-    ...data,
-    eventId: event.eventId,
-    occurredAt: event.occurredAt,
-  });
+  const relay: PaddleRelay = (data) => deliverSubscriptionNotice(
+    supabase,
+    { ...data, eventId: event.eventId, occurredAt: event.occurredAt },
+    (notice) => forwardToTchurch(relaySecret, notice),
+  );
 
   try {
     switch (event.eventType) {
@@ -86,25 +87,6 @@ async function handleSubscriptionCreated(data: any, env: PaddleEnv, relay: Paddl
   const userId = typeof customData?.userId === 'string' && customData.userId.trim() ? customData.userId : null;
   const plan = getSubscriptionPlan(items);
 
-  // The legacy mirror requires both plan identifiers and the optional user metadata.
-  if (userId && plan.productId && plan.priceId) {
-    const { error } = await supabase.from('subscriptions').upsert({
-      user_id: userId,
-      paddle_subscription_id: id,
-      paddle_customer_id: customerId,
-      product_id: plan.productId,
-      price_id: plan.priceId,
-      status: status,
-      current_period_start: currentBillingPeriod?.startsAt,
-      current_period_end: currentBillingPeriod?.endsAt,
-      environment: env,
-      updated_at: new Date().toISOString(),
-    }, {
-      onConflict: 'user_id,environment',
-    });
-    if (error) throw new Error('Could not save Paddle subscription');
-  }
-
   await relay({
     event: 'subscription.created',
     userId,
@@ -121,18 +103,6 @@ async function handleSubscriptionCreated(data: any, env: PaddleEnv, relay: Paddl
 async function handleSubscriptionUpdated(data: any, env: PaddleEnv, relay: PaddleRelay) {
   const { id, customerId, items, status, currentBillingPeriod, scheduledChange, customData } = data;
 
-  const { error } = await supabase.from('subscriptions')
-    .update({
-      status: status,
-      current_period_start: currentBillingPeriod?.startsAt,
-      current_period_end: currentBillingPeriod?.endsAt,
-      cancel_at_period_end: scheduledChange?.action === 'cancel',
-      updated_at: new Date().toISOString(),
-    })
-    .eq('paddle_subscription_id', id)
-    .eq('environment', env);
-  if (error) throw new Error('Could not update Paddle subscription');
-
   await relay({
     event: 'subscription.updated',
     userId: customData?.userId,
@@ -148,19 +118,11 @@ async function handleSubscriptionUpdated(data: any, env: PaddleEnv, relay: Paddl
 }
 
 async function handleSubscriptionCanceled(data: any, env: PaddleEnv, relay: PaddleRelay) {
-  const { error } = await supabase.from('subscriptions')
-    .update({
-      status: 'canceled',
-      updated_at: new Date().toISOString(),
-    })
-    .eq('paddle_subscription_id', data.id)
-    .eq('environment', env);
-  if (error) throw new Error('Could not cancel Paddle subscription');
-
   await relay({
     event: 'subscription.canceled',
     userId: data.customData?.userId,
     subscriptionId: data.id,
+    customerId: data.customerId,
     status: 'canceled',
     environment: env,
   });
